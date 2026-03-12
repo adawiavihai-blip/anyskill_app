@@ -173,7 +173,7 @@ class _AdminScreenState extends State<AdminScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 5,
+      length: 6,
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F7FA),
         appBar: AppBar(
@@ -202,7 +202,7 @@ class _AdminScreenState extends State<AdminScreen> {
             isScrollable: true,
             labelColor: Colors.blueAccent,
             indicatorColor: Colors.blueAccent,
-            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴")],
+            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸")],
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
@@ -248,6 +248,7 @@ class _AdminScreenState extends State<AdminScreen> {
                       _buildList(allUsers.where((d) => (d.data() as Map)['isProvider'] == true).toList()),
                       _buildList(allUsers.where((d) => (d.data() as Map)['isBanned'] == true).toList()),
                       _buildDisputesList(),
+                      _buildWithdrawalsList(),
                     ],
                   ),
                 ),
@@ -264,6 +265,157 @@ class _AdminScreenState extends State<AdminScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.grey.shade200)),
       child: Text(text, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+    );
+  }
+
+  Widget _buildWithdrawalsList() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('withdrawals')
+          .where('status', isEqualTo: 'pending')
+          .orderBy('requestedAt', descending: true)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        final docs = snapshot.data!.docs;
+        if (docs.isEmpty) {
+          return const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.check_circle_outline, size: 64, color: Colors.green),
+                SizedBox(height: 12),
+                Text("אין בקשות משיכה ממתינות", style: TextStyle(color: Colors.grey, fontSize: 16)),
+              ],
+            ),
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: docs.length,
+          itemBuilder: (context, index) {
+            final w = docs[index].data() as Map<String, dynamic>;
+            final wId = docs[index].id;
+            final amount = (w['amount'] ?? 0.0).toDouble();
+            DateTime? requestedAt = (w['requestedAt'] as Timestamp?)?.toDate();
+            final formattedDate = requestedAt != null
+                ? DateFormat('dd/MM HH:mm').format(requestedAt)
+                : '—';
+
+            return Card(
+              margin: const EdgeInsets.only(bottom: 16),
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: Colors.blue.shade100),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text("₪${amount.toStringAsFixed(0)}",
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 20)),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.orange[50],
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(formattedDate,
+                              style: TextStyle(
+                                  color: Colors.orange[800], fontSize: 12)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text("בנק: ${w['bankName'] ?? '—'}",
+                        style: const TextStyle(fontSize: 13)),
+                    Text("מספר חשבון: ${w['accountNumber'] ?? '—'}",
+                        style: const TextStyle(fontSize: 13)),
+                    Text("מזהה משתמש: ${w['userId'] ?? '—'}",
+                        style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.red),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10)),
+                            ),
+                            icon: const Icon(Icons.close, color: Colors.red, size: 18),
+                            label: const Text("דחה",
+                                style: TextStyle(color: Colors.red, fontSize: 13)),
+                            onPressed: () async {
+                              // Reject: refund balance back to user
+                              final uid = w['userId'] ?? '';
+                              await FirebaseFirestore.instance.runTransaction((tx) async {
+                                tx.update(FirebaseFirestore.instance.collection('withdrawals').doc(wId),
+                                    {'status': 'rejected', 'resolvedAt': FieldValue.serverTimestamp()});
+                                if (uid.isNotEmpty) {
+                                  tx.update(FirebaseFirestore.instance.collection('users').doc(uid),
+                                      {'balance': FieldValue.increment(amount)});
+                                  tx.set(FirebaseFirestore.instance.collection('transactions').doc(), {
+                                    'userId': uid,
+                                    'amount': amount,
+                                    'title': 'בקשת משיכה נדחתה — הסכום הוחזר',
+                                    'timestamp': FieldValue.serverTimestamp(),
+                                    'type': 'refund',
+                                  });
+                                }
+                              });
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text("הבקשה נדחתה והסכום הוחזר")));
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10)),
+                            ),
+                            icon: const Icon(Icons.check, color: Colors.white, size: 18),
+                            label: const Text("אשר העברה",
+                                style: TextStyle(color: Colors.white, fontSize: 13)),
+                            onPressed: () async {
+                              await FirebaseFirestore.instance
+                                  .collection('withdrawals')
+                                  .doc(wId)
+                                  .update({
+                                'status': 'approved',
+                                'resolvedAt': FieldValue.serverTimestamp(),
+                              });
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    backgroundColor: Colors.green,
+                                    content: Text("הועברה אושרה — יש לבצע העברה ידנית"),
+                                  ));
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 

@@ -174,9 +174,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // --- שאר הווידג'טים (ארנק, השעיה וכו') נשארים אותו דבר ---
+  // --- ארנק ---
   Widget _buildUserWallet(Map<String, dynamic> data) {
     double balance = (data['balance'] ?? 0.0).toDouble();
+    bool isProvider = data['isProvider'] ?? false;
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(title: const Text("הארנק שלי", style: TextStyle(fontWeight: FontWeight.bold)), centerTitle: true, elevation: 0, backgroundColor: Colors.white),
@@ -199,25 +200,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     const SizedBox(height: 12),
                     Text("₪${balance.toStringAsFixed(2)}", style: const TextStyle(color: Colors.white, fontSize: 44, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 20),
-                    // Top-up button
-                    GestureDetector(
-                      onTap: () => _showTopUpSheet(context),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.white30),
+                    // Action buttons row
+                    Row(
+                      children: [
+                        // Top-up button
+                        GestureDetector(
+                          onTap: () => _showTopUpSheet(context),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.white30),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.add, color: Colors.white, size: 18),
+                                SizedBox(width: 6),
+                                Text("הוסף יתרה", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                              ],
+                            ),
+                          ),
                         ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.add, color: Colors.white, size: 18),
-                            SizedBox(width: 6),
-                            Text("הוסף יתרה", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                          ],
-                        ),
-                      ),
+                        if (isProvider && balance > 0) ...[
+                          const SizedBox(width: 10),
+                          // Withdraw button
+                          GestureDetector(
+                            onTap: () => _showWithdrawSheet(context, balance),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: Colors.green.withValues(alpha: 0.25),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.green.shade300),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.arrow_upward, color: Colors.white, size: 18),
+                                  SizedBox(width: 6),
+                                  Text("משיכה", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 20),
                     const Divider(color: Colors.white24),
@@ -403,6 +432,194 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         'title': 'טעינת ארנק',
         'timestamp': FieldValue.serverTimestamp(),
         'type': 'topup',
+      });
+    });
+  }
+
+  void _showWithdrawSheet(BuildContext context, double availableBalance) {
+    double selectedAmount = availableBalance < 100 ? availableBalance : 100;
+    bool useCustom = false;
+    final customController = TextEditingController();
+    final bankNameController = TextEditingController();
+    final accountNumberController = TextEditingController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModal) {
+          return Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              ),
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 36),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40, height: 4,
+                        decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    const Text("משיכת כספים", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    Text("יתרה זמינה: ₪${availableBalance.toStringAsFixed(2)}", style: TextStyle(color: Colors.grey[600])),
+                    const SizedBox(height: 20),
+                    // Preset chips
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [50, 100, 200, 500].where((amt) => amt.toDouble() <= availableBalance).map((amt) {
+                        final active = !useCustom && selectedAmount == amt.toDouble();
+                        return GestureDetector(
+                          onTap: () => setModal(() {
+                            selectedAmount = amt.toDouble();
+                            useCustom = false;
+                            customController.clear();
+                          }),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                            decoration: BoxDecoration(
+                              color: active ? Colors.black : Colors.grey[100],
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Text("₪$amt",
+                                style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: active ? Colors.white : Colors.black)),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 16),
+                    // Custom amount
+                    TextField(
+                      controller: customController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      textAlign: TextAlign.right,
+                      onChanged: (v) {
+                        final parsed = double.tryParse(v);
+                        setModal(() {
+                          if (parsed != null && parsed > 0 && parsed <= availableBalance) {
+                            selectedAmount = parsed;
+                            useCustom = true;
+                          } else {
+                            useCustom = false;
+                          }
+                        });
+                      },
+                      decoration: InputDecoration(
+                        hintText: 'סכום אחר (עד ₪${availableBalance.toStringAsFixed(0)})...',
+                        prefixText: '₪ ',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    const Text("פרטי חשבון בנק", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: bankNameController,
+                      textAlign: TextAlign.right,
+                      onChanged: (_) => setModal(() {}),
+                      decoration: InputDecoration(
+                        hintText: 'שם הבנק (למשל: בנק הפועלים)',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: accountNumberController,
+                      keyboardType: TextInputType.number,
+                      textAlign: TextAlign.right,
+                      onChanged: (_) => setModal(() {}),
+                      decoration: InputDecoration(
+                        hintText: 'מספר חשבון',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      Icon(Icons.info_outline, size: 14, color: Colors.grey[400]),
+                      const SizedBox(width: 6),
+                      Text("הבקשה תטופל תוך 1–3 ימי עסקים",
+                          style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+                    ]),
+                    const SizedBox(height: 20),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        minimumSize: const Size(double.infinity, 56),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      onPressed: (selectedAmount > 0 &&
+                              bankNameController.text.trim().isNotEmpty &&
+                              accountNumberController.text.trim().isNotEmpty)
+                          ? () async {
+                              final amount = selectedAmount;
+                              final bank = bankNameController.text.trim();
+                              final account = accountNumberController.text.trim();
+                              Navigator.pop(context);
+                              await _executeWithdrawal(amount, bank, account);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                  backgroundColor: Colors.green,
+                                  content: Text("בקשת משיכה של ₪${amount.toStringAsFixed(0)} נשלחה!"),
+                                ));
+                              }
+                            }
+                          : null,
+                      child: Text(
+                        selectedAmount > 0
+                            ? "בקש משיכה של ₪${selectedAmount.toStringAsFixed(0)}"
+                            : "הזן פרטים להמשך",
+                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _executeWithdrawal(double amount, String bankName, String accountNumber) async {
+    final uid = currentUser?.uid ?? '';
+    if (uid.isEmpty) return;
+
+    final db = FirebaseFirestore.instance;
+    await db.runTransaction((tx) async {
+      final userRef = db.collection('users').doc(uid);
+      tx.update(userRef, {'balance': FieldValue.increment(-amount)});
+      tx.set(db.collection('transactions').doc(), {
+        'userId': uid,
+        'amount': -amount,
+        'title': 'בקשת משיכה לבנק',
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'withdrawal',
+      });
+      tx.set(db.collection('withdrawals').doc(), {
+        'userId': uid,
+        'amount': amount,
+        'bankName': bankName,
+        'accountNumber': accountNumber,
+        'status': 'pending',
+        'requestedAt': FieldValue.serverTimestamp(),
       });
     });
   }
