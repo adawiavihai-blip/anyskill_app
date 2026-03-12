@@ -69,6 +69,18 @@ exports.sendchatnotification = onDocumentCreated("chats/{roomId}/messages/{messa
 
         // 5. השליחה
         await admin.messaging().send(messagePayload);
+        // Save to notification inbox (chat — only if not a system message)
+        if (senderId !== 'system') {
+            await admin.firestore().collection('notifications').add({
+                userId: receiverId,
+                title: senderName,
+                body: notificationBody,
+                type: 'chat',
+                data: { senderId, roomId: event.params.roomId },
+                isRead: false,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        }
         console.log(`QA: Notification sent to ${receiverId} from ${senderName}`);
 
     } catch (error) {
@@ -96,17 +108,25 @@ exports.sendbookingnotification = onDocumentCreated("jobs/{jobId}", async (event
         const token = expertSnap.data().fcmToken || expertSnap.data().deviceToken;
         if (!token) return null;
 
+        const bookingTitle = 'הזמנה חדשה! 🎉';
+        const bookingBody = `${customerName} הזמין/ה שירות${dateInfo}`;
         await admin.messaging().send({
             token,
-            notification: {
-                title: 'הזמנה חדשה! 🎉',
-                body: `${customerName} הזמין/ה שירות${dateInfo}`,
-            },
+            notification: { title: bookingTitle, body: bookingBody },
             webpush: {
                 notification: { icon: '/icons/Icon-192.png' },
                 fcm_options: { link: 'https://anyskill-6fdf3.web.app' },
             },
             data: { type: 'new_booking', jobId: event.params.jobId },
+        });
+        await admin.firestore().collection('notifications').add({
+            userId: expertId,
+            title: bookingTitle,
+            body: bookingBody,
+            type: 'new_booking',
+            data: { jobId: event.params.jobId },
+            isRead: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         console.log(`Booking notification sent to expert ${expertId}`);
     } catch (error) {
@@ -154,6 +174,15 @@ exports.sendjobstatusnotification = onDocumentUpdated("jobs/{jobId}", async (eve
                 fcm_options: { link: 'https://anyskill-6fdf3.web.app' },
             },
             data: { type: 'job_status', jobId: event.params.jobId, status: after.status },
+        });
+        await admin.firestore().collection('notifications').add({
+            userId: targetUserId,
+            title,
+            body,
+            type: 'job_status',
+            data: { jobId: event.params.jobId, status: after.status },
+            isRead: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         console.log(`Job status notification (${after.status}) sent to ${targetUserId}`);
     } catch (error) {

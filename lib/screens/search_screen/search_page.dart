@@ -5,6 +5,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import '../category_results_screen.dart';
+import '../notifications_screen.dart';
 
 const Map<String, IconData> _iconMap = {
   'build':              Icons.build,
@@ -29,19 +30,36 @@ class SearchPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 24, 20, 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    "גלה מומחים",
-                    style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
+                  // Bell icon with unread badge
+                  NotificationBadge(
+                    child: IconButton(
+                      icon: const Icon(Icons.notifications_outlined, size: 26),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+                      ),
+                    ),
                   ),
-                  SizedBox(height: 4),
-                  Text(
-                    "בחר תחום ומצא את המומחה המושלם",
-                    style: TextStyle(fontSize: 14, color: Colors.grey),
+                  // Title (RTL — appears on the right)
+                  const Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        "גלה מומחים",
+                        style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        "בחר תחום ומצא את המומחה המושלם",
+                        style: TextStyle(fontSize: 14, color: Colors.grey),
+                      ),
+                    ],
                   ),
                 ],
               ),
