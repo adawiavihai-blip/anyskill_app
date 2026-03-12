@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
 import 'chat_screen.dart';
 
 class ExpertProfileScreen extends StatefulWidget {
@@ -149,6 +150,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                       Text(data['aboutMe'] ?? "מומחה מוסמך בקהילת AnySkill.", style: const TextStyle(fontSize: 16, height: 1.5)),
                       const SizedBox(height: 30),
                       _buildActionButtons(context, data),
+                      const SizedBox(height: 30),
+                      _buildReviewsSection(),
                     ],
                   ),
                 ),
@@ -231,14 +234,96 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
 
   Widget _summaryRow(String label, String value, {bool isBold = false, bool isGreen = false}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5), 
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween, 
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontSize: 16, fontWeight: isBold ? FontWeight.bold : FontWeight.normal)), 
+          Text(label, style: TextStyle(fontSize: 16, fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
           Text(value, style: TextStyle(fontSize: 16, color: isGreen ? Colors.green : Colors.black, fontWeight: isBold ? FontWeight.bold : FontWeight.normal))
         ]
       )
+    );
+  }
+
+  Widget _buildReviewsSection() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('reviews')
+          .where('expertId', isEqualTo: widget.expertId)
+          .orderBy('timestamp', descending: true)
+          .limit(20)
+          .snapshots(),
+      builder: (context, snapshot) {
+        final docs = snapshot.data?.docs ?? [];
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              docs.isEmpty ? 'ביקורות' : 'ביקורות (${docs.length})',
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            if (docs.isEmpty)
+              const Text('אין ביקורות עדיין', style: TextStyle(color: Colors.grey))
+            else
+              ...docs.map((doc) {
+                final r = doc.data() as Map<String, dynamic>;
+                final rating = (r['rating'] ?? 5).toDouble();
+                final name = r['reviewerName'] ?? 'לקוח';
+                final comment = (r['comment'] ?? '').toString().trim();
+                final ts = r['timestamp'] as Timestamp?;
+                final date = ts != null
+                    ? DateFormat('dd/MM/yyyy').format(ts.toDate())
+                    : '';
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(name,
+                              style: const TextStyle(fontWeight: FontWeight.bold)),
+                          Row(
+                            children: List.generate(
+                              5,
+                              (i) => Icon(
+                                i < rating ? Icons.star : Icons.star_border,
+                                color: Colors.amber,
+                                size: 16,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (comment.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(comment,
+                            style: const TextStyle(fontSize: 14, height: 1.4)),
+                      ],
+                      if (date.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(date,
+                            style: const TextStyle(
+                                color: Colors.grey, fontSize: 11)),
+                      ],
+                    ],
+                  ),
+                );
+              }),
+            const SizedBox(height: 20),
+          ],
+        );
+      },
     );
   }
 }

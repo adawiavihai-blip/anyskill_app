@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
-// QA: וודא שהנתיב תואם למיקום הקובץ payment_module.dart אצלך
-import 'chat_modules/payment_module.dart'; 
+import 'chat_modules/payment_module.dart';
+import '../services/payment_service.dart';
 
 class MyBookingsScreen extends StatelessWidget {
   const MyBookingsScreen({super.key});
@@ -33,7 +33,7 @@ class MyBookingsScreen extends StatelessWidget {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(backgroundColor: Colors.green, content: Text("העבודה הושלמה והתשלום שוחרר!"))
         );
-        _showRatingDialog(context, jobData['expertId']);
+        _showRatingDialog(context, jobData['expertId'], jobId);
       }
     } else {
       if (context.mounted) {
@@ -44,44 +44,71 @@ class MyBookingsScreen extends StatelessWidget {
     }
   }
 
-  void _showRatingDialog(BuildContext context, String expertId) {
+  void _showRatingDialog(BuildContext context, String expertId, String jobId) {
     double selectedRating = 5;
+    final commentController = TextEditingController();
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text("איך היה השירות?", textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold)),
+          title: const Text("איך היה השירות?", textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.bold)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text("דרג את המומחה ב-5 כוכבים"),
-              const SizedBox(height: 20),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(5, (index) {
                   return IconButton(
-                    icon: Icon(index < selectedRating ? Icons.star : Icons.star_border, color: Colors.amber, size: 35),
+                    icon: Icon(
+                      index < selectedRating ? Icons.star : Icons.star_border,
+                      color: Colors.amber, size: 35,
+                    ),
                     onPressed: () => setDialogState(() => selectedRating = index + 1.0),
                   );
                 }),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: commentController,
+                maxLines: 3,
+                textAlign: TextAlign.right,
+                decoration: InputDecoration(
+                  hintText: 'ספר על החוויה שלך... (אופציונלי)',
+                  hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  contentPadding: const EdgeInsets.all(12),
+                ),
               ),
             ],
           ),
           actions: [
             Center(
               child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.black, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                 onPressed: () async {
-                  await FirebaseFirestore.instance.collection('reviews').add({
-                    'expertId': expertId,
-                    'rating': selectedRating,
-                    'createdAt': FieldValue.serverTimestamp(),
-                    'customerId': FirebaseAuth.instance.currentUser?.uid,
-                  });
+                  final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+                  final userDoc = await FirebaseFirestore.instance
+                      .collection('users').doc(uid).get();
+                  final reviewerName = userDoc.data()?['name'] ?? 'לקוח';
+
+                  await PaymentService.submitReview(
+                    expertId: expertId,
+                    rating: selectedRating,
+                    comment: commentController.text.trim(),
+                    reviewerName: reviewerName,
+                  );
+                  await FirebaseFirestore.instance
+                      .collection('jobs').doc(jobId)
+                      .update({'isReviewed': true});
+
                   if (context.mounted) Navigator.pop(context);
                 },
-                child: const Text("שלח דירוג", style: TextStyle(color: Colors.white)),
+                child: const Text("שלח ביקורת", style: TextStyle(color: Colors.white)),
               ),
             ),
           ],
@@ -156,9 +183,33 @@ class MyBookingsScreen extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.black, minimumSize: const Size(double.infinity, 50), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                // QA: שולחים את כל ה-Map של job כדי לשאוב ממנו את השמות
                 onPressed: () => _handleCompleteJob(context, jobId, job, amount),
                 child: const Text("אישור ביצוע ושחרור תשלום", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          if (status == 'completed' && !(job['isReviewed'] ?? false))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 46),
+                    side: const BorderSide(color: Colors.amber),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                icon: const Icon(Icons.star_outline, color: Colors.amber),
+                label: const Text("דרג את השירות", style: TextStyle(color: Colors.black)),
+                onPressed: () => _showRatingDialog(context, job['expertId'] ?? '', jobId),
+              ),
+            ),
+          if (status == 'completed' && (job['isReviewed'] ?? false))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: const [
+                  Icon(Icons.check_circle_outline, color: Colors.green, size: 16),
+                  SizedBox(width: 6),
+                  Text("ביקורת נשלחה", style: TextStyle(color: Colors.green, fontSize: 13)),
+                ],
               ),
             ),
           const Divider(height: 1),

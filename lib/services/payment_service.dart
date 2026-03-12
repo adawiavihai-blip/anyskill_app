@@ -64,14 +64,14 @@ class PaymentService {
       DocumentSnapshot expertDoc = await transaction.get(expertRef);
 
       double currentRating = (expertDoc.get('rating') ?? 0.0).toDouble();
-      int currentReviewCount = expertDoc.get('reviewCount') ?? 0;
+      int currentReviewCount = expertDoc.get('reviewsCount') ?? 0;
 
       int newReviewCount = currentReviewCount + 1;
       double newRating = ((currentRating * currentReviewCount) + rating) / newReviewCount;
 
       transaction.update(expertRef, {
         'rating': double.parse(newRating.toStringAsFixed(1)),
-        'reviewCount': newReviewCount,
+        'reviewsCount': newReviewCount,
       });
     });
   }
