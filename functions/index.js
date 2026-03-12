@@ -1,4 +1,4 @@
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
 
 admin.initializeApp();
@@ -77,5 +77,87 @@ exports.sendchatnotification = onDocumentCreated("chats/{roomId}/messages/{messa
     return null;
 });
 
-// השורה הבאה היא ה"שינוי" שיכריח את Firebase לעשות Deploy:
-// QA_UPDATE_TIMESTAMP: 2026-03-11_12:00
+// ── New booking → notify expert ───────────────────────────────────────────
+exports.sendbookingnotification = onDocumentCreated("jobs/{jobId}", async (event) => {
+    const jobData = event.data.data();
+    const expertId = jobData.expertId;
+    if (!expertId) return null;
+
+    const customerName = jobData.customerName || 'לקוח';
+    let dateInfo = '';
+    if (jobData.appointmentDate && jobData.appointmentTime) {
+        const d = jobData.appointmentDate.toDate();
+        dateInfo = ` — ${d.getDate()}/${d.getMonth() + 1} בשעה ${jobData.appointmentTime}`;
+    }
+
+    try {
+        const expertSnap = await admin.firestore().collection('users').doc(expertId).get();
+        if (!expertSnap.exists) return null;
+        const token = expertSnap.data().fcmToken || expertSnap.data().deviceToken;
+        if (!token) return null;
+
+        await admin.messaging().send({
+            token,
+            notification: {
+                title: 'הזמנה חדשה! 🎉',
+                body: `${customerName} הזמין/ה שירות${dateInfo}`,
+            },
+            webpush: {
+                notification: { icon: '/icons/Icon-192.png' },
+                fcm_options: { link: 'https://anyskill-6fdf3.web.app' },
+            },
+            data: { type: 'new_booking', jobId: event.params.jobId },
+        });
+        console.log(`Booking notification sent to expert ${expertId}`);
+    } catch (error) {
+        console.error('Error sending booking notification:', error);
+    }
+    return null;
+});
+
+// ── Job status change → notify the relevant party ─────────────────────────
+exports.sendjobstatusnotification = onDocumentUpdated("jobs/{jobId}", async (event) => {
+    const before = event.data.before.data();
+    const after  = event.data.after.data();
+
+    if (before.status === after.status) return null;
+
+    let targetUserId, title, body;
+
+    if (after.status === 'expert_completed') {
+        // Expert marked done → notify customer to release payment
+        targetUserId = after.customerId;
+        title = 'המומחה סיים! ✅';
+        body  = `${after.expertName || 'המומחה'} סיים את העבודה. לחץ לשחרור התשלום.`;
+
+    } else if (after.status === 'completed') {
+        // Customer released payment → notify expert
+        targetUserId = after.expertId;
+        title = 'התשלום שוחרר! 💰';
+        body  = `${after.customerName || 'הלקוח'} אישר את העבודה. הכסף נוסף לארנק שלך.`;
+
+    } else {
+        return null;
+    }
+
+    try {
+        const userSnap = await admin.firestore().collection('users').doc(targetUserId).get();
+        if (!userSnap.exists) return null;
+        const token = userSnap.data().fcmToken || userSnap.data().deviceToken;
+        if (!token) return null;
+
+        await admin.messaging().send({
+            token,
+            notification: { title, body },
+            webpush: {
+                notification: { icon: '/icons/Icon-192.png' },
+                fcm_options: { link: 'https://anyskill-6fdf3.web.app' },
+            },
+            data: { type: 'job_status', jobId: event.params.jobId, status: after.status },
+        });
+        console.log(`Job status notification (${after.status}) sent to ${targetUserId}`);
+    } catch (error) {
+        console.error('Error sending job status notification:', error);
+    }
+    return null;
+});
