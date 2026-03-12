@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../services/categories_seeder.dart';
+import 'chat_modules/payment_module.dart';
 
 class AdminScreen extends StatefulWidget {
   const AdminScreen({super.key});
@@ -172,7 +173,7 @@ class _AdminScreenState extends State<AdminScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F7FA),
         appBar: AppBar(
@@ -201,7 +202,7 @@ class _AdminScreenState extends State<AdminScreen> {
             isScrollable: true,
             labelColor: Colors.blueAccent,
             indicatorColor: Colors.blueAccent,
-            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים")],
+            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴")],
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
@@ -246,6 +247,7 @@ class _AdminScreenState extends State<AdminScreen> {
                       _buildList(allUsers.where((d) => (d.data() as Map)['isCustomer'] == true).toList()),
                       _buildList(allUsers.where((d) => (d.data() as Map)['isProvider'] == true).toList()),
                       _buildList(allUsers.where((d) => (d.data() as Map)['isBanned'] == true).toList()),
+                      _buildDisputesList(),
                     ],
                   ),
                 ),
@@ -262,6 +264,165 @@ class _AdminScreenState extends State<AdminScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.grey.shade200)),
       child: Text(text, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+    );
+  }
+
+  Widget _buildDisputesList() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('jobs')
+          .where('status', isEqualTo: 'disputed')
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        final docs = snapshot.data!.docs;
+        if (docs.isEmpty) {
+          return const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.check_circle_outline, size: 64, color: Colors.green),
+                SizedBox(height: 12),
+                Text("אין מחלוקות פתוחות", style: TextStyle(color: Colors.grey, fontSize: 16)),
+              ],
+            ),
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: docs.length,
+          itemBuilder: (context, index) {
+            final job = docs[index].data() as Map<String, dynamic>;
+            final jobId = docs[index].id;
+            final amount = (job['totalAmount'] ?? job['totalPaidByCustomer'] ?? 0.0).toDouble();
+            DateTime? openedAt = (job['disputeOpenedAt'] as Timestamp?)?.toDate();
+            final formattedDate = openedAt != null
+                ? DateFormat('dd/MM HH:mm').format(openedAt)
+                : '—';
+
+            return Card(
+              margin: const EdgeInsets.only(bottom: 16),
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: Colors.red.shade100),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text("₪${amount.toStringAsFixed(0)}",
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 18)),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.red[50],
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(formattedDate,
+                              style: TextStyle(
+                                  color: Colors.red[700], fontSize: 12)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text("לקוח: ${job['customerName'] ?? job['customerId'] ?? '—'}",
+                        style: const TextStyle(fontSize: 13)),
+                    Text("מומחה: ${job['expertName'] ?? job['expertId'] ?? '—'}",
+                        style: const TextStyle(fontSize: 13)),
+                    if ((job['disputeReason'] ?? '').isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.orange[50],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          "\"${job['disputeReason']}\"",
+                          style: TextStyle(
+                              color: Colors.orange[900],
+                              fontSize: 13,
+                              fontStyle: FontStyle.italic),
+                          textAlign: TextAlign.right,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.red),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10)),
+                            ),
+                            icon: const Icon(Icons.undo, color: Colors.red, size: 18),
+                            label: const Text("החזר ללקוח",
+                                style: TextStyle(color: Colors.red, fontSize: 13)),
+                            onPressed: () async {
+                              final ok = await PaymentModule.refundDisputedJob(
+                                jobId: jobId,
+                                customerId: job['customerId'] ?? '',
+                                totalAmount: amount,
+                              );
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                  backgroundColor: ok ? Colors.green : Colors.red,
+                                  content: Text(ok
+                                      ? "הסכום הוחזר ללקוח"
+                                      : "שגיאה — נסה שוב"),
+                                ));
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10)),
+                            ),
+                            icon: const Icon(Icons.check, color: Colors.white, size: 18),
+                            label: const Text("שחרר למומחה",
+                                style: TextStyle(color: Colors.white, fontSize: 13)),
+                            onPressed: () async {
+                              final ok = await PaymentModule.releaseEscrowFunds(
+                                jobId: jobId,
+                                expertId: job['expertId'] ?? '',
+                                expertName: job['expertName'] ?? 'מומחה',
+                                customerName: job['customerName'] ?? 'לקוח',
+                                totalAmount: amount,
+                              );
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                  backgroundColor: ok ? Colors.green : Colors.red,
+                                  content: Text(ok
+                                      ? "התשלום שוחרר למומחה"
+                                      : "שגיאה — נסה שוב"),
+                                ));
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 

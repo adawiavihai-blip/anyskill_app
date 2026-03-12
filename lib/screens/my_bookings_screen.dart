@@ -97,6 +97,122 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     }
   }
 
+  // ── Customer: cancel booking (only while paid_escrow) ────────────────────
+  Future<void> _cancelBooking(
+      BuildContext context, String jobId, Map<String, dynamic> job, double amount) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text("ביטול הזמנה", textAlign: TextAlign.center,
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        content: Text(
+          "האם לבטל את ההזמנה?\n₪${amount.toStringAsFixed(0)} יוחזרו לארנק שלך.",
+          textAlign: TextAlign.center,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text("לא, חזור"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text("כן, בטל", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator(color: Colors.white)),
+    );
+
+    final success = await PaymentModule.cancelEscrow(
+      jobId: jobId,
+      customerId: currentUserId,
+      totalAmount: amount,
+      chatRoomId: job['chatRoomId'] ?? '',
+    );
+
+    if (context.mounted) Navigator.pop(context);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        backgroundColor: success ? Colors.green : Colors.red,
+        content: Text(success
+            ? "ההזמנה בוטלה — ₪${amount.toStringAsFixed(0)} הוחזרו לארנק"
+            : "שגיאה בביטול. נסה שוב."),
+      ));
+    }
+  }
+
+  // ── Customer: open dispute (only after expert marks done) ─────────────────
+  Future<void> _openDispute(BuildContext context, String jobId) async {
+    final reasonCtrl = TextEditingController();
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text("פתיחת מחלוקת", textAlign: TextAlign.center,
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              "תאר מה הבעיה עם השירות שניתן. הצוות שלנו יבדוק ויחליט תוך 48 שעות.",
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: reasonCtrl,
+              maxLines: 4,
+              textAlign: TextAlign.right,
+              decoration: InputDecoration(
+                hintText: "תאר את הבעיה...",
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                contentPadding: const EdgeInsets.all(12),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text("בטל"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () {
+              if (reasonCtrl.text.trim().isEmpty) return;
+              Navigator.pop(c, true);
+            },
+            child: const Text("שלח מחלוקת", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+
+    await FirebaseFirestore.instance.collection('jobs').doc(jobId).update({
+      'status': 'disputed',
+      'disputeReason': reasonCtrl.text.trim(),
+      'disputeOpenedAt': FieldValue.serverTimestamp(),
+    });
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.orange,
+          content: Text("המחלוקת נפתחה — הצוות יצור קשר תוך 48 שעות"),
+        ),
+      );
+    }
+  }
+
   // ── Rating dialog (called after customer releases payment) ────────────────
   void _showRatingDialog(BuildContext context, String expertId, String jobId) {
     double selectedRating = 5;
@@ -295,14 +411,30 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         trailing: _buildStatusChip(status),
       ),
       actions: [
-        if (status == 'expert_completed')
+        if (status == 'expert_completed') ...[
           _fullButton(
             label: "אישור ביצוע ושחרור תשלום",
             color: Colors.black,
             onPressed: () => _handleCompleteJob(context, jobId, job, amount),
           ),
-        if (status == 'paid_escrow')
+          _outlinedButton(
+            icon: Icons.report_outlined,
+            iconColor: Colors.red,
+            label: "פתח מחלוקת — יש בעיה",
+            borderColor: Colors.red.shade200,
+            onPressed: () => _openDispute(context, jobId),
+          ),
+        ],
+        if (status == 'paid_escrow') ...[
           _infoRow(Icons.hourglass_top, Colors.orange, "ממתין לסיום מהמומחה"),
+          _outlinedButton(
+            icon: Icons.cancel_outlined,
+            iconColor: Colors.red,
+            label: "ביטול הזמנה (החזר כספי)",
+            borderColor: Colors.red.shade200,
+            onPressed: () => _cancelBooking(context, jobId, job, amount),
+          ),
+        ],
         if (status == 'completed' && !(job['isReviewed'] ?? false))
           _outlinedButton(
             icon: Icons.star_outline,
@@ -470,6 +602,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
       'completed':        (Colors.green,  "הושלם"),
       'expert_completed': (Colors.blue,   "ממתין לאישור"),
       'paid_escrow':      (Colors.orange, "בנאמנות"),
+      'cancelled':        (Colors.red,    "בוטל"),
+      'disputed':         (Colors.red,    "במחלוקת"),
+      'refunded':         (Colors.teal,   "הוחזר"),
     };
     final (color, text) = map[status] ?? (Colors.grey, "בטיפול");
     return Container(
