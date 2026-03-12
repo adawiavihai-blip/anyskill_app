@@ -120,61 +120,128 @@ class _ChatScreenState extends State<ChatScreen> {
         if (status == 'completed' || status == 'הושלם') return const SizedBox.shrink();
 
         bool isExpert = jobData['expertId'] == currentUserId;
-        bool isDone = status == 'expert_completed' || status == 'paid_escrow';
 
+        // ── Expert sees "mark done" when job is in escrow ──────────────────
+        if (isExpert && status == 'paid_escrow') {
+          return Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.amber[50],
+              border: Border(bottom: BorderSide(color: Colors.grey.shade300)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.security, color: Colors.amber[900]),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text("התשלום מוגן בנאמנות — סמן כשתסיים",
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      padding: const EdgeInsets.symmetric(horizontal: 10)),
+                  onPressed: () async {
+                    await FirebaseFirestore.instance
+                        .collection('jobs')
+                        .doc(jobDoc.id)
+                        .update({
+                      'status': 'expert_completed',
+                      'expertCompletedAt': FieldValue.serverTimestamp(),
+                    });
+                    await FirebaseFirestore.instance
+                        .collection('chats')
+                        .doc(chatRoomId)
+                        .collection('messages')
+                        .add({
+                      'senderId': 'system',
+                      'message':
+                          '✅ המומחה סיים את העבודה! לחץ על "אשר ושחרר" כדי לשחרר את התשלום.',
+                      'type': 'text',
+                      'timestamp': FieldValue.serverTimestamp(),
+                    });
+                  },
+                  child: const Text("סיימתי",
+                      style: TextStyle(color: Colors.white, fontSize: 12)),
+                ),
+              ],
+            ),
+          );
+        }
+
+        // ── Customer sees "release" only after expert marks done ───────────
+        if (!isExpert && status == 'expert_completed') {
+          return Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.green[50],
+              border: Border(bottom: BorderSide(color: Colors.grey.shade300)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.green),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text("המומחה סיים! אשר לשחרור התשלום.",
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      padding: const EdgeInsets.symmetric(horizontal: 10)),
+                  onPressed: () async {
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (c) => const Center(
+                          child: CircularProgressIndicator(color: Colors.white)),
+                    );
+
+                    String realName = await _getCurrentUserName();
+
+                    bool success = await PaymentModule.releaseEscrowFunds(
+                      jobId: jobDoc.id,
+                      expertId: jobData['expertId'] ?? widget.receiverId,
+                      expertName: widget.receiverName,
+                      customerName: realName,
+                      totalAmount: (jobData['totalAmount'] ??
+                              jobData['totalPaidByCustomer'] ?? 0.0)
+                          .toDouble(),
+                    );
+
+                    if (mounted) Navigator.pop(context);
+
+                    if (success && mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text("התשלום שוחרר בהצלחה!"),
+                            backgroundColor: Colors.green),
+                      );
+                    }
+                  },
+                  child: const Text("אשר ושחרר",
+                      style: TextStyle(color: Colors.white, fontSize: 12)),
+                ),
+              ],
+            ),
+          );
+        }
+
+        // ── Neutral banner for any other active status ─────────────────────
         return Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: isDone ? Colors.green[50] : Colors.amber[50],
+            color: Colors.amber[50],
             border: Border(bottom: BorderSide(color: Colors.grey.shade300)),
           ),
           child: Row(
             children: [
-              Icon(isDone ? Icons.check_circle : Icons.security, 
-                   color: isDone ? Colors.green : Colors.amber[900]),
+              Icon(Icons.security, color: Colors.amber[900]),
               const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  isDone ? "העבודה הסתיימה! אשר שחרור תשלום." : "התשלום מוגן בחשבון נאמנות",
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                ),
+              const Expanded(
+                child: Text("התשלום מוגן בחשבון נאמנות",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               ),
-              if (!isExpert && isDone)
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green, 
-                    padding: const EdgeInsets.symmetric(horizontal: 10)
-                  ),
-                  onPressed: () async {
-                    // 1. גלגל טעינה - מבטיח שהשם יישמר לפני סגירת הטרנזקציה
-                    showDialog(
-                      context: context, 
-                      barrierDismissible: false, 
-                      builder: (c) => const Center(child: CircularProgressIndicator(color: Colors.white))
-                    );
-
-                    // 2. 🔥 QA: שליפת השם בזמן אמת מה-DB
-                    String realName = await _getCurrentUserName();
-
-                    // 3. ביצוע התשלום
-                    bool success = await PaymentModule.releaseEscrowFunds(
-                      jobId: jobDoc.id, 
-                      expertId: jobData['expertId'] ?? widget.receiverId, 
-                      expertName: widget.receiverName, 
-                      customerName: realName, // השם המלא ששלפנו עכשיו
-                      totalAmount: (jobData['totalAmount'] ?? 0.0).toDouble(),
-                    );
-
-                    if (mounted) Navigator.pop(context); // סגירת גלגל טעינה
-
-                    if (success && mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("התשלום שוחרר בהצלחה!"), backgroundColor: Colors.green)
-                      );
-                    }
-                  },
-                  child: const Text("אשר ושחרר", style: TextStyle(color: Colors.white, fontSize: 12)),
-                ),
             ],
           ),
         );

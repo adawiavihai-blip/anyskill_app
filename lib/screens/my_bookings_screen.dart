@@ -5,45 +5,99 @@ import 'package:intl/intl.dart';
 import 'chat_modules/payment_module.dart';
 import '../services/payment_service.dart';
 
-class MyBookingsScreen extends StatelessWidget {
+class MyBookingsScreen extends StatefulWidget {
   const MyBookingsScreen({super.key});
 
-  // QA: הוספנו שליחת שמות ל-PaymentModule כדי שההיסטוריה תהיה קריאה
-  Future<void> _handleCompleteJob(BuildContext context, String jobId, Map<String, dynamic> jobData, double amount) async {
-    // גלגל טעינה
+  @override
+  State<MyBookingsScreen> createState() => _MyBookingsScreenState();
+}
+
+class _MyBookingsScreenState extends State<MyBookingsScreen> {
+  bool _isExpertView = false;
+  final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? "";
+
+  // ── Customer: release escrow after expert marks done ─────────────────────
+  Future<void> _handleCompleteJob(
+      BuildContext context, String jobId, Map<String, dynamic> jobData, double amount) async {
     showDialog(
-      context: context, 
-      barrierDismissible: false, 
-      builder: (c) => const Center(child: CircularProgressIndicator(color: Colors.white))
+      context: context,
+      barrierDismissible: false,
+      builder: (c) => const Center(child: CircularProgressIndicator(color: Colors.white)),
     );
 
-    // קריאה למודול התשלומים עם כל הנתונים הנדרשים
     bool success = await PaymentModule.releaseEscrowFunds(
       jobId: jobId,
       expertId: jobData['expertId'] ?? "",
-      expertName: jobData['expertName'] ?? "מומחה", // שם המאמן
-      customerName: jobData['customerName'] ?? "לקוח", // שם הלקוח (אביחי)
+      expertName: jobData['expertName'] ?? "מומחה",
+      customerName: jobData['customerName'] ?? "לקוח",
       totalAmount: amount,
     );
 
-    if (context.mounted) Navigator.pop(context); // סגירת גלגל טעינה
+    if (context.mounted) Navigator.pop(context);
 
     if (success) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(backgroundColor: Colors.green, content: Text("העבודה הושלמה והתשלום שוחרר!"))
+          const SnackBar(backgroundColor: Colors.green, content: Text("העבודה הושלמה והתשלום שוחרר!")),
         );
         _showRatingDialog(context, jobData['expertId'], jobId);
       }
     } else {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(backgroundColor: Colors.red, content: Text("שגיאה בשחרור התשלום. נסה שוב."))
+          const SnackBar(backgroundColor: Colors.red, content: Text("שגיאה בשחרור התשלום. נסה שוב.")),
         );
       }
     }
   }
 
+  // ── Expert: mark job as done ──────────────────────────────────────────────
+  Future<void> _markJobDone(BuildContext context, String jobId, String chatRoomId) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (c) => const Center(child: CircularProgressIndicator(color: Colors.white)),
+    );
+
+    try {
+      await FirebaseFirestore.instance.collection('jobs').doc(jobId).update({
+        'status': 'expert_completed',
+        'expertCompletedAt': FieldValue.serverTimestamp(),
+      });
+
+      if (chatRoomId.isNotEmpty) {
+        final chatRef = FirebaseFirestore.instance.collection('chats').doc(chatRoomId);
+        await chatRef.collection('messages').add({
+          'senderId': 'system',
+          'message': '✅ המומחה סיים את העבודה! לחץ על "אשר ושחרר" כדי לשחרר את התשלום.',
+          'type': 'text',
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+        await chatRef.set({
+          'lastMessage': '✅ המומחה סיים את העבודה!',
+          'lastMessageTime': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+
+      if (context.mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              backgroundColor: Colors.green,
+              content: Text("סומן כהושלם! הלקוח יאשר את שחרור התשלום.")),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(backgroundColor: Colors.red, content: Text("שגיאה: $e")),
+        );
+      }
+    }
+  }
+
+  // ── Rating dialog (called after customer releases payment) ────────────────
   void _showRatingDialog(BuildContext context, String expertId, String jobId) {
     double selectedRating = 5;
     final commentController = TextEditingController();
@@ -53,7 +107,8 @@ class MyBookingsScreen extends StatelessWidget {
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text("איך היה השירות?", textAlign: TextAlign.center,
+          title: const Text("איך היה השירות?",
+              textAlign: TextAlign.center,
               style: TextStyle(fontWeight: FontWeight.bold)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -64,7 +119,8 @@ class MyBookingsScreen extends StatelessWidget {
                   return IconButton(
                     icon: Icon(
                       index < selectedRating ? Icons.star : Icons.star_border,
-                      color: Colors.amber, size: 35,
+                      color: Colors.amber,
+                      size: 35,
                     ),
                     onPressed: () => setDialogState(() => selectedRating = index + 1.0),
                   );
@@ -93,7 +149,9 @@ class MyBookingsScreen extends StatelessWidget {
                 onPressed: () async {
                   final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
                   final userDoc = await FirebaseFirestore.instance
-                      .collection('users').doc(uid).get();
+                      .collection('users')
+                      .doc(uid)
+                      .get();
                   final reviewerName = userDoc.data()?['name'] ?? 'לקוח';
 
                   await PaymentService.submitReview(
@@ -103,7 +161,8 @@ class MyBookingsScreen extends StatelessWidget {
                     reviewerName: reviewerName,
                   );
                   await FirebaseFirestore.instance
-                      .collection('jobs').doc(jobId)
+                      .collection('jobs')
+                      .doc(jobId)
                       .update({'isReviewed': true});
 
                   if (context.mounted) Navigator.pop(context);
@@ -117,128 +176,325 @@ class MyBookingsScreen extends StatelessWidget {
     );
   }
 
+  // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? "";
-
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        leading: IconButton(icon: const Icon(Icons.arrow_back_ios, color: Colors.black, size: 20), onPressed: () => Navigator.pop(context)),
-        title: const Text("ההזמנות שלי", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+        title: const Text("הזמנות",
+            style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('jobs')
-            .where('customerId', isEqualTo: currentUserId)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: Colors.black));
-          if (snapshot.hasError) return Center(child: Text("שגיאה: ${snapshot.error}"));
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return _buildEmptyState(context);
-
-          return ListView.builder(
-            padding: const EdgeInsets.all(20),
-            itemCount: snapshot.data!.docs.length,
-            itemBuilder: (context, index) {
-              var jobDoc = snapshot.data!.docs[index];
-              var job = jobDoc.data() as Map<String, dynamic>;
-              return _buildBookingCard(context, job, jobDoc.id);
-            },
-          );
-        },
+      body: Column(
+        children: [
+          _buildToggle(),
+          Expanded(child: _buildList()),
+        ],
       ),
     );
   }
 
-  Widget _buildBookingCard(BuildContext context, Map<String, dynamic> job, String jobId) {
+  Widget _buildToggle() {
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      child: Row(
+        children: [
+          _toggleButton(label: "הזמנות שלי", active: !_isExpertView,
+              onTap: () => setState(() => _isExpertView = false)),
+          const SizedBox(width: 8),
+          _toggleButton(label: "משימות שלי", active: _isExpertView,
+              onTap: () => setState(() => _isExpertView = true)),
+        ],
+      ),
+    );
+  }
+
+  Widget _toggleButton({required String label, required bool active, required VoidCallback onTap}) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: active ? Colors.black : Colors.grey[100],
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: active ? Colors.white : Colors.grey[600],
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildList() {
+    final stream = _isExpertView
+        ? FirebaseFirestore.instance
+            .collection('jobs')
+            .where('expertId', isEqualTo: currentUserId)
+            .snapshots()
+        : FirebaseFirestore.instance
+            .collection('jobs')
+            .where('customerId', isEqualTo: currentUserId)
+            .snapshots();
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: stream,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: Colors.black));
+        }
+        if (snapshot.hasError) return Center(child: Text("שגיאה: ${snapshot.error}"));
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return _buildEmptyState();
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(20),
+          itemCount: snapshot.data!.docs.length,
+          itemBuilder: (context, index) {
+            final jobDoc = snapshot.data!.docs[index];
+            final job = jobDoc.data() as Map<String, dynamic>;
+            return _isExpertView
+                ? _buildExpertJobCard(context, job, jobDoc.id)
+                : _buildCustomerBookingCard(context, job, jobDoc.id);
+          },
+        );
+      },
+    );
+  }
+
+  // ── Customer card ─────────────────────────────────────────────────────────
+  Widget _buildCustomerBookingCard(
+      BuildContext context, Map<String, dynamic> job, String jobId) {
     DateTime? date;
     if (job['appointmentDate'] is Timestamp) {
       date = (job['appointmentDate'] as Timestamp).toDate();
     }
-    
-    String formattedDate = date != null ? DateFormat('dd/MM/yyyy').format(date) : "טרם נקבע";
-    String status = job['status'] ?? "";
-    double amount = (job['totalAmount'] ?? job['amount'] ?? 0.0).toDouble();
+    final formattedDate =
+        date != null ? DateFormat('dd/MM/yyyy').format(date) : "טרם נקבע";
+    final status = job['status'] ?? "";
+    final amount =
+        (job['totalAmount'] ?? job['totalPaidByCustomer'] ?? job['amount'] ?? 0.0)
+            .toDouble();
 
+    return _jobCard(
+      header: ListTile(
+        title: Text(job['expertName'] ?? "מומחה",
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: Text("$formattedDate | ${job['appointmentTime'] ?? ''}"),
+        trailing: _buildStatusChip(status),
+      ),
+      actions: [
+        if (status == 'expert_completed')
+          _fullButton(
+            label: "אישור ביצוע ושחרור תשלום",
+            color: Colors.black,
+            onPressed: () => _handleCompleteJob(context, jobId, job, amount),
+          ),
+        if (status == 'paid_escrow')
+          _infoRow(Icons.hourglass_top, Colors.orange, "ממתין לסיום מהמומחה"),
+        if (status == 'completed' && !(job['isReviewed'] ?? false))
+          _outlinedButton(
+            icon: Icons.star_outline,
+            iconColor: Colors.amber,
+            label: "דרג את השירות",
+            borderColor: Colors.amber,
+            onPressed: () => _showRatingDialog(context, job['expertId'] ?? '', jobId),
+          ),
+        if (status == 'completed' && (job['isReviewed'] ?? false))
+          _infoRow(Icons.check_circle_outline, Colors.green, "ביקורת נשלחה"),
+      ],
+      footer: Text("₪$amount",
+          style: const TextStyle(
+              fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green)),
+    );
+  }
+
+  // ── Expert card ───────────────────────────────────────────────────────────
+  Widget _buildExpertJobCard(
+      BuildContext context, Map<String, dynamic> job, String jobId) {
+    DateTime? date;
+    if (job['createdAt'] is Timestamp) {
+      date = (job['createdAt'] as Timestamp).toDate();
+    }
+    final formattedDate =
+        date != null ? DateFormat('dd/MM/yyyy').format(date) : "תאריך לא ידוע";
+    final status = job['status'] ?? "";
+    final netAmount =
+        (job['netAmountForExpert'] ?? job['totalPaidByCustomer'] ?? job['totalAmount'] ?? 0.0)
+            .toDouble();
+    final chatRoomId = job['chatRoomId'] ?? '';
+
+    return _jobCard(
+      header: ListTile(
+        leading: const CircleAvatar(
+          backgroundColor: Color(0xFFF0F0F0),
+          child: Icon(Icons.person, color: Colors.grey),
+        ),
+        title: Text(job['customerName'] ?? "לקוח",
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: Text("נוצר ב-$formattedDate"),
+        trailing: _buildStatusChip(status),
+      ),
+      actions: [
+        if (status == 'paid_escrow')
+          _fullButton(
+            label: "סיימתי את העבודה",
+            color: Colors.green,
+            icon: Icons.check_circle_outline,
+            onPressed: () => _markJobDone(context, jobId, chatRoomId),
+          ),
+        if (status == 'expert_completed')
+          _infoRow(Icons.hourglass_top, Colors.blue, "ממתין לאישור הלקוח"),
+        if (status == 'completed')
+          _infoRow(Icons.check_circle, Colors.green, "הושלם — התשלום שוחרר"),
+      ],
+      footer: Text("נטו: ₪${netAmount.toStringAsFixed(0)}",
+          style: const TextStyle(
+              fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green)),
+    );
+  }
+
+  // ── Shared card shell ─────────────────────────────────────────────────────
+  Widget _jobCard({
+    required Widget header,
+    required List<Widget> actions,
+    required Widget footer,
+  }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4))
+        ],
       ),
       child: Column(
         children: [
-          ListTile(
-            title: Text(job['expertName'] ?? "מומחה", style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text("$formattedDate | ${job['appointmentTime'] ?? ''}"),
-            trailing: _buildStatusChip(status),
-          ),
-          if (status == 'paid_escrow')
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.black, minimumSize: const Size(double.infinity, 50), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                onPressed: () => _handleCompleteJob(context, jobId, job, amount),
-                child: const Text("אישור ביצוע ושחרור תשלום", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              ),
-            ),
-          if (status == 'completed' && !(job['isReviewed'] ?? false))
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 46),
-                    side: const BorderSide(color: Colors.amber),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                icon: const Icon(Icons.star_outline, color: Colors.amber),
-                label: const Text("דרג את השירות", style: TextStyle(color: Colors.black)),
-                onPressed: () => _showRatingDialog(context, job['expertId'] ?? '', jobId),
-              ),
-            ),
-          if (status == 'completed' && (job['isReviewed'] ?? false))
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-                  Icon(Icons.check_circle_outline, color: Colors.green, size: 16),
-                  SizedBox(width: 6),
-                  Text("ביקורת נשלחה", style: TextStyle(color: Colors.green, fontSize: 13)),
-                ],
-              ),
-            ),
+          header,
+          ...actions,
           const Divider(height: 1),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text("₪$amount", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green)),
-                const Text("פרטי הזמנה >", style: TextStyle(color: Colors.black, decoration: TextDecoration.underline)),
+                footer,
+                const Text("פרטים >",
+                    style: TextStyle(
+                        color: Colors.black,
+                        decoration: TextDecoration.underline)),
               ],
             ),
-          )
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _fullButton(
+      {required String label,
+      required Color color,
+      IconData? icon,
+      required VoidCallback onPressed}) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: ElevatedButton.icon(
+        style: ElevatedButton.styleFrom(
+            backgroundColor: color,
+            minimumSize: const Size(double.infinity, 50),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12))),
+        icon: icon != null ? Icon(icon, color: Colors.white) : const SizedBox.shrink(),
+        label: Text(label,
+            style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 15)),
+        onPressed: onPressed,
+      ),
+    );
+  }
+
+  Widget _outlinedButton(
+      {required IconData icon,
+      required Color iconColor,
+      required String label,
+      required Color borderColor,
+      required VoidCallback onPressed}) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+            minimumSize: const Size(double.infinity, 46),
+            side: BorderSide(color: borderColor),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12))),
+        icon: Icon(icon, color: iconColor),
+        label: Text(label, style: const TextStyle(color: Colors.black)),
+        onPressed: onPressed,
+      ),
+    );
+  }
+
+  Widget _infoRow(IconData icon, Color color, String text) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(width: 6),
+          Text(text, style: TextStyle(color: color, fontSize: 13)),
         ],
       ),
     );
   }
 
   Widget _buildStatusChip(String status) {
-    Color color = status == 'completed' ? Colors.green : (status == 'paid_escrow' ? Colors.blue : Colors.orange);
-    String text = status == 'completed' ? "הושלם" : (status == 'paid_escrow' ? "בנאמנות" : "בטיפול");
+    const map = {
+      'completed':        (Colors.green,  "הושלם"),
+      'expert_completed': (Colors.blue,   "ממתין לאישור"),
+      'paid_escrow':      (Colors.orange, "בנאמנות"),
+    };
+    final (color, text) = map[status] ?? (Colors.grey, "בטיפול");
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
-      child: Text(text, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+      decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8)),
+      child: Text(text,
+          style: TextStyle(
+              color: color, fontSize: 11, fontWeight: FontWeight.bold)),
     );
   }
 
-  Widget _buildEmptyState(BuildContext context) {
-    return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.calendar_today_outlined, size: 80, color: Colors.grey), const SizedBox(height: 20), const Text("אין הזמנות"), const SizedBox(height: 30), OutlinedButton(onPressed: () => Navigator.pop(context), child: const Text("חזור"))]));
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(_isExpertView ? Icons.work_outline : Icons.calendar_today_outlined,
+              size: 80, color: Colors.grey),
+          const SizedBox(height: 20),
+          Text(_isExpertView ? "אין משימות פעילות" : "אין הזמנות",
+              style: const TextStyle(color: Colors.grey, fontSize: 16)),
+        ],
+      ),
+    );
   }
 }
