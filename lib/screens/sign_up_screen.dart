@@ -10,30 +10,26 @@ class SignUpScreen extends StatefulWidget {
 }
 
 class _SignUpScreenState extends State<SignUpScreen> {
+  final _formKey = GlobalKey<FormState>();
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   bool _isLoading = false;
   bool _obscureText = true;
-  
-  // LEGAL: משתנה לבדיקת אישור תנאי השימוש
   bool _termsAccepted = false;
 
+  static bool _isValidEmail(String email) {
+    return RegExp(r'^[\w\.\+\-]+@[\w\-]+\.[a-z]{2,}$', caseSensitive: false)
+        .hasMatch(email.trim());
+  }
+
   Future<void> _signUp() async {
-    // 1. בדיקת תקינות שדות
-    if (_nameCtrl.text.trim().isEmpty || _emailCtrl.text.trim().isEmpty || _passCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("נא למלא את כל השדות"), backgroundColor: Colors.orange));
-      return;
-    }
+    if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    // 2. בדיקה משפטית - האם אישר תנאים?
     if (!_termsAccepted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("חובה לאשר את תנאי השימוש כדי להירשם"), backgroundColor: Colors.redAccent));
-      return;
-    }
-
-    if (_passCtrl.text.length < 6) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("הסיסמה חייבת להכיל לפחות 6 תווים"), backgroundColor: Colors.redAccent));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("חובה לאשר את תנאי השימוש כדי להירשם"),
+          backgroundColor: Colors.redAccent));
       return;
     }
 
@@ -125,7 +121,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 30.0),
-          child: Column(
+          child: Form(
+            key: _formKey,
+            child: Column(
             children: [
               const Icon(Icons.person_add_outlined, size: 70, color: Color(0xFF0D47A1)),
               const SizedBox(height: 10),
@@ -133,8 +131,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
               const Text("מצא מומחים או התחל לתת שירות", style: TextStyle(color: Colors.grey)),
               const SizedBox(height: 40),
 
-              TextField(
+              TextFormField(
                 controller: _nameCtrl,
+                validator: (v) {
+                  final s = v?.trim() ?? '';
+                  if (s.isEmpty) return 'נא להזין שם';
+                  if (s.length < 2) return 'השם חייב להכיל לפחות 2 תווים';
+                  return null;
+                },
                 decoration: InputDecoration(
                   labelText: "שם מלא",
                   prefixIcon: const Icon(Icons.person_outline),
@@ -145,9 +149,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
               ),
               const SizedBox(height: 15),
 
-              TextField(
+              TextFormField(
                 controller: _emailCtrl,
                 keyboardType: TextInputType.emailAddress,
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return 'נא להזין אימייל';
+                  if (!_isValidEmail(v)) return 'כתובת אימייל אינה תקינה';
+                  return null;
+                },
                 decoration: InputDecoration(
                   labelText: "אימייל",
                   prefixIcon: const Icon(Icons.email_outlined),
@@ -158,9 +167,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
               ),
               const SizedBox(height: 15),
 
-              TextField(
+              TextFormField(
                 controller: _passCtrl,
                 obscureText: _obscureText,
+                validator: (v) {
+                  if (v == null || v.isEmpty) return 'נא להזין סיסמה';
+                  if (v.length < 6) return 'הסיסמה חייבת להכיל לפחות 6 תווים';
+                  return null;
+                },
                 decoration: InputDecoration(
                   labelText: "סיסמה (מינימום 6 תווים)",
                   prefixIcon: const Icon(Icons.lock_outline),
@@ -212,6 +226,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   ),
               const SizedBox(height: 20),
             ],
+          ),
           ),
         ),
       ),

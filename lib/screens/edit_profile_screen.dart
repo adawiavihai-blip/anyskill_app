@@ -75,14 +75,35 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _saveProfile() async {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("נא להזין שם"), backgroundColor: Colors.orange));
+      return;
+    }
+    if (name.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("השם חייב להכיל לפחות 2 תווים"), backgroundColor: Colors.orange));
+      return;
+    }
+
     if (!_isCustomer && !_isProvider) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("יש לבחור לפחות תפקיד אחד")));
       return;
     }
 
-    if (_isProvider && (_selectedCategory == null || _priceController.text == "0")) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("כנותן שירות, חובה לבחור תחום ומחיר")));
-      return;
+    if (_isProvider) {
+      if (_selectedCategory == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("נא לבחור תחום התמחות"), backgroundColor: Colors.orange));
+        return;
+      }
+      final price = double.tryParse(_priceController.text.trim());
+      if (price == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("המחיר חייב להיות מספר תקין"), backgroundColor: Colors.orange));
+        return;
+      }
+      if (price <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("המחיר חייב להיות גדול מ-0"), backgroundColor: Colors.orange));
+        return;
+      }
     }
 
     setState(() => _isLoading = true);

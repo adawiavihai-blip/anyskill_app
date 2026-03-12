@@ -52,14 +52,20 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     if (_currentPage == 1) {
       if (_selectedCategory == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("נא לבחור תחום התמחות")),
+          const SnackBar(content: Text("נא לבחור תחום התמחות"), backgroundColor: Colors.orange),
         );
         return;
       }
-      final price = double.tryParse(_priceController.text.trim()) ?? 0;
+      final price = double.tryParse(_priceController.text.trim());
+      if (price == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("המחיר חייב להיות מספר תקין"), backgroundColor: Colors.orange),
+        );
+        return;
+      }
       if (price <= 0) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("נא להזין מחיר לשעה")),
+          const SnackBar(content: Text("המחיר חייב להיות גדול מ-0"), backgroundColor: Colors.orange),
         );
         return;
       }

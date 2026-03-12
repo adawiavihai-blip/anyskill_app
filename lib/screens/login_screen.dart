@@ -26,11 +26,21 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  static bool _isValidEmail(String email) {
+    return RegExp(r'^[\w\.\+\-]+@[\w\-]+\.[a-z]{2,}$', caseSensitive: false)
+        .hasMatch(email.trim());
+  }
+
   Future<void> _login() async {
-    // ולידציה בסיסית לפני פנייה לשרת
     if (_emailCtrl.text.trim().isEmpty || _passCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("נא למלא אימייל וסיסמה"), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    if (!_isValidEmail(_emailCtrl.text)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("כתובת אימייל אינה תקינה"), backgroundColor: Colors.orange),
       );
       return;
     }
