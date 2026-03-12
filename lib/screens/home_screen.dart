@@ -196,7 +196,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     const Text("יתרה זמינה", style: TextStyle(color: Colors.white70, fontSize: 16)),
                     const SizedBox(height: 12),
                     Text("₪${balance.toStringAsFixed(2)}", style: const TextStyle(color: Colors.white, fontSize: 44, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 25),
+                    const SizedBox(height: 20),
+                    // Top-up button
+                    GestureDetector(
+                      onTap: () => _showTopUpSheet(context),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white30),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.add, color: Colors.white, size: 18),
+                            SizedBox(width: 6),
+                            Text("הוסף יתרה", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
                     const Divider(color: Colors.white24),
                     const SizedBox(height: 10),
                     Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -237,6 +258,151 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         );
       },
     );
+  }
+
+  void _showTopUpSheet(BuildContext context) {
+    double selectedAmount = 100;
+    bool useCustom = false;
+    final customController = TextEditingController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModal) {
+          return Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              ),
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 36),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text("הוסף יתרה לארנק", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  const Text("בחר סכום לטעינה", style: TextStyle(color: Colors.grey)),
+                  const SizedBox(height: 20),
+                  // Preset chips
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [50, 100, 200, 500].map((amt) {
+                      final active = !useCustom && selectedAmount == amt.toDouble();
+                      return GestureDetector(
+                        onTap: () => setModal(() {
+                          selectedAmount = amt.toDouble();
+                          useCustom = false;
+                          customController.clear();
+                        }),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                          decoration: BoxDecoration(
+                            color: active ? Colors.black : Colors.grey[100],
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Text("₪$amt",
+                              style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: active ? Colors.white : Colors.black)),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  // Custom amount
+                  TextField(
+                    controller: customController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    textAlign: TextAlign.right,
+                    onChanged: (v) {
+                      final parsed = double.tryParse(v);
+                      setModal(() {
+                        if (parsed != null && parsed > 0) {
+                          selectedAmount = parsed;
+                          useCustom = true;
+                        } else {
+                          useCustom = false;
+                        }
+                      });
+                    },
+                    decoration: InputDecoration(
+                      hintText: 'סכום מותאם אישית...',
+                      prefixText: '₪ ',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Icon(Icons.info_outline, size: 14, color: Colors.grey[400]),
+                    const SizedBox(width: 6),
+                    Text("סביבת הדגמה — לא מחויב כרטיס אמיתי",
+                        style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+                  ]),
+                  const SizedBox(height: 20),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.black,
+                      minimumSize: const Size(double.infinity, 56),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    onPressed: selectedAmount > 0
+                        ? () async {
+                            final amount = selectedAmount;
+                            Navigator.pop(context);
+                            await _executeTopUp(amount);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                backgroundColor: Colors.green,
+                                content: Text("₪${amount.toStringAsFixed(0)} נוספו לארנק שלך!"),
+                              ));
+                            }
+                          }
+                        : null,
+                    child: Text(
+                      "הוסף ₪${selectedAmount.toStringAsFixed(0)} לארנק",
+                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _executeTopUp(double amount) async {
+    final uid = currentUser?.uid ?? '';
+    if (uid.isEmpty) return;
+
+    final db = FirebaseFirestore.instance;
+    await db.runTransaction((tx) async {
+      final userRef = db.collection('users').doc(uid);
+      tx.update(userRef, {'balance': FieldValue.increment(amount)});
+      tx.set(db.collection('transactions').doc(), {
+        'userId': uid,
+        'amount': amount,
+        'title': 'טעינת ארנק',
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'topup',
+      });
+    });
   }
 
   Widget _buildBannedScreen() {
