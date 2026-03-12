@@ -64,8 +64,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
         'isAdmin': false,         
         'isVerified': false,      
         'isCustomer': true,       
-        'isProvider': false,      
-        'termsAccepted': true, // שמירת האישור בבסיס הנתונים
+        'isProvider': false,
+        'termsAccepted': true,
+        'onboardingComplete': false,
         'createdAt': FieldValue.serverTimestamp(),
       });
 

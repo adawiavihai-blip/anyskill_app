@@ -10,6 +10,7 @@ import 'dart:js_interop';
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/onboarding_screen.dart';
 
 // גרסה 1.0.4 - שחרור תקיעה וייצוב סופי
 const String currentAppVersion = "1.0.4"; 
@@ -197,9 +198,30 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
         if (snapshot.hasData && snapshot.data != null) {
-          return const HomeScreen();
+          return const _OnboardingGate();
         }
         return const LoginScreen();
+      },
+    );
+  }
+}
+
+// Checks onboardingComplete for the logged-in user and routes accordingly.
+class _OnboardingGate extends StatelessWidget {
+  const _OnboardingGate();
+
+  @override
+  Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        }
+        final data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
+        final complete = data['onboardingComplete'] ?? true; // existing users skip
+        return complete ? const HomeScreen() : const OnboardingScreen();
       },
     );
   }
