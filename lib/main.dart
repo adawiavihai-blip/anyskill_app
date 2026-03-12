@@ -1,0 +1,206 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:web/web.dart' as web;
+import 'dart:js_interop';
+import 'firebase_options.dart';
+import 'screens/home_screen.dart';
+import 'screens/login_screen.dart';
+
+// גרסה 1.0.4 - שחרור תקיעה וייצוב סופי
+const String currentAppVersion = "1.0.4"; 
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // 1. אתחול Firebase בצורה נקייה
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  
+  // 2. פתרון ל-Web בלי פקודות terminate שתוקעות את המערכת
+  if (kIsWeb) {
+    try {
+      // ביטול ה-Persistence מונע את השגיאה של אבי מהשורש
+      FirebaseFirestore.instance.settings = const Settings(
+        persistenceEnabled: false,
+      );
+      
+      // ניקוי זיכרון תקוע ברקע בלי await כדי לא לעצור את עליית האפליקציה
+      FirebaseFirestore.instance.clearPersistence().catchError((e) => debugPrint("Persistence clear info: $e"));
+      
+      debugPrint("AnySkill Web: Optimized & Persistence Disabled");
+    } catch (e) {
+      debugPrint("Firestore Web Config Error: $e");
+    }
+  }
+
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  runApp(const AnySkillApp());
+}
+
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+}
+
+class AnySkillApp extends StatelessWidget {
+  const AnySkillApp({super.key});
+  
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'AnySkill Elite',
+      theme: ThemeData(
+        useMaterial3: true, 
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF007AFF)),
+        scaffoldBackgroundColor: Colors.white,
+        textTheme: GoogleFonts.heeboTextTheme(Theme.of(context).textTheme),
+      ),
+      home: const AuthWrapper(),
+    );
+  }
+}
+
+class AuthWrapper extends StatefulWidget {
+  const AuthWrapper({super.key});
+
+  @override
+  State<AuthWrapper> createState() => _AuthWrapperState();
+}
+
+class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
+  
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this); 
+    _handleWebUpdates();
+    _setupPushNotifications();
+    _checkVersionUpdate();
+  }
+
+  @override
+  void dispose() {
+    _setOnlineStatus(false);
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // בדיקת גרסה מול מסמך admin/settings ב-Firestore
+  void _checkVersionUpdate() async {
+    try {
+      DocumentSnapshot settings = await FirebaseFirestore.instance
+          .collection('admin')
+          .doc('settings')
+          .get();
+
+      if (settings.exists) {
+        String latestVersion = settings.get('latestVersion') ?? currentAppVersion;
+        if (latestVersion != currentAppVersion && mounted) {
+          _showUpdateBanner();
+        }
+      }
+    } catch (e) {
+      debugPrint("Version check failed: $e");
+    }
+  }
+
+  void _showUpdateBanner() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text("עדכון מערכת זמין לשיפור היציבות."),
+        backgroundColor: Colors.blueAccent,
+        duration: const Duration(seconds: 10),
+        behavior: SnackBarBehavior.fixed,
+        action: SnackBarAction(
+          label: "עדכן כעת",
+          textColor: Colors.white,
+          onPressed: () {
+            if (kIsWeb) {
+              // רענון שמנקה Cache
+              web.window.location.reload();
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  void _setOnlineStatus(bool isOnline) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      try {
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
+          'isOnline': isOnline,
+          'lastSeen': FieldValue.serverTimestamp(),
+        });
+      } catch (e) {
+        debugPrint("Status Update Error: $e");
+      }
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _setOnlineStatus(true);
+      _checkVersionUpdate(); 
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      _setOnlineStatus(false);
+    }
+  }
+
+  void _handleWebUpdates() {
+    if (kIsWeb) {
+      web.window.navigator.serviceWorker.addEventListener(
+        'controllerchange',
+        (JSAny? _) { web.window.location.reload(); }.toJS,
+      );
+    }
+  }
+
+  void _setupPushNotifications() async {
+    try {
+      FirebaseMessaging messaging = FirebaseMessaging.instance;
+      NotificationSettings settings = await messaging.requestPermission(alert: true, badge: true, sound: true);
+
+      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+        String? token = await messaging.getToken();
+        if (token != null) _saveTokenToDatabase(token);
+      }
+    } catch (e) {
+      debugPrint("Messaging Error: $e");
+    }
+  }
+
+  void _saveTokenToDatabase(String? token) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null && token != null) {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'fcmToken': token,
+        'lastActive': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        }
+        if (snapshot.hasData && snapshot.data != null) {
+          return const HomeScreen();
+        }
+        return const LoginScreen();
+      },
+    );
+  }
+}
