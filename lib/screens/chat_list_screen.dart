@@ -5,7 +5,8 @@ import 'package:intl/intl.dart';
 import 'chat_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
-  const ChatListScreen({super.key});
+  final VoidCallback? onGoToSearch;
+  const ChatListScreen({super.key, this.onGoToSearch});
 
   @override
   State<ChatListScreen> createState() => _ChatListScreenState();
@@ -250,13 +251,43 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   Widget _buildEmptyState() {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.chat_bubble_outline, size: 80, color: Colors.grey[300]),
-          const SizedBox(height: 16),
-          const Text("אין הודעות עדיין", style: TextStyle(color: Colors.grey, fontSize: 16, fontWeight: FontWeight.w500)),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.chat_bubble_outline, size: 56, color: Colors.grey[400]),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              "אין שיחות עדיין",
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "כשתיצור קשר עם מומחה, השיחה תופיע כאן",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            ),
+            const SizedBox(height: 28),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              icon: const Icon(Icons.search, color: Colors.white),
+              label: const Text("מצא מומחה", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+              onPressed: widget.onGoToSearch,
+            ),
+          ],
+        ),
       ),
     );
   }

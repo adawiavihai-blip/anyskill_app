@@ -6,7 +6,8 @@ import 'chat_modules/payment_module.dart';
 import '../services/payment_service.dart';
 
 class MyBookingsScreen extends StatefulWidget {
-  const MyBookingsScreen({super.key});
+  final VoidCallback? onGoToSearch;
+  const MyBookingsScreen({super.key, this.onGoToSearch});
 
   @override
   State<MyBookingsScreen> createState() => _MyBookingsScreenState();
@@ -620,15 +621,50 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
 
   Widget _buildEmptyState() {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(_isExpertView ? Icons.work_outline : Icons.calendar_today_outlined,
-              size: 80, color: Colors.grey),
-          const SizedBox(height: 20),
-          Text(_isExpertView ? "אין משימות פעילות" : "אין הזמנות",
-              style: const TextStyle(color: Colors.grey, fontSize: 16)),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                _isExpertView ? Icons.work_outline : Icons.calendar_today_outlined,
+                size: 56,
+                color: Colors.grey[400],
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              _isExpertView ? "אין משימות עדיין" : "אין הזמנות עדיין",
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _isExpertView
+                  ? "הזמנות מלקוחות יופיעו כאן. ודא שהפרופיל שלך מעודכן עם תחום ומחיר."
+                  : "הזמן מומחה והשירות יופיע כאן לאחר מכן",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            ),
+            const SizedBox(height: 28),
+            if (!_isExpertView)
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                icon: const Icon(Icons.search, color: Colors.white),
+                label: const Text("חפש מומחה", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                onPressed: widget.onGoToSearch,
+              ),
+          ],
+        ),
       ),
     );
   }

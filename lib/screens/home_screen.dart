@@ -68,12 +68,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         bool isOnline = data['isOnline'] ?? false;
 
         // QA: סידור רשימת הדפים לפי סדר הלשוניות החדש
+        void goToSearch() => setState(() => _selectedIndex = 0);
+
         List<Widget> pages = [
-          const SearchPage(),         // 0. חיפוש
-          const MyBookingsScreen(),   // 1. הזמנות (החדש!)
-          const ChatListScreen(),     // 2. צ'אט
-          _buildUserWallet(data),     // 3. ארנק
-          const ProfileScreen(),      // 4. פרופיל
+          const SearchPage(),                                         // 0. חיפוש
+          MyBookingsScreen(onGoToSearch: goToSearch),                 // 1. הזמנות
+          ChatListScreen(onGoToSearch: goToSearch),                   // 2. צ'אט
+          _buildUserWallet(data),                                     // 3. ארנק
+          const ProfileScreen(),                                      // 4. פרופיל
         ];
 
         if (isAdmin) {

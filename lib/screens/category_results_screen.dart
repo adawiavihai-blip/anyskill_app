@@ -159,19 +159,53 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
         );
 
         if (experts.isEmpty) {
+          final hasFilters = _searchQuery.isNotEmpty || _filterUnder100;
           return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.person_search_outlined,
-                    size: 80, color: Colors.grey[300]),
-                const SizedBox(height: 16),
-                Text(
-                  'לא נמצאו מומחים ב${widget.categoryName}',
-                  style:
-                      const TextStyle(fontSize: 18, color: Colors.grey),
-                ),
-              ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.person_search_outlined,
+                        size: 56, color: Colors.grey[400]),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    hasFilters ? "לא נמצאו תוצאות" : 'אין מומחים ב${widget.categoryName} עדיין',
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    hasFilters
+                        ? "נסה לשנות את החיפוש או לבטל את הפילטר"
+                        : "היה הראשון להצטרף לקטגוריה זו!",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+                  ),
+                  if (hasFilters) ...[
+                    const SizedBox(height: 28),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      icon: const Icon(Icons.filter_alt_off),
+                      label: const Text("נקה פילטרים"),
+                      onPressed: () => setState(() {
+                        _searchQuery = '';
+                        _filterUnder100 = false;
+                      }),
+                    ),
+                  ],
+                ],
+              ),
             ),
           );
         }
