@@ -147,11 +147,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       'timestamp': FieldValue.serverTimestamp(),
     });
 
+    // רק אתחול מערך המשתתפים — lastMessage ו-unreadCount מתעדכנים ע"י sendchatnotification CF
     await chatRef.set({
-      'lastMessage': "🔒 הזמנה חדשה על סך ₪$total",
-      'lastMessageTime': FieldValue.serverTimestamp(),
       'users': [currentUserId, widget.expertId],
-      'unreadCount_${widget.expertId}': FieldValue.increment(1),
     }, SetOptions(merge: true));
   }
 

@@ -16,7 +16,7 @@ service cloud.firestore {
     // ── Users ─────────────────────────────────────────────────────
     match /users/{uid} {
       allow read:   if isAuth();
-      allow create: if isOwner(uid);
+      allow create: if isOwner(uid) || (isAuth() && uid == 'anyskill_system');
       allow update: if isOwner(uid) || isAdmin();
     }
 
@@ -48,6 +48,12 @@ service cloud.firestore {
 
       match /messages/{msgId} {
         allow read, write: if isAuth();
+      }
+
+      match /unread_shards/{shardId} {
+        // ניתן לקריאה בלבד ע"י משתמשים מחוברים — כתיבה מ-Cloud Function (Admin SDK) בלבד
+        allow read: if isAuth();
+        allow write: if false;
       }
     }
 

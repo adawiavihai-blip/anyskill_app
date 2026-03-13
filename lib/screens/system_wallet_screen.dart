@@ -179,6 +179,7 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
       stream: FirebaseFirestore.instance
           .collection('platform_earnings')
           .orderBy('timestamp', descending: true)
+          .limit(100)
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {

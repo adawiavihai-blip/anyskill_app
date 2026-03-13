@@ -16,6 +16,35 @@ class _ChatListScreenState extends State<ChatListScreen> {
   final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? "";
   String _searchQuery = "";
 
+  Future<void> _markAllAsRead() async {
+    try {
+      final chats = await FirebaseFirestore.instance
+          .collection('chats')
+          .where('users', arrayContains: currentUserId)
+          .limit(50)
+          .get();
+
+      if (chats.docs.isEmpty) return;
+
+      final batch = FirebaseFirestore.instance.batch();
+      for (final doc in chats.docs) {
+        final data = doc.data();
+        if ((data['unreadCount_$currentUserId'] ?? 0) > 0) {
+          batch.update(doc.reference, {'unreadCount_$currentUserId': 0});
+        }
+      }
+      await batch.commit();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("כל ההודעות סומנו כנקראו"), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      debugPrint("markAllAsRead error: $e");
+    }
+  }
+
   void _deleteEntireChat(String chatId) async {
     bool? confirm = await showDialog(
       context: context,
@@ -61,6 +90,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
         elevation: 0,
         backgroundColor: Colors.transparent,
         centerTitle: false,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.done_all, color: Colors.blue),
+            tooltip: "סמן הכל כנקרא",
+            onPressed: _markAllAsRead,
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -285,7 +321,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
               ),
               icon: const Icon(Icons.search, color: Colors.white),
               label: const Text("מצא מומחה", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-              onPressed: widget.onGoToSearch,
+              onPressed: widget.onGoToSearch ?? () {},
             ),
           ],
         ),

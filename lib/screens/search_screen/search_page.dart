@@ -5,16 +5,9 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import '../category_results_screen.dart';
+import '../sub_category_screen.dart';
 import '../notifications_screen.dart';
-
-const Map<String, IconData> _iconMap = {
-  'build':              Icons.build,
-  'cleaning_services':  Icons.cleaning_services,
-  'camera_alt':         Icons.camera_alt,
-  'fitness_center':     Icons.fitness_center,
-  'school':             Icons.school,
-  'palette':            Icons.palette,
-};
+import '../../services/category_service.dart';
 
 class SearchPage extends StatelessWidget {
   const SearchPage({super.key});
@@ -94,13 +87,23 @@ class SearchPage extends StatelessWidget {
                     );
                   }
 
-                  final docs = snapshot.data!.docs;
+                  final allDocs = snapshot.data!.docs;
+
+                  // Main categories: parentId absent or empty string
+                  final mainDocs = allDocs
+                      .where((d) => ((d.data() as Map)['parentId'] as String? ?? '').isEmpty)
+                      .toList();
+
+                  // IDs of main categories that have at least one sub-category
+                  final catIdsWithSubs = allDocs
+                      .where((d) => ((d.data() as Map)['parentId'] as String? ?? '').isNotEmpty)
+                      .map((d) => (d.data() as Map)['parentId'] as String)
+                      .toSet();
 
                   return LayoutBuilder(
                     builder: (context, constraints) {
                       final w = constraints.maxWidth;
                       final cols = w >= 900 ? 4 : w >= 600 ? 3 : 2;
-                      // קלפים מרובעים יותר ככל שיש יותר עמודות
                       final ratio = w >= 900 ? 1.0 : w >= 600 ? 0.90 : 0.85;
                       return GridView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -111,14 +114,15 @@ class SearchPage extends StatelessWidget {
                       mainAxisSpacing: 14,
                       childAspectRatio: ratio,
                     ),
-                    itemCount: docs.length,
+                    itemCount: mainDocs.length,
                     itemBuilder: (context, index) {
-                      final doc  = docs[index];
+                      final doc  = mainDocs[index];
                       final data = doc.data() as Map<String, dynamic>;
                       final name     = data['name']     as String? ?? '';
                       final imageUrl = data['img']      as String? ?? '';
                       final iconName = data['iconName'] as String? ?? '';
-                      final icon     = _iconMap[iconName] ?? Icons.category;
+                      final icon     = CategoryService.getIcon(iconName);
+                      final hasSubs  = catIdsWithSubs.contains(doc.id);
 
                       return _CategoryCard(
                         docId:    doc.id,
@@ -126,13 +130,27 @@ class SearchPage extends StatelessWidget {
                         imageUrl: imageUrl,
                         icon:     icon,
                         isAdmin:  isAdmin,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                CategoryResultsScreen(categoryName: name),
-                          ),
-                        ),
+                        hasSubs:  hasSubs,
+                        onTap: () {
+                          if (hasSubs) {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => SubCategoryScreen(
+                                  parentId:   doc.id,
+                                  parentName: name,
+                                ),
+                              ),
+                            );
+                          } else {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => CategoryResultsScreen(categoryName: name),
+                              ),
+                            );
+                          }
+                        },
                       );
                     },
                   );
@@ -156,6 +174,7 @@ class _CategoryCard extends StatelessWidget {
   final String   imageUrl;
   final IconData icon;
   final bool     isAdmin;
+  final bool     hasSubs;
   final VoidCallback onTap;
 
   const _CategoryCard({
@@ -165,6 +184,7 @@ class _CategoryCard extends StatelessWidget {
     required this.icon,
     required this.isAdmin,
     required this.onTap,
+    this.hasSubs = false,
   });
 
   void _openEditSheet(BuildContext context) {
@@ -234,6 +254,16 @@ class _CategoryCard extends StatelessWidget {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
+                  if (hasSubs) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: const [
+                        Icon(Icons.keyboard_arrow_left, color: Colors.white70, size: 14),
+                        Text("בחר התמחות", style: TextStyle(color: Colors.white70, fontSize: 11)),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),

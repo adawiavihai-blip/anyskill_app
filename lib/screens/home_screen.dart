@@ -17,13 +17,30 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   final User? currentUser = FirebaseAuth.instance.currentUser;
-  final String adminEmail = "adawiavihai@gmail.com"; 
+  final String adminEmail = "adawiavihai@gmail.com";
+
+  // Streams מאוחסנים ב-initState — מניעת subscribe/unsubscribe מחדש בכל rebuild
+  late final Stream<DocumentSnapshot> _userStream;
+  late final Stream<QuerySnapshot> _chatStream;
+  late final Stream<QuerySnapshot> _transactionStream;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _setOnlineStatus(true);
+    final uid = currentUser?.uid;
+    _userStream = FirebaseFirestore.instance.collection('users').doc(uid).snapshots();
+    _chatStream = FirebaseFirestore.instance
+        .collection('chats')
+        .where('users', arrayContains: uid)
+        .snapshots();
+    _transactionStream = FirebaseFirestore.instance
+        .collection('transactions')
+        .where('userId', isEqualTo: uid)
+        .orderBy('timestamp', descending: true)
+        .limit(10)
+        .snapshots();
   }
 
   @override
@@ -52,10 +69,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     bool isAdmin = currentUser?.email == adminEmail;
 
     return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance.collection('users').doc(currentUser?.uid).snapshots(),
+      stream: _userStream,
       builder: (context, snapshot) {
+        if (snapshot.hasError) return const Scaffold(body: Center(child: Text("שגיאה בטעינת הפרופיל")));
         if (!snapshot.hasData) return const Scaffold(body: Center(child: CircularProgressIndicator()));
-        
+
         var data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
         bool isBanned = data['isBanned'] ?? false;
         if (isBanned && !isAdmin) return _buildBannedScreen();
@@ -106,10 +124,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildEliteBottomNav(bool isAdmin) {
     // שאילתת chat docs (קטנות) במקום collectionGroup על כל ההודעות
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('chats')
-          .where('users', arrayContains: currentUser?.uid)
-          .snapshots(),
+      stream: _chatStream,
       builder: (context, snapshot) {
         int unreadCount = 0;
         if (snapshot.hasData) {
@@ -169,13 +184,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 const BottomNavigationBarItem(
                   icon: Icon(Icons.admin_panel_settings_outlined),
                   activeIcon: Icon(Icons.admin_panel_settings),
-                  label: '',
+                  label: 'ניהול',
                   tooltip: 'ניהול',
                 ),
                 const BottomNavigationBarItem(
                   icon: Icon(Icons.analytics_outlined),
                   activeIcon: Icon(Icons.analytics),
-                  label: '',
+                  label: 'מערכת',
                   tooltip: 'מערכת',
                 ),
               ]
@@ -279,33 +294,104 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
-            _buildTransactionsList(),
+            _buildTransactionsList(isProvider: isProvider),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTransactionsList() {
+  Widget _buildTransactionsList({bool isProvider = false}) {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('transactions')
-          .where('userId', isEqualTo: currentUser?.uid)
-          .orderBy('timestamp', descending: true).limit(10).snapshots(),
+      stream: _transactionStream,
       builder: (context, snapshot) {
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return const SizedBox();
-        return ListView.builder(
-          shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
-          itemCount: snapshot.data!.docs.length,
-          itemBuilder: (context, index) {
-            var tx = snapshot.data!.docs[index].data() as Map<String, dynamic>;
-            double amt = (tx['amount'] ?? 0.0).toDouble();
-            bool isPlus = amt > 0;
-            return ListTile(
-              leading: CircleAvatar(backgroundColor: isPlus ? Colors.green[50] : Colors.red[50], child: Icon(isPlus ? Icons.add : Icons.remove, color: isPlus ? Colors.green : Colors.red, size: 16)),
-              title: Text(tx['title'] ?? "פעולה במערכת", style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-              trailing: Text("${isPlus ? '+' : ''}$amt ₪", style: TextStyle(color: isPlus ? Colors.green[700] : Colors.red[700], fontWeight: FontWeight.bold)),
-            );
-          },
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.all(32),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          if (!isProvider) return const SizedBox();
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+            child: Column(
+              children: [
+                Icon(Icons.receipt_long_outlined, size: 52, color: Colors.grey[300]),
+                const SizedBox(height: 16),
+                const Text(
+                  "אין עסקאות עדיין",
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.black87),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  "כשתסיים שירות ותקבל תשלום, הרווחים יופיעו כאן",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: Colors.grey[500]),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final docs = snapshot.data!.docs;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+              child: Text(
+                "היסטוריית עסקאות",
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey[800]),
+              ),
+            ),
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: docs.length,
+              itemBuilder: (context, index) {
+                var tx = docs[index].data() as Map<String, dynamic>;
+                double amt = (tx['amount'] ?? 0.0).toDouble();
+                bool isPlus = amt > 0;
+                String title = tx['title'] ?? "פעולה במערכת";
+                String type = tx['type'] ?? '';
+
+                String dateStr = '';
+                final ts = tx['timestamp'];
+                if (ts is Timestamp) {
+                  final dt = ts.toDate();
+                  dateStr = '${dt.day.toString().padLeft(2, '0')}/'
+                      '${dt.month.toString().padLeft(2, '0')}/'
+                      '${dt.year}  '
+                      '${dt.hour.toString().padLeft(2, '0')}:'
+                      '${dt.minute.toString().padLeft(2, '0')}';
+                }
+
+                return ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: isPlus ? Colors.green[50] : Colors.red[50],
+                    child: Icon(
+                      type == 'earning' ? Icons.trending_up : (isPlus ? Icons.add : Icons.remove),
+                      color: isPlus ? Colors.green : Colors.red,
+                      size: 18,
+                    ),
+                  ),
+                  title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                  subtitle: dateStr.isNotEmpty
+                      ? Text(dateStr, style: TextStyle(fontSize: 11, color: Colors.grey[500]))
+                      : null,
+                  trailing: Text(
+                    "${isPlus ? '+' : ''}${amt.toStringAsFixed(2)} ₪",
+                    style: TextStyle(
+                      color: isPlus ? Colors.green[700] : Colors.red[700],
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
         );
       },
     );

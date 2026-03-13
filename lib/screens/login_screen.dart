@@ -83,19 +83,14 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // לוגו מעוצב
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0D47A1).withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.psychology_outlined, size: 80, color: Color(0xFF0D47A1)),
+              // לוגו
+              const Image(
+                image: AssetImage('assets/images/LOGO.gif'),
+                width: 200,
+                height: 160,
+                fit: BoxFit.contain,
               ),
-              const SizedBox(height: 20),
-              const Text("AnySkill", style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: Color(0xFF0D47A1), letterSpacing: 1.5)),
-              const Text("Elite Experts Marketplace", style: TextStyle(fontSize: 14, color: Colors.grey)),
-              const SizedBox(height: 50),
+              const SizedBox(height: 32),
 
               // שדה אימייל
               TextField(

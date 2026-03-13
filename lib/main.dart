@@ -28,10 +28,8 @@ void main() async {
       FirebaseFirestore.instance.settings = const Settings(
         persistenceEnabled: false,
       );
-      
-      // ניקוי זיכרון תקוע ברקע בלי await כדי לא לעצור את עליית האפליקציה
-      FirebaseFirestore.instance.clearPersistence().catchError((e) => debugPrint("Persistence clear info: $e"));
-      
+      // clearPersistence() הוסר — עם persistence=false אין מה לנקות,
+      // והקריאה האסינכרונית גרמה ל-ve:-1 assertion על listeners פעילים
       debugPrint("AnySkill Web: Optimized & Persistence Disabled");
     } catch (e) {
       debugPrint("Firestore Web Config Error: $e");
@@ -182,7 +180,15 @@ class _AuthWrapperState extends State<AuthWrapper> {
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          return const Scaffold(
+            backgroundColor: Colors.white,
+            body: Center(
+              child: Image(
+                image: AssetImage('assets/images/LOGO.gif'),
+                width: 200,
+              ),
+            ),
+          );
         }
         if (snapshot.hasData && snapshot.data != null) {
           return const _OnboardingGate();

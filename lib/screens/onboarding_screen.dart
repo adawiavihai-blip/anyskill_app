@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
-import '../constants.dart';
+import '../services/category_service.dart';
 import 'home_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
@@ -26,6 +27,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   // Step 2 — provider details
   String? _selectedCategory;
   final _priceController = TextEditingController();
+  List<Map<String, dynamic>> _categories = [];
+  StreamSubscription<List<Map<String, dynamic>>>? _categorySub;
 
   // Step 3 — profile
   String? _profileImageBase64;
@@ -34,7 +37,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   int get _totalPages => _isProvider ? 3 : 2;
 
   @override
+  void initState() {
+    super.initState();
+    _categorySub = CategoryService.stream().listen((cats) {
+      if (mounted) setState(() => _categories = cats);
+    });
+  }
+
+  @override
   void dispose() {
+    _categorySub?.cancel();
     _pageController.dispose();
     _priceController.dispose();
     _bioController.dispose();
@@ -114,6 +126,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           .doc(uid)
           .update(updates);
 
+      // שלח הודעת ברוכים הבאים לפי תפקיד — שגיאה לא חוסמת את הניווט
+      try {
+        await _sendWelcomeMessage(uid, _isProvider);
+      } catch (_) {}
+
       if (mounted) {
         Navigator.pushReplacement(
           context,
@@ -129,6 +146,74 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
+  }
+
+  Future<void> _sendWelcomeMessage(String uid, bool isProvider) async {
+    const systemUid = 'anyskill_system';
+    final firestore = FirebaseFirestore.instance;
+
+    const customerMsg =
+        'ברוכים הבאים ל-AnySkill! 🌟 צריכים עזרה במשהו? הגעתם למקום הנכון. '
+        'אלפי אנשי מקצוע זמינים עבורכם עכשיו כדי להפוך כל תוכנית למציאות. '
+        'חיפוש קל: מצאו את איש המקצוע המדויק לפי דירוג ומיקום. '
+        'צ\'אט ישיר: שלחו הודעה וקבלו מענה מהיר. '
+        'סוגרים ויוצאים לדרך: תיאום פשוט ובטוח ישירות מהאפליקציה. '
+        'במה נתחיל היום?';
+
+    const providerMsg =
+        'איזה כיף שהצטרפת לנבחרת אנשי המקצוע של AnySkill! 🚀 '
+        'הלקוח הבא שלך כבר כאן. כדי להתחיל ברגל ימין: '
+        'הפרופיל שלך: העלה תמונה טובה ופרט על הניסיון שלך – זה כרטיס הביקור שלך. '
+        'זמינות: לקוחות מחפשים מענה מהיר. שים לב להתרעות מהצ\'אט. '
+        'איכות השירות: כל עבודה טובה שווה דירוג של 5 כוכבים שיקפיץ אותך קדימה. '
+        'מאחלים לך המון הצלחה ופניות רבות!';
+
+    final welcomeText = isProvider ? providerMsg : customerMsg;
+
+    // יצירת מסמך anyskill_system אם לא קיים (create בלבד — update חסום בחוקים)
+    try {
+      await firestore.collection('users').doc(systemUid).set({
+        'uid': systemUid,
+        'name': 'AnySkill',
+        'profileImage': '',
+        'isProvider': false,
+        'isCustomer': false,
+        'isOnline': true,
+        'balance': 0,
+      }, SetOptions(merge: true));
+    } catch (_) {
+      // המסמך כבר קיים — לא צריך לעשות כלום
+    }
+
+    // מזהה חדר צ'אט דטרמיניסטי
+    final ids = [uid, systemUid]..sort();
+    final chatRoomId = ids.join('_');
+
+    // יצירת מסמך הצ'אט
+    await firestore.collection('chats').doc(chatRoomId).set({
+      'users': [uid, systemUid],
+      'lastMessage': welcomeText.length > 50
+          ? '${welcomeText.substring(0, 50)}...'
+          : welcomeText,
+      'lastMessageTime': FieldValue.serverTimestamp(),
+      'lastSenderId': systemUid,
+      'unreadCount_$uid': 1,
+      'unreadCount_$systemUid': 0,
+    }, SetOptions(merge: true));
+
+    // הוספת הודעת הברכה
+    await firestore
+        .collection('chats')
+        .doc(chatRoomId)
+        .collection('messages')
+        .add({
+      'senderId': systemUid,
+      'receiverId': uid,
+      'message': welcomeText,
+      'type': 'text',
+      'timestamp': FieldValue.serverTimestamp(),
+      'isRead': false,
+    });
   }
 
   Future<void> _pickProfileImage() async {
@@ -287,7 +372,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             ),
-            items: APP_CATEGORIES
+            items: _categories
                 .map((c) => DropdownMenuItem(
                     value: c['name'] as String,
                     child: Text(c['name'], textAlign: TextAlign.right)))

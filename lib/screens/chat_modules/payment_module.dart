@@ -142,6 +142,17 @@ class PaymentModule {
           'description': '$customerName ➔ $expertName', // מה שיוצג בלשונית מערכת
           'timestamp': FieldValue.serverTimestamp(),
         });
+
+        // 6. תיעוד עסקה בהיסטוריית הרווחים של המומחה
+        transaction.set(firestore.collection('transactions').doc(), {
+          'userId': expertId,
+          'amount': netToExpert,
+          'title': 'קיבלת תשלום — $customerName',
+          'type': 'earning',
+          'clientName': customerName,
+          'jobId': jobId,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
       });
       return true;
     } catch (e) {

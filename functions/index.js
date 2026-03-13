@@ -1,10 +1,17 @@
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
 
 admin.initializeApp();
 
+// מספר ה-shards לכל מונה unreadCount — מפיץ כתיבות ומונע write contention
+const NUM_SHARDS = 5;
+
 // QA: הפונקציה מאזינה ליצירת הודעה חדשה בתוך הצא'טים
-exports.sendchatnotification = onDocumentCreated("chats/{roomId}/messages/{messageId}", async (event) => {
+// maxInstances + concurrency מאפשרים עד 100 * 500 = 50,000 בקשות במקביל ללא cold starts
+exports.sendchatnotification = onDocumentCreated(
+    { document: "chats/{roomId}/messages/{messageId}", maxInstances: 100, concurrency: 500 },
+    async (event) => {
     const snapshot = event.data;
     if (!snapshot) return null;
 
@@ -82,6 +89,39 @@ exports.sendchatnotification = onDocumentCreated("chats/{roomId}/messages/{messa
             });
         }
         console.log(`QA: Notification sent to ${receiverId} from ${senderName}`);
+
+        // 6. עדכון מטאדאטה של השיחה + distributed counter (רק אם לא system message)
+        if (senderId !== 'system' && receiverId) {
+            const roomId = event.params.roomId;
+            const chatDocRef = admin.firestore().collection('chats').doc(roomId);
+
+            // בחירת shard אקראי — מפיץ את הכתיבה על פני NUM_SHARDS מסמכים
+            const shardIndex = Math.floor(Math.random() * NUM_SHARDS);
+            const shardRef = chatDocRef
+                .collection('unread_shards')
+                .doc(`${receiverId}_${shardIndex}`);
+
+            const metaBatch = admin.firestore().batch();
+
+            // עדכון shard — increment אטומי ב-1 מסמך אקראי (ללא contention)
+            metaBatch.set(shardRef, {
+                count: admin.firestore.FieldValue.increment(1),
+                uid: receiverId,
+            }, { merge: true });
+
+            // עדכון chat doc: lastMessage + מונה מדנורמלי
+            // כותב אחד (Cloud Function) — אין תחרות עם הלקוח
+            const lastMessageText = type === 'text' ? messageText : `שלח/ה ${type}`;
+            metaBatch.set(chatDocRef, {
+                lastMessage: lastMessageText,
+                lastMessageTime: admin.firestore.FieldValue.serverTimestamp(),
+                lastSenderId: senderId,
+                [`unreadCount_${receiverId}`]: admin.firestore.FieldValue.increment(1),
+            }, { merge: true });
+
+            await metaBatch.commit();
+            console.log(`QA: Chat metadata updated for room ${roomId}, shard ${shardIndex}`);
+        }
 
     } catch (error) {
         console.error('QA Error - sending notification:', error);
@@ -189,4 +229,93 @@ exports.sendjobstatusnotification = onDocumentUpdated("jobs/{jobId}", async (eve
         console.error('Error sending job status notification:', error);
     }
     return null;
+});
+
+// ── Callable: מחיקת משתמש (Admin SDK — דורש הרשאת admin) ────────────────────
+exports.deleteUser = onCall(async (request) => {
+    if (!request.auth) {
+        throw new HttpsError('unauthenticated', 'User must be authenticated.');
+    }
+
+    // אימות שהמשתמש הקורא הוא מנהל
+    const callerSnap = await admin.firestore().collection('users').doc(request.auth.uid).get();
+    if (!callerSnap.exists || !callerSnap.data().isAdmin) {
+        throw new HttpsError('permission-denied', 'Caller is not an admin.');
+    }
+
+    const { uid } = request.data;
+    if (!uid) throw new HttpsError('invalid-argument', 'uid is required.');
+
+    // מחיקת חשבון ה-Auth (user-not-found = כבר נמחק, לא שגיאה קשה)
+    try {
+        await admin.auth().deleteUser(uid);
+    } catch (e) {
+        if (e.code !== 'auth/user-not-found') {
+            throw new HttpsError('internal', `Auth deletion failed: ${e.message}`);
+        }
+    }
+
+    // מחיקת מסמך ה-Firestore
+    await admin.firestore().collection('users').doc(uid).delete();
+
+    console.log(`Admin ${request.auth.uid} deleted user ${uid}`);
+    return { success: true };
+});
+
+// ── Callable: סימון הודעות כנקראו (Admin SDK — ללא מגבלות client) ──────────────
+// מוחלף על פעולת batch כבדה בצד הלקוח. מאפס shards + שדה מדנורמלי + isRead
+exports.processMarkAsRead = onCall({ minInstances: 1, concurrency: 80 }, async (request) => {
+    // אימות: רק המשתמש עצמו יכול לאפס את המונה שלו
+    if (!request.auth) {
+        throw new HttpsError('unauthenticated', 'User must be authenticated.');
+    }
+
+    const { chatRoomId, userId } = request.data;
+
+    if (request.auth.uid !== userId) {
+        throw new HttpsError('permission-denied', 'You can only mark your own messages as read.');
+    }
+
+    if (!chatRoomId || !userId) {
+        throw new HttpsError('invalid-argument', 'chatRoomId and userId are required.');
+    }
+
+    const db = admin.firestore();
+    const chatDocRef = db.collection('chats').doc(chatRoomId);
+
+    try {
+        // 1. שליפת הודעות שלא נקראו — מוגבל ל-100 למניעת batch גדול מדי
+        const unreadSnap = await db
+            .collection('chats').doc(chatRoomId)
+            .collection('messages')
+            .where('receiverId', '==', userId)
+            .where('isRead', '==', false)
+            .limit(100)
+            .get();
+
+        const batch = db.batch();
+
+        // 2. סימון כל הודעה כנקראה
+        unreadSnap.docs.forEach(doc => batch.update(doc.ref, { isRead: true }));
+
+        // 3. איפוס כל NUM_SHARDS ה-shards של המשתמש
+        for (let i = 0; i < NUM_SHARDS; i++) {
+            const shardRef = chatDocRef
+                .collection('unread_shards')
+                .doc(`${userId}_${i}`);
+            batch.set(shardRef, { count: 0, uid: userId }, { merge: true });
+        }
+
+        // 4. איפוס השדה המדנורמלי בכתב השיחה
+        batch.update(chatDocRef, { [`unreadCount_${userId}`]: 0 });
+
+        await batch.commit();
+
+        console.log(`QA: processMarkAsRead — ${unreadSnap.size} messages marked, shards reset for ${userId} in ${chatRoomId}`);
+        return { success: true, markedCount: unreadSnap.size };
+
+    } catch (error) {
+        console.error('QA Error - processMarkAsRead:', error);
+        throw new HttpsError('internal', `Mark-as-read failed: ${error.message}`);
+    }
 });

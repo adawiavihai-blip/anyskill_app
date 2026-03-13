@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -33,6 +35,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? "";
   late String chatRoomId;
   bool _isUploading = false;
+  Timer? _markAsReadDebounce;
 
   @override
   void initState() {
@@ -40,12 +43,18 @@ class _ChatScreenState extends State<ChatScreen> {
     List<String> ids = [currentUserId, widget.receiverId];
     ids.sort();
     chatRoomId = ids.join("_");
-    
-    _handleMarkAsRead();
+
+    // Reset badge immediately on enter — no debounce, no CF dependency
+    FirebaseFirestore.instance.collection('chats').doc(chatRoomId).update({
+      'unreadCount_$currentUserId': 0,
+    }).catchError((_) {});
+
+    _handleMarkAsRead(); // debounced CF call — marks individual messages as isRead: true
   }
 
   @override
   void dispose() {
+    _markAsReadDebounce?.cancel();
     _messageController.dispose();
     super.dispose();
   }
@@ -74,7 +83,12 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _handleMarkAsRead() {
-    ChatLogicModule.markMessagesAsRead(chatRoomId, currentUserId);
+    // דיבאונס — מונע קריאות חוזרות לכל הודעה נכנסת
+    // Callable Function תופעל פעם אחת לאחר שנייה של דממה
+    _markAsReadDebounce?.cancel();
+    _markAsReadDebounce = Timer(const Duration(seconds: 1), () {
+      ChatLogicModule.markMessagesAsRead(chatRoomId, currentUserId);
+    });
   }
 
   Future<void> _send(String content, String type) async {

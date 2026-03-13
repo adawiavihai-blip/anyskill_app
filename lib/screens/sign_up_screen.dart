@@ -135,7 +135,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
             key: _formKey,
             child: Column(
             children: [
-              const Icon(Icons.person_add_outlined, size: 70, color: Color(0xFF0D47A1)),
+              const Image(
+                image: AssetImage('assets/images/LOGO.gif'),
+                width: 160,
+                height: 120,
+                fit: BoxFit.contain,
+              ),
               const SizedBox(height: 10),
               const Text("הצטרפו ל-AnySkill Elite", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               const Text("מצא מומחים או התחל לתת שירות", style: TextStyle(color: Colors.grey)),

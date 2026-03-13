@@ -24,6 +24,13 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   String _searchQuery    = '';
   bool   _filterUnder100 = false;
   int    _refreshTrigger = 0;
+  Future<List<Map<String, dynamic>>>? _expertsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _expertsFuture = _fetchExperts();
+  }
 
   /// חד-פעמי — מונע את באג ה-Firestore web SDK שמתרחש כאשר
   /// מאזין real-time מתבטל באמצע עדכון (assertion ve:-1).
@@ -157,7 +164,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     }
     return FutureBuilder<List<Map<String, dynamic>>>(
       key: ValueKey(_refreshTrigger),
-      future: _fetchExperts(),
+      future: _expertsFuture,
       builder: (context, snapshot) => _buildContent(context, snapshot),
     );
   }
@@ -181,7 +188,10 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
             OutlinedButton.icon(
               icon: const Icon(Icons.refresh),
               label: const Text('נסה שוב'),
-              onPressed: () => setState(() => _refreshTrigger++),
+              onPressed: () => setState(() {
+                _refreshTrigger++;
+                _expertsFuture = _fetchExperts();
+              }),
             ),
           ],
         ),

@@ -3,10 +3,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 
-import 'package:table_calendar/table_calendar.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
-import '../constants.dart';
+import '../services/category_service.dart';
 
 class EditProfileScreen extends StatefulWidget {
   final Map<String, dynamic> userData;
@@ -21,7 +21,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late TextEditingController _aboutController;
   late TextEditingController _priceController;
   
-  String? _selectedCategory;
+  String? _selectedCategory;       // kept for backward compat but unused in save
+  String? _selectedMainCatId;       // doc ID of selected main category
+  String? _selectedSubCatId;        // doc ID of selected sub-category (nullable)
+  List<Map<String, dynamic>> _mainCategories = [];
+  List<Map<String, dynamic>> _subCategories  = []; // subs for selected main
+
   String? _profileImageUrl;
   List<dynamic> _galleryImages = [];
   bool _isLoading = false;
@@ -29,9 +34,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _isCustomer = false;
   bool _isProvider = false;
 
-  // תאריכים חסומים (אי-זמינות)
-  Set<DateTime> _unavailableDates = {};
-  DateTime _calendarFocusedDay = DateTime.now();
+  List<Map<String, dynamic>> _categories = [];
+  late StreamSubscription<List<Map<String, dynamic>>> _categorySub;
 
   @override
   void initState() {
@@ -45,22 +49,47 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _isCustomer = widget.userData['isCustomer'] ?? true;
     _isProvider = widget.userData['isProvider'] ?? false;
 
-    // טען תאריכים חסומים קיימים
-    final rawDates = widget.userData['unavailableDates'] as List<dynamic>? ?? [];
-    _unavailableDates = rawDates
-        .map((d) => DateTime.tryParse(d.toString()))
-        .whereType<DateTime>()
-        .map((d) => DateTime.utc(d.year, d.month, d.day))
-        .toSet();
+    _selectedCategory = widget.userData['serviceType'] as String?;
 
-    final currentService = widget.userData['serviceType'];
-    if (APP_CATEGORIES.any((cat) => cat['name'] == currentService)) {
-      _selectedCategory = currentService;
-    }
+    _categorySub = CategoryService.stream().listen((cats) {
+      if (!mounted) return;
+      final mains = cats.where((c) => (c['parentId'] as String? ?? '').isEmpty).toList();
+      final serviceType = widget.userData['serviceType'] as String?;
+
+      // Resolve existing serviceType into main-category ID + optional sub-category ID
+      final subMatch = cats.firstWhere(
+        (c) => c['name'] == serviceType && (c['parentId'] as String? ?? '').isNotEmpty,
+        orElse: () => <String, dynamic>{},
+      );
+      String? mainId, subId;
+      if (subMatch.isNotEmpty) {
+        subId  = subMatch['id']       as String?;
+        mainId = subMatch['parentId'] as String?;
+      } else {
+        final mainMatch = mains.firstWhere(
+          (c) => c['name'] == serviceType,
+          orElse: () => <String, dynamic>{},
+        );
+        mainId = mainMatch.isNotEmpty ? mainMatch['id'] as String? : null;
+      }
+
+      final subs = mainId != null
+          ? cats.where((c) => c['parentId'] == mainId).toList()
+          : <Map<String, dynamic>>[];
+
+      setState(() {
+        _categories        = cats;
+        _mainCategories    = mains;
+        _selectedMainCatId = _selectedMainCatId ?? mainId;
+        _subCategories     = subs;
+        _selectedSubCatId  = _selectedSubCatId ?? subId;
+      });
+    });
   }
 
   @override
   void dispose() {
+    _categorySub.cancel();
     _nameController.dispose();
     _aboutController.dispose();
     _priceController.dispose();
@@ -133,18 +162,32 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final messenger = ScaffoldMessenger.of(context);
 
     try {
+      // Resolve the most-specific category name (sub → main → null)
+      String? serviceTypeName;
+      if (_selectedSubCatId != null) {
+        final sub = _categories.firstWhere(
+          (c) => c['id'] == _selectedSubCatId,
+          orElse: () => <String, dynamic>{},
+        );
+        serviceTypeName = sub.isNotEmpty ? sub['name'] as String? : null;
+      } else if (_selectedMainCatId != null) {
+        final main = _mainCategories.firstWhere(
+          (c) => c['id'] == _selectedMainCatId,
+          orElse: () => <String, dynamic>{},
+        );
+        serviceTypeName = main.isNotEmpty ? main['name'] as String? : null;
+      }
+
       await FirebaseFirestore.instance.collection('users').doc(uid).update({
         'name': _nameController.text.trim(),
-        'serviceType': _isProvider ? _selectedCategory : 'לקוח',
+        'serviceType':   _isProvider ? serviceTypeName : 'לקוח',
+        'subCategoryId': _isProvider ? _selectedSubCatId : null,
         'pricePerHour': double.tryParse(_priceController.text) ?? 0.0,
         'aboutMe': _aboutController.text.trim(),
         'profileImage': _profileImageUrl,
         'gallery': _galleryImages,
         'isCustomer': _isCustomer,
         'isProvider': _isProvider,
-        'unavailableDates': _unavailableDates
-            .map((d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}')
-            .toList(),
       });
       if (mounted) {
         navigator.pop();
@@ -224,86 +267,42 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
                 if (_isProvider) ...[
                   const SizedBox(height: 25),
-                  const Text("תחום התמחות", style: TextStyle(fontWeight: FontWeight.bold)),
+                  // ── Main Category dropdown ──────────────────────────────
+                  const Text("תחום התמחות (ראשי)", style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
                   DropdownButtonFormField<String>(
-                    value: _selectedCategory,
-                    items: APP_CATEGORIES.map((c) => DropdownMenuItem(value: c['name'] as String, child: Text(c['name'], textAlign: TextAlign.right))).toList(),
-                    onChanged: (val) => setState(() => _selectedCategory = val),
+                    value: _mainCategories.any((c) => c['id'] == _selectedMainCatId) ? _selectedMainCatId : null,
+                    hint: const Text("בחר תחום", textAlign: TextAlign.right),
+                    items: _mainCategories.map((c) => DropdownMenuItem(
+                      value: c['id'] as String,
+                      child: Text(c['name'] as String? ?? '', textAlign: TextAlign.right),
+                    )).toList(),
+                    onChanged: (val) => setState(() {
+                      _selectedMainCatId = val;
+                      _selectedSubCatId  = null;
+                      _subCategories = _categories.where((c) => c['parentId'] == val).toList();
+                    }),
                     decoration: const InputDecoration(border: OutlineInputBorder()),
                   ),
+                  // ── Sub-Category dropdown (shown only when subs exist) ──
+                  if (_subCategories.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    const Text("התמחות ספציפית (תת-קטגוריה)", style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<String>(
+                      value: _subCategories.any((c) => c['id'] == _selectedSubCatId) ? _selectedSubCatId : null,
+                      hint: const Text("בחר התמחות", textAlign: TextAlign.right),
+                      items: _subCategories.map((c) => DropdownMenuItem(
+                        value: c['id'] as String,
+                        child: Text(c['name'] as String? ?? '', textAlign: TextAlign.right),
+                      )).toList(),
+                      onChanged: (val) => setState(() => _selectedSubCatId = val),
+                      decoration: const InputDecoration(border: OutlineInputBorder()),
+                    ),
+                  ],
                   const SizedBox(height: 20),
                   const Text("מחיר לשעה (₪)", style: TextStyle(fontWeight: FontWeight.bold)),
                   TextField(controller: _priceController, keyboardType: TextInputType.number, textAlign: TextAlign.right, decoration: const InputDecoration(hintText: "כמה תרצה להרוויח?")),
-                  const SizedBox(height: 30),
-                  const Text("ימי חופש / אי-זמינות", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  const SizedBox(height: 6),
-                  Text(
-                    "לחץ על תאריך כדי לסמן אותו כחסום. לחץ שוב להסרה.",
-                    style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                    textAlign: TextAlign.right,
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey.shade300),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: TableCalendar(
-                      firstDay: DateTime.now(),
-                      lastDay: DateTime.now().add(const Duration(days: 365)),
-                      focusedDay: _calendarFocusedDay,
-                      calendarFormat: CalendarFormat.month,
-                      availableCalendarFormats: const {CalendarFormat.month: 'חודש'},
-                      startingDayOfWeek: StartingDayOfWeek.sunday,
-                      headerStyle: const HeaderStyle(
-                        formatButtonVisible: false,
-                        titleCentered: true,
-                        titleTextStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                      ),
-                      calendarStyle: CalendarStyle(
-                        selectedDecoration: const BoxDecoration(
-                          color: Colors.redAccent,
-                          shape: BoxShape.circle,
-                        ),
-                        todayDecoration: BoxDecoration(
-                          color: Colors.blue.withValues(alpha: 0.3),
-                          shape: BoxShape.circle,
-                        ),
-                        selectedTextStyle: const TextStyle(color: Colors.white),
-                      ),
-                      selectedDayPredicate: (day) {
-                        final normalized = DateTime.utc(day.year, day.month, day.day);
-                        return _unavailableDates.contains(normalized);
-                      },
-                      onDaySelected: (selectedDay, focusedDay) {
-                        final normalized = DateTime.utc(selectedDay.year, selectedDay.month, selectedDay.day);
-                        setState(() {
-                          if (_unavailableDates.contains(normalized)) {
-                            _unavailableDates.remove(normalized);
-                          } else {
-                            _unavailableDates.add(normalized);
-                          }
-                          _calendarFocusedDay = focusedDay;
-                        });
-                      },
-                      onPageChanged: (focusedDay) {
-                        setState(() => _calendarFocusedDay = focusedDay);
-                      },
-                    ),
-                  ),
-                  if (_unavailableDates.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: (_unavailableDates.toList()..sort()).map((d) => Chip(
-                        label: Text('${d.day}/${d.month}/${d.year}', style: const TextStyle(fontSize: 12)),
-                        backgroundColor: Colors.red[50],
-                        deleteIcon: const Icon(Icons.close, size: 16),
-                        onDeleted: () => setState(() => _unavailableDates.remove(d)),
-                      )).toList(),
-                    ),
-                  ],
                 ],
 
                 const SizedBox(height: 25),

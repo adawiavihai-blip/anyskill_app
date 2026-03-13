@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:table_calendar/table_calendar.dart';
 import 'chat_modules/payment_module.dart';
 import '../services/payment_service.dart';
 
@@ -15,7 +16,61 @@ class MyBookingsScreen extends StatefulWidget {
 
 class _MyBookingsScreenState extends State<MyBookingsScreen> {
   bool _isExpertView = false;
+  bool _isCalendarView = false;
   final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? "";
+
+  // ── Calendar / availability state ─────────────────────────────────────────
+  Set<DateTime> _unavailableDates = {};
+  DateTime _calendarFocusedDay = DateTime.now();
+  bool _calendarSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUnavailableDates();
+  }
+
+  Future<void> _loadUnavailableDates() async {
+    if (currentUserId.isEmpty) return;
+    final doc = await FirebaseFirestore.instance.collection('users').doc(currentUserId).get();
+    final List<dynamic> raw = (doc.data()?['unavailableDates'] as List<dynamic>?) ?? [];
+    if (mounted) {
+      setState(() {
+        // תואם לפורמט של edit_profile_screen — ISO string ('YYYY-MM-DD')
+        _unavailableDates = raw
+            .map((d) => DateTime.tryParse(d.toString()))
+            .whereType<DateTime>()
+            .map((d) => DateTime.utc(d.year, d.month, d.day))
+            .toSet();
+      });
+    }
+  }
+
+  Future<void> _saveUnavailableDates() async {
+    setState(() => _calendarSaving = true);
+    try {
+      // שומר כ-ISO strings בדיוק כמו edit_profile_screen
+      final isoStrings = _unavailableDates
+          .map((d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}')
+          .toList();
+      await FirebaseFirestore.instance.collection('users').doc(currentUserId).update({
+        'unavailableDates': isoStrings,
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(backgroundColor: Colors.green, content: Text("הזמינות עודכנה בהצלחה")),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(backgroundColor: Colors.red, content: Text("שגיאה בשמירה: $e")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _calendarSaving = false);
+    }
+  }
 
   // ── Customer: release escrow after expert marks done ─────────────────────
   Future<void> _handleCompleteJob(
@@ -308,7 +363,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
       body: Column(
         children: [
           _buildToggle(),
-          Expanded(child: _buildList()),
+          Expanded(child: _isCalendarView ? _buildCalendarView() : _buildList()),
         ],
       ),
     );
@@ -320,11 +375,23 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
       child: Row(
         children: [
-          _toggleButton(label: "הזמנות שלי", active: !_isExpertView,
-              onTap: () => setState(() => _isExpertView = false)),
+          _toggleButton(
+            label: "הזמנות שלי",
+            active: !_isExpertView && !_isCalendarView,
+            onTap: () => setState(() { _isExpertView = false; _isCalendarView = false; }),
+          ),
           const SizedBox(width: 8),
-          _toggleButton(label: "משימות שלי", active: _isExpertView,
-              onTap: () => setState(() => _isExpertView = true)),
+          _toggleButton(
+            label: "משימות שלי",
+            active: _isExpertView && !_isCalendarView,
+            onTap: () => setState(() { _isExpertView = true; _isCalendarView = false; }),
+          ),
+          const SizedBox(width: 8),
+          _toggleButton(
+            label: "יומן",
+            active: _isCalendarView,
+            onTap: () => setState(() => _isCalendarView = true),
+          ),
         ],
       ),
     );
@@ -351,6 +418,100 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildCalendarView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          const Text("ניהול זמינות", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text(
+            "לחץ על תאריך כדי לסמן אותו כחסום. לחץ שוב להסרה.",
+            style: TextStyle(color: Colors.grey[600], fontSize: 13),
+            textAlign: TextAlign.right,
+          ),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.grey.shade300),
+              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10)],
+            ),
+            child: TableCalendar(
+              firstDay: DateTime.now(),
+              lastDay: DateTime.now().add(const Duration(days: 365)),
+              focusedDay: _calendarFocusedDay,
+              calendarFormat: CalendarFormat.month,
+              availableCalendarFormats: const {CalendarFormat.month: 'חודש'},
+              startingDayOfWeek: StartingDayOfWeek.sunday,
+              headerStyle: const HeaderStyle(
+                formatButtonVisible: false,
+                titleCentered: true,
+                titleTextStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              calendarStyle: CalendarStyle(
+                selectedDecoration: const BoxDecoration(
+                  color: Colors.redAccent,
+                  shape: BoxShape.circle,
+                ),
+                todayDecoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.3),
+                  shape: BoxShape.circle,
+                ),
+                selectedTextStyle: const TextStyle(color: Colors.white),
+              ),
+              selectedDayPredicate: (day) {
+                final normalized = DateTime.utc(day.year, day.month, day.day);
+                return _unavailableDates.contains(normalized);
+              },
+              onDaySelected: (selectedDay, focusedDay) {
+                final normalized = DateTime.utc(selectedDay.year, selectedDay.month, selectedDay.day);
+                setState(() {
+                  if (_unavailableDates.contains(normalized)) {
+                    _unavailableDates.remove(normalized);
+                  } else {
+                    _unavailableDates.add(normalized);
+                  }
+                  _calendarFocusedDay = focusedDay;
+                });
+              },
+              onPageChanged: (focusedDay) {
+                setState(() => _calendarFocusedDay = focusedDay);
+              },
+            ),
+          ),
+          if (_unavailableDates.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: (_unavailableDates.toList()..sort()).map((d) => Chip(
+                label: Text('${d.day}/${d.month}/${d.year}', style: const TextStyle(fontSize: 12)),
+                backgroundColor: Colors.red[50],
+                deleteIcon: const Icon(Icons.close, size: 16),
+                onDeleted: () => setState(() => _unavailableDates.remove(d)),
+              )).toList(),
+            ),
+          ],
+          const SizedBox(height: 24),
+          _calendarSaving
+              ? const Center(child: CircularProgressIndicator())
+              : ElevatedButton(
+                  onPressed: _saveUnavailableDates,
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 52),
+                    backgroundColor: Colors.black,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: const Text("שמור שינויים", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                ),
+        ],
       ),
     );
   }
