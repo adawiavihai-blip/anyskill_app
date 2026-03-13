@@ -503,13 +503,13 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
 
   // ── Reviews section ───────────────────────────────────────────────────────
   Widget _buildReviewsSection() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
+    return FutureBuilder<QuerySnapshot>(
+      future: FirebaseFirestore.instance
           .collection('reviews')
           .where('expertId', isEqualTo: widget.expertId)
           .orderBy('timestamp', descending: true)
           .limit(20)
-          .snapshots(),
+          .get(),
       builder: (context, snapshot) {
         final docs = snapshot.data?.docs ?? [];
 

@@ -21,24 +21,24 @@ class CategoryResultsScreen extends StatefulWidget {
 }
 
 class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
-  String _searchQuery   = '';
+  String _searchQuery    = '';
   bool   _filterUnder100 = false;
+  int    _refreshTrigger = 0;
 
-  /// מחזיר את זרם המומחים — Firestore בייצור, testStream בבדיקות.
-  Stream<List<Map<String, dynamic>>> get _expertsStream {
-    if (widget.testStream != null) return widget.testStream!;
-
-    return FirebaseFirestore.instance
+  /// חד-פעמי — מונע את באג ה-Firestore web SDK שמתרחש כאשר
+  /// מאזין real-time מתבטל באמצע עדכון (assertion ve:-1).
+  Future<List<Map<String, dynamic>>> _fetchExperts() async {
+    final snap = await FirebaseFirestore.instance
         .collection('users')
         .where('isProvider', isEqualTo: true)
         .where('serviceType', isEqualTo: widget.categoryName)
         .limit(50)
-        .snapshots()
-        .map((snap) => snap.docs.map((d) {
-              final map = d.data();
-              map['uid'] = d.id;
-              return map;
-            }).toList());
+        .get();
+    return snap.docs.map((d) {
+      final map = d.data();
+      map['uid'] = d.id;
+      return map;
+    }).toList();
   }
 
   @override
@@ -148,14 +148,47 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   }
 
   Widget _buildList() {
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _expertsStream,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+    // בדיקות מזריקות Stream; ייצור משתמש ב-Future (מונע באג Firestore web SDK)
+    if (widget.testStream != null) {
+      return StreamBuilder<List<Map<String, dynamic>>>(
+        stream: widget.testStream,
+        builder: (context, snapshot) => _buildContent(context, snapshot),
+      );
+    }
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      key: ValueKey(_refreshTrigger),
+      future: _fetchExperts(),
+      builder: (context, snapshot) => _buildContent(context, snapshot),
+    );
+  }
 
-        final all = snapshot.data ?? [];
+  Widget _buildContent(
+      BuildContext context, AsyncSnapshot<List<Map<String, dynamic>>> snapshot) {
+    if (snapshot.connectionState == ConnectionState.waiting) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (snapshot.hasError) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.wifi_off_rounded, size: 48, color: Colors.grey),
+            const SizedBox(height: 16),
+            const Text('שגיאה בטעינת המומחים',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.refresh),
+              label: const Text('נסה שוב'),
+              onPressed: () => setState(() => _refreshTrigger++),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final all = snapshot.data ?? [];
         final experts = filterExperts(
           all,
           query: _searchQuery,
@@ -335,7 +368,5 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
             );
           },
         );
-      },
-    );
   }
 }
