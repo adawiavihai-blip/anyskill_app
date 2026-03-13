@@ -1,16 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart'; 
-import 'category_results_screen.dart';
-import 'map_screen.dart';
 import 'profile_screen.dart';
 import 'admin_screen.dart';
 import 'chat_list_screen.dart';
 import 'system_wallet_screen.dart';
-import 'public_profile_screen.dart'; 
-import 'my_bookings_screen.dart'; // QA: ייבוא דף ההזמנות החדש
-import '../constants.dart';
+import 'my_bookings_screen.dart';
 import 'search_screen/search_page.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -109,14 +104,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildEliteBottomNav(bool isAdmin) {
+    // שאילתת chat docs (קטנות) במקום collectionGroup על כל ההודעות
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
-          .collectionGroup('messages')
-          .where('receiverId', isEqualTo: currentUser?.uid)
-          .where('isRead', isEqualTo: false)
+          .collection('chats')
+          .where('users', arrayContains: currentUser?.uid)
           .snapshots(),
       builder: (context, snapshot) {
-        int unreadCount = snapshot.hasData ? snapshot.data!.docs.length : 0;
+        int unreadCount = 0;
+        if (snapshot.hasData) {
+          for (final doc in snapshot.data!.docs) {
+            final d = doc.data() as Map<String, dynamic>;
+            unreadCount += ((d['unreadCount_${currentUser?.uid}'] ?? 0) as num).toInt();
+          }
+        }
 
         return Container(
           decoration: BoxDecoration(boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 15)]),
@@ -164,8 +165,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 label: 'פרופיל'
               ),
               if (isAdmin) ...[
-                const BottomNavigationBarItem(icon: Icon(Icons.admin_panel_settings_outlined), label: 'ניהול'),
-                const BottomNavigationBarItem(icon: Icon(Icons.analytics_outlined), label: 'מערכת'),
+                // לאדמין — label ריק כדי לחסוך מקום בסרגל עם 7 פריטים
+                const BottomNavigationBarItem(
+                  icon: Icon(Icons.admin_panel_settings_outlined),
+                  activeIcon: Icon(Icons.admin_panel_settings),
+                  label: '',
+                  tooltip: 'ניהול',
+                ),
+                const BottomNavigationBarItem(
+                  icon: Icon(Icons.analytics_outlined),
+                  activeIcon: Icon(Icons.analytics),
+                  label: '',
+                  tooltip: 'מערכת',
+                ),
               ]
             ],
           ),
@@ -198,10 +210,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   children: [
                     const Text("יתרה זמינה", style: TextStyle(color: Colors.white70, fontSize: 16)),
                     const SizedBox(height: 12),
-                    Text("₪${balance.toStringAsFixed(2)}", style: const TextStyle(color: Colors.white, fontSize: 44, fontWeight: FontWeight.bold)),
+                    // FittedBox מונע overflow של מספרים ארוכים במסכים צרים
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Text(
+                        "₪${balance.toStringAsFixed(2)}",
+                        style: const TextStyle(color: Colors.white, fontSize: 44, fontWeight: FontWeight.bold),
+                      ),
+                    ),
                     const SizedBox(height: 20),
-                    // Action buttons row
-                    Row(
+                    // Wrap מונע overflow כשהמסך צר מדי לשני כפתורים בשורה
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
                       children: [
                         // Top-up button
                         GestureDetector(
@@ -223,8 +245,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ),
                           ),
                         ),
-                        if (isProvider && balance > 0) ...[
-                          const SizedBox(width: 10),
+                        if (isProvider && balance > 0)
                           // Withdraw button
                           GestureDetector(
                             onTap: () => _showWithdrawSheet(context, balance),
@@ -245,7 +266,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               ),
                             ),
                           ),
-                        ],
                       ],
                     ),
                     const SizedBox(height: 20),
@@ -394,10 +414,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     onPressed: selectedAmount > 0
                         ? () async {
                             final amount = selectedAmount;
+                            final messenger = ScaffoldMessenger.of(context);
                             Navigator.pop(context);
                             await _executeTopUp(amount);
                             if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              messenger.showSnackBar(SnackBar(
                                 backgroundColor: Colors.green,
                                 content: Text("₪${amount.toStringAsFixed(0)} נוספו לארנק שלך!"),
                               ));
@@ -571,10 +592,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               final amount = selectedAmount;
                               final bank = bankNameController.text.trim();
                               final account = accountNumberController.text.trim();
+                              final messenger = ScaffoldMessenger.of(context);
                               Navigator.pop(context);
                               await _executeWithdrawal(amount, bank, account);
                               if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                messenger.showSnackBar(SnackBar(
                                   backgroundColor: Colors.green,
                                   content: Text("בקשת משיכה של ₪${amount.toStringAsFixed(0)} נשלחה!"),
                                 ));

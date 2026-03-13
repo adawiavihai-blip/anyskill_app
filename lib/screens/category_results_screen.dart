@@ -32,9 +32,13 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
         .collection('users')
         .where('isProvider', isEqualTo: true)
         .where('serviceType', isEqualTo: widget.categoryName)
+        .limit(50)
         .snapshots()
-        .map((snap) =>
-            snap.docs.map((d) => d.data() as Map<String, dynamic>).toList());
+        .map((snap) => snap.docs.map((d) {
+              final map = d.data();
+              map['uid'] = d.id;
+              return map;
+            }).toList());
   }
 
   @override

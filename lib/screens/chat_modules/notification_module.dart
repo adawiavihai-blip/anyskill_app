@@ -29,7 +29,7 @@ class NotificationModule {
       // QA Fix: רישום ידני של ה-Service Worker כדי למנוע את שגיאת pushManager
       if (kIsWeb) {
         final registration = await web.window.navigator.serviceWorker
-            .register('/firebase-messaging-sw.js')
+            .register('/firebase-messaging-sw.js'.toJS)
             .toDart;
         debugPrint("QA: Service Worker registered: ${registration.scope}");
       }
@@ -56,9 +56,10 @@ class NotificationModule {
   }
 
   static void listenToForegroundMessages(BuildContext context) {
+    final messenger = ScaffoldMessenger.of(context);
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       if (message.notification != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           SnackBar(
             content: Directionality(
               textDirection: TextDirection.rtl,

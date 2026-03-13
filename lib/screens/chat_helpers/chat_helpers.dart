@@ -8,7 +8,8 @@ class ChatHelpers {
   // --- חלק 1: טיפול במיקום ---
   static Future<String?> pickLocation() async {
     try {
-      Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      Position pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(accuracy: LocationAccuracy.high));
       // שימוש ב-Raw String כדי למנוע שגיאות $ בטרמינל
       return "https://www.google.com/maps/search/?api=1&query=${pos.latitude},${pos.longitude}";
     } catch (e) {

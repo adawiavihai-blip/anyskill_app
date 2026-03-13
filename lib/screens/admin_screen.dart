@@ -112,7 +112,7 @@ class _AdminScreenState extends State<AdminScreen> {
     );
   }
 
-  void _showAddBalanceDialog(String uid, String name, double currentBalance) {
+  void _showAddBalanceDialog(String uid, String name) {
     final scaffoldMessenger = ScaffoldMessenger.of(context);
     final TextEditingController amountController = TextEditingController();
     showDialog(
@@ -122,13 +122,23 @@ class _AdminScreenState extends State<AdminScreen> {
         content: TextField(controller: amountController, keyboardType: TextInputType.number, decoration: const InputDecoration(hintText: "סכום להוספה", suffixText: "₪", border: OutlineInputBorder())),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text("ביטול")),
-          ElevatedButton(onPressed: () {
-            if (amountController.text.isNotEmpty) {
-              double val = double.parse(amountController.text);
-              FirebaseFirestore.instance.collection('users').doc(uid).update({'balance': currentBalance + val});
-              Navigator.pop(dialogContext);
-              scaffoldMessenger.showSnackBar(SnackBar(content: Text("נטענו ₪$val לארנק של $name")));
-            }
+          ElevatedButton(onPressed: () async {
+            final val = double.tryParse(amountController.text.trim());
+            if (val == null || val <= 0) return;
+            Navigator.pop(dialogContext);
+            // FieldValue.increment מונע race condition
+            await FirebaseFirestore.instance.runTransaction((tx) async {
+              final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
+              tx.update(userRef, {'balance': FieldValue.increment(val)});
+              tx.set(FirebaseFirestore.instance.collection('transactions').doc(), {
+                'userId': uid,
+                'amount': val,
+                'title': 'טעינת ארנק ע״י מנהל',
+                'timestamp': FieldValue.serverTimestamp(),
+                'type': 'admin_topup',
+              });
+            });
+            scaffoldMessenger.showSnackBar(SnackBar(content: Text("נטענו ₪$val לארנק של $name")));
           }, child: const Text("אשר והטען")),
         ],
       ),
@@ -187,9 +197,10 @@ class _AdminScreenState extends State<AdminScreen> {
               icon: const Icon(Icons.category_rounded, color: Colors.green, size: 28),
               tooltip: "אתחל קטגוריות ב-Firestore",
               onPressed: () async {
+                final messenger = ScaffoldMessenger.of(context);
                 await CategoriesSeeder.seed();
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  messenger.showSnackBar(
                     const SnackBar(backgroundColor: Colors.green, content: Text("קטגוריות נכתבו ל-Firestore בהצלחה!")),
                   );
                 }
@@ -206,7 +217,7 @@ class _AdminScreenState extends State<AdminScreen> {
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance.collection('users').snapshots(),
+          stream: FirebaseFirestore.instance.collection('users').limit(500).snapshots(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
             var allUsers = snapshot.data!.docs;
@@ -627,7 +638,7 @@ class _AdminScreenState extends State<AdminScreen> {
             ),
             trailing: IconButton(
               icon: const Icon(Icons.add_card, color: Colors.green),
-              onPressed: () => _showAddBalanceDialog(uid, data['name'], (data['balance'] ?? 0.0).toDouble()),
+              onPressed: () => _showAddBalanceDialog(uid, data['name'] ?? 'משתמש'),
             ),
           ),
         );

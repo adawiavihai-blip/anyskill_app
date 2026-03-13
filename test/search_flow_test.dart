@@ -184,7 +184,7 @@ void main() {
       await tester.enterText(find.byType(TextField), 'שם_לא_קיים');
       await tester.pump();
 
-      expect(find.text('לא נמצאו מומחים באימון כושר'), findsOneWidget);
+      expect(find.text('לא נמצאו תוצאות'), findsOneWidget);
     });
 
     testWidgets('ביטול פילטר "עד 100 ₪" מחזיר את כל המומחים', (tester) async {

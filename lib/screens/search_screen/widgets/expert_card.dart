@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import '../../../utils/price_formatter.dart';
+import '../../expert_profile_screen.dart';
 
 class ExpertCard extends StatelessWidget {
+  final String  expertId;
   final String  name;
   final String  bio;
   final double  rating;
@@ -10,6 +12,7 @@ class ExpertCard extends StatelessWidget {
 
   const ExpertCard({
     super.key,
+    required this.expertId,
     required this.name,
     required this.bio,
     required this.rating,
@@ -19,7 +22,14 @@ class ExpertCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ExpertProfileScreen(expertId: expertId, expertName: name),
+        ),
+      ),
+      child: Padding(
       padding: const EdgeInsets.only(bottom: 28), // רווח מעט גדול יותר לנשימה
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -114,6 +124,7 @@ class ExpertCard extends StatelessWidget {
           ),
         ],
       ),
+    ),
     );
   }
 }

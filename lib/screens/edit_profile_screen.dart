@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
+
+import 'package:table_calendar/table_calendar.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import '../constants.dart';
@@ -28,6 +29,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _isCustomer = false;
   bool _isProvider = false;
 
+  // תאריכים חסומים (אי-זמינות)
+  Set<DateTime> _unavailableDates = {};
+  DateTime _calendarFocusedDay = DateTime.now();
+
   @override
   void initState() {
     super.initState();
@@ -40,10 +45,26 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _isCustomer = widget.userData['isCustomer'] ?? true;
     _isProvider = widget.userData['isProvider'] ?? false;
 
+    // טען תאריכים חסומים קיימים
+    final rawDates = widget.userData['unavailableDates'] as List<dynamic>? ?? [];
+    _unavailableDates = rawDates
+        .map((d) => DateTime.tryParse(d.toString()))
+        .whereType<DateTime>()
+        .map((d) => DateTime.utc(d.year, d.month, d.day))
+        .toSet();
+
     final currentService = widget.userData['serviceType'];
     if (APP_CATEGORIES.any((cat) => cat['name'] == currentService)) {
       _selectedCategory = currentService;
     }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _aboutController.dispose();
+    _priceController.dispose();
+    super.dispose();
   }
 
   Future<void> _pickProfileImage() async {
@@ -108,7 +129,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     setState(() => _isLoading = true);
     final uid = FirebaseAuth.instance.currentUser?.uid;
-    
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
     try {
       await FirebaseFirestore.instance.collection('users').doc(uid).update({
         'name': _nameController.text.trim(),
@@ -119,13 +142,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'gallery': _galleryImages,
         'isCustomer': _isCustomer,
         'isProvider': _isProvider,
+        'unavailableDates': _unavailableDates
+            .map((d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}')
+            .toList(),
       });
       if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.green, content: Text("הפרופיל עודכן בהצלחה!")));
+        navigator.pop();
+        messenger.showSnackBar(const SnackBar(backgroundColor: Colors.green, content: Text("הפרופיל עודכן בהצלחה!")));
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("שגיאה בשמירה: $e")));
+      messenger.showSnackBar(SnackBar(content: Text("שגיאה בשמירה: $e")));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -208,6 +234,76 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   const SizedBox(height: 20),
                   const Text("מחיר לשעה (₪)", style: TextStyle(fontWeight: FontWeight.bold)),
                   TextField(controller: _priceController, keyboardType: TextInputType.number, textAlign: TextAlign.right, decoration: const InputDecoration(hintText: "כמה תרצה להרוויח?")),
+                  const SizedBox(height: 30),
+                  const Text("ימי חופש / אי-זמינות", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const SizedBox(height: 6),
+                  Text(
+                    "לחץ על תאריך כדי לסמן אותו כחסום. לחץ שוב להסרה.",
+                    style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                    textAlign: TextAlign.right,
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: TableCalendar(
+                      firstDay: DateTime.now(),
+                      lastDay: DateTime.now().add(const Duration(days: 365)),
+                      focusedDay: _calendarFocusedDay,
+                      calendarFormat: CalendarFormat.month,
+                      availableCalendarFormats: const {CalendarFormat.month: 'חודש'},
+                      startingDayOfWeek: StartingDayOfWeek.sunday,
+                      headerStyle: const HeaderStyle(
+                        formatButtonVisible: false,
+                        titleCentered: true,
+                        titleTextStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                      calendarStyle: CalendarStyle(
+                        selectedDecoration: const BoxDecoration(
+                          color: Colors.redAccent,
+                          shape: BoxShape.circle,
+                        ),
+                        todayDecoration: BoxDecoration(
+                          color: Colors.blue.withValues(alpha: 0.3),
+                          shape: BoxShape.circle,
+                        ),
+                        selectedTextStyle: const TextStyle(color: Colors.white),
+                      ),
+                      selectedDayPredicate: (day) {
+                        final normalized = DateTime.utc(day.year, day.month, day.day);
+                        return _unavailableDates.contains(normalized);
+                      },
+                      onDaySelected: (selectedDay, focusedDay) {
+                        final normalized = DateTime.utc(selectedDay.year, selectedDay.month, selectedDay.day);
+                        setState(() {
+                          if (_unavailableDates.contains(normalized)) {
+                            _unavailableDates.remove(normalized);
+                          } else {
+                            _unavailableDates.add(normalized);
+                          }
+                          _calendarFocusedDay = focusedDay;
+                        });
+                      },
+                      onPageChanged: (focusedDay) {
+                        setState(() => _calendarFocusedDay = focusedDay);
+                      },
+                    ),
+                  ),
+                  if (_unavailableDates.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: (_unavailableDates.toList()..sort()).map((d) => Chip(
+                        label: Text('${d.day}/${d.month}/${d.year}', style: const TextStyle(fontSize: 12)),
+                        backgroundColor: Colors.red[50],
+                        deleteIcon: const Icon(Icons.close, size: 16),
+                        onDeleted: () => setState(() => _unavailableDates.remove(d)),
+                      )).toList(),
+                    ),
+                  ],
                 ],
 
                 const SizedBox(height: 25),

@@ -45,7 +45,7 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _getUserLocation() async {
     try {
       Position position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
+          locationSettings: const LocationSettings(accuracy: LocationAccuracy.high));
       
       LatLng pos = LatLng(position.latitude, position.longitude);
       

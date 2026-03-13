@@ -39,6 +39,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               leading: const CircleAvatar(backgroundColor: Color(0xFF25D366), child: Icon(Icons.chat_bubble_outline, color: Colors.white, size: 20)),
               title: const Text("שלח ישירות לוואטסאפ"),
               onTap: () async {
+                final messenger = ScaffoldMessenger.of(context);
                 Navigator.pop(context);
                 final whatsappUrl = "https://wa.me/?text=${Uri.encodeComponent(shareText)}";
                 try {
@@ -48,7 +49,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     throw "Could not launch";
                   }
                 } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("לא ניתן לפתוח את וואטסאפ בדפדפן זה")));
+                  messenger.showSnackBar(const SnackBar(content: Text("לא ניתן לפתוח את וואטסאפ בדפדפן זה")));
                 }
               },
             ),
@@ -243,6 +244,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _statItem(String label, String value, IconData icon, Color color) {
-    return Expanded(child: Column(children: [Icon(icon, color: color, size: 22), const SizedBox(height: 8), Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), const SizedBox(height: 2), Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12))]));
+    return Expanded(
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: const TextStyle(color: Colors.grey, fontSize: 12),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
   }
 }

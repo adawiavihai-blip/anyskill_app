@@ -33,6 +33,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   int get _totalPages => _isProvider ? 3 : 2;
 
+  @override
+  void dispose() {
+    _pageController.dispose();
+    _priceController.dispose();
+    _bioController.dispose();
+    super.dispose();
+  }
+
   void _nextPage() {
     if (_currentPage == 0) {
       if (!_isCustomer && !_isProvider) {

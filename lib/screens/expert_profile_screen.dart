@@ -46,12 +46,27 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     final firestore = FirebaseFirestore.instance;
     final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? "";
     final String chatRoomId = _getChatRoomId(currentUserId, widget.expertId);
+    final adminSettingsRef = firestore
+        .collection('admin')
+        .doc('admin')
+        .collection('settings')
+        .doc('settings');
 
-    final double commission = totalPrice * 0.10;
-    final double expertNetEarnings = totalPrice - commission;
+    // יוגדרו בתוך הטרנזקציה ויישמרו כאן כדי להיות נגישים לאחר מכן
+    double expertNetEarnings = totalPrice * 0.90;
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
 
     try {
       await firestore.runTransaction((transaction) async {
+        // קריאת הגדרות עמלה מ-Firestore (מונע אי-התאמה בין הזמנה לשחרור)
+        final adminSnap = await transaction.get(adminSettingsRef);
+        final double feePercentage =
+            ((adminSnap.exists ? adminSnap.get('feePercentage') : null) ?? 0.10)
+                .toDouble();
+        final double commission = totalPrice * feePercentage;
+        expertNetEarnings = totalPrice - commission;
+
         final customerRef = firestore.collection('users').doc(currentUserId);
         final customerSnap = await transaction.get(customerRef);
         final double currentBalance = (customerSnap['balance'] ?? 0.0).toDouble();
@@ -99,15 +114,15 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       await _sendSystemNotification(chatRoomId, totalPrice, expertNetEarnings, currentUserId);
 
       if (mounted) {
-        Navigator.pop(context); // close summary sheet
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        navigator.pop(); // close summary sheet
+        messenger.showSnackBar(const SnackBar(
           backgroundColor: Colors.green,
           content: Text("התור שוריין והתשלום הופקד בנאמנות!"),
         ));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           SnackBar(backgroundColor: Colors.red, content: Text(e.toString())),
         );
       }
@@ -195,7 +210,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                               style: TextStyle(
                                   fontSize: 20, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 16),
-                          _buildCalendar(),
+                          _buildCalendar(_parseUnavailableDates(data)),
                           if (_selectedDay != null) ...[
                             const SizedBox(height: 16),
                             _buildTimeSlots(),
@@ -243,7 +258,16 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   }
 
   // ── Calendar ──────────────────────────────────────────────────────────────
-  Widget _buildCalendar() {
+  Set<DateTime> _parseUnavailableDates(Map<String, dynamic> data) {
+    final raw = data['unavailableDates'] as List<dynamic>? ?? [];
+    return raw
+        .map((d) => DateTime.tryParse(d.toString()))
+        .whereType<DateTime>()
+        .map((d) => DateTime.utc(d.year, d.month, d.day))
+        .toSet();
+  }
+
+  Widget _buildCalendar(Set<DateTime> unavailableDates) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -258,6 +282,10 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         headerStyle: const HeaderStyle(
             formatButtonVisible: false, titleCentered: true),
         selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+        enabledDayPredicate: (day) {
+          final normalized = DateTime.utc(day.year, day.month, day.day);
+          return !unavailableDates.contains(normalized);
+        },
         onDaySelected: (selectedDay, focusedDay) {
           setState(() {
             _selectedDay = selectedDay;
@@ -265,6 +293,22 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             _selectedTimeSlot = null;
           });
         },
+        calendarBuilders: CalendarBuilders(
+          disabledBuilder: (context, day, focusedDay) {
+            final normalized = DateTime.utc(day.year, day.month, day.day);
+            if (!unavailableDates.contains(normalized)) return null;
+            return Center(
+              child: Container(
+                width: 36, height: 36,
+                decoration: BoxDecoration(color: Colors.red.shade50, shape: BoxShape.circle),
+                child: Center(
+                  child: Text('${day.day}',
+                    style: TextStyle(color: Colors.red.shade300, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            );
+          },
+        ),
         calendarStyle: const CalendarStyle(
           selectedDecoration:
               BoxDecoration(color: Colors.black, shape: BoxShape.circle),

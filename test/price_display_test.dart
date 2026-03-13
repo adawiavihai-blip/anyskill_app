@@ -67,6 +67,7 @@ void main() {
           body: SizedBox(
             width: 400,
             child: ExpertCard(
+              expertId: 'test_id',
               name: 'מבחן מומחה',
               bio: 'תיאור לצורך בדיקה',
               rating: 4.5,

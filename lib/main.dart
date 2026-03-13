@@ -74,37 +74,46 @@ class AuthWrapper extends StatefulWidget {
   State<AuthWrapper> createState() => _AuthWrapperState();
 }
 
-class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
-  
+class _AuthWrapperState extends State<AuthWrapper> {
+  DateTime? _lastVersionCheck;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this); 
     _handleWebUpdates();
     _setupPushNotifications();
     _checkVersionUpdate();
   }
 
-  @override
-  void dispose() {
-    _setOnlineStatus(false);
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  // בדיקת גרסה מול מסמך admin/settings ב-Firestore
+  // בדיקת גרסה — רק כשהמשתמש מחובר, מוגבלת פעם אחת לשעה
   void _checkVersionUpdate() async {
+    // דילוג כשאין משתמש מחובר — admin/settings דורש אימות
+    if (FirebaseAuth.instance.currentUser == null) return;
+
+    final now = DateTime.now();
+    if (_lastVersionCheck != null &&
+        now.difference(_lastVersionCheck!).inMinutes < 60) {
+      return;
+    }
+    _lastVersionCheck = now;
+
     try {
-      DocumentSnapshot settings = await FirebaseFirestore.instance
+      final settings = await FirebaseFirestore.instance
           .collection('admin')
           .doc('settings')
           .get();
 
       if (settings.exists) {
-        String latestVersion = settings.get('latestVersion') ?? currentAppVersion;
+        final latestVersion =
+            (settings.data()?['latestVersion'] as String?) ?? currentAppVersion;
         if (latestVersion != currentAppVersion && mounted) {
           _showUpdateBanner();
         }
+      }
+    } on FirebaseException catch (e) {
+      // permission-denied אינה שגיאה אמיתית — הכלל עשוי לדרוש הרשאה גבוהה יותר
+      if (e.code != 'permission-denied') {
+        debugPrint("Version check failed: ${e.code} — ${e.message}");
       }
     } catch (e) {
       debugPrint("Version check failed: $e");
@@ -130,30 +139,6 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         ),
       ),
     );
-  }
-
-  void _setOnlineStatus(bool isOnline) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      try {
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
-          'isOnline': isOnline,
-          'lastSeen': FieldValue.serverTimestamp(),
-        });
-      } catch (e) {
-        debugPrint("Status Update Error: $e");
-      }
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _setOnlineStatus(true);
-      _checkVersionUpdate(); 
-    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
-      _setOnlineStatus(false);
-    }
   }
 
   void _handleWebUpdates() {

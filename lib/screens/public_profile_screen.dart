@@ -3,7 +3,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'dart:convert';
 import 'chat_screen.dart';
 import 'my_bookings_screen.dart';
 
@@ -77,9 +76,22 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     final firestore = FirebaseFirestore.instance;
     final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? "";
     List<String> ids = [currentUserId, widget.userId]; ids.sort(); String chatRoomId = ids.join("_");
+    final adminSettingsRef = firestore
+        .collection('admin')
+        .doc('admin')
+        .collection('settings')
+        .doc('settings');
 
     try {
       await firestore.runTransaction((transaction) async {
+        // קריאת עמלה דינמית מ-Firestore
+        final adminSnap = await transaction.get(adminSettingsRef);
+        final double feePercentage =
+            ((adminSnap.exists ? adminSnap.get('feePercentage') : null) ?? 0.10)
+                .toDouble();
+        final double commission = amount * feePercentage;
+        final double netToExpert = amount - commission;
+
         DocumentReference customerRef = firestore.collection('users').doc(currentUserId);
         DocumentSnapshot customerSnap = await transaction.get(customerRef);
         double balance = (customerSnap['balance'] ?? 0.0).toDouble();
@@ -89,18 +101,22 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         DocumentReference jobRef = firestore.collection('jobs').doc();
         transaction.set(jobRef, {
           'jobId': jobRef.id,
+          'chatRoomId': chatRoomId,
           'customerId': currentUserId,
           'customerName': customerSnap['name'] ?? "",
           'expertId': widget.userId,
           'expertName': expertName,
           'totalAmount': amount,
+          'commissionAmount': commission,
+          'netAmountForExpert': netToExpert,
           'appointmentDate': _selectedDay,
           'appointmentTime': _selectedTimeSlot,
           'status': 'paid_escrow',
           'createdAt': FieldValue.serverTimestamp(),
         });
 
-        transaction.update(customerRef, {'balance': balance - amount});
+        // FieldValue.increment מונע race condition
+        transaction.update(customerRef, {'balance': FieldValue.increment(-amount)});
 
         transaction.set(firestore.collection('transactions').doc(), {
           'userId': currentUserId,
@@ -152,7 +168,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                       _buildMainInfo(data),
                       const Padding(padding: EdgeInsets.symmetric(horizontal: 25, vertical: 10), child: Divider()),
                       const Padding(padding: EdgeInsets.symmetric(horizontal: 25, vertical: 10), child: Text("בחר מועד לאימון", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
-                      _buildCalendar(),
+                      _buildCalendar(_parseUnavailableDates(data)),
                       if (_selectedDay != null) _buildTimeSlots(),
                       const Padding(padding: EdgeInsets.symmetric(horizontal: 25, vertical: 25), child: Divider(thickness: 0.8)),
                       _buildSection("אודות המאמן", data['bio'] ?? "אין תיאור זמין"),
@@ -170,7 +186,16 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     );
   }
 
-  Widget _buildCalendar() {
+  Set<DateTime> _parseUnavailableDates(Map<String, dynamic> data) {
+    final raw = data['unavailableDates'] as List<dynamic>? ?? [];
+    return raw
+        .map((d) => DateTime.tryParse(d.toString()))
+        .whereType<DateTime>()
+        .map((d) => DateTime.utc(d.year, d.month, d.day))
+        .toSet();
+  }
+
+  Widget _buildCalendar(Set<DateTime> unavailableDates) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.grey[200]!)),
@@ -181,6 +206,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         focusedDay: _focusedDay,
         headerStyle: const HeaderStyle(formatButtonVisible: false, titleCentered: true),
         selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+        enabledDayPredicate: (day) {
+          final normalized = DateTime.utc(day.year, day.month, day.day);
+          return !unavailableDates.contains(normalized);
+        },
         onDaySelected: (selectedDay, focusedDay) {
           setState(() {
             _selectedDay = selectedDay;
@@ -188,6 +217,22 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
             _selectedTimeSlot = null;
           });
         },
+        calendarBuilders: CalendarBuilders(
+          disabledBuilder: (context, day, focusedDay) {
+            final normalized = DateTime.utc(day.year, day.month, day.day);
+            if (!unavailableDates.contains(normalized)) return null;
+            return Center(
+              child: Container(
+                width: 36, height: 36,
+                decoration: BoxDecoration(color: Colors.red.shade50, shape: BoxShape.circle),
+                child: Center(
+                  child: Text('${day.day}',
+                    style: TextStyle(color: Colors.red.shade300, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            );
+          },
+        ),
         calendarStyle: const CalendarStyle(
           selectedDecoration: BoxDecoration(color: Colors.black, shape: BoxShape.circle),
           todayDecoration: BoxDecoration(color: Colors.pinkAccent, shape: BoxShape.circle),
@@ -236,7 +281,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: isReady ? Colors.black : Colors.grey[300], minimumSize: const Size(0, 60), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
                 onPressed: isReady ? () => _processEscrowOrder(context, data) : null,
-                child: Text(isReady ? "הזמן ל-${_selectedTimeSlot}" : "בחר תאריך וזמן", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                child: Text(isReady ? "הזמן ל-$_selectedTimeSlot" : "בחר תאריך וזמן", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
               ),
             ),
           ],

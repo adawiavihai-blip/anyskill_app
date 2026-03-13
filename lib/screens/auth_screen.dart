@@ -14,7 +14,17 @@ class _AuthScreenState extends State<AuthScreen> {
   final _cityController = TextEditingController();
   bool _isLoginView = true;
 
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _nameController.dispose();
+    _cityController.dispose();
+    super.dispose();
+  }
+
   Future<void> _handleAuth() async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
       if (_isLoginView) {
         await FirebaseAuth.instance.signInWithEmailAndPassword(
@@ -40,7 +50,7 @@ class _AuthScreenState extends State<AuthScreen> {
         _showVerifyInfo();
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("שגיאה: ${e.toString()}")));
+      messenger.showSnackBar(SnackBar(content: Text("שגיאה: ${e.toString()}")));
     }
   }
 

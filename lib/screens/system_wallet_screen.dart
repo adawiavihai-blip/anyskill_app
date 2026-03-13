@@ -12,6 +12,12 @@ class SystemWalletScreen extends StatefulWidget {
 class _SystemWalletScreenState extends State<SystemWalletScreen> {
   final TextEditingController _feeController = TextEditingController();
 
+  @override
+  void dispose() {
+    _feeController.dispose();
+    super.dispose();
+  }
+
   // עדכון עמלה לנתיב המדויק ב-Database
   void _updateFee() {
     if (_feeController.text.isEmpty) {

@@ -70,6 +70,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
               stream: FirebaseFirestore.instance
                   .collection('chats')
                   .where('users', arrayContains: currentUserId)
+                  .limit(50)
                   .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());

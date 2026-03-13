@@ -5,7 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 // יבוא המודולים
 import 'chat_modules/location_module.dart';
 import 'chat_modules/image_module.dart';
-import 'chat_modules/audio_module.dart';
+
 import 'chat_modules/payment_module.dart';
 import 'chat_modules/chat_ui_helper.dart';
 import 'chat_modules/chat_logic_module.dart';
@@ -42,6 +42,12 @@ class _ChatScreenState extends State<ChatScreen> {
     chatRoomId = ids.join("_");
     
     _handleMarkAsRead();
+  }
+
+  @override
+  void dispose() {
+    _messageController.dispose();
+    super.dispose();
   }
 
   // --- 🔥 QA: שליפת השם המלא המדויק מה-Database (FirstName + LastName) ---
@@ -190,6 +196,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       backgroundColor: Colors.green,
                       padding: const EdgeInsets.symmetric(horizontal: 10)),
                   onPressed: () async {
+                    final navigator = Navigator.of(context);
+                    final messenger = ScaffoldMessenger.of(context);
                     showDialog(
                       context: context,
                       barrierDismissible: false,
@@ -209,10 +217,10 @@ class _ChatScreenState extends State<ChatScreen> {
                           .toDouble(),
                     );
 
-                    if (mounted) Navigator.pop(context);
+                    if (mounted) navigator.pop();
 
                     if (success && mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
+                      messenger.showSnackBar(
                         const SnackBar(
                             content: Text("התשלום שוחרר בהצלחה!"),
                             backgroundColor: Colors.green),

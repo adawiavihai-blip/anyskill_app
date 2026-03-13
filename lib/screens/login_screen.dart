@@ -15,6 +15,13 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
   bool _obscureText = true;
 
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _passCtrl.dispose();
+    super.dispose();
+  }
+
   // תרגום שגיאות Firebase לעברית לשיפור ה-QA
   String _translateError(String code) {
     switch (code) {

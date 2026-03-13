@@ -360,10 +360,14 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         ? FirebaseFirestore.instance
             .collection('jobs')
             .where('expertId', isEqualTo: currentUserId)
+            .orderBy('createdAt', descending: true)
+            .limit(50)
             .snapshots()
         : FirebaseFirestore.instance
             .collection('jobs')
             .where('customerId', isEqualTo: currentUserId)
+            .orderBy('createdAt', descending: true)
+            .limit(50)
             .snapshots();
 
     return StreamBuilder<QuerySnapshot>(

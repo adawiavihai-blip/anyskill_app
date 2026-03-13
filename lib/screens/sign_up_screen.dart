@@ -18,6 +18,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
   bool _obscureText = true;
   bool _termsAccepted = false;
 
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _passCtrl.dispose();
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
   static bool _isValidEmail(String email) {
     return RegExp(r'^[\w\.\+\-]+@[\w\-]+\.[a-z]{2,}$', caseSensitive: false)
         .hasMatch(email.trim());
@@ -34,6 +42,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
     }
 
     setState(() => _isLoading = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
 
     try {
       // 1. יצירת המשתמש ב-Authentication
@@ -67,8 +77,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
       });
 
       if (mounted) {
-        Navigator.pop(context); // חזרה למסך הלוגין
-        ScaffoldMessenger.of(context).showSnackBar(
+        navigator.pop();
+        messenger.showSnackBar(
           const SnackBar(backgroundColor: Colors.green, content: Text("החשבון נוצר בהצלחה! ברוכים הבאים.")),
         );
       }
@@ -76,8 +86,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
       String errorMsg = "שגיאה ברישום";
       if (e.code == 'email-already-in-use') errorMsg = "האימייל הזה כבר תפוס";
       if (e.code == 'invalid-email') errorMsg = "כתובת האימייל אינה תקינה";
-      
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMsg), backgroundColor: Colors.redAccent));
+
+      messenger.showSnackBar(SnackBar(content: Text(errorMsg), backgroundColor: Colors.redAccent));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

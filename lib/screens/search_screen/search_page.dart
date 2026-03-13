@@ -46,20 +46,26 @@ class SearchPage extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // Title (RTL — appears on the right)
-                  const Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        "גלה מומחים",
-                        style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        "בחר תחום ומצא את המומחה המושלם",
-                        style: TextStyle(fontSize: 14, color: Colors.grey),
-                      ),
-                    ],
+                  // Title (RTL — appears on the right); Flexible prevents overflow on narrow screens
+                  const Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          "גלה מומחים",
+                          style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          "בחר תחום ומצא את המומחה המושלם",
+                          style: TextStyle(fontSize: 14, color: Colors.grey),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -90,14 +96,20 @@ class SearchPage extends StatelessWidget {
 
                   final docs = snapshot.data!.docs;
 
-                  return GridView.builder(
+                  return LayoutBuilder(
+                    builder: (context, constraints) {
+                      final w = constraints.maxWidth;
+                      final cols = w >= 900 ? 4 : w >= 600 ? 3 : 2;
+                      // קלפים מרובעים יותר ככל שיש יותר עמודות
+                      final ratio = w >= 900 ? 1.0 : w >= 600 ? 0.90 : 0.85;
+                      return GridView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
+                        SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: cols,
                       crossAxisSpacing: 14,
                       mainAxisSpacing: 14,
-                      childAspectRatio: 0.85,
+                      childAspectRatio: ratio,
                     ),
                     itemCount: docs.length,
                     itemBuilder: (context, index) {
@@ -122,6 +134,8 @@ class SearchPage extends StatelessWidget {
                           ),
                         ),
                       );
+                    },
+                  );
                     },
                   );
                 },

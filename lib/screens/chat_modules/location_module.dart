@@ -28,8 +28,7 @@ class LocationModule {
 
       // 3. הבאת המיקום המדויק
       Position pos = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high
-      );
+          locationSettings: const LocationSettings(accuracy: LocationAccuracy.high));
 
       // 4. החזרת קישור תקין (QA: שימוש ב-String interpolation בטוח)
       // הוספתי את הסימן $ בצורה מפורשת לטרמינל
