@@ -22,6 +22,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
   String? _selectedTimeSlot;
+  int _refreshTrigger = 0;
 
   final List<String> _timeSlots = [
     "08:00", "09:00", "10:00", "11:00",
@@ -159,6 +160,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: FutureBuilder<DocumentSnapshot>(
+        key: ValueKey(_refreshTrigger),
         future: FirebaseFirestore.instance
             .collection('users')
             .doc(widget.expertId)
@@ -171,7 +173,10 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
 
           return Stack(
             children: [
-              CustomScrollView(
+              RefreshIndicator(
+                onRefresh: () async => setState(() => _refreshTrigger++),
+                child: CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 slivers: [
                   SliverAppBar(
                     expandedHeight: 250,
@@ -225,6 +230,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                     ),
                   ),
                 ],
+              ),
               ),
               _buildBottomBar(context, data),
             ],

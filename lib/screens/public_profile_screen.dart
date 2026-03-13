@@ -19,6 +19,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   DateTime? _selectedDay;
   String? _selectedTimeSlot;
   bool _isProcessing = false;
+  int _refreshTrigger = 0;
 
   @override
   void initState() {
@@ -150,6 +151,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<DocumentSnapshot>(
+      key: ValueKey(_refreshTrigger),
       future: FirebaseFirestore.instance.collection('users').doc(widget.userId).get(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -159,7 +161,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           backgroundColor: Colors.white,
           body: Stack(
             children: [
-              CustomScrollView(
+              RefreshIndicator(
+                onRefresh: () async => setState(() => _refreshTrigger++),
+                child: CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 slivers: [
                   _buildSliverAppBar(context, data), // תיקון: הוספת context
                   SliverList(
@@ -177,6 +182,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                     ]),
                   ),
                 ],
+              ),
               ),
               _buildBottomAction(context, data),
             ],
