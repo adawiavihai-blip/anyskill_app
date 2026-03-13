@@ -60,7 +60,9 @@ class AnySkillApp extends StatelessWidget {
         useMaterial3: true, 
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF007AFF)),
         scaffoldBackgroundColor: Colors.white,
-        textTheme: GoogleFonts.heeboTextTheme(Theme.of(context).textTheme),
+        textTheme: GoogleFonts.heeboTextTheme(Theme.of(context).textTheme).apply(
+          fontFamilyFallback: ['NotoSansHebrew'],
+        ),
       ),
       home: const AuthWrapper(),
     );

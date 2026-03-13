@@ -48,3 +48,12 @@ flutter:
 
   assets:
     - assets/images/logo.png
+    - assets/fonts/
+
+  fonts:
+    - family: NotoSansHebrew
+      fonts:
+        - asset: assets/fonts/NotoSansHebrew-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/NotoSansHebrew-Bold.ttf
+          weight: 700
