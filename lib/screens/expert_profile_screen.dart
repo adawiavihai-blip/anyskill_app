@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'chat_screen.dart';
+import '../widgets/level_badge.dart';
 
 class ExpertProfileScreen extends StatefulWidget {
   final String expertId;
@@ -239,25 +240,112 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   }
 
   Widget _buildInfoRow(Map<String, dynamic> data) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    final isVerified   = data['isVerified'] ?? false;
+    final isOnline     = data['isOnline']   ?? false;
+    final responseTime = (data['responseTimeMinutes'] ?? 0) as num;
+    final orderCount   = (data['orderCount']           ?? 0) as num;
+    final xp           = (data['xp'] as num? ?? 0).toInt();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Row(children: [
-              const Icon(Icons.star, color: Colors.amber, size: 20),
-              Text(" ${data['rating'] ?? '5.0'}",
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-            ]),
-            Text(data['serviceType'] ?? "נותן שירות",
-                style: const TextStyle(color: Colors.grey)),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.star, color: Colors.amber, size: 20),
+                  Text(" ${data['rating'] ?? '5.0'}",
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text(
+                    '  (${data['reviewsCount'] ?? 0})',
+                    style: const TextStyle(color: Colors.grey, fontSize: 13),
+                  ),
+                ]),
+                Text(data['serviceType'] ?? "נותן שירות",
+                    style: const TextStyle(color: Colors.grey)),
+              ],
+            ),
+            Text("₪${data['pricePerHour'] ?? '250'} / שעה",
+                style: const TextStyle(
+                    fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green)),
           ],
         ),
-        Text("₪${data['pricePerHour'] ?? '250'} / שעה",
-            style: const TextStyle(
-                fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green)),
+        // ── Trust signals row ──────────────────────────────────────────────
+        if (isVerified || isOnline || responseTime > 0 || orderCount > 0 || xp > 0) ...[
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              if (xp > 0) LevelBadge(xp: xp, size: 22),
+              if (isVerified)
+                _trustChip(
+                  icon: Icons.verified,
+                  iconColor: const Color(0xFF1877F2),
+                  label: 'מאומת',
+                  bgColor: const Color(0xFFEBF3FD),
+                  textColor: const Color(0xFF1877F2),
+                ),
+              if (isOnline)
+                _trustChip(
+                  icon: Icons.circle,
+                  iconColor: const Color(0xFF22C55E),
+                  label: 'זמין כעת',
+                  bgColor: const Color(0xFFE8F8EE),
+                  textColor: const Color(0xFF16A34A),
+                ),
+              if (responseTime > 0)
+                _trustChip(
+                  icon: Icons.bolt_rounded,
+                  iconColor: const Color(0xFF6366F1),
+                  label: "מגיב תוך ~$responseTimeד'",
+                  bgColor: const Color(0xFFF0F0FF),
+                  textColor: const Color(0xFF6366F1),
+                ),
+              if (orderCount > 0)
+                _trustChip(
+                  icon: Icons.local_fire_department_rounded,
+                  iconColor: const Color(0xFFD4520A),
+                  label: 'הוזמן $orderCount פעמים',
+                  bgColor: const Color(0xFFFFF3ED),
+                  textColor: const Color(0xFFD4520A),
+                ),
+            ],
+          ),
+        ],
       ],
+    );
+  }
+
+  Widget _trustChip({
+    required IconData icon,
+    required Color iconColor,
+    required String label,
+    required Color bgColor,
+    required Color textColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: iconColor),
+          const SizedBox(width: 4),
+          Text(label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: textColor,
+              )),
+        ],
+      ),
     );
   }
 

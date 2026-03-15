@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
+import 'package:web/web.dart' as web;
+import 'dart:js_interop';
 import '../services/categories_seeder.dart';
 import '../services/category_service.dart';
 import 'chat_modules/payment_module.dart';
@@ -15,6 +17,113 @@ class AdminScreen extends StatefulWidget {
 
 class _AdminScreenState extends State<AdminScreen> {
   String _searchQuery = "";
+  double _feePct        = 10.0;
+  double _urgencyFeePct = 5.0;
+  bool   _settingsLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAdminSettings();
+  }
+
+  Future<void> _loadAdminSettings() async {
+    final doc = await FirebaseFirestore.instance
+        .collection('admin').doc('admin')
+        .collection('settings').doc('settings').get();
+    if (!mounted) return;
+    final d = doc.data() as Map<String, dynamic>? ?? {};
+    setState(() {
+      _feePct        = ((d['feePercentage']       as num?) ?? 10).toDouble();
+      _urgencyFeePct = ((d['urgencyFeePercentage'] as num?) ?? 5).toDouble();
+      _settingsLoaded = true;
+    });
+  }
+
+  // ── CSV Export ────────────────────────────────────────────────────────────
+
+  Future<void> _exportTransactionsCsv() async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+        const SnackBar(content: Text("מכין קובץ CSV...")));
+
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('transactions')
+          .orderBy('timestamp', descending: true)
+          .get();
+
+      final buf = StringBuffer();
+      // UTF-8 BOM for Excel compatibility
+      buf.write('\uFEFF');
+      buf.writeln('מזהה,משתמש,כותרת,סכום,סוג,תאריך');
+
+      for (final doc in snap.docs) {
+        final d  = doc.data();
+        final ts = (d['timestamp'] as Timestamp?)?.toDate();
+        final dateStr = ts != null
+            ? DateFormat('dd/MM/yyyy HH:mm').format(ts)
+            : '';
+        final amount = (d['amount'] as num? ?? 0).toStringAsFixed(2);
+        // Escape any commas or quotes inside fields
+        String _esc(dynamic v) {
+          final s = (v ?? '').toString().replaceAll('"', '""');
+          return '"$s"';
+        }
+        buf.writeln([
+          _esc(doc.id),
+          _esc(d['userId']),
+          _esc(d['title']),
+          _esc(amount),
+          _esc(d['type']),
+          _esc(dateStr),
+        ].join(','));
+      }
+
+      final csvStr  = buf.toString();
+      final filename =
+          'anyskill_transactions_${DateFormat('yyyyMMdd').format(DateTime.now())}.csv';
+
+      // Trigger browser download using the web package
+      final blob = web.Blob(
+        [csvStr.toJS].toJS,
+        web.BlobPropertyBag(type: 'text/csv;charset=utf-8;'),
+      );
+      final url = web.URL.createObjectURL(blob);
+      final anchor =
+          web.document.createElement('a') as web.HTMLAnchorElement;
+      anchor.href      = url;
+      anchor.download  = filename;
+      anchor.click();
+      web.URL.revokeObjectURL(url);
+
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          backgroundColor: Colors.green,
+          content: Text("${snap.size} רשומות יוצאו ל-$filename"),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+            backgroundColor: Colors.red, content: Text("שגיאה: $e")));
+      }
+    }
+  }
+
+  Future<void> _saveAdminSettings() async {
+    await FirebaseFirestore.instance
+        .collection('admin').doc('admin')
+        .collection('settings').doc('settings')
+        .set({
+          'feePercentage':       _feePct,
+          'urgencyFeePercentage': _urgencyFeePct,
+        }, SetOptions(merge: true));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(backgroundColor: Colors.green, content: Text("ההגדרות נשמרו ✓")));
+    }
+  }
 
   String _calculateSeniority(DateTime createdAt) {
     final now = DateTime.now();
@@ -30,8 +139,9 @@ class _AdminScreenState extends State<AdminScreen> {
 
   // תפריט פעולות משודרג - הכל במקום אחד
   void _showUserActions(String uid, Map<String, dynamic> data) {
-    bool isBanned = data['isBanned'] ?? false;
-    bool isVerified = data['isVerified'] ?? false;
+    bool isBanned    = data['isBanned']    ?? false;
+    bool isVerified  = data['isVerified']  ?? false;
+    bool isPromoted  = data['isPromoted']  ?? false;
     String name = data['name'] ?? "משתמש";
     String currentNote = data['adminNote'] ?? "";
 
@@ -55,6 +165,20 @@ class _AdminScreenState extends State<AdminScreen> {
                 title: Text(isVerified ? "בטל אימות (הסר וי כחול)" : "אמת מומחה (הענק וי כחול)"),
                 onTap: () {
                   FirebaseFirestore.instance.collection('users').doc(uid).update({'isVerified': !isVerified});
+                  Navigator.pop(context);
+                },
+              ),
+
+              // ספק מומלץ (זוהר זהוב בחיפוש)
+              ListTile(
+                leading: Icon(isPromoted ? Icons.star_rounded : Icons.star_outline_rounded,
+                    color: isPromoted ? Colors.amber : Colors.grey),
+                title: Text(isPromoted ? "בטל קידום (הסר זוהר זהוב)" : "קדם ספק (הוסף זוהר זהוב + עדיפות)"),
+                subtitle: const Text("ספקים מקודמים מופיעים ראשונים בחיפוש",
+                    style: TextStyle(fontSize: 11)),
+                onTap: () {
+                  FirebaseFirestore.instance.collection('users').doc(uid)
+                      .update({'isPromoted': !isPromoted});
                   Navigator.pop(context);
                 },
               ),
@@ -198,7 +322,7 @@ class _AdminScreenState extends State<AdminScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 7,
+      length: 9,
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F7FA),
         appBar: AppBar(
@@ -215,7 +339,7 @@ class _AdminScreenState extends State<AdminScreen> {
             isScrollable: true,
             labelColor: Colors.blueAccent,
             indicatorColor: Colors.blueAccent,
-            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸"), Tab(text: "קטגוריות 🏷️")],
+            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸"), Tab(text: "קטגוריות 🏷️"), Tab(text: "באנרים 🎨"), Tab(text: "מוניטיזציה 💰")],
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
@@ -263,6 +387,8 @@ class _AdminScreenState extends State<AdminScreen> {
                       _buildDisputesList(),
                       _buildWithdrawalsList(),
                       _buildCategoriesTab(),
+                      _buildBannersTab(),
+                      _buildMonetizationTab(allUsers),
                     ],
                   ),
                 ),
@@ -659,6 +785,7 @@ class _AdminScreenState extends State<AdminScreen> {
           itemBuilder: (context, index) {
             final w = docs[index].data() as Map<String, dynamic>;
             final wId = docs[index].id;
+            final uid = w['userId'] as String? ?? '';
             final amount = (w['amount'] ?? 0.0).toDouble();
             DateTime? requestedAt = (w['requestedAt'] as Timestamp?)?.toDate();
             final formattedDate = requestedAt != null
@@ -677,6 +804,7 @@ class _AdminScreenState extends State<AdminScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // ── Header row: amount + date ──────────────────────
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -696,14 +824,43 @@ class _AdminScreenState extends State<AdminScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Text("בנק: ${w['bankName'] ?? '—'}",
-                        style: const TextStyle(fontSize: 13)),
-                    Text("מספר חשבון: ${w['accountNumber'] ?? '—'}",
-                        style: const TextStyle(fontSize: 13)),
-                    Text("מזהה משתמש: ${w['userId'] ?? '—'}",
-                        style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    const SizedBox(height: 10),
+
+                    // ── User name (live lookup) ─────────────────────────
+                    FutureBuilder<DocumentSnapshot>(
+                      future: uid.isNotEmpty
+                          ? FirebaseFirestore.instance.collection('users').doc(uid).get()
+                          : Future.value(null),
+                      builder: (context, userSnap) {
+                        String userName = uid.isEmpty ? '—' : 'טוען...';
+                        if (userSnap.connectionState == ConnectionState.done) {
+                          if (userSnap.hasData && userSnap.data != null && userSnap.data!.exists) {
+                            final uData = userSnap.data!.data() as Map<String, dynamic>? ?? {};
+                            userName = uData['name'] as String? ?? uid;
+                          } else {
+                            userName = uid;
+                          }
+                        }
+                        return Row(
+                          children: [
+                            const Icon(Icons.person_outline, size: 15, color: Colors.blueGrey),
+                            const SizedBox(width: 5),
+                            Text(userName,
+                                style: const TextStyle(
+                                    fontSize: 14, fontWeight: FontWeight.w600)),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 6),
+
+                    // ── Bank details ────────────────────────────────────
+                    _wDetailRow(Icons.account_balance_outlined, "בנק", w['bankName']),
+                    _wDetailRow(Icons.tag,                       "חשבון", w['accountNumber']),
+                    _wDetailRow(Icons.fork_right,                "סניף", w['branchNumber']),
                     const SizedBox(height: 14),
+
+                    // ── Action buttons ──────────────────────────────────
                     Row(
                       children: [
                         Expanded(
@@ -717,14 +874,16 @@ class _AdminScreenState extends State<AdminScreen> {
                             label: const Text("דחה",
                                 style: TextStyle(color: Colors.red, fontSize: 13)),
                             onPressed: () async {
-                              // Reject: refund balance back to user
-                              final uid = w['userId'] ?? '';
                               await FirebaseFirestore.instance.runTransaction((tx) async {
-                                tx.update(FirebaseFirestore.instance.collection('withdrawals').doc(wId),
-                                    {'status': 'rejected', 'resolvedAt': FieldValue.serverTimestamp()});
+                                tx.update(
+                                  FirebaseFirestore.instance.collection('withdrawals').doc(wId),
+                                  {'status': 'rejected', 'resolvedAt': FieldValue.serverTimestamp()},
+                                );
                                 if (uid.isNotEmpty) {
-                                  tx.update(FirebaseFirestore.instance.collection('users').doc(uid),
-                                      {'balance': FieldValue.increment(amount)});
+                                  tx.update(
+                                    FirebaseFirestore.instance.collection('users').doc(uid),
+                                    {'balance': FieldValue.increment(amount)},
+                                  );
                                   tx.set(FirebaseFirestore.instance.collection('transactions').doc(), {
                                     'userId': uid,
                                     'amount': amount,
@@ -750,21 +909,21 @@ class _AdminScreenState extends State<AdminScreen> {
                                   borderRadius: BorderRadius.circular(10)),
                             ),
                             icon: const Icon(Icons.check, color: Colors.white, size: 18),
-                            label: const Text("אשר העברה",
+                            label: const Text("בוצע — סמן כהושלם",
                                 style: TextStyle(color: Colors.white, fontSize: 13)),
                             onPressed: () async {
                               await FirebaseFirestore.instance
                                   .collection('withdrawals')
                                   .doc(wId)
                                   .update({
-                                'status': 'approved',
-                                'resolvedAt': FieldValue.serverTimestamp(),
+                                'status': 'completed',
+                                'completedAt': FieldValue.serverTimestamp(),
                               });
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(
                                     backgroundColor: Colors.green,
-                                    content: Text("הועברה אושרה — יש לבצע העברה ידנית"),
+                                    content: Text("ההעברה סומנה כהושלמה ✓"),
                                   ));
                               }
                             },
@@ -779,6 +938,22 @@ class _AdminScreenState extends State<AdminScreen> {
           },
         );
       },
+    );
+  }
+
+  // ── Small helper for a labelled detail row in the withdrawal card ──────────
+  Widget _wDetailRow(IconData icon, String label, dynamic value) {
+    final str = (value?.toString() ?? '').isNotEmpty ? value.toString() : '—';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: Colors.blueGrey),
+          const SizedBox(width: 5),
+          Text("$label: ", style: const TextStyle(fontSize: 12, color: Colors.blueGrey)),
+          Text(str, style: const TextStyle(fontSize: 13)),
+        ],
+      ),
     );
   }
 
@@ -955,8 +1130,9 @@ class _AdminScreenState extends State<AdminScreen> {
       itemBuilder: (context, index) {
         var data = filtered[index].data() as Map<String, dynamic>;
         String uid = filtered[index].id;
-        bool isVerified = data['isVerified'] ?? false;
-        bool isOnline = data['isOnline'] ?? false;
+        bool isVerified  = data['isVerified']  ?? false;
+        bool isPromoted  = data['isPromoted']  ?? false;
+        bool isOnline    = data['isOnline']    ?? false;
         DateTime joinDate = (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
 
         return Card(
@@ -988,13 +1164,753 @@ class _AdminScreenState extends State<AdminScreen> {
                 Text("יתרה: ₪${(data['balance'] ?? 0.0).toStringAsFixed(2)} | וותק: ${_calculateSeniority(joinDate)}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
               ],
             ),
-            trailing: IconButton(
-              icon: const Icon(Icons.add_card, color: Colors.green),
-              onPressed: () => _showAddBalanceDialog(uid, data['name'] ?? 'משתמש'),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ── Verification badge quick-toggle ──────────────────
+                GestureDetector(
+                  onTap: () {
+                    FirebaseFirestore.instance
+                        .collection('users')
+                        .doc(uid)
+                        .update({'isVerified': !isVerified});
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text(isVerified
+                          ? "אימות הוסר מ-${data['name'] ?? ''}"
+                          : "${data['name'] ?? ''} אומת ✓"),
+                      backgroundColor:
+                          isVerified ? Colors.orange : Colors.blue,
+                      duration: const Duration(seconds: 2),
+                    ));
+                  },
+                  child: Tooltip(
+                    message: isVerified ? "בטל אימות" : "אמת מומחה",
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: isVerified
+                            ? Colors.blue.shade50
+                            : Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: isVerified
+                                ? Colors.blue.shade300
+                                : Colors.grey.shade300),
+                      ),
+                      child: Icon(
+                        isVerified
+                            ? Icons.verified
+                            : Icons.verified_outlined,
+                        color: isVerified ? Colors.blue : Colors.grey,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ),
+                // ── Promote toggle ────────────────────────────────────
+                GestureDetector(
+                  onTap: () {
+                    FirebaseFirestore.instance.collection('users').doc(uid)
+                        .update({'isPromoted': !isPromoted});
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text(isPromoted
+                          ? "קידום הוסר מ-${data['name'] ?? ''}"
+                          : "${data['name'] ?? ''} קודם ⭐"),
+                      backgroundColor: isPromoted ? Colors.grey : Colors.amber[700],
+                      duration: const Duration(seconds: 2),
+                    ));
+                  },
+                  child: Tooltip(
+                    message: isPromoted ? "בטל קידום" : "קדם ספק",
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: isPromoted ? Colors.amber.shade50 : Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: isPromoted ? Colors.amber.shade400 : Colors.grey.shade300),
+                      ),
+                      child: Icon(
+                        isPromoted ? Icons.star_rounded : Icons.star_outline_rounded,
+                        color: isPromoted ? Colors.amber[700] : Colors.grey,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ),
+                // ── Wallet top-up ─────────────────────────────────────
+                IconButton(
+                  icon: const Icon(Icons.add_card, color: Colors.green),
+                  onPressed: () =>
+                      _showAddBalanceDialog(uid, data['name'] ?? 'משתמש'),
+                ),
+              ],
             ),
           ),
         );
       },
+    );
+  }
+
+  // ── Banners Management ────────────────────────────────────────────────────
+
+  static const _iconOptions = [
+    'stars', 'school', 'emoji_events', 'favorite', 'bolt',
+    'local_offer', 'rocket_launch', 'workspace_premium', 'celebration', 'trending_up',
+  ];
+  static const _iconLabels = {
+    'stars': Icons.stars_rounded,
+    'school': Icons.school_rounded,
+    'emoji_events': Icons.emoji_events_rounded,
+    'favorite': Icons.favorite_rounded,
+    'bolt': Icons.bolt_rounded,
+    'local_offer': Icons.local_offer_rounded,
+    'rocket_launch': Icons.rocket_launch_rounded,
+    'workspace_premium': Icons.workspace_premium_rounded,
+    'celebration': Icons.celebration_rounded,
+    'trending_up': Icons.trending_up_rounded,
+  };
+
+  Widget _buildBannersTab() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('banners')
+          .orderBy('order')
+          .snapshots(),
+      builder: (context, snapshot) {
+        final docs = snapshot.data?.docs ?? [];
+
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        minimumSize: const Size(double.infinity, 50),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      icon: const Icon(Icons.add, color: Colors.white),
+                      label: const Text("הוסף באנר", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      onPressed: () => _showBannerDialog(existingCount: docs.length),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.auto_fix_high_rounded, size: 18),
+                    label: const Text("Seed ברירת מחדל"),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(0, 50),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                    onPressed: docs.isNotEmpty ? null : _seedDefaultBanners,
+                  ),
+                ],
+              ),
+            ),
+            if (!snapshot.hasData)
+              const Expanded(child: Center(child: CircularProgressIndicator()))
+            else if (docs.isEmpty)
+              const Expanded(
+                child: Center(
+                  child: Text("אין באנרים — לחץ 'Seed ברירת מחדל' או 'הוסף באנר'",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey, fontSize: 15)),
+                ),
+              )
+            else
+              Expanded(
+                child: ReorderableListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: docs.length,
+                  onReorder: (oldIndex, newIndex) async {
+                    if (newIndex > oldIndex) newIndex--;
+                    final reordered = [...docs];
+                    final moved = reordered.removeAt(oldIndex);
+                    reordered.insert(newIndex, moved);
+                    final batch = FirebaseFirestore.instance.batch();
+                    for (int i = 0; i < reordered.length; i++) {
+                      batch.update(reordered[i].reference, {'order': i});
+                    }
+                    await batch.commit();
+                  },
+                  itemBuilder: (context, index) {
+                    final doc = docs[index];
+                    final data = doc.data() as Map<String, dynamic>;
+                    final isActive = data['isActive'] as bool? ?? true;
+                    final iconName = data['iconName'] as String? ?? 'stars';
+                    final color1Hex = data['color1'] as String? ?? '667eea';
+
+                    return Card(
+                      key: ValueKey(doc.id),
+                      elevation: 0,
+                      margin: const EdgeInsets.only(bottom: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        side: BorderSide(color: Colors.grey.shade200),
+                      ),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        leading: Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                _hexToAdminColor(color1Hex),
+                                _hexToAdminColor(data['color2'] as String? ?? '764ba2'),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(_iconLabels[iconName] ?? Icons.stars_rounded,
+                              color: Colors.white, size: 22),
+                        ),
+                        title: Text(data['title'] as String? ?? '',
+                            style: const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text(data['subtitle'] as String? ?? '',
+                            style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Switch(
+                              value: isActive,
+                              activeColor: Colors.green,
+                              onChanged: (val) => doc.reference.update({'isActive': val}),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.edit_outlined, color: Colors.blueAccent),
+                              onPressed: () => _showBannerDialog(doc: doc, data: data),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                              onPressed: () => _confirmDeleteBanner(doc.id),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  static Color _hexToAdminColor(String hex) {
+    final clean = hex.replaceAll('#', '').replaceAll('0x', '');
+    final padded = clean.length == 6 ? 'FF$clean' : clean;
+    return Color(int.parse(padded, radix: 16));
+  }
+
+  Future<void> _seedDefaultBanners() async {
+    final defaults = [
+      {'title': 'מצא מומחים מובילים', 'subtitle': 'אלפי מומחים מחכים לך',       'color1': '667eea', 'color2': '764ba2', 'iconName': 'stars',         'order': 0, 'isActive': true},
+      {'title': 'שיעורים פרטיים',      'subtitle': 'ממש מהמקום שאתה נמצא',     'color1': '11998e', 'color2': '38ef7d', 'iconName': 'school',        'order': 1, 'isActive': true},
+      {'title': 'פתח את הפוטנציאל שלך','subtitle': 'עם המומחים הטובים ביותר', 'color1': 'f953c6', 'color2': 'b91d73', 'iconName': 'emoji_events', 'order': 2, 'isActive': true},
+    ];
+    final batch = FirebaseFirestore.instance.batch();
+    for (final b in defaults) {
+      batch.set(FirebaseFirestore.instance.collection('banners').doc(), b);
+    }
+    await batch.commit();
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("3 באנרי ברירת מחדל נוצרו")));
+  }
+
+  void _showBannerDialog({QueryDocumentSnapshot? doc, Map<String, dynamic>? data, int existingCount = 0}) {
+    final titleCtrl    = TextEditingController(text: data?['title']    as String? ?? '');
+    final subtitleCtrl = TextEditingController(text: data?['subtitle'] as String? ?? '');
+    final color1Ctrl   = TextEditingController(text: data?['color1']   as String? ?? '667eea');
+    final color2Ctrl   = TextEditingController(text: data?['color2']   as String? ?? '764ba2');
+    String selectedIcon = data?['iconName'] as String? ?? 'stars';
+    bool isActive = data?['isActive'] as bool? ?? true;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(doc == null ? "באנר חדש" : "עריכת באנר",
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                TextField(controller: titleCtrl,    textAlign: TextAlign.right, decoration: const InputDecoration(labelText: "כותרת")),
+                const SizedBox(height: 10),
+                TextField(controller: subtitleCtrl, textAlign: TextAlign.right, decoration: const InputDecoration(labelText: "תת כותרת")),
+                const SizedBox(height: 10),
+                TextField(controller: color1Ctrl,   textAlign: TextAlign.right, decoration: const InputDecoration(labelText: "צבע 1 (hex)", hintText: "667eea")),
+                const SizedBox(height: 10),
+                TextField(controller: color2Ctrl,   textAlign: TextAlign.right, decoration: const InputDecoration(labelText: "צבע 2 (hex)", hintText: "764ba2")),
+                const SizedBox(height: 14),
+                const Align(alignment: Alignment.centerRight, child: Text("אייקון:", style: TextStyle(fontWeight: FontWeight.bold))),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _iconOptions.map((name) {
+                    final selected = name == selectedIcon;
+                    return GestureDetector(
+                      onTap: () => setDialogState(() => selectedIcon = name),
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: selected ? Colors.blueAccent.withValues(alpha: 0.15) : Colors.grey[100],
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: selected ? Colors.blueAccent : Colors.transparent, width: 2),
+                        ),
+                        child: Icon(_iconLabels[name], size: 22, color: selected ? Colors.blueAccent : Colors.grey[600]),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text("פעיל"),
+                    Switch(value: isActive, onChanged: (v) => setDialogState(() => isActive = v)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("ביטול")),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.black),
+              onPressed: () async {
+                final payload = {
+                  'title':    titleCtrl.text.trim(),
+                  'subtitle': subtitleCtrl.text.trim(),
+                  'color1':   color1Ctrl.text.trim().replaceAll('#', ''),
+                  'color2':   color2Ctrl.text.trim().replaceAll('#', ''),
+                  'iconName': selectedIcon,
+                  'isActive': isActive,
+                  'order':    data?['order'] ?? existingCount,
+                };
+                if (doc == null) {
+                  await FirebaseFirestore.instance.collection('banners').add(payload);
+                } else {
+                  await doc.reference.update(payload);
+                }
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: Text(doc == null ? "הוסף" : "שמור",
+                  style: const TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Monetization Tab ─────────────────────────────────────────────────────
+
+  Widget _buildMonetizationTab(List<QueryDocumentSnapshot> allUsers) {
+    final promotedUsers = allUsers
+        .where((d) => (d.data() as Map<String, dynamic>)['isPromoted'] == true)
+        .toList();
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // ── Commission Controller ──────────────────────────────────────
+          _monoCard(
+            icon: Icons.percent_rounded,
+            color: const Color(0xFF6366F1),
+            title: "עמלת פלטפורמה",
+            child: _settingsLoaded
+                ? Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text("${_feePct.toStringAsFixed(0)}%",
+                              style: const TextStyle(
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF6366F1))),
+                          const Text("מכל עסקה",
+                              style: TextStyle(color: Colors.grey, fontSize: 13)),
+                        ],
+                      ),
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          activeTrackColor: const Color(0xFF6366F1),
+                          thumbColor: const Color(0xFF6366F1),
+                          inactiveTrackColor: Colors.grey[200],
+                          overlayColor: const Color(0xFF6366F1).withValues(alpha: 0.1),
+                        ),
+                        child: Slider(
+                          value: _feePct,
+                          min: 0,
+                          max: 30,
+                          divisions: 30,
+                          onChanged: (v) => setState(() => _feePct = v),
+                        ),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: const [
+                          Text("0%", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                          Text("30%", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                        ],
+                      ),
+                    ],
+                  )
+                : const Center(child: CircularProgressIndicator()),
+          ),
+          const SizedBox(height: 14),
+
+          // ── Urgency Fee ───────────────────────────────────────────────
+          _monoCard(
+            icon: Icons.local_fire_department_rounded,
+            color: const Color(0xFFEA580C),
+            title: "תוספת דחיפות (בקשות דחופות)",
+            child: _settingsLoaded
+                ? Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text("+${_urgencyFeePct.toStringAsFixed(0)}%",
+                              style: const TextStyle(
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFFEA580C))),
+                          const Text("על בקשות דחופות",
+                              style: TextStyle(color: Colors.grey, fontSize: 13)),
+                        ],
+                      ),
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          activeTrackColor: const Color(0xFFEA580C),
+                          thumbColor: const Color(0xFFEA580C),
+                          inactiveTrackColor: Colors.grey[200],
+                          overlayColor:
+                              const Color(0xFFEA580C).withValues(alpha: 0.1),
+                        ),
+                        child: Slider(
+                          value: _urgencyFeePct,
+                          min: 0,
+                          max: 20,
+                          divisions: 20,
+                          onChanged: (v) => setState(() => _urgencyFeePct = v),
+                        ),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: const [
+                          Text("0%", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                          Text("20%", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                        ],
+                      ),
+                    ],
+                  )
+                : const Center(child: CircularProgressIndicator()),
+          ),
+          const SizedBox(height: 14),
+
+          // ── Save button ───────────────────────────────────────────────
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black,
+                minimumSize: const Size(double.infinity, 50),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              icon: const Icon(Icons.save_rounded, color: Colors.white),
+              label: const Text("שמור הגדרות",
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+              onPressed: _saveAdminSettings,
+            ),
+          ),
+          const SizedBox(height: 22),
+
+          // ── Promoted Providers ────────────────────────────────────────
+          _monoCard(
+            icon: Icons.star_rounded,
+            color: Colors.amber[700]!,
+            title: "ספקים מקודמים (${promotedUsers.length})",
+            child: promotedUsers.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Text("אין ספקים מקודמים כרגע",
+                        style: TextStyle(color: Colors.grey, fontSize: 13)),
+                  )
+                : Column(
+                    children: promotedUsers.map((doc) {
+                      final d = doc.data() as Map<String, dynamic>;
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: CircleAvatar(
+                          radius: 20,
+                          backgroundImage: (d['profileImage'] != null &&
+                                  d['profileImage'] != '')
+                              ? NetworkImage(d['profileImage'])
+                              : null,
+                          child:
+                              d['profileImage'] == null ? const Icon(Icons.person) : null,
+                        ),
+                        title: Text(d['name'] ?? '—',
+                            style: const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text(d['serviceType'] ?? d['email'] ?? '',
+                            style: const TextStyle(fontSize: 12)),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.star_rounded,
+                              color: Colors.amber, size: 22),
+                          tooltip: "בטל קידום",
+                          onPressed: () {
+                            FirebaseFirestore.instance
+                                .collection('users')
+                                .doc(doc.id)
+                                .update({'isPromoted': false});
+                          },
+                        ),
+                      );
+                    }).toList(),
+                  ),
+          ),
+          const SizedBox(height: 22),
+
+          // ── Monthly Earnings Chart ────────────────────────────────────
+          _monoCard(
+            icon: Icons.bar_chart_rounded,
+            color: Colors.green[700]!,
+            title: "עמלות החודש",
+            child: _buildEarningsChart(),
+          ),
+          const SizedBox(height: 22),
+
+          // ── CSV Export ────────────────────────────────────────────────
+          _monoCard(
+            icon: Icons.download_rounded,
+            color: Colors.teal[700]!,
+            title: "ייצוא לרואה חשבון",
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  "הורד את כל תנועות הארנק כקובץ CSV מוכן לפתיחה ב-Excel.",
+                  textAlign: TextAlign.right,
+                  style: TextStyle(fontSize: 13, color: Colors.grey[600], height: 1.5),
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.teal[700],
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(double.infinity, 48),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
+                    ),
+                    icon: const Icon(Icons.table_chart_outlined, size: 18),
+                    label: const Text("ייצא עסקאות ל-CSV",
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 15)),
+                    onPressed: _exportTransactionsCsv,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 30),
+        ],
+      ),
+    );
+  }
+
+  Widget _monoCard({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required Widget child,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: color, size: 20),
+              ),
+              Text(title,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 15)),
+            ],
+          ),
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEarningsChart() {
+    final now = DateTime.now();
+    final monthStart = DateTime(now.year, now.month, 1);
+    final daysInMonth = DateUtils.getDaysInMonth(now.year, now.month);
+
+    return FutureBuilder<QuerySnapshot>(
+      future: FirebaseFirestore.instance
+          .collection('platform_earnings')
+          .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
+          .orderBy('timestamp')
+          .get(),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Center(child: Padding(
+            padding: EdgeInsets.all(20),
+            child: CircularProgressIndicator(),
+          ));
+        }
+
+        // Group by day-of-month
+        final Map<int, double> byDay = {};
+        for (final doc in snap.data!.docs) {
+          final d = doc.data() as Map<String, dynamic>;
+          final ts = (d['timestamp'] as Timestamp?)?.toDate();
+          if (ts == null) continue;
+          final fee = ((d['platformFee'] ?? d['amount'] ?? 0) as num).toDouble();
+          byDay[ts.day] = (byDay[ts.day] ?? 0) + fee;
+        }
+
+        final total = byDay.values.fold(0.0, (a, b) => a + b);
+        final maxVal = byDay.values.fold(0.0, (a, b) => a > b ? a : b);
+
+        if (byDay.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 20),
+            child: Center(
+              child: Text("אין עמלות החודש עדיין",
+                  style: TextStyle(color: Colors.grey, fontSize: 13)),
+            ),
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // Total badge
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.green[50],
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text("סה״כ החודש: ₪${total.toStringAsFixed(0)}",
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green[800],
+                      fontSize: 15)),
+            ),
+            const SizedBox(height: 16),
+            // Bar chart
+            SizedBox(
+              height: 110,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: List.generate(daysInMonth, (i) {
+                  final day = i + 1;
+                  final val = byDay[day] ?? 0;
+                  final frac = maxVal > 0 ? val / maxVal : 0.0;
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 1),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          if (val > 0)
+                            Tooltip(
+                              message: "יום $day: ₪${val.toStringAsFixed(0)}",
+                              child: Container(
+                                height: (frac * 85).clamp(3.0, 85.0),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF6366F1),
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                              ),
+                            )
+                          else
+                            Container(
+                              height: 3,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[200],
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                            ),
+                          const SizedBox(height: 2),
+                          if (day % 7 == 1 || day == daysInMonth)
+                            Text("$day",
+                                style: TextStyle(
+                                    fontSize: 7, color: Colors.grey[500]))
+                          else
+                            const SizedBox(height: 9),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _confirmDeleteBanner(String docId) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("מחק באנר"),
+        content: const Text("האם אתה בטוח? הפעולה אינה הפיכה."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("ביטול")),
+          TextButton(
+            onPressed: () async {
+              await FirebaseFirestore.instance.collection('banners').doc(docId).delete();
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text("מחק", style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
     );
   }
 }

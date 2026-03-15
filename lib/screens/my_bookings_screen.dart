@@ -5,6 +5,8 @@ import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'chat_modules/payment_module.dart';
 import '../services/payment_service.dart';
+import '../widgets/receipt_sheet.dart';
+import 'expert_profile_screen.dart';
 
 class MyBookingsScreen extends StatefulWidget {
   final VoidCallback? onGoToSearch;
@@ -81,7 +83,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
       builder: (c) => const Center(child: CircularProgressIndicator(color: Colors.white)),
     );
 
-    bool success = await PaymentModule.releaseEscrowFunds(
+    final error = await PaymentModule.releaseEscrowFundsWithError(
       jobId: jobId,
       expertId: jobData['expertId'] ?? "",
       expertName: jobData['expertName'] ?? "מומחה",
@@ -91,7 +93,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
 
     if (context.mounted) Navigator.pop(context);
 
-    if (success) {
+    if (error == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(backgroundColor: Colors.green, content: Text("העבודה הושלמה והתשלום שוחרר!")),
@@ -100,8 +102,13 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
       }
     } else {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(backgroundColor: Colors.red, content: Text("שגיאה בשחרור התשלום. נסה שוב.")),
+        showDialog(
+          context: context,
+          builder: (c) => AlertDialog(
+            title: const Text("שגיאה בשחרור התשלום"),
+            content: SelectableText(error),
+            actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text("סגור"))],
+          ),
         );
       }
     }
@@ -325,25 +332,109 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                       .doc(uid)
                       .get();
                   final reviewerName = userDoc.data()?['name'] ?? 'לקוח';
-
-                  await PaymentService.submitReview(
-                    expertId: expertId,
-                    rating: selectedRating,
-                    comment: commentController.text.trim(),
-                    reviewerName: reviewerName,
-                  );
-                  await FirebaseFirestore.instance
-                      .collection('jobs')
-                      .doc(jobId)
-                      .update({'isReviewed': true});
-
-                  if (context.mounted) Navigator.pop(context);
+                  try {
+                    await PaymentService.submitReview(
+                      expertId: expertId,
+                      reviewerId: uid,
+                      rating: selectedRating,
+                      comment: commentController.text.trim(),
+                      reviewerName: reviewerName,
+                    );
+                    await FirebaseFirestore.instance
+                        .collection('jobs')
+                        .doc(jobId)
+                        .update({'isReviewed': true});
+                    if (context.mounted) Navigator.pop(context);
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text("שגיאה בשליחת הביקורת: $e"),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
                 },
                 child: const Text("שלח ביקורת", style: TextStyle(color: Colors.white)),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ── Job details bottom sheet ──────────────────────────────────────────────
+  void _showJobDetailsSheet(BuildContext context, Map<String, dynamic> job, String jobId) {
+    final status = job['status'] ?? '';
+    const statusLabels = {
+      'paid_escrow':      'ממתין לסיום',
+      'expert_completed': 'ממתין לאישור',
+      'completed':        'הושלם',
+      'cancelled':        'בוטל',
+      'disputed':         'במחלוקת',
+    };
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => Container(
+        padding: EdgeInsets.fromLTRB(
+            24, 16, 24, MediaQuery.of(context).viewInsets.bottom + 32),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            const SizedBox(height: 20),
+            const Text("פרטי הזמנה",
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 20),
+            _detailRow(Icons.tag, "מזהה הזמנה", jobId),
+            _detailRow(Icons.person_outline, "מומחה", job['expertName'] ?? '—'),
+            _detailRow(Icons.person_2_outlined, "לקוח", job['customerName'] ?? '—'),
+            _detailRow(Icons.info_outline, "סטטוס", statusLabels[status] ?? status),
+            _detailRow(Icons.attach_money, "סכום",
+                "₪${(job['totalAmount'] ?? job['totalPaidByCustomer'] ?? 0).toStringAsFixed(0)}"),
+            if (job['appointmentDate'] != null)
+              _detailRow(Icons.calendar_today, "תאריך",
+                  DateFormat('dd/MM/yyyy')
+                      .format((job['appointmentDate'] as Timestamp).toDate())),
+            if ((job['appointmentTime'] ?? '').toString().isNotEmpty)
+              _detailRow(Icons.access_time, "שעה", job['appointmentTime']),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _detailRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: Colors.grey[600]),
+          const SizedBox(width: 12),
+          Text("$label: ",
+              style: const TextStyle(color: Colors.grey, fontSize: 14)),
+          Expanded(
+            child: Text(value,
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 14)),
+          ),
+        ],
       ),
     );
   }
@@ -570,6 +661,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
             .toDouble();
 
     return _jobCard(
+      onDetailsTap: () => _showJobDetailsSheet(context, job, jobId),
       header: ListTile(
         title: Text(job['expertName'] ?? "מומחה",
             style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -611,6 +703,11 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
           ),
         if (status == 'completed' && (job['isReviewed'] ?? false))
           _infoRow(Icons.check_circle_outline, Colors.green, "ביקורת נשלחה"),
+        // ── Receipt + rebook (completed only) ────────────────────────────
+        if (status == 'completed') ...[
+          _receiptButton(context, job),
+          _rebookButton(context, job),
+        ],
       ],
       footer: Text("₪$amount",
           style: const TextStyle(
@@ -634,6 +731,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     final chatRoomId = job['chatRoomId'] ?? '';
 
     return _jobCard(
+      onDetailsTap: () => _showJobDetailsSheet(context, job, jobId),
       header: ListTile(
         leading: const CircleAvatar(
           backgroundColor: Color(0xFFF0F0F0),
@@ -654,12 +752,82 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
           ),
         if (status == 'expert_completed')
           _infoRow(Icons.hourglass_top, Colors.blue, "ממתין לאישור הלקוח"),
-        if (status == 'completed')
+        if (status == 'completed') ...[
           _infoRow(Icons.check_circle, Colors.green, "הושלם — התשלום שוחרר"),
+          _receiptButton(context, job),
+        ],
       ],
       footer: Text("נטו: ₪${netAmount.toStringAsFixed(0)}",
           style: const TextStyle(
               fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green)),
+    );
+  }
+
+  // ── One-click rebook button ───────────────────────────────────────────────
+  Widget _rebookButton(BuildContext context, Map<String, dynamic> job) {
+    final expertId   = (job['expertId']   ?? '') as String;
+    final expertName = (job['expertName'] ?? 'מומחה') as String;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: ElevatedButton.icon(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFFF0F0FF),
+          foregroundColor: const Color(0xFF6366F1),
+          minimumSize: const Size(double.infinity, 48),
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: const BorderSide(color: Color(0xFF6366F1), width: 1),
+          ),
+        ),
+        icon: const Icon(Icons.replay_rounded, size: 18),
+        label: Text(
+          'הזמן שוב את $expertName',
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+        ),
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                ExpertProfileScreen(expertId: expertId, expertName: expertName),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Digital receipt button ────────────────────────────────────────────────
+  Widget _receiptButton(BuildContext context, Map<String, dynamic> job) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+      child: OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: const Color(0xFF1A1A2E),
+          minimumSize: const Size(double.infinity, 44),
+          side: BorderSide(color: Colors.grey.shade300),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        icon: const Icon(Icons.receipt_long_rounded, size: 17),
+        label: const Text("הצג קבלה",
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+        onPressed: () async {
+          // Fetch provider's taxId for the receipt
+          final expertId = job['expertId'] as String? ?? '';
+          String? taxId;
+          if (expertId.isNotEmpty) {
+            final snap = await FirebaseFirestore.instance
+                .collection('users')
+                .doc(expertId)
+                .get();
+            taxId = (snap.data() as Map<String, dynamic>?)?['taxId']
+                as String?;
+          }
+          if (context.mounted) {
+            showReceiptSheet(context, jobData: job, providerTaxId: taxId);
+          }
+        },
+      ),
     );
   }
 
@@ -668,6 +836,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     required Widget header,
     required List<Widget> actions,
     required Widget footer,
+    VoidCallback? onDetailsTap,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
@@ -692,10 +861,13 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 footer,
-                const Text("פרטים >",
-                    style: TextStyle(
-                        color: Colors.black,
-                        decoration: TextDecoration.underline)),
+                GestureDetector(
+                  onTap: onDetailsTap,
+                  child: const Text("פרטים >",
+                      style: TextStyle(
+                          color: Colors.black,
+                          decoration: TextDecoration.underline)),
+                ),
               ],
             ),
           ),

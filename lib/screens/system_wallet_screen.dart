@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'dart:convert';
+import 'package:web/web.dart' as web;
 
 class SystemWalletScreen extends StatefulWidget {
   const SystemWalletScreen({super.key});
@@ -50,6 +52,155 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
     }
   }
 
+  // ── Export all platform_earnings rows to CSV and trigger browser download ──
+  Future<void> _exportToCsv() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('platform_earnings')
+          .orderBy('timestamp', descending: true)
+          .limit(500)
+          .get();
+
+      final sb = StringBuffer();
+      // UTF-8 BOM so Excel opens Hebrew correctly
+      sb.write('\uFEFF');
+      sb.writeln('תאריך,תיאור,עמלה (₪)');
+      for (final doc in snapshot.docs) {
+        final tx = doc.data() as Map<String, dynamic>;
+        final date = (tx['timestamp'] as Timestamp?)?.toDate();
+        final dateStr = date != null ? DateFormat('dd/MM/yyyy HH:mm').format(date) : '';
+        final desc = (tx['description'] ?? 'עסקה: ${tx['jobId'] ?? ''}')
+            .toString()
+            .replaceAll(',', ' ');
+        final amount = (tx['amount'] ?? 0.0).toStringAsFixed(2);
+        sb.writeln('$dateStr,$desc,$amount');
+      }
+
+      final encoded = base64Encode(utf8.encode(sb.toString()));
+      final filename =
+          'anyskill_earnings_${DateFormat('yyyyMMdd').format(DateTime.now())}.csv';
+      final anchor =
+          web.document.createElement('a') as web.HTMLAnchorElement;
+      anchor.href = 'data:text/csv;charset=utf-8;base64,$encoded';
+      anchor.download = filename;
+      web.document.body!.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.green,
+            content: Text("יוצאו ${snapshot.docs.length} רשומות ל-CSV"),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(backgroundColor: Colors.red, content: Text("שגיאה בייצוא: $e")),
+        );
+      }
+    }
+  }
+
+  // ── Pending fees: sum feePercentage × totalAmount for in-flight jobs ───────
+  Widget _buildPendingFeesCard() {
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('admin')
+          .doc('admin')
+          .collection('settings')
+          .doc('settings')
+          .snapshots(),
+      builder: (context, settingsSnap) {
+        final feePercentage =
+            (settingsSnap.hasData && settingsSnap.data!.exists)
+                ? (settingsSnap.data!.get('feePercentage') ?? 0.10).toDouble()
+                : 0.10;
+
+        return StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('jobs')
+              .where('status', whereIn: ['paid_escrow', 'expert_completed'])
+              .snapshots(),
+          builder: (context, jobsSnap) {
+            double pendingFees = 0.0;
+            int count = 0;
+            if (jobsSnap.hasData) {
+              for (final doc in jobsSnap.data!.docs) {
+                final data = doc.data() as Map<String, dynamic>;
+                final amount = (data['totalAmount'] ??
+                        data['totalPaidByCustomer'] ??
+                        0.0)
+                    .toDouble();
+                pendingFees += amount * feePercentage;
+                count++;
+              }
+            }
+
+            return Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+              margin: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: Colors.orange.shade200),
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.orange.withValues(alpha: 0.08),
+                      blurRadius: 14)
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(11),
+                    decoration: BoxDecoration(
+                        color: Colors.orange.shade50, shape: BoxShape.circle),
+                    child: const Icon(Icons.hourglass_top_rounded,
+                        color: Colors.orange, size: 26),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("עמלות בהמתנה",
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 15)),
+                        const SizedBox(height: 3),
+                        Text(
+                          "$count עסקאות פעילות (escrow / ממתין לאישור)",
+                          style:
+                              TextStyle(fontSize: 11, color: Colors.grey[600]),
+                        ),
+                      ],
+                    ),
+                  ),
+                  !jobsSnap.hasData
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : Text(
+                          "₪${NumberFormat('#,###.##').format(pendingFees)}",
+                          style: const TextStyle(
+                            color: Colors.orange,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 22,
+                          ),
+                        ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -64,11 +215,37 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
       body: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(child: _buildTotalBalanceCard()),
-          SliverToBoxAdapter(child: _buildFeeControlPanel()),
-          const SliverToBoxAdapter(
+          SliverToBoxAdapter(child: _buildPendingFeesCard()),
+          SliverToBoxAdapter(child: Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: _buildFeeControlPanel(),
+          )),
+          SliverToBoxAdapter(
             child: Padding(
-              padding: EdgeInsets.fromLTRB(20, 30, 20, 10),
-              child: Text("פירוט הכנסות מעמלות (זמן אמת)", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
+              padding: const EdgeInsets.fromLTRB(20, 30, 20, 10),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text("פירוט הכנסות מעמלות (זמן אמת)",
+                      style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87)),
+                  OutlinedButton.icon(
+                    onPressed: _exportToCsv,
+                    icon: const Icon(Icons.download_rounded, size: 18),
+                    label: const Text("ייצוא CSV", style: TextStyle(fontSize: 13)),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.blueAccent),
+                      foregroundColor: Colors.blueAccent,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           _buildTransactionHistory(),

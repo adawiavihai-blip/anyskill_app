@@ -21,18 +21,18 @@ void main() async {
   // 1. אתחול Firebase בצורה נקייה
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   
-  // 2. פתרון ל-Web בלי פקודות terminate שתוקעות את המערכת
+  // 2. Web optimisations
   if (kIsWeb) {
     try {
-      // ביטול ה-Persistence מונע את השגיאה של אבי מהשורש
+      // שמירת session המשתמש בין פתיחות הדפדפן (זיכרון מקומי קבוע)
+      await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
+      // Firestore persistence מושבת ב-Web למניעת שגיאות ve:-1
       FirebaseFirestore.instance.settings = const Settings(
         persistenceEnabled: false,
       );
-      // clearPersistence() הוסר — עם persistence=false אין מה לנקות,
-      // והקריאה האסינכרונית גרמה ל-ve:-1 assertion על listeners פעילים
-      debugPrint("AnySkill Web: Optimized & Persistence Disabled");
+      debugPrint("AnySkill Web: Auth LOCAL persistence set, Firestore cache disabled");
     } catch (e) {
-      debugPrint("Firestore Web Config Error: $e");
+      debugPrint("Firestore/Auth Web Config Error: $e");
     }
   }
 

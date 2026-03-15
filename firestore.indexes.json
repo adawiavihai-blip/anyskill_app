@@ -4,7 +4,7 @@
       "collectionGroup": "users",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "isProvider", "order": "ASCENDING" },
+        { "fieldPath": "isProvider",  "order": "ASCENDING" },
         { "fieldPath": "serviceType", "order": "ASCENDING" }
       ]
     },
@@ -12,8 +12,8 @@
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "expertId",   "order": "ASCENDING"  },
-        { "fieldPath": "createdAt",  "order": "DESCENDING" }
+        { "fieldPath": "expertId",  "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     },
     {
@@ -25,11 +25,43 @@
       ]
     },
     {
+      "collectionGroup": "job_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",    "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "job_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId",  "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "scheduled_reminders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "sendAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId",    "order": "ASCENDING"  },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "withdrawals",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status",       "order": "ASCENDING"  },
-        { "fieldPath": "requestedAt",  "order": "DESCENDING" }
+        { "fieldPath": "status",      "order": "ASCENDING"  },
+        { "fieldPath": "requestedAt", "order": "DESCENDING" }
       ]
     },
     {
@@ -44,8 +76,8 @@
       "collectionGroup": "reviews",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "expertId",   "order": "ASCENDING"  },
-        { "fieldPath": "timestamp",  "order": "DESCENDING" }
+        { "fieldPath": "expertId",  "order": "ASCENDING"  },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
       ]
     },
     {
@@ -54,6 +86,22 @@
       "fields": [
         { "fieldPath": "receiverId", "order": "ASCENDING" },
         { "fieldPath": "isRead",     "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "senderId",  "order": "ASCENDING"  },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isPromoted",          "order": "ASCENDING" },
+        { "fieldPath": "promotionExpiryDate", "order": "ASCENDING" }
       ]
     }
   ],

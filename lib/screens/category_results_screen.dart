@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:geolocator/geolocator.dart';
 import 'expert_profile_screen.dart';
 import '../utils/expert_filter.dart';
+import '../services/location_service.dart';
+import '../services/gamification_service.dart';
+import '../widgets/level_badge.dart';
 
 class CategoryResultsScreen extends StatefulWidget {
   final String categoryName;
@@ -25,11 +29,22 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   bool   _filterUnder100 = false;
   int    _refreshTrigger = 0;
   Future<List<Map<String, dynamic>>>? _expertsFuture;
+  Position? _currentPosition;
 
   @override
   void initState() {
     super.initState();
     _expertsFuture = _fetchExperts();
+    // Use cached position instantly; fall back to a dialog-based request
+    final cached = LocationService.cached;
+    if (cached != null) {
+      _currentPosition = cached;
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final pos = await LocationService.requestAndGet(context);
+        if (mounted && pos != null) setState(() => _currentPosition = pos);
+      });
+    }
   }
 
   /// חד-פעמי — מונע את באג ה-Firestore web SDK שמתרחש כאשר
@@ -198,7 +213,43 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       );
     }
 
-    final all = snapshot.data ?? [];
+    final all = (snapshot.data ?? []).toList();
+        // 1) Promoted providers always float to the top
+        all.sort((a, b) {
+          final aPromoted = (a['isPromoted'] as bool? ?? false) ? 0 : 1;
+          final bPromoted = (b['isPromoted'] as bool? ?? false) ? 0 : 1;
+          return aPromoted.compareTo(bPromoted);
+        });
+        // 2) Within each group, sort by proximity × XP boost
+        if (_currentPosition != null) {
+          final myLat = _currentPosition!.latitude;
+          final myLng = _currentPosition!.longitude;
+          // Stable sub-sort: keep promoted at top, sort each half by proximity
+          final promoted    = all.where((e) => e['isPromoted'] == true).toList();
+          final notPromoted = all.where((e) => e['isPromoted'] != true).toList();
+          for (final group in [promoted, notPromoted]) {
+            group.sort((a, b) {
+              final xpA    = (a['xp'] as num? ?? 0).toInt();
+              final xpB    = (b['xp'] as num? ?? 0).toInt();
+              final boostA = GamificationService.proximityBoost(xpA);
+              final boostB = GamificationService.proximityBoost(xpB);
+              final rawA = LocationService.distanceMeters(myLat, myLng,
+                  (a['latitude']  as num?)?.toDouble(),
+                  (a['longitude'] as num?)?.toDouble());
+              final rawB = LocationService.distanceMeters(myLat, myLng,
+                  (b['latitude']  as num?)?.toDouble(),
+                  (b['longitude'] as num?)?.toDouble());
+              if (rawA == null && rawB == null) return 0;
+              if (rawA == null) return 1;
+              if (rawB == null) return -1;
+              return (rawA * boostA).compareTo(rawB * boostB);
+            });
+          }
+          all
+            ..clear()
+            ..addAll(promoted)
+            ..addAll(notPromoted);
+        }
         final experts = filterExperts(
           all,
           query: _searchQuery,
@@ -261,10 +312,11 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           padding: const EdgeInsets.all(16),
           itemCount: experts.length,
           itemBuilder: (context, index) {
-            final data      = experts[index];
-            final isVerified = data['isVerified'] ?? false;
-            final isOnline   = data['isOnline']   ?? false;
-            final expertId   = data['uid']         ?? '';
+            final data       = experts[index];
+            final isVerified  = data['isVerified']  ?? false;
+            final isOnline    = data['isOnline']    ?? false;
+            final isPromoted  = data['isPromoted']  as bool? ?? false;
+            final expertId    = data['uid']          ?? '';
 
             return GestureDetector(
               onTap: () => Navigator.push(
@@ -282,13 +334,25 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.05),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    )
-                  ],
+                  border: isPromoted
+                      ? Border.all(color: Colors.amber.shade300, width: 1.5)
+                      : null,
+                  boxShadow: isPromoted
+                      ? [
+                          BoxShadow(
+                            color: Colors.amber.withValues(alpha: 0.25),
+                            blurRadius: 18,
+                            spreadRadius: 2,
+                            offset: const Offset(0, 4),
+                          ),
+                        ]
+                      : [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.05),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          )
+                        ],
                 ),
                 child: Row(
                   children: [
@@ -332,19 +396,98 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                                 style: const TextStyle(
                                     fontWeight: FontWeight.bold,
                                     fontSize: 17)),
-                            if (isVerified)
-                              const Padding(
-                                padding: EdgeInsets.only(right: 5),
-                                child: Icon(Icons.verified,
-                                    color: Colors.blue, size: 18),
+                            if (isVerified) ...[
+                              const SizedBox(width: 4),
+                              const Icon(Icons.verified,
+                                  color: Color(0xFF1877F2), size: 17),
+                            ],
+                            if ((data['xp'] as num? ?? 0) > 0) ...[
+                              const SizedBox(width: 6),
+                              LevelBadge(
+                                  xp: (data['xp'] as num).toInt(),
+                                  size: 18),
+                            ],
+                            if (isPromoted) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 7, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.amber[50],
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: Colors.amber.shade300),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.star_rounded,
+                                        color: Colors.amber[700], size: 10),
+                                    const SizedBox(width: 3),
+                                    Text("מומלץ",
+                                        style: TextStyle(
+                                            fontSize: 10,
+                                            color: Colors.amber[800],
+                                            fontWeight: FontWeight.w700)),
+                                  ],
+                                ),
                               ),
+                            ],
+                            if (isOnline) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFE8F8EE),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.circle,
+                                        color: Color(0xFF22C55E), size: 7),
+                                    SizedBox(width: 3),
+                                    Text("זמין",
+                                        style: TextStyle(
+                                            fontSize: 10,
+                                            color: Color(0xFF16A34A),
+                                            fontWeight: FontWeight.w600)),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ]),
-                          Text(
-                            data['aboutMe'] ?? 'לחץ לצפייה בפרטים...',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                color: Colors.grey[600], fontSize: 13),
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  data['aboutMe'] ?? 'לחץ לצפייה בפרטים...',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: Colors.grey[600], fontSize: 13),
+                                ),
+                              ),
+                              if ((data['responseTimeMinutes'] ?? 0) > 0) ...[
+                                const SizedBox(width: 6),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.bolt_rounded,
+                                        size: 12, color: Color(0xFF6366F1)),
+                                    Text(
+                                      "~${data['responseTimeMinutes']}ד'",
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Color(0xFF6366F1),
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
                           ),
                           const SizedBox(height: 5),
                           Row(children: [
@@ -356,6 +499,29 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                             Text('(${data['reviewsCount'] ?? '0'})',
                                 style: const TextStyle(
                                     color: Colors.grey, fontSize: 11)),
+                            // Distance badge
+                            if (_currentPosition != null) ...() {
+                              final lat = (data['latitude']  as num?)?.toDouble();
+                              final lng = (data['longitude'] as num?)?.toDouble();
+                              if (lat == null || lng == null) return <Widget>[];
+                              final label = LocationService.distanceLabel(
+                                  _currentPosition!.latitude,
+                                  _currentPosition!.longitude,
+                                  lat, lng);
+                              return [
+                                const SizedBox(width: 6),
+                                Row(mainAxisSize: MainAxisSize.min, children: [
+                                  const Icon(Icons.location_on_rounded,
+                                      size: 11, color: Color(0xFF6366F1)),
+                                  const SizedBox(width: 2),
+                                  Text(label,
+                                      style: const TextStyle(
+                                          fontSize: 11,
+                                          color: Color(0xFF6366F1),
+                                          fontWeight: FontWeight.w600)),
+                                ]),
+                              ];
+                            }(),
                             const Spacer(),
                             Text(
                               '₪${data['pricePerHour'] ?? '100'}',
@@ -369,6 +535,42 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                                 style: TextStyle(
                                     color: Colors.grey, fontSize: 11)),
                           ]),
+                          // Social proof — shown only when provider has bookings
+                          if ((data['orderCount'] ?? 0) > 0) ...[
+                            const SizedBox(height: 5),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFFF3ED),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                        color: const Color(0xFFFF6B35)
+                                            .withValues(alpha: 0.35)),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Text("🔥",
+                                          style: TextStyle(fontSize: 11)),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        'הוזמן ${data['orderCount']} פעמים',
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFFD4520A),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ],
                       ),
                     ),

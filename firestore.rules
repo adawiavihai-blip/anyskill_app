@@ -10,14 +10,23 @@ service cloud.firestore {
     }
     function isAdmin() {
       return isAuth()
-          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+          && (request.auth.token.email == 'adawiavihai@gmail.com'
+              || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true);
     }
 
     // ── Users ─────────────────────────────────────────────────────
     match /users/{uid} {
       allow read:   if isAuth();
       allow create: if isOwner(uid) || (isAuth() && uid == 'anyskill_system');
-      allow update: if isOwner(uid) || isAdmin();
+      allow update: if (isOwner(uid)
+                        // בעל החשבון יכול לעדכן הכל, חוץ מ-xp/level/isPromoted (מנוהלים ע"י מנהל/Cloud Functions)
+                        && !request.resource.data.diff(resource.data)
+                            .affectedKeys().hasAny(['xp', 'level', 'isPromoted']))
+                    || isAdmin()
+                    // כל משתמש מחובר יכול לעדכן רק rating + reviewsCount (לאחר ביקורת)
+                    || (isAuth()
+                        && request.resource.data.diff(resource.data)
+                            .affectedKeys().hasOnly(['rating', 'reviewsCount']));
     }
 
     // ── Jobs (bookings) ───────────────────────────────────────────
@@ -94,6 +103,12 @@ service cloud.firestore {
                     && request.resource.data.reviewerId == request.auth.uid;
     }
 
+    // ── Banners (public read, admin write) ───────────────────────
+    match /banners/{id} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+
     // ── Withdrawals ───────────────────────────────────────────────
     match /withdrawals/{id} {
       allow create: if isAuth()
@@ -102,6 +117,39 @@ service cloud.firestore {
                     && resource.data.userId == request.auth.uid
                     || isAdmin();
       allow update: if isAdmin();
+    }
+
+    // ── Rebook reminders (written by Cloud Functions only) ────────────
+    match /scheduled_reminders/{remId} {
+      allow read:  if isAdmin();
+      allow write: if false; // Admin SDK (Cloud Functions) only
+    }
+
+    // ── Mail (Firebase Trigger Email extension) ───────────────────────
+    // Written only by Cloud Functions (Admin SDK). Clients have no access.
+    match /mail/{docId} {
+      allow read, write: if false;
+    }
+
+    // ── Job Requests (quick order ecosystem) ──────────────────────────
+    match /job_requests/{reqId} {
+      // Any authenticated user can read open requests
+      allow read: if isAuth();
+      // Only the client themselves can create a request
+      allow create: if isAuth()
+                    && request.resource.data.clientId == request.auth.uid;
+      // Providers update only the interest fields; client can close their own request
+      allow update: if isAuth()
+                    && (
+                      // Provider expressing interest: only these fields change
+                      request.resource.data.diff(resource.data)
+                          .affectedKeys()
+                          .hasOnly(['interestedProviders', 'interestedProviderNames',
+                                    'interestedCount', 'status'])
+                      // Client closing/editing their own request
+                      || resource.data.clientId == request.auth.uid
+                    );
+      allow delete: if isAuth() && resource.data.clientId == request.auth.uid;
     }
   }
 }

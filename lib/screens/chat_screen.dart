@@ -221,7 +221,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
                     String realName = await _getCurrentUserName();
 
-                    bool success = await PaymentModule.releaseEscrowFunds(
+                    final error = await PaymentModule.releaseEscrowFundsWithError(
                       jobId: jobDoc.id,
                       expertId: jobData['expertId'] ?? widget.receiverId,
                       expertName: widget.receiverName,
@@ -233,11 +233,20 @@ class _ChatScreenState extends State<ChatScreen> {
 
                     if (mounted) navigator.pop();
 
-                    if (success && mounted) {
+                    if (error == null && mounted) {
                       messenger.showSnackBar(
                         const SnackBar(
                             content: Text("התשלום שוחרר בהצלחה!"),
                             backgroundColor: Colors.green),
+                      );
+                    } else if (error != null && mounted) {
+                      showDialog(
+                        context: context,
+                        builder: (c) => AlertDialog(
+                          title: const Text("שגיאה בשחרור התשלום"),
+                          content: SelectableText(error),
+                          actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text("סגור"))],
+                        ),
                       );
                     }
                   },

@@ -43,6 +43,7 @@ class PaymentService {
   // הפונקציה ששומרת את הביקורת ומעדכנת את הפרופיל
   static Future<void> submitReview({
     required String expertId,
+    required String reviewerId,
     required double rating,
     required String comment,
     required String reviewerName,
@@ -52,6 +53,7 @@ class PaymentService {
     // 1. שמירת הביקורת באוסף חדש
     await db.collection('reviews').add({
       'expertId': expertId,
+      'reviewerId': reviewerId,
       'rating': rating,
       'comment': comment,
       'reviewerName': reviewerName,
@@ -63,8 +65,9 @@ class PaymentService {
       DocumentReference expertRef = db.collection('users').doc(expertId);
       DocumentSnapshot expertDoc = await transaction.get(expertRef);
 
-      double currentRating = (expertDoc.get('rating') ?? 0.0).toDouble();
-      int currentReviewCount = expertDoc.get('reviewsCount') ?? 0;
+      final data = expertDoc.data() as Map<String, dynamic>? ?? {};
+      double currentRating = (data['rating'] ?? 0.0).toDouble();
+      int currentReviewCount = (data['reviewsCount'] ?? 0) as int;
 
       int newReviewCount = currentReviewCount + 1;
       double newRating = ((currentRating * currentReviewCount) + rating) / newReviewCount;

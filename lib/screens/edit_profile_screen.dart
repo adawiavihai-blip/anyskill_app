@@ -20,12 +20,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late TextEditingController _nameController;
   late TextEditingController _aboutController;
   late TextEditingController _priceController;
+  late TextEditingController _taxIdController;
   
   String? _selectedCategory;       // kept for backward compat but unused in save
   String? _selectedMainCatId;       // doc ID of selected main category
   String? _selectedSubCatId;        // doc ID of selected sub-category (nullable)
   List<Map<String, dynamic>> _mainCategories = [];
   List<Map<String, dynamic>> _subCategories  = []; // subs for selected main
+
+  int? _responseTimeMinutes;
 
   String? _profileImageUrl;
   List<dynamic> _galleryImages = [];
@@ -40,14 +43,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.userData['name']);
+    _nameController  = TextEditingController(text: widget.userData['name']);
     _aboutController = TextEditingController(text: widget.userData['aboutMe'] ?? widget.userData['bio'] ?? "");
     _priceController = TextEditingController(text: (widget.userData['pricePerHour'] ?? "0").toString());
+    _taxIdController = TextEditingController(text: widget.userData['taxId'] as String? ?? '');
     _galleryImages = List.from(widget.userData['gallery'] ?? []);
     _profileImageUrl = widget.userData['profileImage'];
     
     _isCustomer = widget.userData['isCustomer'] ?? true;
     _isProvider = widget.userData['isProvider'] ?? false;
+    _responseTimeMinutes = widget.userData['responseTimeMinutes'] as int?;
 
     _selectedCategory = widget.userData['serviceType'] as String?;
 
@@ -93,6 +98,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _nameController.dispose();
     _aboutController.dispose();
     _priceController.dispose();
+    _taxIdController.dispose();
     super.dispose();
   }
 
@@ -188,6 +194,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'gallery': _galleryImages,
         'isCustomer': _isCustomer,
         'isProvider': _isProvider,
+        if (_isProvider) 'responseTimeMinutes': _responseTimeMinutes,
+        if (_isProvider) 'taxId': _taxIdController.text.trim(),
       });
       if (mounted) {
         navigator.pop();
@@ -301,8 +309,71 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                   ],
                   const SizedBox(height: 20),
+
+                  // ── Tax ID ──────────────────────────────────────────────
+                  const Text("ח.פ / ת.ז (לחשבוניות)", style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  const Text("יופיע בקבלות הדיגיטליות שנשלחות ללקוחות",
+                      style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _taxIdController,
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.right,
+                    decoration: InputDecoration(
+                      hintText: "לדוגמה: 123456789",
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      prefixIcon: const Icon(Icons.receipt_long_outlined, color: Colors.grey),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
                   const Text("מחיר לשעה (₪)", style: TextStyle(fontWeight: FontWeight.bold)),
                   TextField(controller: _priceController, keyboardType: TextInputType.number, textAlign: TextAlign.right, decoration: const InputDecoration(hintText: "כמה תרצה להרוויח?")),
+                  const SizedBox(height: 20),
+                  const Text("זמן תגובה ממוצע", style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  const Text("כמה מהר אתה בדרך כלל מגיב להודעות?", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        for (final minutes in [5, 10, 15, 30, 60])
+                          GestureDetector(
+                            onTap: () => setState(() =>
+                                _responseTimeMinutes = _responseTimeMinutes == minutes ? null : minutes),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: _responseTimeMinutes == minutes
+                                    ? const Color(0xFF6366F1)
+                                    : Colors.white,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: _responseTimeMinutes == minutes
+                                      ? const Color(0xFF6366F1)
+                                      : Colors.grey.shade300,
+                                ),
+                              ),
+                              child: Text(
+                                minutes == 60 ? 'שעה' : '~$minutesד\'',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: _responseTimeMinutes == minutes
+                                      ? Colors.white
+                                      : Colors.grey[700],
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ],
 
                 const SizedBox(height: 25),

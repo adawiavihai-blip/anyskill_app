@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 class PaymentModule {
@@ -84,80 +85,52 @@ class PaymentModule {
     }
   }
 
+  // Returns null on success, or an error string to show the user.
+  static Future<String?> releaseEscrowFundsWithError({
+    required String jobId,
+    required String expertId,
+    required String expertName,
+    required String customerName,
+    required double totalAmount,
+  }) async {
+    try {
+      debugPrint("[PPR-CLIENT] calling processPaymentRelease: jobId=$jobId expertId=$expertId total=$totalAmount");
+      final result = await FirebaseFunctions.instance
+          .httpsCallable('processPaymentRelease')
+          .call({
+        'jobId': jobId,
+        'expertId': expertId,
+        'expertName': expertName,
+        'customerName': customerName,
+        'totalAmount': totalAmount,
+      });
+      debugPrint("[PPR-CLIENT] success: ${result.data}");
+      return null; // no error
+    } on FirebaseFunctionsException catch (e) {
+      final msg = "[${e.code}] ${e.message}${e.details != null ? ' | details: ${e.details}' : ''}";
+      debugPrint("[PPR-CLIENT] FirebaseFunctionsException: $msg");
+      return msg;
+    } catch (e) {
+      debugPrint("[PPR-CLIENT] unexpected error: $e");
+      return e.toString();
+    }
+  }
+
   static Future<bool> releaseEscrowFunds({
     required String jobId,
     required String expertId,
-    required String expertName,   // QA: נוסף כדי להציג בהיסטוריה
-    required String customerName, // QA: נוסף כדי להציג בהיסטוריה
+    required String expertName,
+    required String customerName,
     required double totalAmount,
-    FirebaseFirestore? db,        // injectable for testing; null = production instance
+    FirebaseFirestore? db, // kept for API compatibility; ignored (Cloud Function handles DB)
   }) async {
-    final firestore = db ?? FirebaseFirestore.instance;
-
-    try {
-      // הנתיב המדויק לפי ה-Console שלך
-      final DocumentReference adminSettingsRef = firestore
-          .collection('admin')
-          .doc('admin')
-          .collection('settings')
-          .doc('settings');
-
-      await firestore.runTransaction((transaction) async {
-        // 1. קריאת נתונים מקדימה
-        DocumentSnapshot adminSnap = await transaction.get(adminSettingsRef);
-        
-        double feePercentage = 0.10;
-        if (adminSnap.exists) {
-          feePercentage = (adminSnap.get('feePercentage') ?? 0.10).toDouble();
-        }
-
-        double feeAmount = totalAmount * feePercentage;
-        double netToExpert = totalAmount - feeAmount;
-
-        // 2. עדכון סטטוס העבודה
-        transaction.update(firestore.collection('jobs').doc(jobId), {
-          'status': 'completed',
-          'completedAt': FieldValue.serverTimestamp(),
-          'feeAmount': feeAmount,
-          'netAmountForExpert': netToExpert,
-        });
-
-        // 3. העברת כסף למאמן (הנטו)
-        transaction.update(firestore.collection('users').doc(expertId), {
-          'balance': FieldValue.increment(netToExpert)
-        });
-
-        // 4. עדכון יתרת המערכת (העמלה שלך)
-        transaction.set(adminSettingsRef, {
-          'totalPlatformBalance': FieldValue.increment(feeAmount),
-          'lastFinanceUpdate': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-
-        // 5. 🔥 התיקון לבקשתך: תיעוד מפורט עם שמות הלקוח והמומחה
-        transaction.set(firestore.collection('platform_earnings').doc(), {
-          'jobId': jobId,
-          'amount': feeAmount,
-          'customerName': customerName,
-          'expertName': expertName,
-          'description': '$customerName ➔ $expertName', // מה שיוצג בלשונית מערכת
-          'timestamp': FieldValue.serverTimestamp(),
-        });
-
-        // 6. תיעוד עסקה בהיסטוריית הרווחים של המומחה
-        transaction.set(firestore.collection('transactions').doc(), {
-          'userId': expertId,
-          'amount': netToExpert,
-          'title': 'קיבלת תשלום — $customerName',
-          'type': 'earning',
-          'clientName': customerName,
-          'jobId': jobId,
-          'timestamp': FieldValue.serverTimestamp(),
-        });
-      });
-      return true;
-    } catch (e) {
-      debugPrint("QA_FINANCE_ERROR: $e");
-      return false;
-    }
+    final error = await releaseEscrowFundsWithError(
+      jobId: jobId,
+      expertId: expertId,
+      expertName: expertName,
+      customerName: customerName,
+      totalAmount: totalAmount,
+    );
+    return error == null;
   }
 }
