@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'chat_modules/payment_module.dart';
 import '../services/payment_service.dart';
+import '../services/cancellation_policy_service.dart';
 import '../widgets/receipt_sheet.dart';
 import 'expert_profile_screen.dart';
 
@@ -26,9 +27,26 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   DateTime _calendarFocusedDay = DateTime.now();
   bool _calendarSaving = false;
 
+  // ── Stable streams (initialized once — avoids StreamBuilder re-subscribing
+  //    on every setState, which caused a spinner flash after status changes) ──
+  late final Stream<QuerySnapshot> _expertStream;
+  late final Stream<QuerySnapshot> _customerStream;
+
   @override
   void initState() {
     super.initState();
+    _expertStream = FirebaseFirestore.instance
+        .collection('jobs')
+        .where('expertId', isEqualTo: currentUserId)
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .snapshots();
+    _customerStream = FirebaseFirestore.instance
+        .collection('jobs')
+        .where('customerId', isEqualTo: currentUserId)
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .snapshots();
     _loadUnavailableDates();
   }
 
@@ -160,17 +178,134 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     }
   }
 
-  // ── Customer: cancel booking (only while paid_escrow) ────────────────────
+  // ── Customer: cancel booking (policy-aware, only while paid_escrow) ─────
   Future<void> _cancelBooking(
       BuildContext context, String jobId, Map<String, dynamic> job, double amount) async {
+    final penalty    = CancellationPolicyService.penaltyAmountFor(job);
+    final hasPenalty = penalty > 0;
+    final refund     = amount - penalty;
+    final policy     = job['cancellationPolicy'] as String? ?? 'flexible';
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text("ביטול הזמנה", textAlign: TextAlign.center,
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        content: Text(
-          "האם לבטל את ההזמנה?\n₪${amount.toStringAsFixed(0)} יוחזרו לארנק שלך.",
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(hasPenalty ? Icons.warning_amber_rounded : Icons.cancel_outlined,
+                color: hasPenalty ? Colors.orange : Colors.red, size: 22),
+            const SizedBox(width: 8),
+            const Text("ביטול הזמנה",
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: hasPenalty
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange[50],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      "אזהרה: חלון הביטול החינמי עבר.\n"
+                      "לפי מדיניות ${CancellationPolicyService.label(policy)}, "
+                      "ביטול כעת יגרור קנס של "
+                      "₪${penalty.toStringAsFixed(0)}.",
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: Colors.deepOrange),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    "תקבל בחזרה: ₪${refund.toStringAsFixed(0)}\n"
+                    "ישולם למומחה: ₪${penalty.toStringAsFixed(0)} (בניכוי עמלה)",
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ],
+              )
+            : Text(
+                "האם לבטל את ההזמנה?\n₪${amount.toStringAsFixed(0)} יוחזרו לארנק שלך.",
+                textAlign: TextAlign.center,
+              ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text("לא, חזור"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: hasPenalty ? Colors.orange : Colors.red),
+            onPressed: () => Navigator.pop(c, true),
+            child: Text(
+                hasPenalty ? "כן, בטל (קנס ₪${penalty.toStringAsFixed(0)})" : "כן, בטל",
+                style: const TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) =>
+          const Center(child: CircularProgressIndicator(color: Colors.white)),
+    );
+
+    try {
+      await PaymentModule.cancelWithPolicy(
+        jobId: jobId,
+        cancelledBy: 'customer',
+      );
+      if (context.mounted) Navigator.pop(context);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: Colors.green,
+          content: Text(hasPenalty
+              ? "ההזמנה בוטלה — ₪${refund.toStringAsFixed(0)} הוחזרו לארנק"
+              : "ההזמנה בוטלה — ₪${amount.toStringAsFixed(0)} הוחזרו לארנק"),
+        ));
+      }
+    } catch (e) {
+      if (context.mounted) Navigator.pop(context);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: Colors.red,
+          content: Text("שגיאה בביטול: $e"),
+        ));
+      }
+    }
+  }
+
+  // ── Provider: cancel booking (full refund to customer + XP penalty) ───────
+  Future<void> _providerCancelBooking(
+      BuildContext context, String jobId, Map<String, dynamic> job) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.warning_amber_rounded,
+                color: Colors.red, size: 22),
+            SizedBox(width: 8),
+            Text("ביטול מצד הספק",
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: const Text(
+          "ביטול מצד הספק מחזיר ללקוח 100% מהסכום\n"
+          "ויפחית XP מהפרופיל שלך.\n\n"
+          "האם להמשיך?",
           textAlign: TextAlign.center,
         ),
         actions: [
@@ -181,7 +316,8 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(c, true),
-            child: const Text("כן, בטל", style: TextStyle(color: Colors.white)),
+            child: const Text("כן, בטל",
+                style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -191,24 +327,30 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator(color: Colors.white)),
+      builder: (_) =>
+          const Center(child: CircularProgressIndicator(color: Colors.white)),
     );
 
-    final success = await PaymentModule.cancelEscrow(
-      jobId: jobId,
-      customerId: currentUserId,
-      totalAmount: amount,
-      chatRoomId: job['chatRoomId'] ?? '',
-    );
-
-    if (context.mounted) Navigator.pop(context);
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        backgroundColor: success ? Colors.green : Colors.red,
-        content: Text(success
-            ? "ההזמנה בוטלה — ₪${amount.toStringAsFixed(0)} הוחזרו לארנק"
-            : "שגיאה בביטול. נסה שוב."),
-      ));
+    try {
+      await PaymentModule.cancelWithPolicy(
+        jobId: jobId,
+        cancelledBy: 'provider',
+      );
+      if (context.mounted) Navigator.pop(context);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          backgroundColor: Colors.orange,
+          content: Text("ההזמנה בוטלה — הלקוח יקבל החזר מלא"),
+        ));
+      }
+    } catch (e) {
+      if (context.mounted) Navigator.pop(context);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: Colors.red,
+          content: Text("שגיאה בביטול: $e"),
+        ));
+      }
     }
   }
 
@@ -373,7 +515,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
       'expert_completed': 'ממתין לאישור',
       'completed':        'הושלם',
       'cancelled':        'בוטל',
-      'disputed':         'במחלוקת',
+      'disputed':              'במחלוקת',
+      'split_resolved':        'נפתר — פשרה',
+      'cancelled_with_penalty': 'בוטל (קנס)',
     };
 
     showModalBottomSheet(
@@ -608,22 +752,8 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   }
 
   Widget _buildList() {
-    final stream = _isExpertView
-        ? FirebaseFirestore.instance
-            .collection('jobs')
-            .where('expertId', isEqualTo: currentUserId)
-            .orderBy('createdAt', descending: true)
-            .limit(50)
-            .snapshots()
-        : FirebaseFirestore.instance
-            .collection('jobs')
-            .where('customerId', isEqualTo: currentUserId)
-            .orderBy('createdAt', descending: true)
-            .limit(50)
-            .snapshots();
-
     return StreamBuilder<QuerySnapshot>(
-      stream: stream,
+      stream: _isExpertView ? _expertStream : _customerStream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: Colors.black));
@@ -743,13 +873,21 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         trailing: _buildStatusChip(status),
       ),
       actions: [
-        if (status == 'paid_escrow')
+        if (status == 'paid_escrow') ...[
           _fullButton(
             label: "סיימתי את העבודה",
             color: Colors.green,
             icon: Icons.check_circle_outline,
             onPressed: () => _markJobDone(context, jobId, chatRoomId),
           ),
+          _outlinedButton(
+            icon: Icons.cancel_outlined,
+            iconColor: Colors.red,
+            label: "בטל הזמנה (החזר ללקוח)",
+            borderColor: Colors.red.shade200,
+            onPressed: () => _providerCancelBooking(context, jobId, job),
+          ),
+        ],
         if (status == 'expert_completed')
           _infoRow(Icons.hourglass_top, Colors.blue, "ממתין לאישור הלקוח"),
         if (status == 'completed') ...[
@@ -820,8 +958,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                 .collection('users')
                 .doc(expertId)
                 .get();
-            taxId = (snap.data() as Map<String, dynamic>?)?['taxId']
-                as String?;
+            taxId = snap.data()?['taxId'] as String?;
           }
           if (context.mounted) {
             showReceiptSheet(context, jobData: job, providerTaxId: taxId);
@@ -942,7 +1079,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
       'paid_escrow':      (Colors.orange, "בנאמנות"),
       'cancelled':        (Colors.red,    "בוטל"),
       'disputed':         (Colors.red,    "במחלוקת"),
-      'refunded':         (Colors.teal,   "הוחזר"),
+      'refunded':              (Colors.teal,   "הוחזר"),
+      'split_resolved':        (Colors.purple, "פשרה"),
+      'cancelled_with_penalty': (Colors.deepOrange, "בוטל+קנס"),
     };
     final (color, text) = map[status] ?? (Colors.grey, "בטיפול");
     return Container(

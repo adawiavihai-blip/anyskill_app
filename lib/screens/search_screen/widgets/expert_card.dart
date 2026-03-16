@@ -7,8 +7,9 @@ class ExpertCard extends StatelessWidget {
   final String  name;
   final String  bio;
   final double  rating;
-  final dynamic price;   // int | double | String | null
+  final dynamic price;          // int | double | String | null
   final String  imageUrl;
+  final bool    hasActiveStory; // shows a gradient ring when true
 
   const ExpertCard({
     super.key,
@@ -18,6 +19,7 @@ class ExpertCard extends StatelessWidget {
     required this.rating,
     required this.price,
     required this.imageUrl,
+    this.hasActiveStory = false,
   });
 
   @override
@@ -37,21 +39,31 @@ class ExpertCard extends StatelessWidget {
           // 1. תמונה עם הגנות ועיצוב Airbnb
           Stack(
             children: [
+              // Story ring — wraps the entire card image with a gradient border
+              if (hasActiveStory)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: CustomPaint(
+                        painter: _StoryRingPainter(),
+                      ),
+                    ),
+                  ),
+                ),
               ClipRRect(
                 borderRadius: BorderRadius.circular(16),
                 child: Image.network(
                   imageUrl,
-                  height: 240, // הגדלתי מעט את הגובה למראה מרשים יותר
+                  height: 240,
                   width: double.infinity,
                   fit: BoxFit.cover,
-                  // QA: טיפול במקרה שהתמונה שבורה או לא קיימת
                   errorBuilder: (context, error, stackTrace) => Container(
                     height: 240,
                     width: double.infinity,
                     color: Colors.grey[100],
                     child: Icon(Icons.person, size: 50, color: Colors.grey[400]),
                   ),
-                  // QA: מחוון טעינה בזמן שהתמונה יורדת מהרשת
                   loadingBuilder: (context, child, loadingProgress) {
                     if (loadingProgress == null) return child;
                     return Container(
@@ -63,7 +75,35 @@ class ExpertCard extends StatelessWidget {
                   },
                 ),
               ),
-              // כפתור לב (Wishlist) - סימן ההיכר של Airbnb
+              // Story badge chip
+              if (hasActiveStory)
+                Positioned(
+                  top: 12,
+                  left: 12,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF6366F1), Color(0xFFEC4899)],
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.play_circle_fill_rounded,
+                            color: Colors.white, size: 12),
+                        SizedBox(width: 3),
+                        Text('סיפור חי',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                ),
+              // Wishlist button
               const Positioned(
                 top: 12,
                 right: 12,
@@ -127,4 +167,29 @@ class ExpertCard extends StatelessWidget {
     ),
     );
   }
+}
+
+// ── Story ring painter — gradient border on top of the card image ─────────────
+class _StoryRingPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    const strokeW = 3.5;
+    final rect  = Rect.fromLTWH(strokeW / 2, strokeW / 2,
+        size.width - strokeW, size.height - strokeW);
+    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(16));
+
+    final paint = Paint()
+      ..style       = PaintingStyle.stroke
+      ..strokeWidth = strokeW
+      ..shader      = const LinearGradient(
+          colors: [Color(0xFF6366F1), Color(0xFFEC4899), Color(0xFFF59E0B)],
+          begin:  Alignment.topLeft,
+          end:    Alignment.bottomRight,
+        ).createShader(rect);
+
+    canvas.drawRRect(rrect, paint);
+  }
+
+  @override
+  bool shouldRepaint(_StoryRingPainter old) => false;
 }

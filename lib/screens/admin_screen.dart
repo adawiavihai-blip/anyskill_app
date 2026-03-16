@@ -1,12 +1,15 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
-import 'package:web/web.dart' as web;
-import 'dart:js_interop';
-import '../services/categories_seeder.dart';
+import '../utils/web_utils.dart';
+import 'pending_categories_screen.dart';
+import 'business_ai_screen.dart';
+import 'xp_manager_screen.dart';
+import 'dispute_resolution_screen.dart';
 import '../services/category_service.dart';
-import 'chat_modules/payment_module.dart';
+
 
 class AdminScreen extends StatefulWidget {
   const AdminScreen({super.key});
@@ -21,10 +24,45 @@ class _AdminScreenState extends State<AdminScreen> {
   double _urgencyFeePct = 5.0;
   bool   _settingsLoaded = false;
 
+  // ── Insights tab — real-time aggregated state ──────────────────────────────
+  double _insGmv       = 0;
+  double _insNetRev    = 0;
+  double _insEscrow    = 0;
+  int    _insTxCount   = 0;
+  int    _insUnanswered = 0;
+  List<Map<String, dynamic>> _insBanners = [];
+
+  // Per-metric "first snapshot received" flags — prevents showing 0 before data arrives
+  bool _insGmvLoaded      = false;
+  bool _insNetRevLoaded   = false;
+  bool _insEscrowLoaded   = false;
+  bool _insTxLoaded       = false;
+  bool _insUnanswLoaded   = false;
+  bool _insBannersLoaded  = false;
+
+  StreamSubscription<QuerySnapshot>? _insCompletedSub;
+  StreamSubscription<QuerySnapshot>? _insEarnSub;
+  StreamSubscription<QuerySnapshot>? _insEscrowSub;
+  StreamSubscription<QuerySnapshot>? _insTxSub;
+  StreamSubscription<QuerySnapshot>? _insUnanswSub;
+  StreamSubscription<QuerySnapshot>? _insBannersSub;
+
   @override
   void initState() {
     super.initState();
     _loadAdminSettings();
+    _setupInsightsStreams();
+  }
+
+  @override
+  void dispose() {
+    _insCompletedSub?.cancel();
+    _insEarnSub?.cancel();
+    _insEscrowSub?.cancel();
+    _insTxSub?.cancel();
+    _insUnanswSub?.cancel();
+    _insBannersSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadAdminSettings() async {
@@ -32,11 +70,118 @@ class _AdminScreenState extends State<AdminScreen> {
         .collection('admin').doc('admin')
         .collection('settings').doc('settings').get();
     if (!mounted) return;
-    final d = doc.data() as Map<String, dynamic>? ?? {};
+    final d = doc.data() ?? {};
     setState(() {
-      _feePct        = ((d['feePercentage']       as num?) ?? 10).toDouble();
-      _urgencyFeePct = ((d['urgencyFeePercentage'] as num?) ?? 5).toDouble();
+      // Firestore stores decimal fraction (0.10 = 10%) — multiply ×100 for UI display
+      _feePct        = (((d['feePercentage']       as num?) ?? 0.10) * 100).toDouble();
+      _urgencyFeePct = (((d['urgencyFeePercentage'] as num?) ?? 0.05) * 100).toDouble();
       _settingsLoaded = true;
+    });
+  }
+
+  // ── Insights: set up (or re-set up) all real-time stream subscriptions ───────
+  void _setupInsightsStreams() {
+    // Cancel existing subscriptions before re-subscribing (called on force-refresh too)
+    _insCompletedSub?.cancel();
+    _insEarnSub?.cancel();
+    _insEscrowSub?.cancel();
+    _insTxSub?.cancel();
+    _insUnanswSub?.cancel();
+    _insBannersSub?.cancel();
+
+    // Reset loaded flags so UI shows a brief spinner while first snapshots arrive
+    if (mounted) {
+      setState(() {
+        _insGmvLoaded     = false;
+        _insNetRevLoaded  = false;
+        _insEscrowLoaded  = false;
+        _insTxLoaded      = false;
+        _insUnanswLoaded  = false;
+        _insBannersLoaded = false;
+      });
+    }
+
+    // 1. GMV — sum totalAmount of all completed jobs
+    _insCompletedSub = FirebaseFirestore.instance
+        .collection('jobs')
+        .where('status', isEqualTo: 'completed')
+        .snapshots()
+        .listen((snap) {
+      double gmv = 0;
+      for (final d in snap.docs) {
+        gmv += ((d.data())['totalAmount'] as num? ?? 0).toDouble();
+      }
+      if (mounted) setState(() { _insGmv = gmv; _insGmvLoaded = true; });
+    }, onError: (_) {
+      if (mounted) setState(() { _insGmv = 0; _insGmvLoaded = true; });
+    });
+
+    // 2. Net revenue — sum amount from platform_earnings
+    _insEarnSub = FirebaseFirestore.instance
+        .collection('platform_earnings')
+        .snapshots()
+        .listen((snap) {
+      double rev = 0;
+      for (final d in snap.docs) {
+        rev += ((d.data())['amount'] as num? ?? 0).toDouble();
+      }
+      if (mounted) setState(() { _insNetRev = rev; _insNetRevLoaded = true; });
+    }, onError: (_) {
+      if (mounted) setState(() { _insNetRev = 0; _insNetRevLoaded = true; });
+    });
+
+    // 3. Escrow held — sum totalAmount of paid_escrow jobs
+    _insEscrowSub = FirebaseFirestore.instance
+        .collection('jobs')
+        .where('status', isEqualTo: 'paid_escrow')
+        .snapshots()
+        .listen((snap) {
+      double esc = 0;
+      for (final d in snap.docs) {
+        esc += ((d.data())['totalAmount'] as num? ?? 0).toDouble();
+      }
+      if (mounted) setState(() { _insEscrow = esc; _insEscrowLoaded = true; });
+    }, onError: (_) {
+      if (mounted) setState(() { _insEscrow = 0; _insEscrowLoaded = true; });
+    });
+
+    // 4. Transaction count — total records in transactions collection
+    _insTxSub = FirebaseFirestore.instance
+        .collection('transactions')
+        .snapshots()
+        .listen((snap) {
+      if (mounted) setState(() { _insTxCount = snap.docs.length; _insTxLoaded = true; });
+    }, onError: (_) {
+      if (mounted) setState(() { _insTxCount = 0; _insTxLoaded = true; });
+    });
+
+    // 5. Unanswered opportunities — open job_requests with no provider interest yet
+    _insUnanswSub = FirebaseFirestore.instance
+        .collection('job_requests')
+        .where('status', isEqualTo: 'open')
+        .where('interestedCount', isEqualTo: 0)
+        .snapshots()
+        .listen((snap) {
+      if (mounted) setState(() { _insUnanswered = snap.docs.length; _insUnanswLoaded = true; });
+    }, onError: (_) {
+      if (mounted) setState(() { _insUnanswered = 0; _insUnanswLoaded = true; });
+    });
+
+    // 6. Banner analytics — click counts per banner (sorted desc)
+    _insBannersSub = FirebaseFirestore.instance
+        .collection('banners')
+        .snapshots()
+        .listen((snap) {
+      final banners = snap.docs
+          .map((d) => {
+                'title':  (d.data())['title']  as String? ?? 'ללא שם',
+                'clicks': ((d.data())['clicks'] as num? ?? 0).toInt(),
+              })
+          .toList()
+        ..sort((a, b) => (b['clicks'] as int).compareTo(a['clicks'] as int));
+      if (mounted) setState(() { _insBanners = banners; _insBannersLoaded = true; });
+    }, onError: (_) {
+      if (mounted) setState(() { _insBanners = []; _insBannersLoaded = true; });
     });
   }
 
@@ -66,17 +211,17 @@ class _AdminScreenState extends State<AdminScreen> {
             : '';
         final amount = (d['amount'] as num? ?? 0).toStringAsFixed(2);
         // Escape any commas or quotes inside fields
-        String _esc(dynamic v) {
+        String esc(dynamic v) {
           final s = (v ?? '').toString().replaceAll('"', '""');
           return '"$s"';
         }
         buf.writeln([
-          _esc(doc.id),
-          _esc(d['userId']),
-          _esc(d['title']),
-          _esc(amount),
-          _esc(d['type']),
-          _esc(dateStr),
+          esc(doc.id),
+          esc(d['userId']),
+          esc(d['title']),
+          esc(amount),
+          esc(d['type']),
+          esc(dateStr),
         ].join(','));
       }
 
@@ -84,18 +229,7 @@ class _AdminScreenState extends State<AdminScreen> {
       final filename =
           'anyskill_transactions_${DateFormat('yyyyMMdd').format(DateTime.now())}.csv';
 
-      // Trigger browser download using the web package
-      final blob = web.Blob(
-        [csvStr.toJS].toJS,
-        web.BlobPropertyBag(type: 'text/csv;charset=utf-8;'),
-      );
-      final url = web.URL.createObjectURL(blob);
-      final anchor =
-          web.document.createElement('a') as web.HTMLAnchorElement;
-      anchor.href      = url;
-      anchor.download  = filename;
-      anchor.click();
-      web.URL.revokeObjectURL(url);
+      triggerCsvDownload(csvStr, filename);
 
       if (mounted) {
         messenger.showSnackBar(SnackBar(
@@ -116,8 +250,9 @@ class _AdminScreenState extends State<AdminScreen> {
         .collection('admin').doc('admin')
         .collection('settings').doc('settings')
         .set({
-          'feePercentage':       _feePct,
-          'urgencyFeePercentage': _urgencyFeePct,
+          // Divide ÷100 to store as decimal fraction (10% → 0.10)
+          'feePercentage':       _feePct / 100,
+          'urgencyFeePercentage': _urgencyFeePct / 100,
         }, SetOptions(merge: true));
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -183,6 +318,27 @@ class _AdminScreenState extends State<AdminScreen> {
                 },
               ),
 
+              // עמלה מותאמת — רק לספקים
+              if (data['isProvider'] == true)
+                ListTile(
+                  leading: const Icon(Icons.percent_rounded, color: Colors.purple),
+                  title: const Text("עמלת עסקה מותאמת אישית"),
+                  subtitle: Text(
+                    data['customCommission'] != null
+                        ? "${((data['customCommission'] as num) * 100).toStringAsFixed(0)}% (מותאם)"
+                        : "לא הוגדרה — ברירת מחדל גלובלית",
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showCustomCommissionDialog(
+                      uid,
+                      name,
+                      (data['customCommission'] as num?)?.toDouble(),
+                    );
+                  },
+                ),
+
               // הערת מנהל
               ListTile(
                 leading: const Icon(Icons.edit_note, color: Colors.amber),
@@ -233,6 +389,75 @@ class _AdminScreenState extends State<AdminScreen> {
             FirebaseFirestore.instance.collection('users').doc(uid).update({'adminNote': noteController.text});
             Navigator.pop(context);
           }, child: const Text("שמור")),
+        ],
+      ),
+    );
+  }
+
+  void _showCustomCommissionDialog(String uid, String name, double? current) {
+    final ctrl = TextEditingController(
+        text: current != null ? (current * 100).toStringAsFixed(0) : '');
+    final messenger = ScaffoldMessenger.of(context);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text("עמלה מותאמת — $name"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              "הגדר עמלה אישית לספק זה.\nהשאר ריק או לחץ 'הסר' כדי לחזור לעמלה הגלובלית.",
+              style: TextStyle(color: Colors.grey[600], fontSize: 13, height: 1.5),
+              textAlign: TextAlign.right,
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: ctrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              textAlign: TextAlign.right,
+              decoration: InputDecoration(
+                hintText: "לדוגמה: 8",
+                suffixText: "%",
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(uid)
+                  .update({'customCommission': FieldValue.delete()});
+              if (ctx.mounted) Navigator.pop(ctx);
+              messenger.showSnackBar(
+                  SnackBar(content: Text("עמלת ברירת מחדל שוחזרה עבור $name")));
+            },
+            child: const Text("הסר (גלובלי)", style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.purple,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () async {
+              final pct = double.tryParse(ctrl.text.trim());
+              if (pct == null || pct < 0 || pct > 100) return;
+              await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(uid)
+                  .update({'customCommission': pct / 100});
+              if (ctx.mounted) Navigator.pop(ctx);
+              messenger.showSnackBar(SnackBar(
+                  backgroundColor: Colors.purple,
+                  content: Text("עמלה של ${pct.toStringAsFixed(0)}% נשמרה עבור $name")));
+            },
+            child: const Text("שמור", style: TextStyle(color: Colors.white)),
+          ),
         ],
       ),
     );
@@ -322,7 +547,7 @@ class _AdminScreenState extends State<AdminScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 9,
+      length: 12,
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F7FA),
         appBar: AppBar(
@@ -339,7 +564,7 @@ class _AdminScreenState extends State<AdminScreen> {
             isScrollable: true,
             labelColor: Colors.blueAccent,
             indicatorColor: Colors.blueAccent,
-            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸"), Tab(text: "קטגוריות 🏷️"), Tab(text: "באנרים 🎨"), Tab(text: "מוניטיזציה 💰")],
+            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸"), Tab(text: "קטגוריות 🏷️"), Tab(text: "באנרים 🎨"), Tab(text: "מוניטיזציה 💰"), Tab(text: "תובנות 📊"), Tab(text: "בינה עסקית 🧠"), Tab(text: "XP & רמות 🎮")],
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
@@ -384,11 +609,14 @@ class _AdminScreenState extends State<AdminScreen> {
                       _buildList(allUsers.where((d) => (d.data() as Map)['isCustomer'] == true).toList()),
                       _buildList(allUsers.where((d) => (d.data() as Map)['isProvider'] == true).toList()),
                       _buildList(allUsers.where((d) => (d.data() as Map)['isBanned'] == true).toList()),
-                      _buildDisputesList(),
+                      const DisputeResolutionScreen(),
                       _buildWithdrawalsList(),
                       _buildCategoriesTab(),
                       _buildBannersTab(),
                       _buildMonetizationTab(allUsers),
+                      _buildInsightsTab(allUsers),
+                      const BusinessAiScreen(),
+                      const XpManagerScreen(),
                     ],
                   ),
                 ),
@@ -423,7 +651,7 @@ class _AdminScreenState extends State<AdminScreen> {
         return Column(
           children: [
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.black,
@@ -433,6 +661,21 @@ class _AdminScreenState extends State<AdminScreen> {
                 icon: const Icon(Icons.add, color: Colors.white),
                 label: const Text("הוסף קטגוריה", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                 onPressed: () => _showCategoryDialog(existingCount: cats.length),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 46),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  side: const BorderSide(color: Color(0xFF6366F1)),
+                ),
+                icon: const Icon(Icons.auto_awesome_rounded, color: Color(0xFF6366F1)),
+                label: const Text("קטגוריות ממתינות לאישור AI",
+                    style: TextStyle(color: Color(0xFF6366F1), fontWeight: FontWeight.bold)),
+                onPressed: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const PendingCategoriesScreen())),
               ),
             ),
             if (!snapshot.hasData)
@@ -827,7 +1070,7 @@ class _AdminScreenState extends State<AdminScreen> {
                     const SizedBox(height: 10),
 
                     // ── User name (live lookup) ─────────────────────────
-                    FutureBuilder<DocumentSnapshot>(
+                    FutureBuilder<DocumentSnapshot?>(
                       future: uid.isNotEmpty
                           ? FirebaseFirestore.instance.collection('users').doc(uid).get()
                           : Future.value(null),
@@ -957,164 +1200,7 @@ class _AdminScreenState extends State<AdminScreen> {
     );
   }
 
-  Widget _buildDisputesList() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('jobs')
-          .where('status', isEqualTo: 'disputed')
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        final docs = snapshot.data!.docs;
-        if (docs.isEmpty) {
-          return const Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.check_circle_outline, size: 64, color: Colors.green),
-                SizedBox(height: 12),
-                Text("אין מחלוקות פתוחות", style: TextStyle(color: Colors.grey, fontSize: 16)),
-              ],
-            ),
-          );
-        }
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: docs.length,
-          itemBuilder: (context, index) {
-            final job = docs[index].data() as Map<String, dynamic>;
-            final jobId = docs[index].id;
-            final amount = (job['totalAmount'] ?? job['totalPaidByCustomer'] ?? 0.0).toDouble();
-            DateTime? openedAt = (job['disputeOpenedAt'] as Timestamp?)?.toDate();
-            final formattedDate = openedAt != null
-                ? DateFormat('dd/MM HH:mm').format(openedAt)
-                : '—';
 
-            return Card(
-              margin: const EdgeInsets.only(bottom: 16),
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: BorderSide(color: Colors.red.shade100),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text("₪${amount.toStringAsFixed(0)}",
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 18)),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.red[50],
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(formattedDate,
-                              style: TextStyle(
-                                  color: Colors.red[700], fontSize: 12)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text("לקוח: ${job['customerName'] ?? job['customerId'] ?? '—'}",
-                        style: const TextStyle(fontSize: 13)),
-                    Text("מומחה: ${job['expertName'] ?? job['expertId'] ?? '—'}",
-                        style: const TextStyle(fontSize: 13)),
-                    if ((job['disputeReason'] ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.orange[50],
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          "\"${job['disputeReason']}\"",
-                          style: TextStyle(
-                              color: Colors.orange[900],
-                              fontSize: 13,
-                              fontStyle: FontStyle.italic),
-                          textAlign: TextAlign.right,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: Colors.red),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10)),
-                            ),
-                            icon: const Icon(Icons.undo, color: Colors.red, size: 18),
-                            label: const Text("החזר ללקוח",
-                                style: TextStyle(color: Colors.red, fontSize: 13)),
-                            onPressed: () async {
-                              final ok = await PaymentModule.refundDisputedJob(
-                                jobId: jobId,
-                                customerId: job['customerId'] ?? '',
-                                totalAmount: amount,
-                              );
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                                  backgroundColor: ok ? Colors.green : Colors.red,
-                                  content: Text(ok
-                                      ? "הסכום הוחזר ללקוח"
-                                      : "שגיאה — נסה שוב"),
-                                ));
-                              }
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green,
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10)),
-                            ),
-                            icon: const Icon(Icons.check, color: Colors.white, size: 18),
-                            label: const Text("שחרר למומחה",
-                                style: TextStyle(color: Colors.white, fontSize: 13)),
-                            onPressed: () async {
-                              final ok = await PaymentModule.releaseEscrowFunds(
-                                jobId: jobId,
-                                expertId: job['expertId'] ?? '',
-                                expertName: job['expertName'] ?? 'מומחה',
-                                customerName: job['customerName'] ?? 'לקוח',
-                                totalAmount: amount,
-                              );
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                                  backgroundColor: ok ? Colors.green : Colors.red,
-                                  content: Text(ok
-                                      ? "התשלום שוחרר למומחה"
-                                      : "שגיאה — נסה שוב"),
-                                ));
-                              }
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
 
   Widget _buildList(List<QueryDocumentSnapshot> users) {
     var filtered = users.where((doc) {
@@ -1343,9 +1429,14 @@ class _AdminScreenState extends State<AdminScreen> {
                   itemBuilder: (context, index) {
                     final doc = docs[index];
                     final data = doc.data() as Map<String, dynamic>;
-                    final isActive = data['isActive'] as bool? ?? true;
-                    final iconName = data['iconName'] as String? ?? 'stars';
-                    final color1Hex = data['color1'] as String? ?? '667eea';
+                    final isActive   = data['isActive'] as bool? ?? true;
+                    final iconName   = data['iconName']  as String? ?? 'stars';
+                    final color1Hex  = data['color1']    as String? ?? '667eea';
+                    final expiresAt  = (data['expiresAt'] as Timestamp?)?.toDate();
+                    final now        = DateTime.now();
+                    final isExpired  = expiresAt != null && expiresAt.isBefore(now);
+                    final expiresSoon = expiresAt != null && !isExpired &&
+                        expiresAt.isBefore(now.add(const Duration(days: 7)));
 
                     return Card(
                       key: ValueKey(doc.id),
@@ -1355,45 +1446,129 @@ class _AdminScreenState extends State<AdminScreen> {
                         borderRadius: BorderRadius.circular(14),
                         side: BorderSide(color: Colors.grey.shade200),
                       ),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        leading: Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                _hexToAdminColor(color1Hex),
-                                _hexToAdminColor(data['color2'] as String? ?? '764ba2'),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ListTile(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            leading: Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    _hexToAdminColor(color1Hex),
+                                    _hexToAdminColor(data['color2'] as String? ?? '764ba2'),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Icon(_iconLabels[iconName] ?? Icons.stars_rounded,
+                                  color: Colors.white, size: 22),
+                            ),
+                            title: Text(data['title'] as String? ?? '',
+                                style: const TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Text(data['subtitle'] as String? ?? '',
+                                style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Switch(
+                                  value: isActive,
+                                  activeColor: Colors.green,
+                                  onChanged: (val) => doc.reference.update({'isActive': val}),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.edit_outlined, color: Colors.blueAccent),
+                                  onPressed: () => _showBannerDialog(doc: doc, data: data),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                                  onPressed: () => _confirmDeleteBanner(doc.id),
+                                ),
                               ],
                             ),
-                            borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Icon(_iconLabels[iconName] ?? Icons.stars_rounded,
-                              color: Colors.white, size: 22),
-                        ),
-                        title: Text(data['title'] as String? ?? '',
-                            style: const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: Text(data['subtitle'] as String? ?? '',
-                            style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Switch(
-                              value: isActive,
-                              activeColor: Colors.green,
-                              onChanged: (val) => doc.reference.update({'isActive': val}),
+                          // Expiry status chip
+                          if (expiresAt != null)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    isExpired ? Icons.event_busy_rounded : Icons.schedule_rounded,
+                                    size: 13,
+                                    color: isExpired
+                                        ? Colors.red[700]
+                                        : expiresSoon
+                                            ? Colors.orange[700]
+                                            : Colors.grey[500],
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    isExpired
+                                        ? 'פג תוקף — ${DateFormat('dd/MM/yyyy').format(expiresAt)}'
+                                        : 'פג תוקף ב-${DateFormat('dd/MM/yyyy').format(expiresAt)}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: expiresSoon || isExpired
+                                          ? FontWeight.w600
+                                          : FontWeight.normal,
+                                      color: isExpired
+                                          ? Colors.red[700]
+                                          : expiresSoon
+                                              ? Colors.orange[700]
+                                              : Colors.grey[500],
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.edit_outlined, color: Colors.blueAccent),
-                              onPressed: () => _showBannerDialog(doc: doc, data: data),
+
+                          // Featured provider chip (shown when providerId is set)
+                          if ((data['providerId'] as String?) != null)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.amber.shade50,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: Colors.amber.shade300),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    CircleAvatar(
+                                      radius: 14,
+                                      backgroundImage: ((data['providerPhoto'] as String?) ?? '').isNotEmpty
+                                          ? NetworkImage(data['providerPhoto'] as String)
+                                          : null,
+                                      backgroundColor: Colors.amber.shade200,
+                                      child: ((data['providerPhoto'] as String?) ?? '').isEmpty
+                                          ? Text(
+                                              ((data['providerName'] as String?) ?? '?')[0].toUpperCase(),
+                                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                                            )
+                                          : null,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Icon(Icons.workspace_premium_rounded,
+                                        size: 14, color: Colors.amber.shade700),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      data['providerName'] as String? ?? 'ספק מקודם',
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.amber.shade900),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                              onPressed: () => _confirmDeleteBanner(doc.id),
-                            ),
-                          ],
-                        ),
+                        ],
                       ),
                     );
                   },
@@ -1426,90 +1601,286 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 
   void _showBannerDialog({QueryDocumentSnapshot? doc, Map<String, dynamic>? data, int existingCount = 0}) {
-    final titleCtrl    = TextEditingController(text: data?['title']    as String? ?? '');
-    final subtitleCtrl = TextEditingController(text: data?['subtitle'] as String? ?? '');
-    final color1Ctrl   = TextEditingController(text: data?['color1']   as String? ?? '667eea');
-    final color2Ctrl   = TextEditingController(text: data?['color2']   as String? ?? '764ba2');
+    final titleCtrl      = TextEditingController(text: data?['title']    as String? ?? '');
+    final subtitleCtrl   = TextEditingController(text: data?['subtitle'] as String? ?? '');
+    final color1Ctrl     = TextEditingController(text: data?['color1']   as String? ?? '667eea');
+    final color2Ctrl     = TextEditingController(text: data?['color2']   as String? ?? '764ba2');
+    final provSearchCtrl = TextEditingController();
     String selectedIcon = data?['iconName'] as String? ?? 'stars';
-    bool isActive = data?['isActive'] as bool? ?? true;
+    bool   isActive     = data?['isActive'] as bool? ?? true;
+
+    // Provider link state
+    String? linkedProviderId    = data?['providerId']    as String?;
+    String? linkedProviderName  = data?['providerName']  as String?;
+    String? linkedProviderPhoto = data?['providerPhoto'] as String?;
+
+    // Expiration date state (null = never expires)
+    DateTime? expiresAt = (data?['expiresAt'] as Timestamp?)?.toDate();
+
+    // Provider search results shown inside the dialog
+    List<QueryDocumentSnapshot> provResults = [];
+    bool provSearching = false;
 
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: Text(doc == null ? "באנר חדש" : "עריכת באנר",
-              style: const TextStyle(fontWeight: FontWeight.bold)),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                TextField(controller: titleCtrl,    textAlign: TextAlign.right, decoration: const InputDecoration(labelText: "כותרת")),
-                const SizedBox(height: 10),
-                TextField(controller: subtitleCtrl, textAlign: TextAlign.right, decoration: const InputDecoration(labelText: "תת כותרת")),
-                const SizedBox(height: 10),
-                TextField(controller: color1Ctrl,   textAlign: TextAlign.right, decoration: const InputDecoration(labelText: "צבע 1 (hex)", hintText: "667eea")),
-                const SizedBox(height: 10),
-                TextField(controller: color2Ctrl,   textAlign: TextAlign.right, decoration: const InputDecoration(labelText: "צבע 2 (hex)", hintText: "764ba2")),
-                const SizedBox(height: 14),
-                const Align(alignment: Alignment.centerRight, child: Text("אייקון:", style: TextStyle(fontWeight: FontWeight.bold))),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _iconOptions.map((name) {
-                    final selected = name == selectedIcon;
-                    return GestureDetector(
-                      onTap: () => setDialogState(() => selectedIcon = name),
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: selected ? Colors.blueAccent.withValues(alpha: 0.15) : Colors.grey[100],
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: selected ? Colors.blueAccent : Colors.transparent, width: 2),
+        builder: (ctx, setDialogState) {
+
+          Future<void> searchProviders(String query) async {
+            if (query.trim().length < 2) {
+              setDialogState(() { provResults = []; });
+              return;
+            }
+            setDialogState(() => provSearching = true);
+            final snap = await FirebaseFirestore.instance
+                .collection('users')
+                .where('isProvider', isEqualTo: true)
+                .limit(20)
+                .get();
+            final lower = query.trim().toLowerCase();
+            final filtered = snap.docs.where((d) {
+              final n = ((d.data() as Map)['name'] as String? ?? '').toLowerCase();
+              return n.contains(lower);
+            }).toList();
+            if (ctx.mounted) setDialogState(() { provResults = filtered; provSearching = false; });
+          }
+
+          return AlertDialog(
+            title: Text(doc == null ? "באנר חדש" : "עריכת באנר",
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  TextField(controller: titleCtrl,    textAlign: TextAlign.right, decoration: const InputDecoration(labelText: "כותרת")),
+                  const SizedBox(height: 10),
+                  TextField(controller: subtitleCtrl, textAlign: TextAlign.right, decoration: const InputDecoration(labelText: "תת כותרת")),
+                  const SizedBox(height: 10),
+                  TextField(controller: color1Ctrl,   textAlign: TextAlign.right, decoration: const InputDecoration(labelText: "צבע 1 (hex)", hintText: "667eea")),
+                  const SizedBox(height: 10),
+                  TextField(controller: color2Ctrl,   textAlign: TextAlign.right, decoration: const InputDecoration(labelText: "צבע 2 (hex)", hintText: "764ba2")),
+                  const SizedBox(height: 14),
+                  const Align(alignment: Alignment.centerRight, child: Text("אייקון:", style: TextStyle(fontWeight: FontWeight.bold))),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: _iconOptions.map((name) {
+                      final selected = name == selectedIcon;
+                      return GestureDetector(
+                        onTap: () => setDialogState(() => selectedIcon = name),
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: selected ? Colors.blueAccent.withValues(alpha: 0.15) : Colors.grey[100],
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: selected ? Colors.blueAccent : Colors.transparent, width: 2),
+                          ),
+                          child: Icon(_iconLabels[name], size: 22, color: selected ? Colors.blueAccent : Colors.grey[600]),
                         ),
-                        child: Icon(_iconLabels[name], size: 22, color: selected ? Colors.blueAccent : Colors.grey[600]),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("פעיל"),
+                      Switch(value: isActive, onChanged: (v) => setDialogState(() => isActive = v)),
+                    ],
+                  ),
+
+                  // ── Expiration Date ──────────────────────────────────────
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // Date picker button
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: expiresAt != null ? Colors.red[700] : Colors.blueAccent,
+                          padding: EdgeInsets.zero,
+                        ),
+                        icon: Icon(
+                          expiresAt != null ? Icons.event_busy_rounded : Icons.date_range_rounded,
+                          size: 18,
+                        ),
+                        label: Text(
+                          expiresAt != null
+                              ? DateFormat('dd/MM/yyyy').format(expiresAt!)
+                              : "בחר תאריך תפוגה",
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: ctx,
+                            initialDate: expiresAt ?? DateTime.now().add(const Duration(days: 30)),
+                            firstDate: DateTime.now(),
+                            lastDate: DateTime.now().add(const Duration(days: 365 * 3)),
+                            helpText: 'תאריך תפוגת הבאנר',
+                            confirmText: 'אשר',
+                            cancelText: 'ביטול',
+                          );
+                          if (picked != null) setDialogState(() => expiresAt = picked);
+                        },
                       ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text("פעיל"),
-                    Switch(value: isActive, onChanged: (v) => setDialogState(() => isActive = v)),
+                      // Clear button
+                      if (expiresAt != null)
+                        IconButton(
+                          icon: const Icon(Icons.close, size: 16, color: Colors.grey),
+                          tooltip: "ללא תפוגה",
+                          onPressed: () => setDialogState(() => expiresAt = null),
+                        ),
+                      const Align(
+                        alignment: Alignment.centerRight,
+                        child: Text("תאריך תפוגה", style: TextStyle(fontSize: 13)),
+                      ),
+                    ],
+                  ),
+
+                  // ── Featured Provider Section ─────────────────────────────
+                  const SizedBox(height: 16),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                  const Align(
+                    alignment: Alignment.centerRight,
+                    child: Text("ספק מקודם (Featured Provider)",
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  ),
+                  const SizedBox(height: 6),
+
+                  // Currently linked provider chip
+                  if (linkedProviderId != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.amber.shade300),
+                      ),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 18,
+                            backgroundImage: (linkedProviderPhoto != null && linkedProviderPhoto!.isNotEmpty)
+                                ? NetworkImage(linkedProviderPhoto!) : null,
+                            child: (linkedProviderPhoto == null || linkedProviderPhoto!.isEmpty)
+                                ? Text((linkedProviderName ?? '?')[0].toUpperCase()) : null,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(linkedProviderName ?? linkedProviderId!,
+                                style: const TextStyle(fontWeight: FontWeight.w600)),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 18, color: Colors.grey),
+                            onPressed: () => setDialogState(() {
+                              linkedProviderId   = null;
+                              linkedProviderName = null;
+                              linkedProviderPhoto = null;
+                              provResults = [];
+                              provSearchCtrl.clear();
+                            }),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                   ],
-                ),
-              ],
+
+                  // Search field
+                  TextField(
+                    controller: provSearchCtrl,
+                    textAlign: TextAlign.right,
+                    decoration: InputDecoration(
+                      labelText: "חפש ספק לפי שם",
+                      hintText: "הקלד שם...",
+                      suffixIcon: provSearching
+                          ? const SizedBox(width: 20, height: 20,
+                              child: Padding(padding: EdgeInsets.all(12),
+                                child: CircularProgressIndicator(strokeWidth: 2)))
+                          : const Icon(Icons.search),
+                    ),
+                    onChanged: (v) => searchProviders(v),
+                  ),
+
+                  // Search results list
+                  if (provResults.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      constraints: const BoxConstraints(maxHeight: 180),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade200),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: provResults.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (_, i) {
+                          final pd = provResults[i].data() as Map<String, dynamic>;
+                          final pName  = pd['name']         as String? ?? 'ללא שם';
+                          final pPhoto = pd['profileImage'] as String? ?? '';
+                          final pType  = pd['serviceType']  as String? ?? '';
+                          return ListTile(
+                            dense: true,
+                            leading: CircleAvatar(
+                              radius: 18,
+                              backgroundImage: pPhoto.isNotEmpty ? NetworkImage(pPhoto) : null,
+                              child: pPhoto.isEmpty ? Text(pName[0].toUpperCase()) : null,
+                            ),
+                            title: Text(pName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                            subtitle: pType.isNotEmpty ? Text(pType, style: const TextStyle(fontSize: 11)) : null,
+                            onTap: () => setDialogState(() {
+                              linkedProviderId   = provResults[i].id;
+                              linkedProviderName = pName;
+                              linkedProviderPhoto = pPhoto;
+                              provResults = [];
+                              provSearchCtrl.clear();
+                            }),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("ביטול")),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.black),
-              onPressed: () async {
-                final payload = {
-                  'title':    titleCtrl.text.trim(),
-                  'subtitle': subtitleCtrl.text.trim(),
-                  'color1':   color1Ctrl.text.trim().replaceAll('#', ''),
-                  'color2':   color2Ctrl.text.trim().replaceAll('#', ''),
-                  'iconName': selectedIcon,
-                  'isActive': isActive,
-                  'order':    data?['order'] ?? existingCount,
-                };
-                if (doc == null) {
-                  await FirebaseFirestore.instance.collection('banners').add(payload);
-                } else {
-                  await doc.reference.update(payload);
-                }
-                if (ctx.mounted) Navigator.pop(ctx);
-              },
-              child: Text(doc == null ? "הוסף" : "שמור",
-                  style: const TextStyle(color: Colors.white)),
-            ),
-          ],
-        ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("ביטול")),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.black),
+                onPressed: () async {
+                  final payload = <String, dynamic>{
+                    'title':    titleCtrl.text.trim(),
+                    'subtitle': subtitleCtrl.text.trim(),
+                    'color1':   color1Ctrl.text.trim().replaceAll('#', ''),
+                    'color2':   color2Ctrl.text.trim().replaceAll('#', ''),
+                    'iconName': selectedIcon,
+                    'isActive': isActive,
+                    'order':    data?['order'] ?? existingCount,
+                    // Provider link — null means "generic banner, no navigation"
+                    'providerId':    linkedProviderId,
+                    'providerName':  linkedProviderName,
+                    'providerPhoto': linkedProviderPhoto,
+                    // Monetization tracking: timestamp of when provider was linked
+                    'providerLinkedAt': linkedProviderId != null ? FieldValue.serverTimestamp() : null,
+                    // Expiration — null means the banner never expires
+                    'expiresAt': expiresAt != null ? Timestamp.fromDate(expiresAt!) : null,
+                  };
+                  if (doc == null) {
+                    await FirebaseFirestore.instance.collection('banners').add(payload);
+                  } else {
+                    await doc.reference.update(payload);
+                  }
+                  if (ctx.mounted) Navigator.pop(ctx);
+                },
+                child: Text(doc == null ? "הוסף" : "שמור",
+                    style: const TextStyle(color: Colors.white)),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1526,11 +1897,11 @@ class _AdminScreenState extends State<AdminScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // ── Commission Controller ──────────────────────────────────────
+          // ── Global Commission % ───────────────────────────────────────
           _monoCard(
             icon: Icons.percent_rounded,
             color: const Color(0xFF6366F1),
-            title: "עמלת פלטפורמה",
+            title: "עמלת פלטפורמה גלובלית",
             child: _settingsLoaded
                 ? Column(
                     children: [
@@ -1542,7 +1913,7 @@ class _AdminScreenState extends State<AdminScreen> {
                                   fontSize: 28,
                                   fontWeight: FontWeight.bold,
                                   color: Color(0xFF6366F1))),
-                          const Text("מכל עסקה",
+                          const Text("מכל עסקה (ברירת מחדל)",
                               style: TextStyle(color: Colors.grey, fontSize: 13)),
                         ],
                       ),
@@ -1567,6 +1938,19 @@ class _AdminScreenState extends State<AdminScreen> {
                           Text("0%", style: TextStyle(fontSize: 11, color: Colors.grey)),
                           Text("30%", style: TextStyle(fontSize: 11, color: Colors.grey)),
                         ],
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF6366F1).withValues(alpha: 0.07),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text(
+                          "ניתן לדרוס לספקים ספציפיים דרך רשימת הספקים ← עמלה מותאמת",
+                          style: TextStyle(fontSize: 11, color: Color(0xFF6366F1)),
+                          textAlign: TextAlign.right,
+                        ),
                       ),
                     ],
                   )
@@ -1695,6 +2079,15 @@ class _AdminScreenState extends State<AdminScreen> {
           ),
           const SizedBox(height: 22),
 
+          // ── Escrow Commissions (pending jobs) ─────────────────────────
+          _monoCard(
+            icon: Icons.lock_clock_rounded,
+            color: Colors.orange[700]!,
+            title: "עמלות בהמתנה (Escrow)",
+            child: _buildEscrowSection(),
+          ),
+          const SizedBox(height: 22),
+
           // ── CSV Export ────────────────────────────────────────────────
           _monoCard(
             icon: Icons.download_rounded,
@@ -1778,6 +2171,117 @@ class _AdminScreenState extends State<AdminScreen> {
           child,
         ],
       ),
+    );
+  }
+
+  // ── Escrow section: live list of jobs in paid_escrow ─────────────────────
+  Widget _buildEscrowSection() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('jobs')
+          .where('status', isEqualTo: 'paid_escrow')
+          .orderBy('createdAt', descending: true)
+          .limit(50)
+          .snapshots(),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final docs = snap.data!.docs;
+        double total = 0;
+        for (final d in docs) {
+          total += (((d.data() as Map<String, dynamic>)['totalAmount']) as num? ?? 0).toDouble();
+        }
+
+        if (docs.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Center(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.check_circle_outline, color: Colors.green, size: 18),
+                  SizedBox(width: 6),
+                  Text("אין עסקאות בהמתנה כרגע",
+                      style: TextStyle(color: Colors.grey, fontSize: 13)),
+                ],
+              ),
+            ),
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // ── Total badge ──────────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text("${docs.length} עסקאות",
+                      style: TextStyle(color: Colors.orange[700], fontSize: 13)),
+                  Text("סה״כ: ₪${total.toStringAsFixed(0)}",
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange[800],
+                          fontSize: 15)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            // ── Per-job rows ─────────────────────────────────────────────
+            ...docs.map((doc) {
+              final j    = doc.data() as Map<String, dynamic>;
+              final amt  = ((j['totalAmount']) as num? ?? 0).toDouble();
+              final expert   = j['expertName']   as String? ?? '—';
+              final customer = j['customerName'] as String? ?? '—';
+              final ts   = (j['createdAt'] as Timestamp?)?.toDate();
+              final date = ts != null ? DateFormat('dd/MM HH:mm').format(ts) : '—';
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.orange.shade100),
+                ),
+                child: Row(
+                  children: [
+                    Text("₪${amt.toStringAsFixed(0)}",
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 15)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text("$customer ← $expert",
+                              style: const TextStyle(fontSize: 12),
+                              textAlign: TextAlign.right),
+                          Text(date,
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.grey[500])),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(Icons.hourglass_top_rounded,
+                        size: 16, color: Colors.orange[400]),
+                  ],
+                ),
+              );
+            }),
+          ],
+        );
+      },
     );
   }
 
@@ -1892,6 +2396,287 @@ class _AdminScreenState extends State<AdminScreen> {
         );
       },
     );
+  }
+
+  // ── Insights & Analytics Tab ──────────────────────────────────────────────
+
+  Widget _buildInsightsTab(List<QueryDocumentSnapshot> allUsers) {
+    // DAU: from allUsers stream (already live via parent StreamBuilder)
+    // Try both field names for last-seen timestamp
+    final now        = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+    final dau = allUsers.where((d) {
+      final data = d.data() as Map<String, dynamic>;
+      final ts = ((data['lastOnlineAt'] ?? data['lastActive']) as Timestamp?)?.toDate();
+      return ts != null && ts.isAfter(todayStart);
+    }).length;
+
+    // All 4 financial metrics must have loaded before showing numbers
+    final finLoaded = _insGmvLoaded && _insNetRevLoaded && _insEscrowLoaded && _insTxLoaded;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("תובנות ואנליטיקס",
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded, color: Colors.blueAccent),
+                onPressed: _setupInsightsStreams,
+                tooltip: "כפה רענון — סגור וחדש את כל ה-Listeners",
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // ── Financial Overview (real-time) ────────────────────────────
+          _monoCard(
+            icon: Icons.account_balance_wallet_rounded,
+            color: Colors.green,
+            title: "סקירה פיננסית",
+            child: !finLoaded
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                : Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(child: _insightsMiniCard(
+                              'GMV סה"כ', '₪${_fmtNum(_insGmv)}', Colors.green)),
+                          const SizedBox(width: 10),
+                          Expanded(child: _insightsMiniCard(
+                              'הכנסות נטו', '₪${_fmtNum(_insNetRev)}', Colors.teal)),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(child: _insightsMiniCard(
+                              'ב-Escrow', '₪${_fmtNum(_insEscrow)}', Colors.orange)),
+                          const SizedBox(width: 10),
+                          Expanded(child: _insightsMiniCard(
+                              'עסקאות', _fmtNum(_insTxCount.toDouble()), Colors.blue)),
+                        ],
+                      ),
+                    ],
+                  ),
+          ),
+          const SizedBox(height: 16),
+
+          // ── User Activity (DAU from parent stream, unanswered from own stream) ──
+          _monoCard(
+            icon: Icons.people_alt_rounded,
+            color: Colors.purple,
+            title: "פעילות משתמשים",
+            child: Row(
+              children: [
+                Expanded(child: _insightsMiniCard(
+                    'פעילים היום (DAU)', dau.toString(), Colors.purple)),
+                const SizedBox(width: 10),
+                Expanded(child: _insightsMiniCard(
+                    'בקשות ללא מענה',
+                    _insUnanswLoaded ? _insUnanswered.toString() : '…',
+                    _insUnanswered > 5 ? Colors.red : Colors.green)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // ── Banner Analytics (real-time click counts) ─────────────────
+          _monoCard(
+            icon: Icons.bar_chart_rounded,
+            color: Colors.indigo,
+            title: "אנליטיקס באנרים",
+            child: !_insBannersLoaded
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                : _insBanners.isEmpty
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Text("אין באנרים עדיין",
+                            style: TextStyle(color: Colors.grey)),
+                      )
+                    : Column(
+                        children: _insBanners.map((b) {
+                          final clicks   = b['clicks'] as int;
+                          final maxClicks =
+                              (_insBanners.first['clicks'] as int) < 1
+                                  ? 1
+                                  : _insBanners.first['clicks'] as int;
+                          final ratio = clicks / maxClicks;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 5),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text('$clicks קליקים',
+                                        style: const TextStyle(
+                                            fontSize: 12, color: Colors.grey)),
+                                    Text(b['title'] as String,
+                                        style: const TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600)),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: LinearProgressIndicator(
+                                    value: ratio,
+                                    minHeight: 8,
+                                    backgroundColor:
+                                        Colors.indigo.withValues(alpha: 0.1),
+                                    valueColor:
+                                        const AlwaysStoppedAnimation<Color>(
+                                            Colors.indigo),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ),
+          ),
+          const SizedBox(height: 16),
+
+          // ── Top Rated Providers (from parent allUsers stream) ─────────
+          _monoCard(
+            icon: Icons.star_rounded,
+            color: const Color(0xFFF59E0B),
+            title: "ספקים מובילים",
+            child: Builder(builder: (context) {
+              final providers = allUsers
+                  .map((d) => d.data() as Map<String, dynamic>)
+                  .where((d) =>
+                      d['isProvider'] == true &&
+                      (d['reviewsCount'] as num? ?? 0) > 0)
+                  .toList()
+                ..sort((a, b) => ((b['rating'] as num? ?? 0)
+                    .compareTo(a['rating'] as num? ?? 0)));
+
+              final top = providers.take(5).toList();
+              if (top.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text("אין ספקים עם ביקורות עדיין",
+                      style: TextStyle(color: Colors.grey)),
+                );
+              }
+
+              return Column(
+                children: top.map((d) {
+                  // Support both 'name' (used by most screens) and 'fullName'
+                  final name = (d['name'] ?? d['fullName'] ?? 'ספק') as String;
+                  final rating  = (d['rating']       as num? ?? 0).toDouble();
+                  final reviews = (d['reviewsCount'] as num? ?? 0).toInt();
+                  final photo   = d['profileImage']  as String?;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.star_rounded,
+                                color: Color(0xFFF59E0B), size: 16),
+                            const SizedBox(width: 4),
+                            Text(rating.toStringAsFixed(1),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13)),
+                            const SizedBox(width: 4),
+                            Text('($reviews)',
+                                style: const TextStyle(
+                                    color: Colors.grey, fontSize: 12)),
+                          ],
+                        ),
+                        const Spacer(),
+                        Text(name,
+                            style: const TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w600)),
+                        const SizedBox(width: 10),
+                        CircleAvatar(
+                          radius: 18,
+                          backgroundColor: Colors.grey[200],
+                          backgroundImage: (photo != null && photo.isNotEmpty)
+                              ? NetworkImage(photo)
+                              : null,
+                          child: (photo == null || photo.isEmpty)
+                              ? Text(
+                                  name.isNotEmpty ? name[0] : '?',
+                                  style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold),
+                                )
+                              : null,
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              );
+            }),
+          ),
+          const SizedBox(height: 16),
+
+          // ── Response Time Placeholder ─────────────────────────────────
+          _monoCard(
+            icon: Icons.timer_outlined,
+            color: Colors.blueGrey,
+            title: "זמן תגובה ממוצע",
+            child: const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Center(
+                child: Text(
+                  "יהיה זמין בקרוב 🚀",
+                  style: TextStyle(color: Colors.grey, fontSize: 14),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  Widget _insightsMiniCard(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(value,
+              style: TextStyle(
+                  fontSize: 20, fontWeight: FontWeight.bold, color: color)),
+          const SizedBox(height: 2),
+          Text(label,
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
+              textAlign: TextAlign.right),
+        ],
+      ),
+    );
+  }
+
+  String _fmtNum(double n) {
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000)    return '${(n / 1000).toStringAsFixed(1)}K';
+    return n.toStringAsFixed(0);
   }
 
   void _confirmDeleteBanner(String docId) {

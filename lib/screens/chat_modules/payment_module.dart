@@ -133,4 +133,24 @@ class PaymentModule {
     );
     return error == null;
   }
+
+  // ── Policy-aware cancellation — calls processCancellation Cloud Function ───
+  // cancelledBy: 'customer' | 'provider'
+  // Returns a map with: success, newStatus, isPenalty, customerCredit, expertCredit.
+  // Throws a user-readable String on error.
+  static Future<Map<String, dynamic>> cancelWithPolicy({
+    required String jobId,
+    required String cancelledBy,
+  }) async {
+    try {
+      final result = await FirebaseFunctions.instance
+          .httpsCallable('processCancellation')
+          .call({'jobId': jobId, 'cancelledBy': cancelledBy});
+      return Map<String, dynamic>.from(result.data as Map);
+    } on FirebaseFunctionsException catch (e) {
+      throw (e.message ?? e.code);
+    } catch (e) {
+      throw e.toString();
+    }
+  }
 }

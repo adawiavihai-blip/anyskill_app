@@ -1,6 +1,10 @@
+import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:showcaseview/showcaseview.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'profile_screen.dart';
 import 'admin_screen.dart';
 import 'chat_list_screen.dart';
@@ -11,6 +15,8 @@ import 'opportunities_screen.dart';
 import 'my_requests_screen.dart';
 import '../services/location_service.dart';
 import '../services/ai_analysis_service.dart';
+import '../onboarding/app_tour.dart';
+import '../main.dart' show PendingNotification;
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,7 +27,37 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   final User? currentUser = FirebaseAuth.instance.currentUser;
+
+  /// One navigator key per tab slot (max 8 tabs: 5 common + opp + admin + system).
+  final List<GlobalKey<NavigatorState>> _tabNavKeys =
+      List.generate(8, (_) => GlobalKey<NavigatorState>());
   final String adminEmail = "adawiavihai@gmail.com";
+
+  // ── Badge counters ─────────────────────────────────────────────────────────
+  int _bookingsCustBadge   = 0;  // jobs needing customer approval (expert_completed)
+  int _bookingsExpertBadge = 0;  // jobs needing expert to finish (paid_escrow)
+  int _opportunitiesBadge  = 0;  // new job_requests in provider's category
+  int get _bookingsBadge => _bookingsCustBadge + _bookingsExpertBadge;
+
+  // ── Bookings badge "seen" logic ───────────────────────────────────────────
+  // Stores the count at the time the user last opened the Bookings tab.
+  // The visible badge = max(0, _bookingsBadge - _bookingsLastCleared).
+  // Resets to 0 when tapped, reappears only when new actionable jobs arrive.
+  int _bookingsLastCleared = 0;
+  int get _bookingsVisibleBadge => (_bookingsBadge - _bookingsLastCleared).clamp(0, 999);
+
+  // ── Tour ────────────────────────────────────────────────────────────────────
+  /// Context inside the ShowCaseWidget tree — used to call startShowCase().
+  BuildContext? _showcaseCtx;
+  bool _tourStarted     = false;
+  bool _tourLocallyDone = false; // fast local guard, loaded from SharedPreferences
+
+  StreamSubscription<QuerySnapshot>? _bookingsCustSub;
+  StreamSubscription<QuerySnapshot>? _bookingsExpertSub;
+  StreamSubscription<QuerySnapshot>? _opportunitiesSub;
+
+  String    _oppServiceType = '';   // cached to detect serviceType changes
+  Timestamp? _oppLastViewed;        // users/{uid}.lastViewedOpportunitiesAt
 
   // Streams מאוחסנים ב-initState — מניעת subscribe/unsubscribe מחדש בכל rebuild
   late final Stream<DocumentSnapshot> _userStream;
@@ -35,6 +71,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _setOnlineStatus(true);
     final uid = currentUser?.uid;
     if (uid != null) LocationService.init(uid);
+    // Load local tour-complete flag so the tour is suppressed even before
+    // the Firestore user doc arrives (prevents a flash on slow connections).
+    SharedPreferences.getInstance().then((p) {
+      if (p.getBool('tour_complete') == true && mounted) {
+        setState(() => _tourLocallyDone = true);
+      }
+    });
     _userStream = FirebaseFirestore.instance.collection('users').doc(uid).snapshots();
     _chatStream = FirebaseFirestore.instance
         .collection('chats')
@@ -46,12 +89,40 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         .orderBy('timestamp', descending: true)
         .limit(10)
         .snapshots();
+
+    // Handle notification tap: switch to the tab indicated by main.dart
+    final pendingTab = PendingNotification.tabIndex;
+    if (pendingTab != null) {
+      _selectedIndex = pendingTab;
+      PendingNotification.clear();
+    }
+
+    if (uid != null) {
+      // Badge: bookings needing customer approval
+      _bookingsCustSub = FirebaseFirestore.instance
+          .collection('jobs')
+          .where('customerId', isEqualTo: uid)
+          .where('status', isEqualTo: 'expert_completed')
+          .snapshots()
+          .listen((s) { if (mounted) setState(() => _bookingsCustBadge = s.docs.length); });
+
+      // Badge: bookings needing expert to mark as done
+      _bookingsExpertSub = FirebaseFirestore.instance
+          .collection('jobs')
+          .where('expertId', isEqualTo: uid)
+          .where('status', isEqualTo: 'paid_escrow')
+          .snapshots()
+          .listen((s) { if (mounted) setState(() => _bookingsExpertBadge = s.docs.length); });
+    }
   }
 
   @override
   void dispose() {
     _setOnlineStatus(false);
     WidgetsBinding.instance.removeObserver(this);
+    _bookingsCustSub?.cancel();
+    _bookingsExpertSub?.cancel();
+    _opportunitiesSub?.cancel();
     super.dispose();
   }
 
@@ -73,6 +144,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     bool isAdmin = currentUser?.email == adminEmail;
 
+    // ── ShowCaseWidget wraps the entire screen so that Showcase targets
+    //    defined in SearchPage and the bottom nav are all in the same tree.
+    return ShowCaseWidget(
+      onFinish: AppTour.markComplete,
+      builder: (scCtx) {
+        _showcaseCtx = scCtx;
+        return _buildBody(context, isAdmin);
+      },
+    );
+  }
+
+  Widget _buildBody(BuildContext context, bool isAdmin) {
     return StreamBuilder<DocumentSnapshot>(
       stream: _userStream,
       builder: (context, snapshot) {
@@ -92,32 +175,101 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         String serviceType = (data['serviceType'] ?? '') as String;
         String userName = (data['name'] ?? '') as String;
 
-        List<Widget> pages = [
-          const SearchPage(),                                         // 0. חיפוש
-          MyBookingsScreen(onGoToSearch: goToSearch),                 // 1. הזמנות
-          ChatListScreen(onGoToSearch: goToSearch),                   // 2. צ'אט
-          _buildUserWallet(data),                                     // 3. ארנק
-          const ProfileScreen(),                                      // 4. פרופיל
+        // ── Tour trigger ─────────────────────────────────────────────────────
+        // Start once, after the frame builds, using the ShowCaseWidget context.
+        // _tourLocallyDone is set from SharedPreferences in initState and acts
+        // as an instant gate before the Firestore value arrives.
+        final tourDone = _tourLocallyDone || (data['tourComplete'] as bool?) == true;
+        if (!tourDone && !_tourStarted && _showcaseCtx != null) {
+          _tourStarted = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || _showcaseCtx == null) return;
+            if (isProvider) {
+              AppTour.startProvider(_showcaseCtx!);
+            } else {
+              AppTour.startClient(_showcaseCtx!);
+            }
+          });
+        }
+
+        // Setup opportunities badge whenever serviceType or lastViewed timestamp changes
+        final lastViewed = data['lastViewedOpportunitiesAt'] as Timestamp?;
+        if (isProvider && (serviceType != _oppServiceType || lastViewed != _oppLastViewed)) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _setupOpportunitiesBadge(serviceType, lastViewed);
+          });
+        }
+
+        // ── STABLE tab index map (never changes regardless of role) ─────────────
+        // Index 0: חיפוש        — all users
+        // Index 1: הזמנות        — all users
+        // Index 2: צ'אט          — all users
+        // Index 3: ארנק          — all users  (no _nestedTab — plain Scaffold)
+        // Index 4: פרופיל        — all users
+        // Index 5: הזדמנויות    — providers only  (added iff isProvider)
+        // Index 6: ניהול         — admins only     (added iff isAdmin)
+        // Index 7: מערכת         — admins only     (added iff isAdmin)
+        //
+        // Each _nestedTab(idx, …) uses _tabNavKeys[idx] as GlobalKey.
+        // Because the keys are FIXED to the logical index, Flutter never
+        // confuses AdminScreen with OpportunitiesScreen even when roles
+        // arrive asynchronously from Firestore.
+        final List<Widget> tabs = [
+          _nestedTab(0, const SearchPage()),
+          _nestedTab(1, MyBookingsScreen(onGoToSearch: goToSearch)),
+          _nestedTab(2, ChatListScreen(onGoToSearch: goToSearch)),
+          _buildUserWallet(data),          // idx 3 — plain Scaffold, no Navigator key
+          _nestedTab(4, const ProfileScreen()),
         ];
 
+        // Index 5 — Opportunities (providers only)
         if (isProvider) {
-          pages.add(OpportunitiesScreen(
+          tabs.add(_nestedTab(5, OpportunitiesScreen(
+            key: ValueKey(serviceType),
             serviceType: serviceType,
             providerName: userName,
-          ));                                                         // 5. הזדמנויות
+            isAdmin: isAdmin,
+          )));
         }
 
+        // Indices 6 & 7 — admin-only screens.
+        // Strict isAdmin guard: these tabs are NEVER added to the list for
+        // non-admin users, so there is no possible list index that maps to
+        // AdminScreen or SystemWalletScreen for a regular user.
         if (isAdmin) {
-          pages.add(const AdminScreen());
-          pages.add(const SystemWalletScreen());
+          tabs.add(_nestedTab(6, const AdminScreen()));
+          tabs.add(_nestedTab(7, const SystemWalletScreen()));
         }
 
-        return Scaffold(
+        // ── Guard: clamp _selectedIndex to valid range ────────────────────────
+        // If the user's role changed (e.g. provider → customer removes יומן/הזדמנויות),
+        // _selectedIndex may now exceed tabs.length - 1.
+        // Schedule a reset so the next frame renders at index 0.
+        final int safeIndex = _selectedIndex.clamp(0, tabs.length - 1);
+        if (safeIndex != _selectedIndex) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _selectedIndex = 0);
+          });
+        }
+
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (bool didPop, dynamic _) {
+            if (didPop) return;
+            final keyIdx = _tabKeyForPos(safeIndex, isProvider);
+            final navState = _tabNavKeys[keyIdx].currentState;
+            if (navState != null && navState.canPop()) {
+              navState.pop();
+            } else if (safeIndex != 0) {
+              setState(() => _selectedIndex = 0);
+            }
+          },
+          child: Scaffold(
           body: Stack(
             children: [
-              IndexedStack(index: _selectedIndex, children: pages),
+              IndexedStack(index: safeIndex, children: tabs),
               // כפתור אופליין/אונליין צף - מופיע רק בדף החיפוש
-              if (_selectedIndex == 0) ...[
+              if (safeIndex == 0) ...[
                 Positioned(
                   bottom: 25,
                   left: 20,
@@ -143,13 +295,70 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ],
             ],
           ),
-          bottomNavigationBar: _buildEliteBottomNav(isAdmin, isProvider),
-        );
+          bottomNavigationBar: _buildEliteBottomNav(isAdmin, isProvider, serviceType, safeIndex),
+          ),         // close Scaffold
+        );           // close PopScope
       },
     );
   }
 
-  Widget _buildEliteBottomNav(bool isAdmin, bool isProvider) {
+  /// Wraps [child] in a tab-specific Navigator so sub-page pushes stay inside
+  /// the tab without hiding the bottom nav.
+  Navigator _nestedTab(int idx, Widget child) => Navigator(
+    key: _tabNavKeys[idx],
+    onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => child),
+  );
+
+  /// Maps a list position (safeIndex) to the correct _tabNavKeys index.
+  /// When isProvider=false, there is no Opportunities tab at pos 5, so
+  /// Admin(pos5)→key[6] and System(pos6)→key[7].
+  int _tabKeyForPos(int pos, bool isProvider) {
+    if (pos <= 4) return pos;
+    if (isProvider) return pos;   // pos5=key5(Opp), pos6=key6(Admin), pos7=key7(System)
+    return pos + 1;               // no Opp: pos5→key6(Admin), pos6→key7(System)
+  }
+
+  /// (Re)builds the opportunities badge stream when serviceType or lastViewed changes.
+  void _setupOpportunitiesBadge(String serviceType, Timestamp? lastViewed) {
+    _oppServiceType = serviceType;
+    _oppLastViewed  = lastViewed;
+    _opportunitiesSub?.cancel();
+
+    if (serviceType.isEmpty) {
+      if (mounted) setState(() => _opportunitiesBadge = 0);
+      return;
+    }
+
+    var query = FirebaseFirestore.instance
+        .collection('job_requests')
+        .where('status', isEqualTo: 'open')
+        .where('category', isEqualTo: serviceType);
+
+    if (lastViewed != null) {
+      query = query.where('createdAt', isGreaterThan: lastViewed);
+    }
+
+    _opportunitiesSub = query.snapshots().listen((s) {
+      if (mounted) setState(() => _opportunitiesBadge = s.docs.length);
+    });
+  }
+
+  /// Called when provider enters the Opportunities tab — resets badge and
+  /// persists the "last viewed" timestamp to Firestore.
+  Future<void> _markOpportunitiesSeen() async {
+    if (_opportunitiesBadge == 0) return;
+    setState(() => _opportunitiesBadge = 0);
+    final uid = currentUser?.uid;
+    if (uid == null) return;
+    final now = Timestamp.now();
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .update({'lastViewedOpportunitiesAt': now});
+    _setupOpportunitiesBadge(_oppServiceType, now);
+  }
+
+  Widget _buildEliteBottomNav(bool isAdmin, bool isProvider, String serviceType, int safeIndex) {
     // שאילתת chat docs (קטנות) במקום collectionGroup על כל ההודעות
     return StreamBuilder<QuerySnapshot>(
       stream: _chatStream,
@@ -162,28 +371,56 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           }
         }
 
-        return Container(
-          decoration: BoxDecoration(boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 15)]),
+        // Indices with provider tabs: opp=5; admin tabs follow.
+        final int oppTabIndex = isProvider ? 5 : -1;
+
+        return ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.85),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 20, offset: const Offset(0, -4))],
+          ),
           child: BottomNavigationBar(
-            currentIndex: _selectedIndex,
-            onTap: (i) => setState(() => _selectedIndex = i),
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            currentIndex: safeIndex,
+            onTap: (i) {
+              setState(() {
+                _selectedIndex = i;
+                // ── Clear bookings badge immediately when entering that tab ──
+                if (i == 1) _bookingsLastCleared = _bookingsBadge;
+              });
+              // Mark opportunities as seen when provider enters that tab
+              if (isProvider && i == oppTabIndex) _markOpportunitiesSeen();
+            },
             type: BottomNavigationBarType.fixed,
-            backgroundColor: Colors.white,
-            selectedItemColor: Colors.black, // Airbnb Style - שחור כשהוא נבחר
+            selectedItemColor: Colors.black,
             unselectedItemColor: Colors.grey[400],
             selectedFontSize: 11,
             unselectedFontSize: 11,
             items: [
               const BottomNavigationBarItem(
-                icon: Icon(Icons.search_outlined), 
-                activeIcon: Icon(Icons.search), 
+                icon: Icon(Icons.search_outlined),
+                activeIcon: Icon(Icons.search),
                 label: 'חיפוש'
               ),
-              const BottomNavigationBarItem(
-                icon: Icon(Icons.receipt_long_outlined), // אייקון הזמנות
-                activeIcon: Icon(Icons.receipt_long), 
-                label: 'הזמנות'
+              // Bookings badge — shows NEW jobs since last tab visit
+              BottomNavigationBarItem(
+                icon: Badge(
+                  label: Text(_bookingsVisibleBadge.toString()),
+                  isLabelVisible: _bookingsVisibleBadge > 0,
+                  child: const Icon(Icons.receipt_long_outlined),
+                ),
+                activeIcon: Badge(
+                  label: Text(_bookingsVisibleBadge.toString()),
+                  isLabelVisible: _bookingsVisibleBadge > 0,
+                  child: const Icon(Icons.receipt_long),
+                ),
+                label: 'הזמנות',
               ),
+              // Chat badge — existing unread count logic
               BottomNavigationBarItem(
                 icon: Badge(
                   label: Text(unreadCount.toString()),
@@ -197,20 +434,49 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
                 label: 'צ\'אט',
               ),
-              const BottomNavigationBarItem(
-                icon: Icon(Icons.account_balance_wallet_outlined), 
-                activeIcon: Icon(Icons.account_balance_wallet), 
-                label: 'ארנק'
+              // Wallet — provider tour target
+              BottomNavigationBarItem(
+                icon: AnyShowcase(
+                  tourKey: tourProviderWalletKey,
+                  title: 'ארנק שלי 💰',
+                  description: 'כאן תראה את יתרתך, תוכל למשוך לחשבון בנק ולעקוב אחר כל תשלום',
+                  tooltipPosition: TooltipPosition.top,
+                  child: const Icon(Icons.account_balance_wallet_outlined),
+                ),
+                activeIcon: const Icon(Icons.account_balance_wallet),
+                label: 'ארנק',
               ),
-              const BottomNavigationBarItem(
-                icon: Icon(Icons.person_outline), 
-                activeIcon: Icon(Icons.person), 
-                label: 'פרופיל'
+              // Profile — provider tour target
+              BottomNavigationBarItem(
+                icon: AnyShowcase(
+                  tourKey: tourProviderProfileKey,
+                  title: 'הפרופיל שלי 🌟',
+                  description: 'ערוך תמונות, מחיר, תגיות ולוח זמינות כדי למשוך יותר לקוחות',
+                  tooltipPosition: TooltipPosition.top,
+                  child: const Icon(Icons.person_outline),
+                ),
+                activeIcon: const Icon(Icons.person),
+                label: 'פרופיל',
               ),
+              // Opportunities badge — new requests in provider's category (index 5)
               if (isProvider) ...[
-                const BottomNavigationBarItem(
-                  icon: Icon(Icons.work_outline_rounded),
-                  activeIcon: Icon(Icons.work_rounded),
+                BottomNavigationBarItem(
+                  icon: AnyShowcase(
+                    tourKey: tourProviderOppKey,
+                    title: 'הזדמנויות 🚀',
+                    description: 'לקוחות מחפשים ספקים בתחומך — ראו בקשות חדשות ומצאו הזמנות',
+                    tooltipPosition: TooltipPosition.top,
+                    child: Badge(
+                      label: Text(_opportunitiesBadge.toString()),
+                      isLabelVisible: _opportunitiesBadge > 0,
+                      child: const Icon(Icons.work_outline_rounded),
+                    ),
+                  ),
+                  activeIcon: Badge(
+                    label: Text(_opportunitiesBadge.toString()),
+                    isLabelVisible: _opportunitiesBadge > 0,
+                    child: const Icon(Icons.work_rounded),
+                  ),
                   label: 'הזדמנויות',
                 ),
               ],
@@ -230,7 +496,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ]
             ],
           ),
-        );
+        )));
       },
     );
   }
@@ -860,8 +1126,9 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
         final settingsDoc = await FirebaseFirestore.instance
             .collection('admin').doc('admin')
             .collection('settings').doc('settings').get();
-        final sd = settingsDoc.data() as Map<String, dynamic>? ?? {};
-        urgencyFeePct = ((sd['urgencyFeePercentage'] as num?) ?? 5).toDouble();
+        final sd = settingsDoc.data() ?? {};
+        // Admin stores decimal fraction (0.05 = 5%) — multiply ×100 for display
+        urgencyFeePct = (((sd['urgencyFeePercentage'] as num?) ?? 0.05) * 100).toDouble();
       }
 
       await FirebaseFirestore.instance.collection('job_requests').add({
@@ -871,7 +1138,7 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
         'location': _locCtrl.text.trim(),
         'category': category,
         'status': 'open',
-        'urgency': _analysis.urgency ?? 'normal',
+        'urgency': _analysis.urgency,
         if (isUrgent) 'urgencyFeePercentage': urgencyFeePct,
         'interestedProviders': [],
         'interestedProviderNames': [],

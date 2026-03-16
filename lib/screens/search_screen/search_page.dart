@@ -5,11 +5,19 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui';
 import '../category_results_screen.dart';
 import '../sub_category_screen.dart';
 import '../notifications_screen.dart';
+import '../expert_profile_screen.dart';
+import 'package:showcaseview/showcaseview.dart';
+import '../help_center_screen.dart';
 import '../../services/category_service.dart';
+import '../../services/visual_fetcher_service.dart';
+import '../../widgets/category_image_card.dart';
+import '../../onboarding/app_tour.dart';
+import 'widgets/stories_row.dart';
 
 // ─── Discover / Search page ──────────────────────────────────────────────────
 
@@ -22,21 +30,162 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage> {
   final TextEditingController _searchCtrl = TextEditingController();
-  String _searchQuery = '';
+  String _searchQuery       = '';
+  Timer? _searchLogTimer;
+  String _lastLoggedQuery   = '';
+  String _lastZeroQuery     = '';
 
   @override
   void dispose() {
+    _searchLogTimer?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
 
+  void _scheduleSearchLog(String query) {
+    _searchLogTimer?.cancel();
+    if (query.length < 2) return;
+    _searchLogTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (query != _lastLoggedQuery) {
+        _lastLoggedQuery = query;
+        FirebaseFirestore.instance.collection('search_logs').add({
+          'query':       query.toLowerCase().trim(),
+          'userId':      FirebaseAuth.instance.currentUser?.uid,
+          'timestamp':   FieldValue.serverTimestamp(),
+          'zeroResults': false,
+        });
+      }
+    });
+  }
+
+  void _logZeroResult(String query) {
+    if (query.length < 2 || query == _lastZeroQuery) return;
+    _lastZeroQuery = query;
+    FirebaseFirestore.instance.collection('search_logs').add({
+      'query':       query.toLowerCase().trim(),
+      'userId':      FirebaseAuth.instance.currentUser?.uid,
+      'timestamp':   FieldValue.serverTimestamp(),
+      'zeroResults': true,
+    });
+  }
+
+  // ── Time-based greeting ─────────────────────────────────────────────────────
+
+  String _getGreeting() {
+    final h = DateTime.now().hour;
+    if (h >= 6  && h < 12) return 'בוקר טוב ☀️';
+    if (h >= 12 && h < 17) return 'אחה"צ טובות 🌤️';
+    if (h >= 17 && h < 22) return 'ערב טוב 🌙';
+    return 'לילה טוב ✨';
+  }
+
+  String _getGreetingSubtitle() {
+    final h = DateTime.now().hour;
+    if (h >= 6  && h < 12) return 'מה צריך לסדר הבוקר?';
+    if (h >= 12 && h < 17) return 'מחפש מקצוען? זה הזמן';
+    if (h >= 17 && h < 22) return 'פינוק בערב? מגיע לך!';
+    return 'גלה מומחים מובילים';
+  }
+
+  List<Map<String, dynamic>> _getTimeSuggestions() {
+    final h = DateTime.now().hour;
+    if (h >= 6 && h < 12) {
+      return [
+        {'label': 'שרברב',  'icon': Icons.plumbing_rounded},
+        {'label': 'חשמלאי', 'icon': Icons.electrical_services_rounded},
+        {'label': 'ניקיון', 'icon': Icons.cleaning_services_rounded},
+        {'label': 'גינון',  'icon': Icons.yard_rounded},
+      ];
+    }
+    if (h >= 12 && h < 17) {
+      return [
+        {'label': 'שיעורים פרטיים', 'icon': Icons.school_rounded},
+        {'label': 'ייעוץ עסקי',     'icon': Icons.business_center_rounded},
+        {'label': 'עיצוב',           'icon': Icons.brush_rounded},
+        {'label': 'תרגום',           'icon': Icons.translate_rounded},
+      ];
+    }
+    if (h >= 17 && h < 22) {
+      return [
+        {'label': 'עיסוי',       'icon': Icons.spa_rounded},
+        {'label': 'כושר ואימון', 'icon': Icons.fitness_center_rounded},
+        {'label': 'יופי',        'icon': Icons.face_retouching_natural_rounded},
+        {'label': 'תזונה',       'icon': Icons.restaurant_menu_rounded},
+      ];
+    }
+    return [
+      {'label': 'מוסיקה', 'icon': Icons.music_note_rounded},
+      {'label': 'ציור',   'icon': Icons.palette_rounded},
+      {'label': 'כתיבה',  'icon': Icons.edit_note_rounded},
+      {'label': 'תכנות',  'icon': Icons.code_rounded},
+    ];
+  }
+
+  Widget _buildSuggestedRow() {
+    final suggestions = _getTimeSuggestions();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 2, 0, 2),
+      child: SizedBox(
+        height: 38,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          reverse: true,
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          itemCount: suggestions.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (_, i) {
+            final s = suggestions[i];
+            return GestureDetector(
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => CategoryResultsScreen(
+                      categoryName: s['label'] as String),
+                ),
+              ),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0F0FF),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                      color: const Color(0xFF6366F1).withValues(alpha: 0.2)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(s['icon'] as IconData,
+                        size: 13, color: const Color(0xFF6366F1)),
+                    const SizedBox(width: 5),
+                    Text(s['label'] as String,
+                        style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF6366F1))),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   // ── Search bar ──────────────────────────────────────────────────────────────
   Widget _buildSearchBar() {
-    return Padding(
+    return AnyShowcase(
+      tourKey: tourClientSearchKey,
+      title: '🔍 חיפוש מומחים',
+      description: 'הקלידו שם, קטגוריה, או סוג שירות — AnySkill ימצא את הספק המתאים לכם',
+      child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: TextField(
         controller: _searchCtrl,
-        onChanged: (v) => setState(() => _searchQuery = v.trim()),
+        onChanged: (v) {
+          setState(() => _searchQuery = v.trim());
+          _scheduleSearchLog(v.trim());
+        },
         textAlign: TextAlign.right,
         textDirection: TextDirection.rtl,
         decoration: InputDecoration(
@@ -75,7 +224,27 @@ class _SearchPageState extends State<SearchPage> {
               const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
         ),
       ),
-    );
+    ),   // closes Padding
+    );   // closes AnyShowcase
+  }
+
+  // ── Current user's provider status ─────────────────────────────────────────
+  bool _isProvider = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProviderStatus();
+  }
+
+  Future<void> _loadProviderStatus() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final doc = await FirebaseFirestore.instance
+        .collection('users').doc(uid).get();
+    if (!mounted) return;
+    final isProvider = (doc.data() ?? {})['isProvider'] as bool? ?? false;
+    if (isProvider != _isProvider) setState(() => _isProvider = isProvider);
   }
 
   @override
@@ -96,31 +265,49 @@ class _SearchPageState extends State<SearchPage> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  NotificationBadge(
-                    child: IconButton(
-                      icon: const Icon(Icons.notifications_outlined, size: 24),
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const NotificationsScreen()),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Help Center entry point
+                      IconButton(
+                        icon: const Icon(Icons.help_outline_rounded, size: 22),
+                        color: const Color(0xFF6366F1),
+                        tooltip: 'מרכז עזרה',
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const HelpCenterScreen()),
+                        ),
                       ),
-                    ),
+                      NotificationBadge(
+                        child: IconButton(
+                          icon: const Icon(Icons.notifications_outlined,
+                              size: 24),
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const NotificationsScreen()),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  const Flexible(
+                  Flexible(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         Text(
-                          "גלה מומחים",
-                          style: TextStyle(
+                          _getGreeting(),
+                          style: const TextStyle(
                               fontSize: 26, fontWeight: FontWeight.bold),
                           overflow: TextOverflow.ellipsis,
                           maxLines: 1,
                         ),
-                        SizedBox(height: 2),
+                        const SizedBox(height: 2),
                         Text(
-                          "בחר תחום ומצא את המומחה המושלם",
-                          style: TextStyle(fontSize: 13, color: Colors.grey),
+                          _getGreetingSubtitle(),
+                          style: const TextStyle(
+                              fontSize: 13, color: Colors.grey),
                           overflow: TextOverflow.ellipsis,
                           maxLines: 1,
                         ),
@@ -136,9 +323,35 @@ class _SearchPageState extends State<SearchPage> {
             // ── Search bar ────────────────────────────────────────────────
             _buildSearchBar(),
 
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
 
-            // ── Banner — OUTSIDE the categories StreamBuilder/LayoutBuilder ──
+            // ── Suggested categories (time-based) — client tour step 2 ────────
+            AnimatedSize(
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeInOut,
+              child: _searchQuery.isEmpty
+                  ? AnyShowcase(
+                      tourKey: tourClientSuggestionsKey,
+                      title: '⚡ קטגוריות מומלצות',
+                      description: 'AnySkill מציע שירותים בהתאם לשעה ביום — בוקר לתיקונים, ערב לספא ורווחה',
+                      child: _buildSuggestedRow(),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+
+            const SizedBox(height: 6),
+
+            // ── Skills Stories row ─────────────────────────────────────
+            // Collapses automatically when empty or when user is typing.
+            AnimatedSize(
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeInOut,
+              child: _searchQuery.isEmpty
+                  ? StoriesRow(isProvider: _isProvider)
+                  : const SizedBox.shrink(),
+            ),
+
+            // ── Banner carousel — OUTSIDE the categories StreamBuilder/LayoutBuilder ──
             // AnimatedSize collapses it smoothly when search is active.
             // _BannerCarousel has a const constructor so it is never rebuilt
             // by _SearchPageState.setState — it owns its own state/timer/sub.
@@ -207,6 +420,8 @@ class _SearchPageState extends State<SearchPage> {
                         }).toList();
 
                   if (_searchQuery.isNotEmpty && filtered.isEmpty) {
+                    WidgetsBinding.instance.addPostFrameCallback(
+                        (_) => _logZeroResult(_searchQuery));
                     return Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -233,6 +448,21 @@ class _SearchPageState extends State<SearchPage> {
 
                       return CustomScrollView(
                         slivers: [
+                          // ── Credits card + Inspiration feed (search empty) ──
+                          if (_searchQuery.isEmpty) ...[
+                            const SliverToBoxAdapter(child: _CreditsCard()),
+                            // client tour step 3
+                            SliverToBoxAdapter(
+                              child: AnyShowcase(
+                                tourKey: tourClientFeedKey,
+                                title: '✨ פיד ההשראה',
+                                description: 'עבודות אמיתיות מהאפליקציה — לחצו על כרטיס לפרופיל הספק המלא',
+                                tooltipPosition: TooltipPosition.top,
+                                child: const _InspirationFeed(),
+                              ),
+                            ),
+                          ],
+
                           // Section label
                           SliverToBoxAdapter(
                             child: Padding(
@@ -328,6 +558,587 @@ class _SearchPageState extends State<SearchPage> {
   }
 }
 
+// ─── Featured Provider Card ───────────────────────────────────────────────────
+//
+// Replaces the banner carousel. Queries Firestore for the top-rated provider,
+// then renders a high-conversion card: story-ring avatar, live online status,
+// service badges, date picker, "Order Now" CTA, and an urgency nudge.
+
+class _FeaturedProviderCard extends StatefulWidget {
+  const _FeaturedProviderCard();
+
+  @override
+  State<_FeaturedProviderCard> createState() => _FeaturedProviderCardState();
+}
+
+class _FeaturedProviderCardState extends State<_FeaturedProviderCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ringCtrl;
+
+  StreamSubscription<QuerySnapshot>? _sub;
+  Map<String, dynamic>? _data;
+  String? _uid;
+  bool _loading = true;
+  DateTime? _selectedDate;
+
+  @override
+  void initState() {
+    super.initState();
+    // Back-fill missing category images (runs once per app session).
+    VisualFetcherService.backfillAll();
+
+    _ringCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    )..repeat();
+
+    _sub = FirebaseFirestore.instance
+        .collection('users')
+        .where('isProvider', isEqualTo: true)
+        .orderBy('rating', descending: true)
+        .limit(1)
+        .snapshots()
+        .listen((snap) {
+          if (!mounted) return;
+          if (snap.docs.isEmpty) { setState(() => _loading = false); return; }
+          setState(() {
+            _uid     = snap.docs.first.id;
+            _data    = snap.docs.first.data();
+            _loading = false;
+          });
+        }, onError: (_) {
+          if (mounted) setState(() => _loading = false);
+        });
+  }
+
+  @override
+  void dispose() {
+    _ringCtrl.dispose();
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  String _urgencyText() {
+    final h = DateTime.now().hour;
+    if (h >= 6  && h < 13) return '🔴 נותר מקום 1 בלבד להיום!';
+    if (h >= 13 && h < 20) return '⚡ נותרו 2 מקומות לשבוע זה';
+    return '⏰ בדרך כלל מוזמן 3 ימים מראש';
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: now.add(const Duration(days: 1)),
+      firstDate: now,
+      lastDate: now.add(const Duration(days: 30)),
+    );
+    if (picked != null && mounted) setState(() => _selectedDate = picked);
+  }
+
+  void _goToProfile() {
+    if (_uid == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ExpertProfileScreen(
+          expertId: _uid!,
+          expertName: _data?['name'] as String? ?? '',
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loading && _data == null) return const SizedBox.shrink();
+    if (_loading) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: _BannerShimmer(height: 185),
+      );
+    }
+    return _buildCard();
+  }
+
+  Widget _buildCard() {
+    final d        = _data!;
+    final name     = d['name']         as String? ?? 'מומחה';
+    final title    = d['serviceType']  as String? ?? 'מומחה מוסמך';
+    final price    = (d['pricePerHour'] as num? ?? 100).toInt();
+    final rating   = (d['rating']       as num? ?? 5.0);
+    final city     = d['city']          as String? ?? 'שכונתך';
+    final photo    = d['profileImage']  as String? ?? '';
+    final online   = d['isOnline']      as bool? ?? false;
+    final verified = d['isVerified']    as bool? ?? false;
+
+    final dateLabel = _selectedDate == null
+        ? 'מתי פנוי?'
+        : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}';
+
+    return GestureDetector(
+      onTap: _goToProfile,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: const Color(0xFFF0F0FF)),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF6366F1).withValues(alpha: 0.10),
+                blurRadius: 20,
+                offset: const Offset(0, 6),
+              ),
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+
+                // ── Top row: story avatar + provider info ─────────────────────
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // Story-style avatar (visually left)
+                    _StoryAvatar(imageUrl: photo, ringCtrl: _ringCtrl),
+                    const SizedBox(width: 12),
+
+                    // Info block (RTL — right-aligned text)
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+
+                          // Name row + badges
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              // Gold "Recommended" badge
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                    colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
+                                  ),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: const Text('⭐ מומלץ',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold)),
+                              ),
+                              const SizedBox(width: 6),
+                              // Verified icon + name
+                              Flexible(
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    if (verified) ...[
+                                      const Icon(Icons.verified_rounded,
+                                          size: 14, color: Color(0xFF007AFF)),
+                                      const SizedBox(width: 3),
+                                    ],
+                                    Flexible(
+                                      child: Text(name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.bold,
+                                            color: Color(0xFF0F172A),
+                                          )),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+
+                          // Professional title
+                          Text(title,
+                              textAlign: TextAlign.right,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: Color(0xFF6366F1))),
+                          const SizedBox(height: 4),
+
+                          // Stars + location
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Text('📍 $city',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade500)),
+                              const SizedBox(width: 8),
+                              const Icon(Icons.star_rounded,
+                                  size: 13, color: Color(0xFFFBBF24)),
+                              const SizedBox(width: 2),
+                              Text(rating.toStringAsFixed(1),
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF0F172A))),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+
+                          // Price + online status
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              // Online indicator
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 7, height: 7,
+                                    decoration: BoxDecoration(
+                                      color: online
+                                          ? const Color(0xFF10B981)
+                                          : Colors.grey.shade300,
+                                      shape: BoxShape.circle,
+                                      boxShadow: online ? [
+                                        BoxShadow(
+                                          color: const Color(0xFF10B981)
+                                              .withValues(alpha: 0.5),
+                                          blurRadius: 4,
+                                          spreadRadius: 1,
+                                        ),
+                                      ] : null,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    online ? 'זמין עכשיו' : 'לא זמין',
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: online
+                                            ? const Color(0xFF10B981)
+                                            : Colors.grey),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(width: 10),
+                              // Price
+                              RichText(
+                                text: TextSpan(
+                                  style: const TextStyle(
+                                      color: Color(0xFF0F172A)),
+                                  children: [
+                                    TextSpan(
+                                      text: '₪$price',
+                                      style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w900),
+                                    ),
+                                    const TextSpan(
+                                      text: ' / שעה',
+                                      style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.grey,
+                                          fontWeight: FontWeight.normal),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 9),
+
+                // ── Service badges ────────────────────────────────────────────
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    _ServiceChip(
+                      icon: Icons.calendar_month_rounded,
+                      label: 'זמין בסופ"ש',
+                      color: const Color(0xFF8B5CF6),
+                    ),
+                    const SizedBox(width: 6),
+                    _ServiceChip(
+                      icon: Icons.home_rounded,
+                      label: 'ביקור בית',
+                      color: const Color(0xFF007AFF),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 9),
+                Container(height: 1, color: const Color(0xFFF1F5F9)),
+                const SizedBox(height: 9),
+
+                // ── Bottom row: date picker + CTA button ──────────────────────
+                Row(
+                  children: [
+                    // "הזמן עכשיו" button
+                    Expanded(
+                      flex: 5,
+                      child: GestureDetector(
+                        onTap: _goToProfile,
+                        child: Container(
+                          height: 40,
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF2563EB), Color(0xFF007AFF)],
+                              begin: Alignment.centerRight,
+                              end: Alignment.centerLeft,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF007AFF)
+                                    .withValues(alpha: 0.30),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          alignment: Alignment.center,
+                          child: const Text('הזמן עכשיו',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+
+                    // Date picker pill
+                    Expanded(
+                      flex: 4,
+                      child: GestureDetector(
+                        onTap: _pickDate,
+                        child: Container(
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8F8FF),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: const Color(0xFF6366F1)
+                                  .withValues(alpha: 0.22),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.calendar_today_rounded,
+                                  size: 13,
+                                  color: _selectedDate != null
+                                      ? const Color(0xFF6366F1)
+                                      : Colors.grey),
+                              const SizedBox(width: 5),
+                              Text(dateLabel,
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: _selectedDate != null
+                                          ? const Color(0xFF6366F1)
+                                          : Colors.grey)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 6),
+
+                // ── Urgency nudge ─────────────────────────────────────────────
+                Text(
+                  _urgencyText(),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFFDC2626)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Story-style animated avatar ──────────────────────────────────────────────
+
+class _StoryAvatar extends StatelessWidget {
+  const _StoryAvatar({required this.imageUrl, required this.ringCtrl});
+
+  final String           imageUrl;
+  final AnimationController ringCtrl;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 76,
+      height: 76,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Rotating gradient ring
+          AnimatedBuilder(
+            animation: ringCtrl,
+            builder: (_, __) => CustomPaint(
+              size: const Size(76, 76),
+              painter: _StoryRingPainter(ringCtrl.value),
+            ),
+          ),
+
+          // Profile photo with white border gap
+          Container(
+            width: 60,
+            height: 60,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white,
+            ),
+            padding: const EdgeInsets.all(2.5),
+            child: ClipOval(
+              child: imageUrl.isNotEmpty
+                  ? Image.network(imageUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _placeholder())
+                  : _placeholder(),
+            ),
+          ),
+
+          // Play button badge (bottom-right corner)
+          Positioned(
+            bottom: 3,
+            right: 3,
+            child: Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                ),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 1.5),
+              ),
+              child: const Icon(Icons.play_arrow_rounded,
+                  size: 13, color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _placeholder() => Container(
+        color: const Color(0xFFF0F0FF),
+        child: const Icon(Icons.person_rounded,
+            color: Color(0xFF6366F1), size: 28),
+      );
+}
+
+// ─── Rotating rainbow ring painter ────────────────────────────────────────────
+
+class _StoryRingPainter extends CustomPainter {
+  const _StoryRingPainter(this.progress);
+
+  final double progress;
+
+  static const _kColors = [
+    Color(0xFF6366F1),
+    Color(0xFF8B5CF6),
+    Color(0xFFF59E0B),
+    Color(0xFFEC4899),
+    Color(0xFF10B981),
+    Color(0xFF6366F1),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx     = size.width  / 2;
+    final cy     = size.height / 2;
+    final radius = cx - 2.5;
+    final angle  = progress * math.pi * 2;
+    final rect   = Rect.fromCircle(center: Offset(cx, cy), radius: radius);
+
+    final paint = Paint()
+      ..shader = SweepGradient(
+        startAngle: angle,
+        endAngle: angle + math.pi * 2,
+        colors: _kColors,
+      ).createShader(rect)
+      ..style      = PaintingStyle.stroke
+      ..strokeWidth = 3.0
+      ..strokeCap  = StrokeCap.round;
+
+    canvas.drawCircle(Offset(cx, cy), radius, paint);
+  }
+
+  @override
+  bool shouldRepaint(_StoryRingPainter old) => old.progress != progress;
+}
+
+// ─── Service chip badge ────────────────────────────────────────────────────────
+
+class _ServiceChip extends StatelessWidget {
+  const _ServiceChip({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String   label;
+  final Color    color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.20)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: color),
+          const SizedBox(width: 4),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: color)),
+        ],
+      ),
+    );
+  }
+}
+
 // ─── Banner carousel — completely isolated StatefulWidget ─────────────────────
 //
 // Has a `const` constructor so the parent's setState never rebuilds it.
@@ -398,9 +1209,17 @@ class _BannerCarouselState extends State<_BannerCarousel> {
       (snap) {
         if (!mounted) return;
 
+        final now = DateTime.now();
         final newList = snap.docs
-            .map((d) => d.data() as Map<String, dynamic>)
-            .where((b) => b['isActive'] == true)
+            .map((d) => {
+                  ...d.data(),
+                  '_id': d.id,
+                })
+            .where((b) {
+              if (b['isActive'] != true) return false;
+              final expires = (b['expiresAt'] as Timestamp?)?.toDate();
+              return expires == null || expires.isAfter(now);
+            })
             .toList();
 
         // Memoize by doc-ID string — skip setState if nothing changed
@@ -556,15 +1375,41 @@ class _BannerPageState extends State<_BannerPage>
   Widget build(BuildContext context) {
     super.build(context); // required by AutomaticKeepAliveClientMixin
 
-    final b        = widget.data;
-    final color1   = widget.hexToColor(b['color1'] as String? ?? '667eea');
-    final color2   = widget.hexToColor(b['color2'] as String? ?? '764ba2');
-    final icon     = widget.icons[b['iconName'] as String? ?? 'stars'] ??
+    final b           = widget.data;
+    final color1      = widget.hexToColor(b['color1'] as String? ?? '667eea');
+    final color2      = widget.hexToColor(b['color2'] as String? ?? '764ba2');
+    final icon        = widget.icons[b['iconName'] as String? ?? 'stars'] ??
         Icons.stars_rounded;
-    final title    = b['title']    as String? ?? '';
-    final subtitle = b['subtitle'] as String? ?? '';
+    final title       = b['title']      as String? ?? '';
+    final subtitle    = b['subtitle']   as String? ?? '';
+    final providerId  = b['providerId'] as String?;
+    final providerName = b['providerName'] as String? ?? '';
 
-    return Container(
+    void onTap() {
+      if (providerId != null && providerId.isNotEmpty) {
+        // Track click (fire-and-forget)
+        final bannerId = b['_id'] as String?;
+        if (bannerId != null && bannerId.isNotEmpty) {
+          FirebaseFirestore.instance
+              .collection('banners')
+              .doc(bannerId)
+              .update({'clicks': FieldValue.increment(1)});
+        }
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ExpertProfileScreen(
+              expertId: providerId,
+              expertName: providerName,
+            ),
+          ),
+        );
+      }
+    }
+
+    return GestureDetector(
+      onTap: providerId != null ? onTap : null,
+      child: Container(
       margin: const EdgeInsets.symmetric(horizontal: 20),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
@@ -601,6 +1446,35 @@ class _BannerPageState extends State<_BannerPage>
                 child: Container(width: 70, height: 70,
                   decoration: BoxDecoration(shape: BoxShape.circle,
                     color: Colors.white.withValues(alpha: 0.07)))),
+
+              // "View profile" badge — shown only for featured-provider banners
+              if (providerId != null)
+                Positioned(
+                  bottom: 10,
+                  left: 14,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.22),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.40)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text("לפרופיל",
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.95),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            )),
+                        const SizedBox(width: 4),
+                        Icon(Icons.arrow_forward_ios_rounded,
+                            size: 10, color: Colors.white.withValues(alpha: 0.95)),
+                      ],
+                    ),
+                  ),
+                ),
 
               // Content row
               Positioned.fill(
@@ -691,7 +1565,8 @@ class _BannerPageState extends State<_BannerPage>
           ),
         ),
       ),
-    );
+    ),   // end Container (child of GestureDetector)
+    );   // end GestureDetector
   }
 }
 
@@ -828,7 +1703,7 @@ class _CategoryCardState extends State<_CategoryCard> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 140),
         curve: Curves.easeOut,
-        transform: Matrix4.identity()..scale(_pressed ? 0.97 : 1.0),
+        transform: Matrix4.identity()..scaleByDouble(_pressed ? 0.97 : 1.0, _pressed ? 0.97 : 1.0, 1.0, 1.0),
         transformAlignment: Alignment.center,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
@@ -846,29 +1721,7 @@ class _CategoryCardState extends State<_CategoryCard> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              Image.network(
-                widget.imageUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
-                    Container(color: Colors.grey[200]),
-                loadingBuilder: (context, child, progress) {
-                  if (progress == null) return child;
-                  return Container(color: Colors.grey[100]);
-                },
-              ),
-              Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.transparent,
-                      Colors.black.withValues(alpha: 0.68),
-                    ],
-                    stops: const [0.4, 1.0],
-                  ),
-                ),
-              ),
+              CategoryImageBackground(imageUrl: widget.imageUrl),
               Positioned(
                 bottom: 10, left: 10, right: 10,
                 child: Column(
@@ -1154,4 +2007,404 @@ class _EditCategorySheetState extends State<_EditCategorySheet> {
       ),
     );
   }
+}
+
+// ─── Credits Card — isolated StatefulWidget ────────────────────────────────────
+//
+// Reads the current user's `credits` field from Firestore.
+// Shows a branded progress bar toward the next discount milestone.
+// Hidden when credits == 0.
+
+class _CreditsCard extends StatefulWidget {
+  const _CreditsCard();
+  @override
+  State<_CreditsCard> createState() => _CreditsCardState();
+}
+
+class _CreditsCardState extends State<_CreditsCard> {
+  static const int _milestone = 200; // credits per discount tier
+
+  StreamSubscription<DocumentSnapshot>? _sub;
+  int  _credits = 0;
+  bool _loaded  = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) { _loaded = true; return; }
+    _sub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .snapshots()
+        .listen((snap) {
+          if (!mounted) return;
+          final data = snap.data() ?? {};
+          setState(() {
+            _credits = (data['credits'] as num? ?? 0).toInt();
+            _loaded  = true;
+          });
+        }, onError: (_) {
+          if (mounted) setState(() => _loaded = true);
+        });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loaded || _credits == 0) return const SizedBox.shrink();
+
+    final progress   = (_credits % _milestone) / _milestone;
+    final remaining  = _milestone - (_credits % _milestone);
+    final tierNumber = _credits ~/ _milestone;
+    final discount   = tierNumber * 10; // 10% per milestone tier
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+            begin: Alignment.topRight,
+            end: Alignment.bottomLeft,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+                color: const Color(0xFF6366F1).withValues(alpha: 0.25),
+                blurRadius: 12,
+                offset: const Offset(0, 4)),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    if (discount > 0) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFBBF24),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text('$discount% הנחה זמינה!',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Text(
+                      'עוד $remaining להנחה הבאה',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.75),
+                          fontSize: 11),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Text('$_credits',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900)),
+                    const SizedBox(width: 4),
+                    const Text('קרדיטים',
+                        style: TextStyle(
+                            color: Colors.white70, fontSize: 12)),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.stars_rounded,
+                        color: Color(0xFFFBBF24), size: 20),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 8,
+                backgroundColor: Colors.white.withValues(alpha: 0.2),
+                valueColor: const AlwaysStoppedAnimation<Color>(
+                    Color(0xFFFBBF24)),
+              ),
+            ),
+            const SizedBox(height: 5),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('$_milestone',
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.5),
+                        fontSize: 9)),
+                Text('0',
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.5),
+                        fontSize: 9)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Inspiration Feed — isolated StatefulWidget ────────────────────────────────
+//
+// Reads `completed_works` collection (written by Cloud Function on job completion).
+// Shows a horizontally scrollable feed of recently completed works.
+// Hidden when the collection is empty.
+
+class _InspirationFeed extends StatefulWidget {
+  const _InspirationFeed();
+  @override
+  State<_InspirationFeed> createState() => _InspirationFeedState();
+}
+
+class _InspirationFeedState extends State<_InspirationFeed> {
+  static const double _cardW = 155.0;
+  static const double _cardH = 195.0;
+
+  StreamSubscription<QuerySnapshot>? _sub;
+  List<Map<String, dynamic>> _works   = [];
+  bool                        _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _sub = FirebaseFirestore.instance
+        .collection('completed_works')
+        .orderBy('completedAt', descending: true)
+        .limit(10)
+        .snapshots()
+        .listen((snap) {
+          if (!mounted) return;
+          setState(() {
+            _works   = snap.docs
+                .map((d) => d.data())
+                .toList();
+            _loading = false;
+          });
+        }, onError: (_) {
+          if (mounted) setState(() => _loading = false);
+        });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading || _works.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // ── Header ──────────────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFECFDF5),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text('חדש',
+                      style: TextStyle(
+                          color: Color(0xFF065F46),
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold)),
+                ),
+                const Text('השראה — עבודות שהושלמו',
+                    style: TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+
+          // ── Horizontal cards ─────────────────────────────────────────────
+          SizedBox(
+            height: _cardH,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              reverse: true,
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              itemCount: _works.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, i) {
+                final work        = _works[i];
+                final coverImage  = work['coverImage']  as String? ?? '';
+                final expertName  = work['expertName']  as String? ?? 'מומחה';
+                final serviceType = work['serviceType'] as String? ?? '';
+                final city        = work['city']        as String? ?? '';
+                final expertId    = work['expertId']    as String? ?? '';
+
+                return GestureDetector(
+                  onTap: () {
+                    if (expertId.isEmpty) return;
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ExpertProfileScreen(
+                          expertId: expertId,
+                          expertName: expertName,
+                        ),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    width: _cardW,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      color: const Color(0xFFF0F0FF),
+                    ),
+                    clipBehavior: Clip.hardEdge,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        // Cover image
+                        coverImage.isNotEmpty
+                            ? Image.network(coverImage,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    _InspirationFeedState._placeholder())
+                            : _InspirationFeedState._placeholder(),
+
+                        // Gradient overlay
+                        Positioned.fill(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.transparent,
+                                  Colors.black
+                                      .withValues(alpha: 0.78)
+                                ],
+                                stops: const [0.4, 1.0],
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        // Expert info (bottom)
+                        Positioned(
+                          bottom: 10,
+                          left: 8,
+                          right: 8,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(expertName,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
+                              if (serviceType.isNotEmpty)
+                                Text(serviceType,
+                                    style: TextStyle(
+                                        color: Colors.white
+                                            .withValues(alpha: 0.75),
+                                        fontSize: 10),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                            ],
+                          ),
+                        ),
+
+                        // City badge (top-left)
+                        if (city.isNotEmpty)
+                          Positioned(
+                            top: 8,
+                            left: 8,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 7, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.location_on_rounded,
+                                      color: Colors.white, size: 9),
+                                  const SizedBox(width: 2),
+                                  Text(city,
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 9)),
+                                ],
+                              ),
+                            ),
+                          ),
+
+                        // "Completed" badge (top-right)
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade600
+                                  .withValues(alpha: 0.9),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Text('הושלם ✓',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _placeholder() => Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: const Icon(Icons.work_rounded, color: Colors.white54, size: 40),
+      );
 }

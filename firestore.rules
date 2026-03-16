@@ -19,9 +19,9 @@ service cloud.firestore {
       allow read:   if isAuth();
       allow create: if isOwner(uid) || (isAuth() && uid == 'anyskill_system');
       allow update: if (isOwner(uid)
-                        // בעל החשבון יכול לעדכן הכל, חוץ מ-xp/level/isPromoted (מנוהלים ע"י מנהל/Cloud Functions)
+                        // בעל החשבון יכול לעדכן הכל, חוץ מ-xp/current_xp/level/isPromoted (מנוהלים ע"י Cloud Functions בלבד)
                         && !request.resource.data.diff(resource.data)
-                            .affectedKeys().hasAny(['xp', 'level', 'isPromoted']))
+                            .affectedKeys().hasAny(['xp', 'current_xp', 'level', 'isPromoted']))
                     || isAdmin()
                     // כל משתמש מחובר יכול לעדכן רק rating + reviewsCount (לאחר ביקורת)
                     || (isAuth()
@@ -85,7 +85,20 @@ service cloud.firestore {
       allow read:   if isAdmin();
     }
 
-    // ── Notifications ─────────────────────────────────────────────
+    // ── Notifications (flat collection — written by Cloud Functions) ──────────
+    match /notifications/{notifId} {
+      // Owner may read their own notifications
+      allow read: if isAuth() && resource.data.userId == request.auth.uid;
+      // Owner may only flip isRead (no other field changes allowed from client)
+      allow update: if isAuth()
+                    && resource.data.userId == request.auth.uid
+                    && request.resource.data.diff(resource.data)
+                        .affectedKeys().hasOnly(['isRead']);
+      // All writes (create/delete) are done by Cloud Functions via Admin SDK
+      allow create, delete: if false;
+    }
+
+    // ── Notifications subcollection (legacy — written by client SDK) ──────────
     match /notifications/{uid}/userNotifications/{notifId} {
       allow read, write: if isOwner(uid);
     }
@@ -101,12 +114,21 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isAuth()
                     && request.resource.data.reviewerId == request.auth.uid;
+      // הספק יכול להוסיף תגובה (providerResponse) לביקורות שלו בלבד
+      allow update: if isAuth()
+                    && resource.data.expertId == request.auth.uid
+                    && request.resource.data.diff(resource.data)
+                        .affectedKeys().hasOnly(['providerResponse']);
     }
 
     // ── Banners (public read, admin write) ───────────────────────
     match /banners/{id} {
       allow read:  if true;
       allow write: if isAdmin();
+      // כל משתמש מחובר יכול לספור לחיצה (clicks בלבד) — מעקב analytics
+      allow update: if isAuth()
+                    && request.resource.data.diff(resource.data)
+                        .affectedKeys().hasOnly(['clicks']);
     }
 
     // ── Withdrawals ───────────────────────────────────────────────
@@ -119,6 +141,12 @@ service cloud.firestore {
       allow update: if isAdmin();
     }
 
+    // ── Completed Works (Inspiration Feed — written by Cloud Function) ───
+    match /completed_works/{docId} {
+      allow read: if true;      // public — no sensitive data
+      allow write: if false;    // Admin SDK only (Cloud Function)
+    }
+
     // ── Rebook reminders (written by Cloud Functions only) ────────────
     match /scheduled_reminders/{remId} {
       allow read:  if isAdmin();
@@ -129,6 +157,56 @@ service cloud.firestore {
     // Written only by Cloud Functions (Admin SDK). Clients have no access.
     match /mail/{docId} {
       allow read, write: if false;
+    }
+
+    // ── Categories Pending (AI moderation queue) ──────────────────────
+    // Written by the categorizeprovider Cloud Function and by approvecategory.
+    // Only admins may read or write from the client SDK.
+    match /categories_pending/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    // ── Search Logs (analytics — written by every searching user) ─────
+    // Any authenticated user may CREATE a log entry (search_page.dart).
+    // Only admins may READ (Business AI dashboard).
+    // Immutable after creation — no update/delete from client.
+    match /search_logs/{id} {
+      allow create: if isAuth();
+      allow read:   if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ── Market Alerts (written by Cloud Function, read by admin) ──────
+    match /market_alerts/{id} {
+      allow read:  if isAdmin();
+      allow write: if false; // Admin SDK (marketopportunitymonitor) only
+    }
+
+    // ── Skills Stories ────────────────────────────────────────────────
+    // One document per provider (doc ID = uid).
+    // Providers create/overwrite their own story.
+    // Any authenticated user can read (discovery feed + viewer).
+    // viewCount increments are allowed by any authenticated user.
+    // hasActive / expiresAt are set by the client on upload and cleared
+    // by the expireStories Cloud Function (Admin SDK).
+    match /stories/{uid} {
+      allow read:   if isAuth();
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid)
+                    // Any viewer can increment viewCount only
+                    || (isAuth()
+                        && request.resource.data.diff(resource.data)
+                            .affectedKeys().hasOnly(['viewCount']));
+      allow delete: if isOwner(uid) || isAdmin();
+    }
+
+    // ── Gamification Settings ────────────────────────────────────────
+    // Admin writes XP event definitions and level thresholds.
+    // Any authenticated user (and Cloud Functions) may read — event points
+    // are needed client-side for display and inside updateUserXP function.
+    match /settings_gamification/{docId} {
+      allow read:  if isAuth();
+      allow write: if isAdmin();
     }
 
     // ── Job Requests (quick order ecosystem) ──────────────────────────

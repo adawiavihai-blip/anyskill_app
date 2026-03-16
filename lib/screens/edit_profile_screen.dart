@@ -7,6 +7,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import '../services/category_service.dart';
+import '../services/cancellation_policy_service.dart';
+import '../constants/quick_tags.dart';
 
 class EditProfileScreen extends StatefulWidget {
   final Map<String, dynamic> userData;
@@ -28,7 +30,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   List<Map<String, dynamic>> _mainCategories = [];
   List<Map<String, dynamic>> _subCategories  = []; // subs for selected main
 
-  int? _responseTimeMinutes;
+  int?   _responseTimeMinutes;
+  String _cancellationPolicy = 'flexible';
+  Set<String> _selectedQuickTags = {};
 
   String? _profileImageUrl;
   List<dynamic> _galleryImages = [];
@@ -48,11 +52,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _priceController = TextEditingController(text: (widget.userData['pricePerHour'] ?? "0").toString());
     _taxIdController = TextEditingController(text: widget.userData['taxId'] as String? ?? '');
     _galleryImages = List.from(widget.userData['gallery'] ?? []);
+    _selectedQuickTags = Set<String>.from(
+        (widget.userData['quickTags'] as List? ?? []).cast<String>());
     _profileImageUrl = widget.userData['profileImage'];
     
     _isCustomer = widget.userData['isCustomer'] ?? true;
     _isProvider = widget.userData['isProvider'] ?? false;
     _responseTimeMinutes = widget.userData['responseTimeMinutes'] as int?;
+    _cancellationPolicy  = widget.userData['cancellationPolicy'] as String? ?? 'flexible';
 
     _selectedCategory = widget.userData['serviceType'] as String?;
 
@@ -196,6 +203,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'isProvider': _isProvider,
         if (_isProvider) 'responseTimeMinutes': _responseTimeMinutes,
         if (_isProvider) 'taxId': _taxIdController.text.trim(),
+        if (_isProvider) 'quickTags': _selectedQuickTags.toList(),
+        if (_isProvider) 'cancellationPolicy': _cancellationPolicy,
       });
       if (mounted) {
         navigator.pop();
@@ -375,6 +384,167 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                   ),
                 ],
+
+                const SizedBox(height: 25),
+
+                // ── Quick Tags picker ─────────────────────────────────────
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      "${_selectedQuickTags.length}/3 נבחרו",
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: _selectedQuickTags.length >= 3
+                              ? const Color(0xFF6366F1)
+                              : Colors.grey),
+                    ),
+                    const Text("תגיות מהירות (Quick Tags)",
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    "בחר עד 3 תגיות שיוצגו על הכרטיס שלך",
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.end,
+                  children: kQuickTagCatalog.map((tag) {
+                    final key      = tag['key']!;
+                    final selected = _selectedQuickTags.contains(key);
+                    final maxed    = _selectedQuickTags.length >= 3;
+                    return GestureDetector(
+                      onTap: () {
+                        if (!selected && maxed) return; // cap at 3
+                        setState(() {
+                          if (selected) {
+                            _selectedQuickTags.remove(key);
+                          } else {
+                            _selectedQuickTags.add(key);
+                          }
+                        });
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? const Color(0xFF6366F1)
+                              : (!selected && maxed)
+                                  ? Colors.grey[100]
+                                  : const Color(0xFFF0F0FF),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: selected
+                                ? const Color(0xFF6366F1)
+                                : (!selected && maxed)
+                                    ? Colors.grey.shade300
+                                    : const Color(0xFF6366F1)
+                                        .withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Text(
+                          '${tag['emoji']} ${tag['label']}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: selected
+                                ? Colors.white
+                                : (!selected && maxed)
+                                    ? Colors.grey
+                                    : const Color(0xFF6366F1),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+
+                const SizedBox(height: 25),
+
+                // ── Cancellation Policy picker ─────────────────────────────
+                const Text("מדיניות ביטול",
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                const Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    "לקוחות יראו מדיניות זו לפני ביצוע ההזמנה",
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Column(
+                  children: CancellationPolicyService.kPolicies.map((p) {
+                    final selected = _cancellationPolicy == p;
+                    return GestureDetector(
+                      onTap: () => setState(() => _cancellationPolicy = p),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? const Color(0xFFF0F0FF)
+                              : Colors.grey[50],
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: selected
+                                ? const Color(0xFF6366F1)
+                                : Colors.grey.shade200,
+                            width: selected ? 2 : 1,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              selected
+                                  ? Icons.radio_button_checked
+                                  : Icons.radio_button_unchecked,
+                              color: selected
+                                  ? const Color(0xFF6366F1)
+                                  : Colors.grey,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    CancellationPolicyService.label(p),
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                      color: selected
+                                          ? const Color(0xFF6366F1)
+                                          : Colors.black87,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    CancellationPolicyService.description(p),
+                                    style: const TextStyle(
+                                        fontSize: 12, color: Colors.grey),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
 
                 const SizedBox(height: 25),
                 const Text("תיאור אישי (About)", style: TextStyle(fontWeight: FontWeight.bold)),

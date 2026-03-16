@@ -1,21 +1,28 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
-import 'package:web/web.dart' as web;
-import 'dart:js_interop';
+import '../../services/permission_service.dart';
 
 class NotificationModule {
   static final FirebaseMessaging _fcm = FirebaseMessaging.instance;
 
   static Future<bool> requestPermissions() async {
+    // Never re-prompt if we already have a stored answer.
+    final stored = await PermissionService.getNotificationStatus();
+    if (stored == PermissionService.granted) return true;
+    if (stored == PermissionService.denied)  return false;
+
     try {
-      NotificationSettings settings = await _fcm.requestPermission(
+      final settings = await _fcm.requestPermission(
         alert: true,
         badge: true,
         sound: true,
       );
-      return settings.authorizationStatus == AuthorizationStatus.authorized;
+      final ok = settings.authorizationStatus == AuthorizationStatus.authorized;
+      await PermissionService.saveNotificationStatus(
+        ok ? PermissionService.granted : PermissionService.denied,
+      );
+      return ok;
     } catch (e) {
       debugPrint("QA Error - Permissions: $e");
       return false;
@@ -26,14 +33,6 @@ class NotificationModule {
     if (userId.isEmpty) return;
 
     try {
-      // QA Fix: רישום ידני של ה-Service Worker כדי למנוע את שגיאת pushManager
-      if (kIsWeb) {
-        final registration = await web.window.navigator.serviceWorker
-            .register('/firebase-messaging-sw.js'.toJS)
-            .toDart;
-        debugPrint("QA: Service Worker registered: ${registration.scope}");
-      }
-
       // שליפת הטוקן עם ה-VAPID Key שלך
       String? token = await _fcm.getToken(
         vapidKey: "BMps6y9pYxVgpcL6BI6iieleDICi-coUHasv6KjzYzdawU", 

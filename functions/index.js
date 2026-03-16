@@ -1,7 +1,11 @@
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
+
+// ── Secrets (set via: firebase functions:secrets:set ANTHROPIC_API_KEY) ────────
+const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 
 admin.initializeApp();
 
@@ -50,6 +54,14 @@ exports.sendchatnotification = onDocumentCreated(
         if (type === 'location') notificationBody = '📍 שיתפ/ה איתך מיקום';
         if (type === 'audio') notificationBody = '🎤 שלח/ה הודעה קולית';
 
+        // 3b. חישוב badge count עבור iOS (unread בשיחה הנוכחית + 1)
+        let badgeCount = 1;
+        try {
+            const chatSnap = await admin.firestore()
+                .collection('chats').doc(event.params.roomId).get();
+            badgeCount = (((chatSnap.data() || {})[`unreadCount_${receiverId}`]) || 0) + 1;
+        } catch (_) { /* fallback to 1 */ }
+
         // 4. בניית ה-Payload ל-FCM
         const messagePayload = {
             token: targetToken,
@@ -58,21 +70,28 @@ exports.sendchatnotification = onDocumentCreated(
                 body: notificationBody,
             },
             data: {
-                senderId: senderId,
-                roomId: event.params.roomId,
+                senderId:   senderId,
+                roomId:     event.params.roomId,
+                chatRoomId: event.params.roomId, // Flutter's PendingNotification reads this
                 click_action: "FLUTTER_NOTIFICATION_CLICK",
-                type: "chat"
+                type: "chat",
+            },
+            android: {
+                priority: "high",
+                notification: { channelId: "anyskill_chats" },
+            },
+            apns: {
+                headers: { "apns-priority": "10" },
+                payload: { aps: { badge: badgeCount, sound: "default" } },
             },
             webpush: {
                 notification: {
                     icon: "/icons/Icon-192.png",
                     badge: "/icons/Icon-192.png",
-                    click_action: "https://anyskill-6fdf3.web.app"
+                    click_action: "https://anyskill-6fdf3.web.app",
                 },
-                fcm_options: {
-                    link: "https://anyskill-6fdf3.web.app"
-                }
-            }
+                fcm_options: { link: "https://anyskill-6fdf3.web.app" },
+            },
         };
 
         // 5. השליחה
@@ -154,6 +173,14 @@ exports.sendbookingnotification = onDocumentCreated("jobs/{jobId}", async (event
         await admin.messaging().send({
             token,
             notification: { title: bookingTitle, body: bookingBody },
+            android: {
+                priority: "high",
+                notification: { channelId: "anyskill_default" },
+            },
+            apns: {
+                headers: { "apns-priority": "10" },
+                payload: { aps: { sound: "default", contentAvailable: 1 } },
+            },
             webpush: {
                 notification: { icon: '/icons/Icon-192.png' },
                 fcm_options: { link: 'https://anyskill-6fdf3.web.app' },
@@ -210,6 +237,14 @@ exports.sendjobstatusnotification = onDocumentUpdated("jobs/{jobId}", async (eve
         await admin.messaging().send({
             token,
             notification: { title, body },
+            android: {
+                priority: "high",
+                notification: { channelId: "anyskill_default" },
+            },
+            apns: {
+                headers: { "apns-priority": "10" },
+                payload: { aps: { sound: "default", contentAvailable: 1 } },
+            },
             webpush: {
                 notification: { icon: '/icons/Icon-192.png' },
                 fcm_options: { link: 'https://anyskill-6fdf3.web.app' },
@@ -306,12 +341,23 @@ exports.processPaymentRelease = onCall(async (request) => {
     // STEP 6: Firestore transaction
     try {
         await db.runTransaction(async (tx) => {
-            console.log('[PPR] STEP6 TX: reading adminSettings...');
-            const adminSnap = await tx.get(adminSettingsRef);
-            const feePercentage = adminSnap.exists ? (adminSnap.data().feePercentage ?? 0.10) : 0.10;
+            console.log('[PPR] STEP6 TX: reading adminSettings + expertData...');
+            // Read both docs before any writes (Firestore transaction requirement)
+            const [adminSnap, expertDataSnap] = await Promise.all([
+                tx.get(adminSettingsRef),
+                tx.get(expertRef),
+            ]);
+
+            // Per-provider commission takes priority; fall back to global setting
+            const customCommission = expertDataSnap.exists
+                ? expertDataSnap.data().customCommission
+                : undefined;
+            const globalFee = adminSnap.exists ? (adminSnap.data().feePercentage ?? 0.10) : 0.10;
+            const feePercentage = (customCommission != null) ? customCommission : globalFee;
+
             const feeAmount   = totalAmount * feePercentage;
             const netToExpert = totalAmount - feeAmount;
-            console.log(`[PPR] STEP6 TX: feePercentage=${feePercentage}, feeAmount=${feeAmount}, netToExpert=${netToExpert}`);
+            console.log(`[PPR] STEP6 TX: feePercentage=${feePercentage} (${customCommission != null ? 'custom' : 'global'}), feeAmount=${feeAmount}, netToExpert=${netToExpert}`);
 
             console.log('[PPR] STEP6 TX: updating job...');
             tx.update(jobRef, {
@@ -483,6 +529,14 @@ exports.sendRebookReminders = onSchedule(
                 await admin.messaging().send({
                     token,
                     notification: { title, body },
+                    android: {
+                        priority: "high",
+                        notification: { channelId: "anyskill_default" },
+                    },
+                    apns: {
+                        headers: { "apns-priority": "10" },
+                        payload: { aps: { sound: "default", contentAvailable: 1 } },
+                    },
                     webpush: {
                         notification: { icon: '/icons/Icon-192.png', badge: '/icons/Icon-192.png' },
                         fcm_options:  { link: 'https://anyskill-6fdf3.web.app' },
@@ -873,5 +927,1663 @@ exports.expireVipSubscriptions = onSchedule(
         }
         await batch.commit();
         console.log(`expireVipSubscriptions: cleared ${expired.size} expired VIP(s)`);
+    }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+// RETENTION & ENGAGEMENT SYSTEM
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Write a "completed_works" doc when a job finishes (Inspiration Feed) ──────
+// Powers the _InspirationFeed widget in search_page.dart.
+// Keeps only: expertId, expertName, serviceType, coverImage, city, completedAt.
+
+exports.writeCompletedWork = onDocumentUpdated(
+    { document: "jobs/{jobId}", maxInstances: 10 },
+    async (event) => {
+        const before = event.data.before.data();
+        const after  = event.data.after.data();
+        if (before.status === 'completed' || after.status !== 'completed') return null;
+
+        const expertId = after.expertId;
+        if (!expertId) return null;
+
+        const db = admin.firestore();
+        try {
+            const expertSnap = await db.collection('users').doc(expertId).get();
+            if (!expertSnap.exists) return null;
+            const expertData = expertSnap.data();
+
+            await db.collection('completed_works').add({
+                expertId,
+                expertName:   after.expertName  || expertData.name || 'מומחה',
+                serviceType:  expertData.serviceType || '',
+                coverImage:   expertData.profileImage || '',
+                city:         expertData.city || '',
+                rating:       expertData.rating || 5.0,
+                completedAt:  admin.firestore.FieldValue.serverTimestamp(),
+            });
+            console.log(`Inspiration Feed: completed_work written for expert ${expertId}`);
+        } catch (e) {
+            console.error('writeCompletedWork error:', e);
+        }
+        return null;
+    }
+);
+
+// ── Geo-completion notifications — notify nearby users when a job finishes ──
+// Sends up to 15 push notifications to customers in the same city as the expert.
+// Throttled: each user receives at most 1 geo-notification per 6 hours.
+
+exports.sendGeoCompletionNotifications = onDocumentUpdated(
+    { document: "jobs/{jobId}", maxInstances: 5 },
+    async (event) => {
+        const before = event.data.before.data();
+        const after  = event.data.after.data();
+        if (before.status === 'completed' || after.status !== 'completed') return null;
+
+        const expertId = after.expertId;
+        if (!expertId) return null;
+
+        const db = admin.firestore();
+        try {
+            const expertSnap = await db.collection('users').doc(expertId).get();
+            if (!expertSnap.exists) return null;
+            const expertData  = expertSnap.data();
+            const city        = expertData.city        || '';
+            const serviceType = expertData.serviceType || '';
+            const expertName  = expertData.name        || 'מומחה';
+            if (!city) return null;
+
+            // Find up to 15 nearby customers (non-providers)
+            const nearbySnap = await db.collection('users')
+                .where('city', '==', city)
+                .where('isProvider', '==', false)
+                .limit(15)
+                .get();
+            if (nearbySnap.empty) return null;
+
+            const sixHoursAgo = new Date(Date.now() - 6 * 3600 * 1000);
+            const title = `מומחה מוביל סיים עבודה ב${city}! 📍`;
+            const body  = `${expertName} (${serviceType}) זמין עכשיו לשירות נוסף.`;
+
+            const sends = nearbySnap.docs
+                .filter(d => {
+                    if (d.id === expertId || d.id === after.customerId) return false;
+                    const lastNotify = d.data().geoNotifyLastAt?.toDate();
+                    if (lastNotify && lastNotify > sixHoursAgo) return false;
+                    return !!(d.data().fcmToken || d.data().deviceToken);
+                })
+                .map(async d => {
+                    const token = d.data().fcmToken || d.data().deviceToken;
+                    try {
+                        await admin.messaging().send({
+                            token,
+                            notification: { title, body },
+                            android: {
+                                priority: "high",
+                                notification: { channelId: "anyskill_default" },
+                            },
+                            apns: {
+                                headers: { "apns-priority": "10" },
+                                payload: { aps: { sound: "default", contentAvailable: 1 } },
+                            },
+                            webpush: {
+                                notification: { icon: '/icons/Icon-192.png' },
+                                fcm_options: { link: 'https://anyskill-6fdf3.web.app' },
+                            },
+                            data: { type: 'geo_nearby', expertId, city },
+                        });
+                        const batch = db.batch();
+                        batch.set(db.collection('notifications').doc(), {
+                            userId: d.id, title, body, type: 'geo_nearby',
+                            data: { expertId, city, serviceType },
+                            isRead: false,
+                            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                        });
+                        batch.update(d.ref, {
+                            geoNotifyLastAt: admin.firestore.FieldValue.serverTimestamp(),
+                        });
+                        await batch.commit();
+                    } catch (e) {
+                        console.error(`Geo notify error for ${d.id}:`, e.message);
+                    }
+                });
+
+            await Promise.all(sends);
+            console.log(`Geo notifications sent to ${sends.length} users in ${city}`);
+        } catch (e) {
+            console.error('sendGeoCompletionNotifications error:', e);
+        }
+        return null;
+    }
+);
+
+// ── Monthly seasonal notifications (1st of each month, 10:00 IST) ────────────
+// Sends contextual push about season-relevant services to all users with tokens.
+// Users can opt out via users/{uid}.disableSeasonalNotifs = true.
+
+const SEASONAL_MAP = {
+    2:  { title: 'האביב כבר כאן! 🌸', body: 'הגיע הזמן לניקיון מזגן, גינון ורענון הבית.' },
+    3:  { title: 'מוכן לקיץ? ☀️',     body: 'קבל הצעות על שיפוץ, צביעה וריהוט חדש.' },
+    5:  { title: 'קיץ חם בפתח! 🏖️',   body: 'בדוק שהמזגן שלך מוכן לגל החום הבא.' },
+    8:  { title: 'הסתיו הגיע 🍂',      body: 'זמן מצוין להכין את הבית לחורף — שרברב, חשמלאי ועוד.' },
+    10: { title: 'החורף מתקרב ❄️',     body: 'דאג לחימום, בידוד וצנרת לפני הגשמים.' },
+};
+
+exports.sendSeasonalNotifications = onSchedule(
+    { schedule: '0 10 1 * *', timeZone: 'Asia/Jerusalem', maxInstances: 1 },
+    async () => {
+        const db    = admin.firestore();
+        const month = new Date().getMonth();
+        const seasonal = SEASONAL_MAP[month];
+        if (!seasonal) {
+            console.log('sendSeasonalNotifications: no campaign for month', month);
+            return;
+        }
+
+        const { title, body } = seasonal;
+        let totalSent = 0;
+        let lastDoc   = null;
+
+        // Paginate through all users in batches of 500
+        do {
+            let query = db.collection('users').orderBy('__name__').limit(500);
+            if (lastDoc) query = query.startAfter(lastDoc);
+
+            const snap = await query.get();
+            if (snap.empty) break;
+
+            for (const doc of snap.docs) {
+                const userData = doc.data();
+                const token    = userData.fcmToken || userData.deviceToken;
+                if (!token || userData.disableSeasonalNotifs === true) continue;
+
+                try {
+                    await admin.messaging().send({
+                        token,
+                        notification: { title, body },
+                        android: {
+                            priority: "high",
+                            notification: { channelId: "anyskill_default" },
+                        },
+                        apns: {
+                            headers: { "apns-priority": "10" },
+                            payload: { aps: { sound: "default", contentAvailable: 1 } },
+                        },
+                        webpush: {
+                            notification: { icon: '/icons/Icon-192.png' },
+                            fcm_options: { link: 'https://anyskill-6fdf3.web.app' },
+                        },
+                        data: { type: 'seasonal', month: String(month) },
+                    });
+                    await db.collection('notifications').add({
+                        userId: doc.id, title, body, type: 'seasonal',
+                        data: { month: String(month) },
+                        isRead: false,
+                        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    totalSent++;
+                } catch (e) {
+                    console.error(`Seasonal notify error for ${doc.id}:`, e.message);
+                }
+            }
+
+            lastDoc = snap.docs[snap.docs.length - 1];
+        } while (true);
+
+        console.log(`sendSeasonalNotifications: sent ${totalSent} for month ${month}`);
+    }
+);
+
+// ── Weekly inactivity reminders — every Sunday 11:00 IST ─────────────────────
+// Targets customers who haven't booked in 60+ days.
+// Requires users/{uid}.lastBookingAt to be stamped on job creation
+// (done by awardCreditsOnBooking below via the same trigger).
+// Users can opt out via users/{uid}.disableInactivityNotifs = true.
+
+exports.sendInactivityReminders = onSchedule(
+    { schedule: '0 11 * * 0', timeZone: 'Asia/Jerusalem', maxInstances: 1 },
+    async () => {
+        const db     = admin.firestore();
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - 60);
+        const cutoffTs = admin.firestore.Timestamp.fromDate(cutoff);
+
+        const snap = await db.collection('users')
+            .where('isProvider',   '==', false)
+            .where('lastBookingAt', '<',  cutoffTs)
+            .limit(200)
+            .get();
+
+        let sent = 0;
+        for (const doc of snap.docs) {
+            const userData = doc.data();
+            const token    = userData.fcmToken || userData.deviceToken;
+            if (!token || userData.disableInactivityNotifs === true) continue;
+
+            const name  = userData.name || 'יקר/ה';
+            const title = `${name}, מתגעגעים אליך! 👋`;
+            const body  = 'כבר 60 יום לא הזמנת שירות. גלה מה חדש ב-AnySkill!';
+
+            try {
+                await admin.messaging().send({
+                    token,
+                    notification: { title, body },
+                    android: {
+                        priority: "high",
+                        notification: { channelId: "anyskill_default" },
+                    },
+                    apns: {
+                        headers: { "apns-priority": "10" },
+                        payload: { aps: { sound: "default", contentAvailable: 1 } },
+                    },
+                    webpush: {
+                        notification: { icon: '/icons/Icon-192.png' },
+                        fcm_options: { link: 'https://anyskill-6fdf3.web.app' },
+                    },
+                    data: { type: 'inactivity_reminder' },
+                });
+                await db.collection('notifications').add({
+                    userId: doc.id, title, body, type: 'inactivity_reminder',
+                    data: {}, isRead: false,
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+                sent++;
+            } catch (e) {
+                console.error(`Inactivity notify error for ${doc.id}:`, e.message);
+            }
+        }
+        console.log(`sendInactivityReminders: sent ${sent} notifications`);
+    }
+);
+
+// ── Award loyalty credits when customer creates a booking (+50 credits) ────────
+// Also stamps lastBookingAt for the inactivity reminder query above.
+
+exports.awardCreditsOnBooking = onDocumentCreated(
+    { document: "jobs/{jobId}", maxInstances: 50 },
+    async (event) => {
+        const jobData    = event.data.data();
+        const customerId = jobData.customerId;
+        if (!customerId) return null;
+
+        const db                  = admin.firestore();
+        const CREDITS_PER_BOOKING = 50;
+
+        try {
+            await db.collection('users').doc(customerId).update({
+                credits:       admin.firestore.FieldValue.increment(CREDITS_PER_BOOKING),
+                lastBookingAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            console.log(`Credits: +${CREDITS_PER_BOOKING} to customer ${customerId}`);
+        } catch (e) {
+            console.error('awardCreditsOnBooking error:', e);
+        }
+        return null;
+    }
+);
+
+// ── Award loyalty credits when customer leaves a photo review (+30 credits) ───
+
+exports.awardCreditsOnPhotoReview = onDocumentCreated(
+    { document: "reviews/{reviewId}", maxInstances: 30 },
+    async (event) => {
+        const review   = event.data.data();
+        const reviewer = review.reviewerId;
+        const photos   = review.photos || [];
+        if (!reviewer || !Array.isArray(photos) || photos.length === 0) return null;
+
+        const CREDITS_PER_PHOTO_REVIEW = 30;
+        const db = admin.firestore();
+        try {
+            await db.collection('users').doc(reviewer).update({
+                credits: admin.firestore.FieldValue.increment(CREDITS_PER_PHOTO_REVIEW),
+            });
+            console.log(`Credits: +${CREDITS_PER_PHOTO_REVIEW} to reviewer ${reviewer}`);
+        } catch (e) {
+            console.error('awardCreditsOnPhotoReview error:', e);
+        }
+        return null;
+    }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin email notification — new user registration
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// HOW IT WORKS
+// ─────────────
+// Triggers whenever a new document is created in users/{uid}.
+// Writes a doc to the `mail` collection, which the Firebase "Trigger Email"
+// extension picks up and sends via your configured SMTP provider.
+//
+// SETUP (one-time)
+// ─────────────────
+// 1. Install the Firebase Trigger Email extension:
+//    https://firebase.google.com/products/extensions/firebase-firestore-send-email
+//    Choose "mail" as the collection name when prompted.
+//
+// 2. Configure SMTP credentials in the extension settings.
+//    Recommended free options:
+//      • Brevo (formerly Sendinblue) — 300 emails/day free
+//        SMTP host: smtp-relay.brevo.com  port: 587
+//      • Mailjet — 200 emails/day free
+//        SMTP host: in-v3.mailjet.com     port: 587
+//    For both: create an account → Settings → SMTP & API → copy credentials.
+//
+// 3. Deploy this function:
+//    firebase deploy --only functions:notifyadminonregister
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ADMIN_EMAIL = "adawiavihai@gmail.com";
+
+/** Formats a Firestore Timestamp (or null) as a Hebrew locale date-time string. */
+function formatDate(ts) {
+    if (!ts) return "לא ידוע";
+    try {
+        return ts.toDate().toLocaleString("he-IL", {
+            timeZone:    "Asia/Jerusalem",
+            day:         "2-digit",
+            month:       "2-digit",
+            year:        "numeric",
+            hour:        "2-digit",
+            minute:      "2-digit",
+        });
+    } catch (_) {
+        return String(ts);
+    }
+}
+
+/** Returns a badge-style HTML pill for the user type. */
+function userTypePill(isProvider) {
+    const label = isProvider ? "נותן שירות" : "לקוח";
+    const bg    = isProvider ? "#6366F1"    : "#10B981";
+    return `<span style="display:inline-block;background:${bg};color:#fff;`
+         + `padding:3px 12px;border-radius:99px;font-size:12px;`
+         + `font-weight:700;">${label}</span>`;
+}
+
+/** Builds the full HTML body for the admin notification email. */
+function buildEmailHtml({ uid, name, email, isProvider, userType,
+                          createdAt, city, serviceType, phone }) {
+    const accentColor = "#6366F1";
+    const bgLight     = "#F5F5FF";
+
+    return `<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>משתמש חדש נרשם</title>
+</head>
+<body style="margin:0;padding:0;background:#F0F0FF;font-family:Arial,Helvetica,sans-serif;direction:rtl;">
+
+  <!-- Wrapper -->
+  <table width="100%" cellpadding="0" cellspacing="0" border="0"
+         style="background:#F0F0FF;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" border="0"
+               style="max-width:600px;width:100%;background:#fff;
+                      border-radius:20px;overflow:hidden;
+                      box-shadow:0 4px 24px rgba(99,102,241,.15);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#4F46E5 0%,${accentColor} 50%,#8B5CF6 100%);
+                        padding:32px 32px 28px;text-align:center;">
+              <div style="font-size:28px;font-weight:900;color:#fff;
+                          letter-spacing:0.5px;margin-bottom:6px;">
+                AnySkill
+              </div>
+              <div style="font-size:13px;color:rgba(255,255,255,.80);">
+                פאנל ניהול — התראה אוטומטית
+              </div>
+            </td>
+          </tr>
+
+          <!-- Alert banner -->
+          <tr>
+            <td style="background:#EEF2FF;padding:16px 32px;
+                        border-bottom:1px solid #E0E7FF;">
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="font-size:22px;vertical-align:middle;">🎉</td>
+                  <td width="12"></td>
+                  <td>
+                    <div style="font-size:16px;font-weight:700;color:#1E1B4B;">
+                      משתמש חדש נרשם לפלטפורמה
+                    </div>
+                    <div style="font-size:12px;color:#6B7280;margin-top:2px;">
+                      ${createdAt}
+                    </div>
+                  </td>
+                  <td align="left">${userTypePill(isProvider)}</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Details card -->
+          <tr>
+            <td style="padding:28px 32px;">
+              <table width="100%" cellpadding="0" cellspacing="0"
+                     style="background:${bgLight};border-radius:14px;
+                            overflow:hidden;border:1px solid #E0E7FF;">
+
+                ${_row("👤", "שם מלא",         name)}
+                ${_row("✉️", "אימייל",          email)}
+                ${_row("🏷️", "סוג משתמש",      userType)}
+                ${_row("🛠️", "תחום / קטגוריה", serviceType || "לא צוין")}
+                ${_row("📱", "טלפון",           phone || "לא צוין")}
+                ${_row("📍", "מיקום",           city)}
+                ${_row("🆔", "UID",             uid)}
+                ${_row("📅", "תאריך הרשמה",   createdAt)}
+
+              </table>
+            </td>
+          </tr>
+
+          <!-- CTA -->
+          <tr>
+            <td style="padding:0 32px 28px;text-align:center;">
+              <a href="https://console.firebase.google.com/project/_/firestore/data/~2Fusers~2F${uid}"
+                 target="_blank"
+                 style="display:inline-block;background:linear-gradient(135deg,#4F46E5,${accentColor});
+                         color:#fff;text-decoration:none;font-size:14px;font-weight:700;
+                         padding:12px 28px;border-radius:10px;
+                         box-shadow:0 4px 12px rgba(99,102,241,.35);">
+                פתח בFirestore Console →
+              </a>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#F9F9FF;padding:18px 32px;
+                        border-top:1px solid #E0E7FF;text-align:center;">
+              <div style="font-size:11px;color:#9CA3AF;">
+                הודעה זו נשלחה אוטומטית על ידי AnySkill Cloud Functions<br/>
+                לא להשיב על מייל זה — לפניות: ${ADMIN_EMAIL}
+              </div>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>`;
+}
+
+/** Returns a single detail row for the details table. */
+function _row(emoji, label, value) {
+    return `
+    <tr>
+      <td style="padding:12px 16px;border-bottom:1px solid #E0E7FF;width:36px;
+                  font-size:16px;vertical-align:top;">${emoji}</td>
+      <td style="padding:12px 8px 12px 0;border-bottom:1px solid #E0E7FF;
+                  width:130px;font-size:13px;color:#6B7280;
+                  font-weight:600;vertical-align:top;">${label}</td>
+      <td style="padding:12px 16px 12px 0;border-bottom:1px solid #E0E7FF;
+                  font-size:13px;color:#1E1B4B;
+                  font-weight:700;vertical-align:top;">${value}</td>
+    </tr>`;
+}
+
+// ── The Cloud Function ────────────────────────────────────────────────────────
+
+exports.notifyadminonregister = onDocumentCreated(
+    {
+        document:    "users/{uid}",
+        maxInstances: 10,
+        region:      "us-central1",
+    },
+    async (event) => {
+        const snap = event.data;
+        if (!snap) return null;
+
+        const data       = snap.data();
+        const uid        = event.params.uid;
+
+        // Skip system-created users (e.g. service accounts)
+        if (uid === "anyskill_system") return null;
+
+        const isProvider  = data.isProvider === true;
+        const name        = data.name        || "לא צוין";
+        const email       = data.email       || "לא צוין";
+        const phone       = data.phone       || "";
+        const serviceType = isProvider ? (data.serviceType || "לא צוין") : "—";
+        const userType    = isProvider ? "נותן שירות (ספק)" : "לקוח";
+
+        // Location: try multiple field names your app might populate
+        const city = data.city
+            || data.locationCity
+            || data.location
+            || (data.locationData && data.locationData.city)
+            || "לא צוין";
+
+        const createdAt = formatDate(data.createdAt);
+
+        const html = buildEmailHtml({
+            uid, name, email, isProvider, userType,
+            createdAt, city, serviceType, phone,
+        });
+
+        const subject = `🆕 [AnySkill] נרשם ${userType}: ${name}`;
+
+        // ── Method A: Firebase Trigger Email extension (recommended) ──────────
+        // Writes a doc to the `mail` collection; the extension delivers it.
+        // Make sure the extension is installed and SMTP is configured.
+        try {
+            await admin.firestore().collection("mail").add({
+                to:      ADMIN_EMAIL,
+                message: { subject, html },
+            });
+            console.log(`Admin notification sent for new user: ${uid} (${email})`);
+        } catch (err) {
+            console.error("notifyadminonregister: failed to queue mail doc:", err);
+        }
+
+        return null;
+
+        // ── Method B: Nodemailer (alternative — uncomment if you prefer SMTP) ─
+        //
+        // SETUP:
+        //   1. cd functions && npm install nodemailer
+        //   2. firebase functions:secrets:set SMTP_USER SMTP_PASS
+        //   3. Add "runWith({ secrets: ['SMTP_USER','SMTP_PASS'] })" to the
+        //      function options (v2 syntax shown below).
+        //
+        // const nodemailer = require("nodemailer");
+        // const { defineSecret } = require("firebase-functions/params");
+        // const SMTP_USER = defineSecret("SMTP_USER");
+        // const SMTP_PASS = defineSecret("SMTP_PASS");
+        //
+        // const transporter = nodemailer.createTransport({
+        //     host: "smtp-relay.brevo.com",   // or smtp.mailjet.com
+        //     port: 587,
+        //     secure: false,
+        //     auth: {
+        //         user: SMTP_USER.value(),
+        //         pass: SMTP_PASS.value(),
+        //     },
+        // });
+        //
+        // await transporter.sendMail({
+        //     from: `"AnySkill Admin" <${SMTP_USER.value()}>`,
+        //     to:   ADMIN_EMAIL,
+        //     subject,
+        //     html,
+        // });
+    }
+);
+
+// =============================================================================
+// ─── AI Category Mapping Engine ───────────────────────────────────────────────
+// =============================================================================
+//
+// Flow:
+//   1. Provider completes onboarding → Flutter calls `categorizeprovider`
+//   2. Function fetches live categories from Firestore + calls Claude
+//   3a. Confidence ≥ 0.90  → auto-assign, update user.serviceType immediately
+//   3b. Confidence < 0.90  → write to `categories_pending`, email admin
+//   4. Admin opens PendingCategoriesScreen → calls `approvecategory`
+//   5. Approval creates a real `categories` doc; provider is updated
+// =============================================================================
+
+// ── System prompt (injected into every Claude call) ───────────────────────────
+const _CATEGORY_SYSTEM_PROMPT = `\
+You are AnySkill's category routing AI for an Israeli service marketplace.
+Your task: given a service provider's free-text description, map it to the best
+existing category OR flag it as a new one.
+
+RESPOND WITH ONLY VALID JSON — no markdown fences, no explanation text.
+
+Required JSON schema:
+{
+  "action":                   "match" | "new",
+  "confidence":               0.0–1.0,
+  "matched_category_id":      "<Firestore doc ID> | null",
+  "matched_category_name":    "<Hebrew name> | null",
+  "suggested_category_name":  "<Hebrew name> | null",
+  "suggested_subcategory_name": "<Hebrew name> | null",
+  "image_prompt":             "<English Midjourney/DALL-E prompt> | null",
+  "keywords":                 ["<Hebrew keyword>", ...],
+  "reasoning":                "<brief Hebrew explanation>"
+}
+
+Rules:
+• action="match"  when confidence >= 0.90 — fill matched_category_id/name
+• action="new"    when confidence <  0.90 — fill suggested_*name fields
+• image_prompt (new categories only): describe a professional Israeli service
+  photo — real person in action, clean bright background, photorealistic 8K.
+  Example: "Professional Israeli personal trainer coaching client in modern gym,
+  bright natural light, clean minimal background, photorealistic, 8K"
+• keywords: 3–6 Hebrew synonyms/related terms to enable semantic search later
+• reasoning: one sentence in Hebrew explaining your decision
+• Output JSON only. Any non-JSON output will cause an error.`;
+
+// ── Helper: email HTML for pending-category admin alert ───────────────────────
+function buildPendingCategoryEmail({ uid, serviceDescription, suggestedCategoryName,
+    suggestedSubCategoryName, imagePrompt, confidence, reasoning, pendingId }) {
+    const pct = Math.round((confidence || 0) * 100);
+    return `<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head><meta charset="UTF-8"/><title>קטגוריה ממתינה</title></head>
+<body style="margin:0;padding:24px;background:#F0F0FF;font-family:Arial,sans-serif;direction:rtl;">
+  <div style="max-width:560px;margin:auto;background:#fff;border-radius:16px;overflow:hidden;
+              box-shadow:0 4px 20px rgba(99,102,241,.15);">
+    <div style="background:linear-gradient(135deg,#4F46E5,#6366F1,#8B5CF6);padding:28px 28px 20px;text-align:center;">
+      <div style="font-size:24px;font-weight:900;color:#fff;">AnySkill 🤖</div>
+      <div style="font-size:13px;color:rgba(255,255,255,.8);margin-top:4px;">קטגוריה חדשה ממתינה לאישורך</div>
+    </div>
+    <div style="padding:24px 28px;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td style="padding:8px 0;color:#6B7280;font-size:13px;">תיאור הספק</td>
+            <td style="padding:8px 0;font-weight:700;font-size:14px;text-align:left;">${serviceDescription}</td></tr>
+        <tr><td style="padding:8px 0;color:#6B7280;font-size:13px;">קטגוריה מוצעת</td>
+            <td style="padding:8px 0;font-weight:700;font-size:14px;color:#6366F1;text-align:left;">${suggestedCategoryName || "—"}</td></tr>
+        <tr><td style="padding:8px 0;color:#6B7280;font-size:13px;">תת-קטגוריה</td>
+            <td style="padding:8px 0;font-size:13px;text-align:left;">${suggestedSubCategoryName || "—"}</td></tr>
+        <tr><td style="padding:8px 0;color:#6B7280;font-size:13px;">ביטחון AI</td>
+            <td style="padding:8px 0;text-align:left;">
+              <span style="background:#FEF3C7;color:#D97706;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700;">${pct}%</span>
+            </td></tr>
+        <tr><td style="padding:8px 0;color:#6B7280;font-size:13px;">הנמקה</td>
+            <td style="padding:8px 0;font-size:13px;text-align:left;">${reasoning || "—"}</td></tr>
+        ${imagePrompt ? `<tr><td style="padding:8px 0;color:#6B7280;font-size:13px;">פרומפט לתמונה</td>
+            <td style="padding:8px 0;font-size:11px;color:#6366F1;text-align:left;font-style:italic;">${imagePrompt}</td></tr>` : ""}
+        <tr><td style="padding:8px 0;color:#6B7280;font-size:13px;">UID הספק</td>
+            <td style="padding:8px 0;font-size:11px;color:#9CA3AF;text-align:left;">${uid}</td></tr>
+      </table>
+      <div style="margin-top:20px;text-align:center;">
+        <a href="https://console.firebase.google.com/project/anyskill-6fdf3/firestore/data/~2Fcategories_pending~2F${pendingId}"
+           style="display:inline-block;background:linear-gradient(135deg,#4F46E5,#6366F1);color:#fff;
+                  text-decoration:none;padding:12px 28px;border-radius:10px;font-weight:700;font-size:14px;">
+          פתח בקונסול לאישור ←
+        </a>
+      </div>
+    </div>
+  </div>
+</body></html>`;
+}
+
+// ── categorizeprovider — callable from Flutter ────────────────────────────────
+exports.categorizeprovider = onCall(
+    { secrets: [ANTHROPIC_API_KEY], maxInstances: 10, region: "us-central1" },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError("unauthenticated", "Authentication required");
+        }
+
+        const { serviceDescription } = request.data;
+        if (!serviceDescription || typeof serviceDescription !== "string" || serviceDescription.trim().length < 2) {
+            throw new HttpsError("invalid-argument", "serviceDescription is required");
+        }
+
+        const uid = request.auth.uid;
+        const db  = admin.firestore();
+
+        // 1. Fetch all top-level live categories from Firestore
+        const catSnap = await db.collection("categories")
+            .where("parentId", "==", "")
+            .limit(60)
+            .get();
+
+        const existingCategories = catSnap.docs.map(d => ({
+            id:       d.id,
+            name:     d.data().name     || "",
+            keywords: d.data().keywords || [],
+        }));
+
+        // 2. Build the user message
+        const categoryList = existingCategories.length > 0
+            ? existingCategories
+                .map((c, i) => `${i + 1}. id="${c.id}" name="${c.name}"${c.keywords.length ? ` keywords=[${c.keywords.join(", ")}]` : ""}`)
+                .join("\n")
+            : "(no categories exist yet — suggest a new one)";
+
+        const userMessage =
+            `Provider service description: "${serviceDescription.trim()}"\n\n` +
+            `Existing categories:\n${categoryList}\n\n` +
+            `Map this provider. Return JSON only.`;
+
+        // 3. Call Claude (haiku — fast + cheap for classification)
+        let parsed;
+        try {
+            const { default: Anthropic } = await import("@anthropic-ai/sdk");
+            const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
+
+            const msg = await anthropic.messages.create({
+                model:      "claude-haiku-4-5-20251001",
+                max_tokens: 512,
+                system:     _CATEGORY_SYSTEM_PROMPT,
+                messages:   [{ role: "user", content: userMessage }],
+            });
+
+            parsed = JSON.parse(msg.content[0]?.text ?? "{}");
+        } catch (err) {
+            console.error("categorizeprovider: AI call failed:", err);
+            throw new HttpsError("internal", "AI categorization failed");
+        }
+
+        const {
+            action, confidence,
+            matched_category_id, matched_category_name,
+            suggested_category_name, suggested_subcategory_name,
+            image_prompt, keywords = [], reasoning,
+        } = parsed;
+
+        // ── 3a. High-confidence match — auto-assign ──────────────────────────
+        if (action === "match" && matched_category_id && (confidence ?? 0) >= 0.90) {
+            await db.collection("users").doc(uid).update({
+                serviceType:     matched_category_name || "",
+                categoryId:      matched_category_id,
+                categoryStatus:  "approved",
+            });
+            console.log(`categorizeprovider: auto-matched uid=${uid} → ${matched_category_name} (${Math.round(confidence * 100)}%)`);
+            return {
+                action:       "match",
+                categoryId:   matched_category_id,
+                categoryName: matched_category_name,
+                confidence,
+                reasoning,
+            };
+        }
+
+        // ── 3b. Low-confidence or new — flag for admin review ────────────────
+        const pendingRef = await db.collection("categories_pending").add({
+            uid,
+            serviceDescription:        serviceDescription.trim(),
+            suggestedCategoryName:     suggested_category_name    || serviceDescription.trim(),
+            suggestedSubCategoryName:  suggested_subcategory_name || null,
+            imagePrompt:               image_prompt               || null,
+            keywords,
+            confidence:                confidence                 ?? 0,
+            reasoning:                 reasoning                  || "",
+            status:    "pending",   // pending | approved | rejected
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        await db.collection("users").doc(uid).update({
+            serviceType:       suggested_category_name || serviceDescription.trim(),
+            categoryStatus:    "pending_review",
+            pendingCategoryId: pendingRef.id,
+        });
+
+        // Notify admin
+        try {
+            await db.collection("mail").add({
+                to: ADMIN_EMAIL,
+                message: {
+                    subject: `🤖 [AnySkill] קטגוריה חדשה ממתינה: ${suggested_category_name || serviceDescription}`,
+                    html: buildPendingCategoryEmail({
+                        uid, serviceDescription,
+                        suggestedCategoryName:    suggested_category_name,
+                        suggestedSubCategoryName: suggested_subcategory_name,
+                        imagePrompt:              image_prompt,
+                        confidence, reasoning,
+                        pendingId: pendingRef.id,
+                    }),
+                },
+            });
+        } catch (mailErr) {
+            console.warn("categorizeprovider: failed to queue admin mail:", mailErr);
+        }
+
+        console.log(`categorizeprovider: flagged for review uid=${uid} → "${suggested_category_name}" pendingId=${pendingRef.id}`);
+        return {
+            action:               "new",
+            pendingId:            pendingRef.id,
+            suggestedCategoryName: suggested_category_name,
+            confidence,
+            reasoning,
+        };
+    }
+);
+
+// ── approvecategory — admin-only callable ─────────────────────────────────────
+exports.approvecategory = onCall(
+    { maxInstances: 5, region: "us-central1" },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError("unauthenticated", "Authentication required");
+        }
+
+        // Guard: caller must be admin
+        const callerSnap = await admin.firestore()
+            .collection("users").doc(request.auth.uid).get();
+        if (!callerSnap.exists || callerSnap.data()?.isAdmin !== true) {
+            throw new HttpsError("permission-denied", "Admin only");
+        }
+
+        const { pendingId, action } = request.data; // action: "approve" | "reject"
+        if (!pendingId || !["approve", "reject"].includes(action)) {
+            throw new HttpsError("invalid-argument", "pendingId and action ('approve'|'reject') required");
+        }
+
+        const db          = admin.firestore();
+        const pendingRef  = db.collection("categories_pending").doc(pendingId);
+        const pendingSnap = await pendingRef.get();
+
+        if (!pendingSnap.exists) {
+            throw new HttpsError("not-found", "Pending category not found");
+        }
+        const pending = pendingSnap.data();
+        const now     = admin.firestore.FieldValue.serverTimestamp();
+
+        // ── Reject ───────────────────────────────────────────────────────────
+        if (action === "reject") {
+            await Promise.all([
+                pendingRef.update({ status: "rejected", reviewedAt: now, reviewedBy: request.auth.uid }),
+                db.collection("users").doc(pending.uid).update({ categoryStatus: "rejected" }),
+            ]);
+            return { success: true, action: "rejected" };
+        }
+
+        // ── Approve: create the live category (and optional sub-category) ────
+        const orderSnap = await db.collection("categories")
+            .orderBy("order", "desc").limit(1).get();
+        const nextOrder = (orderSnap.docs[0]?.data()?.order ?? 0) + 1;
+
+        const newCatRef = await db.collection("categories").add({
+            name:         pending.suggestedCategoryName,
+            parentId:     "",
+            iconName:     "stars",
+            img:          "",            // admin pastes Midjourney URL here later
+            imagePrompt:  pending.imagePrompt  || null,
+            keywords:     pending.keywords     || [],
+            order:        nextOrder,
+            bookingCount: 0,
+            isActive:     true,
+            createdBy:    "ai",
+            createdAt:    now,
+        });
+
+        const ops = [
+            pendingRef.update({
+                status:             "approved",
+                approvedCategoryId: newCatRef.id,
+                reviewedAt:         now,
+                reviewedBy:         request.auth.uid,
+            }),
+            db.collection("users").doc(pending.uid).update({
+                categoryId:     newCatRef.id,
+                serviceType:    pending.suggestedCategoryName,
+                categoryStatus: "approved",
+            }),
+        ];
+
+        if (pending.suggestedSubCategoryName) {
+            ops.push(
+                db.collection("categories").add({
+                    name:         pending.suggestedSubCategoryName,
+                    parentId:     newCatRef.id,
+                    iconName:     "stars",
+                    img:          "",
+                    keywords:     [],
+                    order:        1,
+                    bookingCount: 0,
+                    isActive:     true,
+                    createdBy:    "ai",
+                    createdAt:    now,
+                })
+            );
+        }
+
+        await Promise.all(ops);
+
+        console.log(`approvecategory: approved pendingId=${pendingId} → newCategoryId=${newCatRef.id}`);
+        return { success: true, action: "approved", newCategoryId: newCatRef.id };
+    }
+);
+
+// ── Market Opportunity Monitor ─────────────────────────────────────────────────
+// Triggers on every new search_log document.
+// When a zero-result keyword exceeds the admin-configured threshold within 24h,
+// sends a high-priority FCM push to all admin devices and records the alert.
+
+exports.marketopportunitymonitor = onDocumentCreated(
+    "search_logs/{logId}",
+    async (event) => {
+        const data = event.data?.data();
+        if (!data || !data.zeroResults) return null;
+
+        const query = (data.query || "").trim().toLowerCase();
+        if (query.length < 2) return null;
+
+        const db = admin.firestore();
+
+        // ── 1. Read alert threshold from admin settings ──────────────────────
+        const settingsSnap = await db
+            .collection("admin").doc("admin")
+            .collection("settings").doc("settings")
+            .get();
+        const threshold = Number((settingsSnap.data() || {}).marketAlertThreshold) || 5;
+
+        // ── 2. Count zero-result occurrences of this keyword in last 24h ─────
+        const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const countSnap = await db
+            .collection("search_logs")
+            .where("query",       "==", query)
+            .where("zeroResults", "==", true)
+            .where("timestamp",   ">=", admin.firestore.Timestamp.fromDate(since))
+            .limit(threshold + 1) // fetch one extra to confirm threshold crossed
+            .get();
+
+        if (countSnap.size < threshold) return null;
+
+        // ── 3. Deduplicate — only one alert per keyword per calendar day ──────
+        const alertId  = query.replace(/[/.]/g, "_").substring(0, 100);
+        const alertRef = db.collection("market_alerts").doc(alertId);
+        const alertDoc = await alertRef.get();
+        const alertData = alertDoc.data() || {};
+
+        if (alertData.lastAlertedAt) {
+            const lastAlerted = alertData.lastAlertedAt.toDate();
+            const todayStart  = new Date();
+            todayStart.setHours(0, 0, 0, 0);
+            if (lastAlerted >= todayStart) {
+                console.log(`marketopportunitymonitor: already alerted today for "${query}"`);
+                return null;
+            }
+        }
+
+        // ── 4. Record the alert ───────────────────────────────────────────────
+        await alertRef.set({
+            keyword:       query,
+            searchCount:   countSnap.size,
+            threshold:     threshold,
+            lastAlertedAt: admin.firestore.FieldValue.serverTimestamp(),
+            totalAlerts:   admin.firestore.FieldValue.increment(1),
+        }, { merge: true });
+
+        // ── 5. Collect admin FCM tokens ───────────────────────────────────────
+        const adminSnap = await db
+            .collection("users")
+            .where("isAdmin", "==", true)
+            .limit(5)
+            .get();
+
+        const tokens = adminSnap.docs
+            .map(d => d.data().fcmToken)
+            .filter(t => typeof t === "string" && t.length > 10);
+
+        if (tokens.length === 0) {
+            console.log(`marketopportunitymonitor: no admin FCM tokens — alert recorded but not pushed`);
+            return null;
+        }
+
+        // ── 6. Send high-priority FCM push to all admin devices ───────────────
+        const response = await admin.messaging().sendEachForMulticast({
+            notification: {
+                title: "🚀 הזדמנות שוק זוהתה!",
+                body:  `${countSnap.size} משתמשים חיפשו "${query}" היום ולא קיבלו תוצאות — הגיע הזמן לגייס ספקים!`,
+            },
+            data: {
+                type:        "market_opportunity",
+                keyword:     query,
+                searchCount: String(countSnap.size),
+                screen:      "business_ai",
+            },
+            tokens,
+            android: {
+                priority: "high",
+                notification: { channelId: "market_alerts" },
+            },
+            apns: {
+                payload: { aps: { sound: "default", badge: 1 } },
+            },
+        });
+
+        console.log(
+            `marketopportunitymonitor: keyword="${query}" count=${countSnap.size}/${threshold} ` +
+            `→ ${response.successCount} delivered, ${response.failureCount} failed`
+        );
+        return null;
+    }
+);
+
+// ── updateUserXP (Callable) ────────────────────────────────────────────────
+// Awards or deducts XP from a user based on a named event.
+// Reads the points value from settings_gamification/{eventId} so admins can
+// tune every event without a code deploy.
+// After updating XP the function recalculates the user's level using the
+// thresholds stored in settings_gamification/__levels__.
+//
+// Call from Flutter:
+//   await FirebaseFunctions.instance
+//       .httpsCallable('updateUserXP')
+//       .call({'userId': uid, 'eventId': 'finish_job'});
+//
+exports.updateUserXP = onCall(
+    { maxInstances: 50 },
+    async (request) => {
+        // ── 1. Auth guard ─────────────────────────────────────────────────
+        if (!request.auth) {
+            throw new HttpsError("unauthenticated", "Authentication required.");
+        }
+
+        const { userId, eventId } = request.data;
+        if (!userId || !eventId) {
+            throw new HttpsError("invalid-argument", "userId and eventId are required.");
+        }
+
+        const db = admin.firestore();
+
+        // ── 2. Read event definition ──────────────────────────────────────
+        const eventSnap = await db
+            .collection("settings_gamification")
+            .doc(eventId)
+            .get();
+
+        if (!eventSnap.exists) {
+            throw new HttpsError("not-found", `XP event '${eventId}' not found in settings_gamification.`);
+        }
+
+        const eventData = eventSnap.data();
+        const points    = typeof eventData.points === "number" ? eventData.points : 0;
+
+        // ── 3. Read level thresholds (with sensible defaults) ─────────────
+        const levelsSnap = await db
+            .collection("settings_gamification")
+            .doc("__levels__")
+            .get();
+
+        const levels          = levelsSnap.data() || {};
+        const silverThreshold = typeof levels.silver === "number" ? levels.silver : 500;
+        const goldThreshold   = typeof levels.gold   === "number" ? levels.gold   : 2000;
+
+        // ── 4. Atomic transaction: increment XP + recalculate level ───────
+        let finalXp    = 0;
+        let finalLevel = "bronze";
+        let oldLevel   = "bronze";
+
+        await db.runTransaction(async (t) => {
+            const userRef  = db.collection("users").doc(userId);
+            const userSnap = await t.get(userRef);
+
+            if (!userSnap.exists) {
+                throw new HttpsError("not-found", `User ${userId} not found.`);
+            }
+
+            const userData  = userSnap.data();
+            const currentXp =
+                typeof userData.current_xp === "number" ? userData.current_xp :
+                typeof userData.xp          === "number" ? userData.xp          : 0;
+
+            oldLevel = userData.level || "bronze";
+
+            // XP floor is 0 — providers cannot go into negative
+            finalXp = Math.max(0, currentXp + points);
+
+            if      (finalXp >= goldThreshold)   finalLevel = "gold";
+            else if (finalXp >= silverThreshold) finalLevel = "silver";
+            else                                 finalLevel = "bronze";
+
+            t.update(userRef, {
+                current_xp: finalXp,
+                xp:         finalXp,   // keep legacy xp field in sync
+                level:      finalLevel,
+            });
+        });
+
+        const levelChanged = finalLevel !== oldLevel;
+
+        console.log(
+            `[updateUserXP] user=${userId} event=${eventId} ` +
+            `Δ${points >= 0 ? "+" : ""}${points} → xp=${finalXp} level=${finalLevel}` +
+            (levelChanged ? ` 🎉 LEVEL UP: ${oldLevel} → ${finalLevel}` : "")
+        );
+
+        // ── 5. Send level-up push notification if level improved ──────────
+        if (levelChanged && finalLevel !== "bronze") {
+            try {
+                const userSnap = await db.collection("users").doc(userId).get();
+                const token    = (userSnap.data() || {}).fcmToken;
+                const levelNames = { silver: "כסף 🥈", gold: "זהב 🥇" };
+
+                if (token) {
+                    await admin.messaging().send({
+                        token,
+                        notification: {
+                            title: "🎉 עלית רמה!",
+                            body:  `כל הכבוד! הגעת לרמת ${levelNames[finalLevel] || finalLevel}!`,
+                        },
+                        data: { type: "level_up", newLevel: finalLevel },
+                        android: { priority: "high" },
+                        apns:    { payload: { aps: { sound: "default" } } },
+                    });
+                }
+            } catch (notifErr) {
+                // Non-fatal — XP was already updated
+                console.warn(`[updateUserXP] level-up notification failed: ${notifErr.message}`);
+            }
+        }
+
+        return { success: true, points, newXp: finalXp, newLevel: finalLevel, levelChanged };
+    }
+);
+
+// ── expireStories (Scheduled) ──────────────────────────────────────────────
+// Runs every 30 minutes.
+// Scans the `stories` collection for documents where expiresAt < now.
+// For each expired story:
+//   1. Sets stories/{uid}.hasActive = false  (removes it from the discovery feed)
+//   2. Sets users/{uid}.hasActiveStory = false  (removes the ranking boost)
+//
+// The story document is intentionally kept for analytics / history.
+// A provider's next upload simply overwrites it.
+exports.expireStories = onSchedule(
+    { schedule: "every 30 minutes", timeZone: "Asia/Jerusalem" },
+    async () => {
+        const db  = admin.firestore();
+        const now = admin.firestore.Timestamp.now();
+
+        const expiredSnap = await db
+            .collection("stories")
+            .where("hasActive",  "==",       true)
+            .where("expiresAt",  "<=",       now)
+            .limit(200)
+            .get();
+
+        if (expiredSnap.empty) {
+            console.log("[expireStories] No expired stories found.");
+            return;
+        }
+
+        const batch = db.batch();
+        const uids  = [];
+
+        for (const doc of expiredSnap.docs) {
+            // Mark story as inactive
+            batch.update(doc.ref, { hasActive: false });
+            uids.push(doc.id); // doc.id === uid
+        }
+
+        // Flip hasActiveStory = false on every affected user profile
+        for (const uid of uids) {
+            batch.update(db.collection("users").doc(uid), {
+                hasActiveStory: false,
+            });
+        }
+
+        await batch.commit();
+        console.log(`[expireStories] Expired ${uids.length} stories: ${uids.join(", ")}`);
+    }
+);
+
+// ── onStoryPublished (Firestore trigger) ──────────────────────────────────
+// Fires when a provider writes / overwrites their stories/{uid} document.
+// Awards XP for the story_upload event via the updateUserXP callable logic
+// (duplicated inline here to avoid a cross-function call, which would add
+// latency and an extra billing unit).
+exports.onStoryPublished = onDocumentCreated(
+    { document: "stories/{uid}" },
+    async (event) => {
+        const uid  = event.params.uid;
+        const data = event.data?.data();
+        if (!data || !data.hasActive) return null;
+
+        const db = admin.firestore();
+
+        // Read story_upload event points from settings_gamification
+        const eventSnap = await db
+            .collection("settings_gamification")
+            .doc("story_upload")
+            .get();
+
+        if (!eventSnap.exists) {
+            console.log("[onStoryPublished] story_upload event not found in settings — XP skipped.");
+            return null;
+        }
+
+        const points = typeof eventSnap.data().points === "number"
+            ? eventSnap.data().points
+            : 5;
+
+        // Read level thresholds
+        const levelsSnap = await db
+            .collection("settings_gamification")
+            .doc("__levels__")
+            .get();
+        const levels          = levelsSnap.data() || {};
+        const silverThreshold = levels.silver ?? 500;
+        const goldThreshold   = levels.gold   ?? 2000;
+
+        let finalXp = 0; let finalLevel = "bronze";
+
+        await db.runTransaction(async (t) => {
+            const userRef  = db.collection("users").doc(uid);
+            const userSnap = await t.get(userRef);
+            if (!userSnap.exists) return;
+
+            const currentXp = typeof userSnap.data().current_xp === "number"
+                ? userSnap.data().current_xp
+                : (userSnap.data().xp || 0);
+
+            finalXp = Math.max(0, currentXp + points);
+            if      (finalXp >= goldThreshold)   finalLevel = "gold";
+            else if (finalXp >= silverThreshold) finalLevel = "silver";
+            else                                 finalLevel = "bronze";
+
+            t.update(userRef, { current_xp: finalXp, xp: finalXp, level: finalLevel });
+        });
+
+        console.log(`[onStoryPublished] uid=${uid} story XP +${points} → xp=${finalXp} level=${finalLevel}`);
+        return null;
+    }
+);
+
+// ── resolveDisputeAdmin — Admin-only: arbitrate a disputed job ─────────────────
+// Callable from DisputeResolutionScreen (Flutter admin panel only).
+// resolution: 'refund' | 'release' | 'split'
+// refund     → full totalAmount back to customer; expert gets 0.
+// release    → expert gets totalAmount×(1−fee); platform earns fee.
+// split      → customer gets 50%; expert gets 50%×(1−fee); platform earns 50%×fee.
+exports.resolveDisputeAdmin = onCall(
+    { maxInstances: 10 },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError("unauthenticated", "Authentication required.");
+        }
+
+        const db       = admin.firestore();
+        const callerId = request.auth.uid;
+
+        // ── Admin guard ────────────────────────────────────────────────────────
+        const callerSnap = await db.collection("users").doc(callerId).get();
+        const isAdminUser =
+            callerSnap.exists &&
+            (callerSnap.data().isAdmin === true ||
+             request.auth.token.email === "adawiavihai@gmail.com");
+        if (!isAdminUser) {
+            throw new HttpsError("permission-denied", "Admin access required.");
+        }
+
+        const { jobId, resolution, adminNote } = request.data;
+        if (!jobId || !["refund", "release", "split"].includes(resolution)) {
+            throw new HttpsError("invalid-argument", "jobId and valid resolution are required.");
+        }
+
+        const jobRef  = db.collection("jobs").doc(jobId);
+
+        // All balance mutations inside a transaction to prevent race conditions
+        let customerId, expertId, totalAmount, newStatus;
+        let customerCredit = 0, expertCredit = 0, platformFee = 0;
+
+        await db.runTransaction(async (t) => {
+            const jobSnap = await t.get(jobRef);
+            if (!jobSnap.exists) throw new HttpsError("not-found", "Job not found.");
+
+            const job = jobSnap.data();
+            if (job.status !== "disputed") {
+                throw new HttpsError("failed-precondition", `Job is not disputed (status: ${job.status}).`);
+            }
+
+            customerId  = job.customerId;
+            expertId    = job.expertId;
+            totalAmount = typeof job.totalAmount === "number" ? job.totalAmount : 0;
+
+            // Read fee from admin settings inside the transaction
+            const settingsRef  = db.collection("admin").doc("admin")
+                                   .collection("settings").doc("settings");
+            const settingsSnap = await t.get(settingsRef);
+            const feePct       = typeof settingsSnap.data()?.feePercentage === "number"
+                ? settingsSnap.data().feePercentage
+                : 0.10;
+
+            const customerRef = db.collection("users").doc(customerId);
+            const expertRef   = db.collection("users").doc(expertId);
+
+            if (resolution === "refund") {
+                // Full refund to customer — expert loses all
+                customerCredit = totalAmount;
+                expertCredit   = 0;
+                platformFee    = 0;
+                newStatus      = "refunded";
+
+                t.update(customerRef, { balance: admin.firestore.FieldValue.increment(customerCredit) });
+
+            } else if (resolution === "release") {
+                // Release escrow to expert (minus platform fee)
+                expertCredit   = totalAmount * (1 - feePct);
+                platformFee    = totalAmount * feePct;
+                customerCredit = 0;
+                newStatus      = "completed";
+
+                t.update(expertRef, { balance: admin.firestore.FieldValue.increment(expertCredit) });
+
+                // Record platform earning
+                t.set(db.collection("platform_earnings").doc(), {
+                    jobId,
+                    amount:    platformFee,
+                    type:      "dispute_release_fee",
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                });
+
+            } else {
+                // Split 50 / 50
+                const half     = totalAmount * 0.5;
+                customerCredit = half;
+                expertCredit   = half * (1 - feePct);
+                platformFee    = half * feePct;
+                newStatus      = "split_resolved";
+
+                t.update(customerRef, { balance: admin.firestore.FieldValue.increment(customerCredit) });
+                t.update(expertRef,   { balance: admin.firestore.FieldValue.increment(expertCredit)   });
+
+                // Record platform earning
+                t.set(db.collection("platform_earnings").doc(), {
+                    jobId,
+                    amount:    platformFee,
+                    type:      "dispute_split_fee",
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+
+            // Update job status
+            t.update(jobRef, {
+                status:          newStatus,
+                resolvedAt:      admin.firestore.FieldValue.serverTimestamp(),
+                resolvedBy:      callerId,
+                resolutionType:  resolution,
+                adminNote:       adminNote || "",
+            });
+
+            // Transaction history — customer
+            if (customerCredit > 0) {
+                t.set(db.collection("transactions").doc(), {
+                    userId:    customerId,
+                    amount:    customerCredit,
+                    title:     resolution === "refund" ? "החזר כספי — מחלוקת" : "פשרה — מחלוקת (50%)",
+                    type:      "credit",
+                    jobId,
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+
+            // Transaction history — expert
+            if (expertCredit > 0) {
+                t.set(db.collection("transactions").doc(), {
+                    userId:    expertId,
+                    amount:    expertCredit,
+                    title:     resolution === "release" ? "שחרור נאמנות — החלטת מנהל" : "פשרה — מחלוקת (50%)",
+                    type:      "credit",
+                    jobId,
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+        });
+
+        // ── FCM Notifications (best-effort, outside transaction) ──────────────
+        const notifTitle = {
+            refund:  "החזר כספי אושר",
+            release: "תשלום שוחרר",
+            split:   "מחלוקת נפתרה",
+        }[resolution];
+
+        const customerMsg = resolution === "refund"
+            ? `קיבלת החזר מלא של ₪${totalAmount.toFixed(0)} לאחר ביקורת המנהל`
+            : resolution === "split"
+            ? `קיבלת ₪${customerCredit.toFixed(0)} (50%) כפשרה בין הצדדים`
+            : `המחלוקת נסגרה — הסכום שוחרר לספק`;
+
+        const expertMsg = resolution === "refund"
+            ? `המחלוקת נסגרה — הסכום הוחזר ללקוח`
+            : resolution === "release"
+            ? `קיבלת ₪${expertCredit.toFixed(0)} לאחר ביקורת המנהל`
+            : `קיבלת ₪${expertCredit.toFixed(0)} (50% בניכוי עמלה) כפשרה`;
+
+        const sendNotif = async (userId, body) => {
+            try {
+                const userSnap = await admin.firestore().collection("users").doc(userId).get();
+                const token    = userSnap.data()?.fcmToken || userSnap.data()?.deviceToken;
+
+                // Write to notifications collection
+                await admin.firestore().collection("notifications").add({
+                    userId,
+                    title:     notifTitle,
+                    body,
+                    type:      "dispute_resolved",
+                    jobId,
+                    isRead:    false,
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                });
+
+                if (!token) return;
+                await admin.messaging().send({
+                    token,
+                    notification: { title: notifTitle, body },
+                    data:         { type: "dispute_resolved", jobId },
+                });
+            } catch (err) {
+                console.warn(`[resolveDisputeAdmin] FCM to ${userId} failed:`, err.message);
+            }
+        };
+
+        await Promise.all([
+            sendNotif(customerId, customerMsg),
+            sendNotif(expertId,   expertMsg),
+        ]);
+
+        console.log(`[resolveDisputeAdmin] jobId=${jobId} resolution=${resolution} by admin=${callerId}`);
+        return {
+            success:       true,
+            resolution,
+            newStatus,
+            customerCredit: parseFloat(customerCredit.toFixed(2)),
+            expertCredit:   parseFloat(expertCredit.toFixed(2)),
+            platformFee:    parseFloat(platformFee.toFixed(2)),
+        };
+    }
+);
+
+// ── processCancellation — Customer or Provider cancels a paid_escrow job ──────
+// cancelledBy: 'customer' | 'provider'
+// Customer before deadline  → full refund
+// Customer after deadline   → partial refund + penalty to provider (minus fee)
+// Provider cancels          → full refund to customer + XP penalty for provider
+exports.processCancellation = onCall(
+    { maxInstances: 20 },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError("unauthenticated", "Authentication required.");
+        }
+
+        const db       = admin.firestore();
+        const callerId = request.auth.uid;
+        const { jobId, cancelledBy } = request.data;
+
+        if (!jobId) {
+            throw new HttpsError("invalid-argument", "jobId is required.");
+        }
+
+        const jobRef = db.collection("jobs").doc(jobId);
+
+        let customerId, expertId, totalAmount, chatRoomId, policy;
+        let customerCredit = 0, expertCredit = 0, platformFee = 0;
+        let newStatus   = "cancelled";
+        let isPenalty   = false;
+        let isProviderCancelling = false;
+
+        await db.runTransaction(async (t) => {
+            const jobSnap = await t.get(jobRef);
+            if (!jobSnap.exists) throw new HttpsError("not-found", "Job not found.");
+
+            const job = jobSnap.data();
+            if (job.status !== "paid_escrow") {
+                throw new HttpsError("failed-precondition", `Job is not cancellable (status: ${job.status}).`);
+            }
+
+            // Only the involved parties can cancel
+            if (callerId !== job.customerId && callerId !== job.expertId) {
+                throw new HttpsError("permission-denied", "Not your booking.");
+            }
+
+            customerId  = job.customerId;
+            expertId    = job.expertId;
+            totalAmount = typeof job.totalAmount === "number" ? job.totalAmount : 0;
+            chatRoomId  = job.chatRoomId || "";
+            policy      = job.cancellationPolicy || "flexible";
+            isProviderCancelling = (cancelledBy === "provider") || (callerId === expertId && cancelledBy !== "customer");
+
+            // Read fee from admin settings inside the transaction
+            const settingsSnap = await t.get(
+                db.collection("admin").doc("admin").collection("settings").doc("settings")
+            );
+            const feePct = settingsSnap.data()?.feePercentage || 0.10;
+
+            if (isProviderCancelling) {
+                // Provider cancels: full refund to customer, expert gets nothing
+                customerCredit = totalAmount;
+                newStatus      = "cancelled";
+                t.update(db.collection("users").doc(customerId), {
+                    balance: admin.firestore.FieldValue.increment(customerCredit),
+                });
+
+            } else {
+                // Customer cancels: check deadline
+                const deadlineTs = job.cancellationDeadline;
+                const deadline   = deadlineTs?.toDate ? deadlineTs.toDate() : null;
+                const now        = new Date();
+
+                if (!deadline || now <= deadline) {
+                    // Before deadline → full refund
+                    customerCredit = totalAmount;
+                    newStatus      = "cancelled";
+                    t.update(db.collection("users").doc(customerId), {
+                        balance: admin.firestore.FieldValue.increment(customerCredit),
+                    });
+                } else {
+                    // After deadline → penalty split
+                    isPenalty = true;
+                    const penaltyPct    = policy === "strict" ? 1.0 : 0.5;
+                    const penaltyAmount = totalAmount * penaltyPct;
+                    customerCredit = totalAmount - penaltyAmount;
+                    expertCredit   = penaltyAmount * (1 - feePct);
+                    platformFee    = penaltyAmount * feePct;
+                    newStatus      = "cancelled_with_penalty";
+
+                    if (customerCredit > 0) {
+                        t.update(db.collection("users").doc(customerId), {
+                            balance: admin.firestore.FieldValue.increment(customerCredit),
+                        });
+                    }
+                    t.update(db.collection("users").doc(expertId), {
+                        balance: admin.firestore.FieldValue.increment(expertCredit),
+                    });
+                    t.set(db.collection("platform_earnings").doc(), {
+                        jobId,
+                        amount:    platformFee,
+                        type:      "cancellation_penalty_fee",
+                        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                }
+            }
+
+            // Update job
+            t.update(jobRef, {
+                status:              newStatus,
+                cancelledAt:         admin.firestore.FieldValue.serverTimestamp(),
+                cancelledBy:         isProviderCancelling ? "provider" : "customer",
+                customerRefund:      customerCredit,
+                expertPenaltyCredit: expertCredit,
+            });
+
+            // Customer transaction record
+            if (customerCredit > 0) {
+                t.set(db.collection("transactions").doc(), {
+                    userId:    customerId,
+                    amount:    customerCredit,
+                    title:     customerCredit === totalAmount
+                        ? "ביטול הזמנה — החזר מלא"
+                        : `ביטול הזמנה — החזר חלקי ₪${customerCredit.toFixed(0)}`,
+                    type:      "refund",
+                    jobId,
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+
+            // Expert transaction record (penalty payout)
+            if (expertCredit > 0) {
+                t.set(db.collection("transactions").doc(), {
+                    userId:    expertId,
+                    amount:    expertCredit,
+                    title:     "פיצוי ביטול מלקוח",
+                    type:      "credit",
+                    jobId,
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+        });
+
+        // XP penalty for provider cancellation (best-effort, outside transaction)
+        if (isProviderCancelling) {
+            try {
+                const eventSnap = await db.collection("settings_gamification").doc("provider_cancel").get();
+                const points    = eventSnap.exists
+                    ? (typeof eventSnap.data().points === "number" ? eventSnap.data().points : -100)
+                    : -100;
+                const levelsSnap      = await db.collection("settings_gamification").doc("__levels__").get();
+                const levels          = levelsSnap.data() || {};
+                const silverThreshold = levels.silver ?? 500;
+                const goldThreshold   = levels.gold   ?? 2000;
+
+                await db.runTransaction(async (t) => {
+                    const userRef  = db.collection("users").doc(expertId);
+                    const userSnap = await t.get(userRef);
+                    if (!userSnap.exists) return;
+                    const curXp  = typeof userSnap.data().current_xp === "number"
+                        ? userSnap.data().current_xp
+                        : (userSnap.data().xp || 0);
+                    const newXp  = Math.max(0, curXp + points);
+                    let newLevel = "bronze";
+                    if      (newXp >= goldThreshold)   newLevel = "gold";
+                    else if (newXp >= silverThreshold) newLevel = "silver";
+                    t.update(userRef, { current_xp: newXp, xp: newXp, level: newLevel });
+                });
+                console.log(`[processCancellation] XP penalty ${points} applied to provider ${expertId}`);
+            } catch (err) {
+                console.warn("[processCancellation] XP penalty failed:", err.message);
+            }
+        }
+
+        // Chat notification (best-effort)
+        if (chatRoomId) {
+            try {
+                let msg;
+                if (isProviderCancelling) {
+                    msg = "❌ המומחה ביטל את ההזמנה. הסכום המלא הוחזר לארנקך.";
+                } else if (isPenalty) {
+                    msg = `❌ ההזמנה בוטלה. ₪${customerCredit.toFixed(0)} הוחזרו ללקוח. ₪${expertCredit.toFixed(0)} זוכו לספק (פיצוי ביטול).`;
+                } else {
+                    msg = "❌ ההזמנה בוטלה. הסכום המלא הוחזר לארנק הלקוח.";
+                }
+                await db.collection("chats").doc(chatRoomId)
+                    .collection("messages").add({
+                        senderId:  "system",
+                        message:   msg,
+                        type:      "text",
+                        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+            } catch (err) {
+                console.warn("[processCancellation] chat message failed:", err.message);
+            }
+        }
+
+        console.log(`[processCancellation] jobId=${jobId} by=${callerId} status=${newStatus} customerCredit=${customerCredit} expertCredit=${expertCredit}`);
+        return {
+            success:       true,
+            newStatus,
+            isPenalty,
+            customerCredit: parseFloat(customerCredit.toFixed(2)),
+            expertCredit:   parseFloat(expertCredit.toFixed(2)),
+        };
     }
 );

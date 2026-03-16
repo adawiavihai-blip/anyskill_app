@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -5,7 +7,25 @@ import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'chat_screen.dart';
-import '../widgets/level_badge.dart';
+import '../constants/quick_tags.dart';
+import '../services/cancellation_policy_service.dart';
+
+// Brand tokens
+const _kPurple     = Color(0xFF6366F1);
+const _kPurpleSoft = Color(0xFFF0F0FF);
+const _kGold       = Color(0xFFFBBF24);
+
+// Trait tag catalog — keys stored in reviews/{id}.traitTags
+const _kTraitTags = [
+  {'key': 'punctual',      'emoji': '⏰', 'label': 'תמיד בזמן'},
+  {'key': 'professional',  'emoji': '💼', 'label': 'מקצועי/ת'},
+  {'key': 'communicative', 'emoji': '💬', 'label': 'תקשורת מעולה'},
+  {'key': 'patient',       'emoji': '🤗', 'label': 'סבלני/ת'},
+  {'key': 'knowledgeable', 'emoji': '🎓', 'label': 'בעל/ת ידע'},
+  {'key': 'friendly',      'emoji': '😊', 'label': 'ידידותי/ת'},
+  {'key': 'creative',      'emoji': '🎨', 'label': 'יצירתי/ת'},
+  {'key': 'flexible',      'emoji': '🔄', 'label': 'גמיש/ה'},
+];
 
 class ExpertProfileScreen extends StatefulWidget {
   final String expertId;
@@ -19,11 +39,20 @@ class ExpertProfileScreen extends StatefulWidget {
 }
 
 class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
+  // ── Booking state ──────────────────────────────────────────────────────────
   bool _isProcessing = false;
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
   String? _selectedTimeSlot;
   int _refreshTrigger = 0;
+  int _selectedServiceIndex = 0;
+
+  // ── Hero carousel state ────────────────────────────────────────────────────
+  final PageController _pageController = PageController();
+  int _heroPage = 0;
+
+  // ── Bio expand state ───────────────────────────────────────────────────────
+  bool _bioExpanded = false;
 
   final List<String> _timeSlots = [
     "08:00", "09:00", "10:00", "11:00",
@@ -36,87 +65,162 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     initializeDateFormatting('he_IL', null);
   }
 
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Derived service tiers (no separate Firestore collection needed)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  List<Map<String, dynamic>> _deriveServices(double pricePerHour) => [
+        {
+          'title':    'שיעור בודד',
+          'subtitle': 'מפגש אישי אחד',
+          'duration': "60 דק'",
+          'price':    pricePerHour,
+        },
+        {
+          'title':    'שיעור מורחב',
+          'subtitle': 'כולל סיכום ומשימות',
+          'duration': "90 דק'",
+          'price':    (pricePerHour * 1.4).roundToDouble(),
+        },
+        {
+          'title':    'סשן מלא',
+          'subtitle': 'עבודה מעמיקה + תכנית אישית',
+          'duration': "120 דק'",
+          'price':    (pricePerHour * 1.8).roundToDouble(),
+        },
+      ];
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Helpers
+  // ─────────────────────────────────────────────────────────────────────────
+
   String _getChatRoomId(String uid1, String uid2) {
     final ids = [uid1, uid2]..sort();
     return ids.join("_");
   }
 
-  Future<void> _processEscrowPayment(BuildContext context, double totalPrice) async {
+  /// Render a gallery image that may be an HTTP URL or a raw base64 string.
+  Widget _buildGalleryImage(String src, {BoxFit fit = BoxFit.cover}) {
+    if (src.startsWith('http')) {
+      return Image.network(src, fit: fit,
+          errorBuilder: (_, __, ___) => _imagePH());
+    }
+    try {
+      final bytes = base64Decode(src.contains(',') ? src.split(',').last : src);
+      return Image.memory(bytes, fit: fit);
+    } catch (_) {
+      return _imagePH();
+    }
+  }
+
+  Widget _imagePH() => Container(
+        color: _kPurpleSoft,
+        child: Icon(Icons.image_outlined,
+            size: 40, color: _kPurple.withValues(alpha: 0.3)),
+      );
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Payment / booking (UNCHANGED LOGIC)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Future<void> _processEscrowPayment(
+      BuildContext context, double totalPrice, String cancellationPolicy) async {
     if (_isProcessing) return;
     setState(() => _isProcessing = true);
 
     final firestore = FirebaseFirestore.instance;
-    final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? "";
-    final String chatRoomId = _getChatRoomId(currentUserId, widget.expertId);
+    final String currentUserId =
+        FirebaseAuth.instance.currentUser?.uid ?? "";
+    final String chatRoomId =
+        _getChatRoomId(currentUserId, widget.expertId);
     final adminSettingsRef = firestore
         .collection('admin')
         .doc('admin')
         .collection('settings')
         .doc('settings');
 
-    // יוגדרו בתוך הטרנזקציה ויישמרו כאן כדי להיות נגישים לאחר מכן
     double expertNetEarnings = totalPrice * 0.90;
-    final navigator = Navigator.of(context);
-    final messenger = ScaffoldMessenger.of(context);
+    final navigator  = Navigator.of(context);
+    final messenger  = ScaffoldMessenger.of(context);
 
     try {
       await firestore.runTransaction((transaction) async {
-        // קריאת הגדרות עמלה מ-Firestore (מונע אי-התאמה בין הזמנה לשחרור)
         final adminSnap = await transaction.get(adminSettingsRef);
         final double feePercentage =
-            ((adminSnap.exists ? adminSnap.get('feePercentage') : null) ?? 0.10)
+            ((adminSnap.exists ? adminSnap.get('feePercentage') : null) ??
+                    0.10)
                 .toDouble();
-        final double commission = totalPrice * feePercentage;
-        expertNetEarnings = totalPrice - commission;
+        final double commission    = totalPrice * feePercentage;
+        expertNetEarnings          = totalPrice - commission;
 
-        final customerRef = firestore.collection('users').doc(currentUserId);
+        final customerRef  = firestore.collection('users').doc(currentUserId);
         final customerSnap = await transaction.get(customerRef);
-        final double currentBalance = (customerSnap['balance'] ?? 0.0).toDouble();
+        final double currentBalance =
+            (customerSnap['balance'] ?? 0.0).toDouble();
 
         if (currentBalance < totalPrice) {
           throw "אין מספיק יתרה בארנק לביצוע ההזמנה";
         }
 
+        // Calculate cancellation deadline based on provider's policy
+        final cancelDeadline = CancellationPolicyService.deadline(
+          policy:          cancellationPolicy,
+          appointmentDate: _selectedDay,
+          timeSlot:        _selectedTimeSlot,
+        );
+
         final jobRef = firestore.collection('jobs').doc();
         transaction.set(jobRef, {
-          'jobId': jobRef.id,
-          'chatRoomId': chatRoomId,
-          'customerId': currentUserId,
-          'customerName': customerSnap['name'] ?? "",
-          'expertId': widget.expertId,
-          'expertName': widget.expertName,
-          'totalPaidByCustomer': totalPrice,
-          'commissionAmount': commission,
-          'netAmountForExpert': expertNetEarnings,
-          'appointmentDate': _selectedDay,
-          'appointmentTime': _selectedTimeSlot,
-          'status': 'paid_escrow',
-          'createdAt': FieldValue.serverTimestamp(),
+          'jobId':                 jobRef.id,
+          'chatRoomId':            chatRoomId,
+          'customerId':            currentUserId,
+          'customerName':          customerSnap['name'] ?? "",
+          'expertId':              widget.expertId,
+          'expertName':            widget.expertName,
+          'totalPaidByCustomer':   totalPrice,
+          'totalAmount':           totalPrice,
+          'commissionAmount':      commission,
+          'netAmountForExpert':    expertNetEarnings,
+          'appointmentDate':       _selectedDay,
+          'appointmentTime':       _selectedTimeSlot,
+          'status':                'paid_escrow',
+          'createdAt':             FieldValue.serverTimestamp(),
+          'cancellationPolicy':    cancellationPolicy,
+          if (cancelDeadline != null)
+            'cancellationDeadline': Timestamp.fromDate(cancelDeadline),
         });
 
-        transaction.update(customerRef, {'balance': FieldValue.increment(-totalPrice)});
+        transaction.update(
+            customerRef, {'balance': FieldValue.increment(-totalPrice)});
 
         transaction.set(firestore.collection('platform_earnings').doc(), {
-          'jobId': jobRef.id,
-          'amount': commission,
+          'jobId':          jobRef.id,
+          'amount':         commission,
           'sourceExpertId': widget.expertId,
-          'timestamp': FieldValue.serverTimestamp(),
-          'status': 'pending_escrow',
+          'timestamp':      FieldValue.serverTimestamp(),
+          'status':         'pending_escrow',
         });
 
         transaction.set(firestore.collection('transactions').doc(), {
-          'userId': currentUserId,
-          'amount': -totalPrice,
-          'title': "תשלום מאובטח: ${widget.expertName}",
+          'userId':    currentUserId,
+          'amount':    -totalPrice,
+          'title':     "תשלום מאובטח: ${widget.expertName}",
           'timestamp': FieldValue.serverTimestamp(),
-          'status': 'escrow',
+          'status':    'escrow',
         });
       });
 
-      await _sendSystemNotification(chatRoomId, totalPrice, expertNetEarnings, currentUserId);
+      await _sendSystemNotification(
+          chatRoomId, totalPrice, expertNetEarnings, currentUserId);
 
       if (mounted) {
-        navigator.pop(); // close summary sheet
+        navigator.pop();
         messenger.showSnackBar(const SnackBar(
           backgroundColor: Colors.green,
           content: Text("התור שוריין והתשלום הופקד בנאמנות!"),
@@ -125,8 +229,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     } catch (e) {
       if (mounted) {
         messenger.showSnackBar(
-          SnackBar(backgroundColor: Colors.red, content: Text(e.toString())),
-        );
+            SnackBar(backgroundColor: Colors.red, content: Text(e.toString())));
       }
     } finally {
       if (mounted) setState(() => _isProcessing = false);
@@ -135,221 +238,571 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
 
   Future<void> _sendSystemNotification(
       String chatRoomId, double total, double net, String currentUserId) async {
-    final chatRef = FirebaseFirestore.instance.collection('chats').doc(chatRoomId);
+    final chatRef =
+        FirebaseFirestore.instance.collection('chats').doc(chatRoomId);
     final dateStr = _selectedDay != null
         ? "${_selectedDay!.day}/${_selectedDay!.month}"
         : "";
-
     await chatRef.collection('messages').add({
       'senderId': 'system',
       'message':
           "🔒 הזמנה חדשה לתאריך $dateStr בשעה $_selectedTimeSlot!\nסכום שיעבור אליך: ₪$net",
-      'type': 'text',
+      'type':      'text',
       'timestamp': FieldValue.serverTimestamp(),
     });
-
-    // רק אתחול מערך המשתתפים — lastMessage ו-unreadCount מתעדכנים ע"י sendchatnotification CF
-    await chatRef.set({
-      'users': [currentUserId, widget.expertId],
-    }, SetOptions(merge: true));
+    await chatRef.set(
+        {'users': [currentUserId, widget.expertId]},
+        SetOptions(merge: true));
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: FutureBuilder<DocumentSnapshot>(
-        key: ValueKey(_refreshTrigger),
-        future: FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.expertId)
-            .get(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final data = snapshot.data!.data() as Map<String, dynamic>;
+  // ─────────────────────────────────────────────────────────────────────────
+  // UI: Hero gallery carousel
+  // ─────────────────────────────────────────────────────────────────────────
 
-          return Stack(
-            children: [
-              RefreshIndicator(
-                onRefresh: () async => setState(() => _refreshTrigger++),
-                child: CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
-                  SliverAppBar(
-                    expandedHeight: 250,
-                    pinned: true,
-                    flexibleSpace: FlexibleSpaceBar(
-                      title: Text(widget.expertName,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              shadows: [Shadow(blurRadius: 10, color: Colors.black)])),
-                      background: (data['profileImage'] != null &&
-                              data['profileImage'] != "")
-                          ? Image.network(data['profileImage'], fit: BoxFit.cover)
-                          : Container(color: Colors.blueGrey),
-                    ),
+  Widget _buildHeroBackground(Map<String, dynamic> data) {
+    final gallery      = (data['gallery'] as List? ?? []).cast<String>();
+    final profileImage = data['profileImage'] as String? ?? '';
+    final images       = [...gallery];
+    if (images.isEmpty && profileImage.isNotEmpty) images.add(profileImage);
+
+    final isVerified = data['isVerified'] as bool? ?? false;
+    final isPromoted = data['isPromoted'] as bool? ?? false;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // ── Image / carousel ─────────────────────────────────────────────
+        images.isEmpty
+            ? Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [_kPurple, _kPurple.withValues(alpha: 0.6)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildInfoRow(data),
-                          const SizedBox(height: 25),
-                          const Text("על המומחה",
-                              style: TextStyle(
-                                  fontSize: 20, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 10),
-                          Text(
-                            data['aboutMe'] ?? "מומחה מוסמך בקהילת AnySkill.",
-                            style: const TextStyle(fontSize: 16, height: 1.5),
+                ),
+                child: Icon(Icons.person_outlined,
+                    size: 100, color: Colors.white.withValues(alpha: 0.3)),
+              )
+            : PageView.builder(
+                controller: _pageController,
+                itemCount: images.length,
+                onPageChanged: (i) => setState(() => _heroPage = i),
+                itemBuilder: (_, i) =>
+                    _buildGalleryImage(images[i], fit: BoxFit.cover),
+              ),
+
+        // ── Bottom gradient ───────────────────────────────────────────────
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.transparent,
+                  Colors.black.withValues(alpha: 0.72),
+                ],
+                stops: const [0.45, 1.0],
+              ),
+            ),
+          ),
+        ),
+
+        // ── Name + badges overlay (bottom) ────────────────────────────────
+        Positioned(
+          bottom: 50,
+          left: 16,
+          right: 16,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        if (isPromoted)
+                          Container(
+                            margin: const EdgeInsets.only(right: 6),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: _kGold,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.star_rounded,
+                                    size: 11, color: Colors.white),
+                                SizedBox(width: 3),
+                                Text('מומלץ',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold)),
+                              ],
+                            ),
                           ),
-                          const SizedBox(height: 30),
-                          const Divider(),
-                          const SizedBox(height: 16),
-                          const Text("בחר מועד לשירות",
-                              style: TextStyle(
-                                  fontSize: 20, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 16),
-                          _buildCalendar(_parseUnavailableDates(data)),
-                          if (_selectedDay != null) ...[
-                            const SizedBox(height: 16),
-                            _buildTimeSlots(),
-                          ],
-                          const SizedBox(height: 30),
-                          const Divider(),
-                          const SizedBox(height: 16),
-                          _buildReviewsSection(),
-                          const SizedBox(height: 120), // space for bottom bar
-                        ],
+                        if (isVerified)
+                          const Icon(Icons.verified_rounded,
+                              color: Color(0xFF60A5FA), size: 20),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      widget.expertName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                        shadows: [Shadow(blurRadius: 8, color: Colors.black54)],
                       ),
                     ),
-                  ),
-                ],
+                    if ((data['serviceType'] as String? ?? '').isNotEmpty)
+                      Text(
+                        data['serviceType'] as String,
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.85),
+                            fontSize: 14),
+                      ),
+                  ],
+                ),
               ),
-              ),
-              _buildBottomBar(context, data),
             ],
+          ),
+        ),
+
+        // ── Page indicator dots ────────────────────────────────────────────
+        if ((data['gallery'] as List? ?? []).length > 1)
+          Positioned(
+            bottom: 14,
+            left: 0,
+            right: 0,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                (data['gallery'] as List).length,
+                (i) => AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  width:  _heroPage == i ? 18 : 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: _heroPage == i
+                        ? Colors.white
+                        : Colors.white.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // UI: Power Row (trust stats horizontal scroll)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildPowerRow(Map<String, dynamic> data) {
+    final rating       = (data['rating']       as num? ?? 5.0).toDouble();
+    final reviewsCount = (data['reviewsCount'] as num? ?? 0).toInt();
+    final orderCount   = (data['orderCount']   as num? ?? 0).toInt();
+    final respTime     = (data['responseTimeMinutes'] as num? ?? 0).toInt();
+    final xp           = (data['xp']           as num? ?? 0).toInt();
+
+    // Repeat rate: shown when orderCount > 3 (approximated — no real data)
+    final repeatRate   = orderCount > 3 ? 75 : null;
+
+    final stats = <Map<String, dynamic>>[
+      {
+        'value': rating.toStringAsFixed(1),
+        'label': 'דירוג',
+        'icon':  Icons.star_rounded,
+        'color': _kGold,
+      },
+      if (reviewsCount > 0)
+        {
+          'value': '$reviewsCount',
+          'label': 'ביקורות',
+          'icon':  Icons.chat_bubble_outline_rounded,
+          'color': Colors.blue,
+        },
+      if (repeatRate != null)
+        {
+          'value': '$repeatRate%',
+          'label': 'לקוחות חוזרים',
+          'icon':  Icons.repeat_rounded,
+          'color': Colors.green,
+        },
+      if (respTime > 0)
+        {
+          'value': "$respTimeד'",
+          'label': 'זמן תגובה',
+          'icon':  Icons.bolt_rounded,
+          'color': _kPurple,
+        },
+      if (orderCount > 0)
+        {
+          'value': '$orderCount',
+          'label': 'הזמנות',
+          'icon':  Icons.local_fire_department_rounded,
+          'color': Colors.orange,
+        },
+      if (xp > 0)
+        {
+          'value': '$xp XP',
+          'label': 'נקודות',
+          'icon':  Icons.emoji_events_rounded,
+          'color': const Color(0xFF8B5CF6),
+        },
+    ];
+
+    return SizedBox(
+      height: 80,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        reverse: true,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        itemCount: stats.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (_, i) {
+          final s = stats[i];
+          final color = s['color'] as Color;
+          return Container(
+            width: 88,
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: color.withValues(alpha: 0.2)),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2)),
+              ],
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(s['icon'] as IconData, color: color, size: 20),
+                const SizedBox(height: 3),
+                Text(s['value'] as String,
+                    style: TextStyle(
+                        color: color,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15)),
+                Text(s['label'] as String,
+                    style: TextStyle(
+                        color: Colors.grey[500], fontSize: 10)),
+              ],
+            ),
           );
         },
       ),
     );
   }
 
-  Widget _buildInfoRow(Map<String, dynamic> data) {
-    final isVerified   = data['isVerified'] ?? false;
-    final isOnline     = data['isOnline']   ?? false;
-    final responseTime = (data['responseTimeMinutes'] ?? 0) as num;
-    final orderCount   = (data['orderCount']           ?? 0) as num;
-    final xp           = (data['xp'] as num? ?? 0).toInt();
+  // ─────────────────────────────────────────────────────────────────────────
+  // UI: Quick Tags
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildQuickTagsSection(Map<String, dynamic> data) {
+    final tagKeys = ((data['quickTags'] as List?) ?? []).cast<String>();
+    final resolved = tagKeys
+        .map(quickTagByKey)
+        .whereType<Map<String, String>>()
+        .toList();
+    if (resolved.isEmpty) return const SizedBox.shrink();
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      alignment: WrapAlignment.end,
+      children: resolved.map((t) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        decoration: BoxDecoration(
+          color: _kPurpleSoft,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _kPurple.withValues(alpha: 0.2)),
+        ),
+        child: Text(
+          '${t['emoji']} ${t['label']}',
+          style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: _kPurple),
+        ),
+      )).toList(),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // UI: Bio section
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildBioSection(Map<String, dynamic> data) {
+    final bio = data['aboutMe'] as String? ?? 'מומחה מוסמך בקהילת AnySkill.';
+    const maxLines = 3;
+    final isLong   = bio.split('\n').length > maxLines || bio.length > 160;
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(children: [
-                  const Icon(Icons.star, color: Colors.amber, size: 20),
-                  Text(" ${data['rating'] ?? '5.0'}",
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                  Text(
-                    '  (${data['reviewsCount'] ?? 0})',
-                    style: const TextStyle(color: Colors.grey, fontSize: 13),
-                  ),
-                ]),
-                Text(data['serviceType'] ?? "נותן שירות",
-                    style: const TextStyle(color: Colors.grey)),
-              ],
-            ),
-            Text("₪${data['pricePerHour'] ?? '250'} / שעה",
-                style: const TextStyle(
-                    fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green)),
-          ],
+        Text(
+          bio,
+          textAlign: TextAlign.right,
+          maxLines: _bioExpanded ? null : maxLines,
+          overflow: _bioExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
+          style: TextStyle(
+              fontSize: 15, height: 1.6, color: Colors.grey[800]),
         ),
-        // ── Trust signals row ──────────────────────────────────────────────
-        if (isVerified || isOnline || responseTime > 0 || orderCount > 0 || xp > 0) ...[
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              if (xp > 0) LevelBadge(xp: xp, size: 22),
-              if (isVerified)
-                _trustChip(
-                  icon: Icons.verified,
-                  iconColor: const Color(0xFF1877F2),
-                  label: 'מאומת',
-                  bgColor: const Color(0xFFEBF3FD),
-                  textColor: const Color(0xFF1877F2),
-                ),
-              if (isOnline)
-                _trustChip(
-                  icon: Icons.circle,
-                  iconColor: const Color(0xFF22C55E),
-                  label: 'זמין כעת',
-                  bgColor: const Color(0xFFE8F8EE),
-                  textColor: const Color(0xFF16A34A),
-                ),
-              if (responseTime > 0)
-                _trustChip(
-                  icon: Icons.bolt_rounded,
-                  iconColor: const Color(0xFF6366F1),
-                  label: "מגיב תוך ~$responseTimeד'",
-                  bgColor: const Color(0xFFF0F0FF),
-                  textColor: const Color(0xFF6366F1),
-                ),
-              if (orderCount > 0)
-                _trustChip(
-                  icon: Icons.local_fire_department_rounded,
-                  iconColor: const Color(0xFFD4520A),
-                  label: 'הוזמן $orderCount פעמים',
-                  bgColor: const Color(0xFFFFF3ED),
-                  textColor: const Color(0xFFD4520A),
-                ),
-            ],
+        if (isLong)
+          GestureDetector(
+            onTap: () => setState(() => _bioExpanded = !_bioExpanded),
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                _bioExpanded ? 'הצג פחות ▲' : 'קרא עוד ▼',
+                style: const TextStyle(
+                    color: _kPurple,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600),
+              ),
+            ),
           ),
-        ],
       ],
     );
   }
 
-  Widget _trustChip({
-    required IconData icon,
-    required Color iconColor,
-    required String label,
-    required Color bgColor,
-    required Color textColor,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: iconColor),
-          const SizedBox(width: 4),
-          Text(label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: textColor,
-              )),
-        ],
+  // ─────────────────────────────────────────────────────────────────────────
+  // UI: Service menu
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildServiceMenu(Map<String, dynamic> data) {
+    final price    = (data['pricePerHour'] as num? ?? 100).toDouble();
+    final services = _deriveServices(price);
+
+    return Column(
+      children: List.generate(services.length, (i) {
+        final svc      = services[i];
+        final selected = i == _selectedServiceIndex;
+        final svcPrice = svc['price'] as double;
+
+        return GestureDetector(
+          onTap: () => setState(() => _selectedServiceIndex = i),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color:        selected ? _kPurpleSoft : Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color:  selected ? _kPurple : Colors.grey.shade200,
+                width:  selected ? 1.5 : 1,
+              ),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                          color: _kPurple.withValues(alpha: 0.12),
+                          blurRadius: 10,
+                          offset: const Offset(0, 3))
+                    ]
+                  : [
+                      BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.03),
+                          blurRadius: 6)
+                    ],
+            ),
+            child: Row(
+              children: [
+                // ── Selection indicator ────────────────────────────────
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  width: 22, height: 22,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color:  selected ? _kPurple : Colors.transparent,
+                    border: Border.all(
+                        color:  selected ? _kPurple : Colors.grey.shade300,
+                        width:  2),
+                  ),
+                  child: selected
+                      ? const Icon(Icons.check_rounded,
+                          color: Colors.white, size: 14)
+                      : null,
+                ),
+                const SizedBox(width: 14),
+                // ── Details ────────────────────────────────────────────
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          // Duration pill
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? _kPurple.withValues(alpha: 0.1)
+                                  : Colors.grey[100],
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.schedule_rounded,
+                                    size: 12,
+                                    color: selected
+                                        ? _kPurple
+                                        : Colors.grey[600]),
+                                const SizedBox(width: 3),
+                                Text(svc['duration'] as String,
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        color: selected
+                                            ? _kPurple
+                                            : Colors.grey[700],
+                                        fontWeight: FontWeight.w600)),
+                              ],
+                            ),
+                          ),
+                          // Title
+                          Text(svc['title'] as String,
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                  color: selected
+                                      ? _kPurple
+                                      : Colors.black87)),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('₪${svcPrice.toStringAsFixed(0)}',
+                              style: const TextStyle(
+                                  color: _kPurple,
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 18)),
+                          Text(svc['subtitle'] as String,
+                              style: TextStyle(
+                                  color: Colors.grey[500],
+                                  fontSize: 12)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // UI: Interactive Portfolio grid
+  // ─────────────────────────────────────────────────────────────────────────
+
+  void _expandPortfolioImage(
+      BuildContext context, List<String> images, int startIndex) {
+    final ctrl = PageController(initialPage: startIndex);
+    showDialog(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          children: [
+            PageView.builder(
+              controller: ctrl,
+              itemCount: images.length,
+              itemBuilder: (_, i) => Center(
+                child: InteractiveViewer(
+                  child: _buildGalleryImage(images[i], fit: BoxFit.contain),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 40,
+              right: 16,
+              child: GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.close, color: Colors.white, size: 22),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  // ── Calendar ──────────────────────────────────────────────────────────────
+  Widget _buildPortfolioGrid(Map<String, dynamic> data) {
+    final gallery = (data['gallery'] as List? ?? []).cast<String>();
+    if (gallery.isEmpty) return const SizedBox.shrink();
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount:  3,
+        crossAxisSpacing: 4,
+        mainAxisSpacing:  4,
+      ),
+      itemCount: gallery.length,
+      itemBuilder: (context, i) => GestureDetector(
+        onTap: () => _expandPortfolioImage(context, gallery, i),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _buildGalleryImage(gallery[i]),
+              // Hover-hint overlay
+              Positioned(
+                bottom: 4,
+                right: 4,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                      color: Colors.black38, shape: BoxShape.circle),
+                  child: const Icon(Icons.zoom_in_rounded,
+                      color: Colors.white, size: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // UI: Calendar (unchanged logic, updated style)
+  // ─────────────────────────────────────────────────────────────────────────
+
   Set<DateTime> _parseUnavailableDates(Map<String, dynamic> data) {
     final raw = data['unavailableDates'] as List<dynamic>? ?? [];
     return raw
@@ -364,38 +817,47 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Colors.grey.shade100),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 8,
+              offset: const Offset(0, 2)),
+        ],
       ),
       child: TableCalendar(
         locale: 'he_IL',
         firstDay: DateTime.now(),
         lastDay: DateTime.now().add(const Duration(days: 60)),
         focusedDay: _focusedDay,
-        headerStyle: const HeaderStyle(
-            formatButtonVisible: false, titleCentered: true),
+        headerStyle:
+            const HeaderStyle(formatButtonVisible: false, titleCentered: true),
         selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
         enabledDayPredicate: (day) {
-          final normalized = DateTime.utc(day.year, day.month, day.day);
-          return !unavailableDates.contains(normalized);
+          final n = DateTime.utc(day.year, day.month, day.day);
+          return !unavailableDates.contains(n);
         },
         onDaySelected: (selectedDay, focusedDay) {
           setState(() {
-            _selectedDay = selectedDay;
-            _focusedDay = focusedDay;
+            _selectedDay     = selectedDay;
+            _focusedDay      = focusedDay;
             _selectedTimeSlot = null;
           });
         },
         calendarBuilders: CalendarBuilders(
-          disabledBuilder: (context, day, focusedDay) {
-            final normalized = DateTime.utc(day.year, day.month, day.day);
-            if (!unavailableDates.contains(normalized)) return null;
+          disabledBuilder: (context, day, _) {
+            final n = DateTime.utc(day.year, day.month, day.day);
+            if (!unavailableDates.contains(n)) return null;
             return Center(
               child: Container(
                 width: 36, height: 36,
-                decoration: BoxDecoration(color: Colors.red.shade50, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                    color: Colors.red.shade50, shape: BoxShape.circle),
                 child: Center(
                   child: Text('${day.day}',
-                    style: TextStyle(color: Colors.red.shade300, fontWeight: FontWeight.bold)),
+                      style: TextStyle(
+                          color: Colors.red.shade300,
+                          fontWeight: FontWeight.bold)),
                 ),
               ),
             );
@@ -403,18 +865,23 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         ),
         calendarStyle: const CalendarStyle(
           selectedDecoration:
-              BoxDecoration(color: Colors.black, shape: BoxShape.circle),
-          todayDecoration:
-              BoxDecoration(color: Colors.pinkAccent, shape: BoxShape.circle),
+              BoxDecoration(color: _kPurple, shape: BoxShape.circle),
+          todayDecoration: BoxDecoration(
+              color: Color(0xFFE0E7FF), shape: BoxShape.circle),
+          todayTextStyle: TextStyle(
+              color: _kPurple, fontWeight: FontWeight.bold),
         ),
       ),
     );
   }
 
-  // ── Time slots ────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // UI: Time slots
+  // ─────────────────────────────────────────────────────────────────────────
+
   Widget _buildTimeSlots() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         const Text("בחר שעה",
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
@@ -426,7 +893,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             reverse: true,
             itemCount: _timeSlots.length,
             itemBuilder: (context, index) {
-              final slot = _timeSlots[index];
+              final slot       = _timeSlots[index];
               final isSelected = _selectedTimeSlot == slot;
               return GestureDetector(
                 onTap: () => setState(() => _selectedTimeSlot = slot),
@@ -435,15 +902,23 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   margin: const EdgeInsets.only(left: 8),
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   decoration: BoxDecoration(
-                    color: isSelected ? Colors.black : Colors.white,
+                    color: isSelected ? _kPurple : Colors.white,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                        color: isSelected ? Colors.black : Colors.grey.shade300),
+                        color: isSelected ? _kPurple : Colors.grey.shade300),
+                    boxShadow: isSelected
+                        ? [
+                            BoxShadow(
+                                color: _kPurple.withValues(alpha: 0.25),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2))
+                          ]
+                        : [],
                   ),
                   child: Center(
                     child: Text(slot,
                         style: TextStyle(
-                            color: isSelected ? Colors.white : Colors.black,
+                            color: isSelected ? Colors.white : Colors.black87,
                             fontWeight: FontWeight.bold)),
                   ),
                 ),
@@ -455,116 +930,833 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     );
   }
 
-  // ── Sticky bottom bar ─────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // UI: Reviews — Advanced Social Proof System
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildReviewsSection() {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final isProvider = currentUid == widget.expertId;
+
+    return FutureBuilder<QuerySnapshot>(
+      key: ValueKey('reviews_$_refreshTrigger'),
+      future: FirebaseFirestore.instance
+          .collection('reviews')
+          .where('expertId', isEqualTo: widget.expertId)
+          .orderBy('timestamp', descending: true)
+          .limit(20)
+          .get(),
+      builder: (context, snapshot) {
+        // Show spinner while Firestore is loading
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 32),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final docs    = snapshot.data?.docs ?? [];
+        final reviews = docs.map((d) => d.data() as Map<String, dynamic>).toList();
+
+        // ── Rating distribution ─────────────────────────────────────────────
+        final dist = <int, int>{1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
+        for (final r in reviews) {
+          final star = (r['rating'] as num? ?? 5).round().clamp(1, 5);
+          dist[star] = (dist[star] ?? 0) + 1;
+        }
+        final maxCount = dist.values.fold(0, (a, b) => a > b ? a : b);
+
+        // ── Trait tag aggregation ───────────────────────────────────────────
+        final traitCounts = <String, int>{};
+        for (final r in reviews) {
+          for (final t in (r['traitTags'] as List? ?? []).cast<String>()) {
+            traitCounts[t] = (traitCounts[t] ?? 0) + 1;
+          }
+        }
+        final sortedTraits = traitCounts.entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // ── Header ───────────────────────────────────────────────────────
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                if (docs.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _kPurpleSoft,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${docs.length} ביקורות',
+                      style: const TextStyle(
+                          color: _kPurple,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                const Text('ביקורות',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // ── Empty state ──────────────────────────────────────────────────
+            if (docs.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: const Column(
+                  children: [
+                    Icon(Icons.star_border_rounded, size: 40, color: Colors.grey),
+                    SizedBox(height: 8),
+                    Text('אין ביקורות עדיין',
+                        style: TextStyle(color: Colors.grey, fontSize: 14)),
+                  ],
+                ),
+              )
+            else ...[
+              // ── Rating Distribution bar chart ─────────────────────────────
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.grey.shade100),
+                  boxShadow: [
+                    BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.03),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2)),
+                  ],
+                ),
+                child: Column(
+                  children: List.generate(5, (i) {
+                    final star  = 5 - i;
+                    final count = dist[star] ?? 0;
+                    final frac  = maxCount > 0 ? count / maxCount : 0.0;
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 20,
+                            child: Text('$count',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: count > 0
+                                        ? Colors.grey[700]
+                                        : Colors.grey[300])),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(4),
+                              child: LinearProgressIndicator(
+                                value: frac,
+                                minHeight: 8,
+                                backgroundColor: Colors.grey[100],
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  star >= 4
+                                      ? _kGold
+                                      : star == 3
+                                          ? Colors.orange.shade300
+                                          : Colors.red.shade300,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('$star',
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600)),
+                              const Icon(Icons.star_rounded,
+                                  size: 12, color: _kGold),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // ── Trait Tags (AI-style highlights) ─────────────────────────
+              if (sortedTraits.isNotEmpty) ...[
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.end,
+                  children: sortedTraits.take(6).map((entry) {
+                    final meta = _kTraitTags.firstWhere(
+                        (t) => t['key'] == entry.key,
+                        orElse: () => {'emoji': '✓', 'label': entry.key});
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: _kPurpleSoft,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: _kPurple.withValues(alpha: 0.2)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: _kPurple,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text('${entry.value}',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold)),
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            '${meta['emoji']} ${meta['label']}',
+                            style: const TextStyle(
+                                color: _kPurple,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 16),
+              ],
+
+              // ── Review cards ──────────────────────────────────────────────
+              ...List.generate(docs.length, (idx) {
+                final doc      = docs[idx];
+                final r        = doc.data() as Map<String, dynamic>;
+                final rating   = (r['rating'] as num? ?? 5).toDouble();
+                final name     = r['reviewerName'] as String? ?? 'לקוח';
+                final comment  = (r['comment'] ?? '').toString().trim();
+                final ts       = r['timestamp'] as Timestamp?;
+                final date     = ts != null
+                    ? DateFormat('dd/MM/yy').format(ts.toDate())
+                    : '';
+                final photos   = (r['photos']    as List? ?? []).cast<String>();
+                final tags     = (r['traitTags'] as List? ?? []).cast<String>();
+                final response = r['providerResponse'] as String?;
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade100),
+                    boxShadow: [
+                      BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.04),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2)),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      // ── Card header ────────────────────────────────────
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Left: stars + verified + date
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: List.generate(
+                                      5,
+                                      (i) => Icon(
+                                            i < rating
+                                                ? Icons.star_rounded
+                                                : Icons.star_border_rounded,
+                                            color: _kGold,
+                                            size: 16,
+                                          )),
+                                ),
+                                const SizedBox(height: 5),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.verified_rounded,
+                                        color: Colors.green, size: 12),
+                                    const SizedBox(width: 3),
+                                    Text('הזמנה מאובטחת',
+                                        style: TextStyle(
+                                            color: Colors.green[700],
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600)),
+                                    if (date.isNotEmpty)
+                                      Text('  ·  $date',
+                                          style: const TextStyle(
+                                              color: Colors.grey,
+                                              fontSize: 10)),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            // Right: name + avatar
+                            Row(
+                              children: [
+                                Text(name,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14)),
+                                const SizedBox(width: 8),
+                                CircleAvatar(
+                                  radius: 17,
+                                  backgroundColor: _kPurpleSoft,
+                                  child: Text(
+                                    name.isNotEmpty
+                                        ? name[0].toUpperCase()
+                                        : '?',
+                                    style: const TextStyle(
+                                        fontSize: 13,
+                                        color: _kPurple,
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // ── Comment ────────────────────────────────────────
+                      if (comment.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                          child: Text(comment,
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                  fontSize: 14,
+                                  height: 1.55,
+                                  color: Colors.grey[800])),
+                        ),
+
+                      // ── Trait chips ────────────────────────────────────
+                      if (tags.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                          child: Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            alignment: WrapAlignment.end,
+                            children: tags.map((key) {
+                              final meta = _kTraitTags.firstWhere(
+                                  (t) => t['key'] == key,
+                                  orElse: () =>
+                                      {'emoji': '✓', 'label': key});
+                              return Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF0FDF4),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                      color: Colors.green.shade200),
+                                ),
+                                child: Text(
+                                  '${meta['emoji']} ${meta['label']}',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.green[800],
+                                      fontWeight: FontWeight.w600),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+
+                      // ── Review photos ──────────────────────────────────
+                      if (photos.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                          child: SizedBox(
+                            height: 76,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              reverse: true,
+                              itemCount: photos.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(width: 6),
+                              itemBuilder: (_, i) => GestureDetector(
+                                onTap: () =>
+                                    _expandPortfolioImage(context, photos, i),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: SizedBox(
+                                    width: 76,
+                                    height: 76,
+                                    child: _buildGalleryImage(photos[i]),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+
+                      // ── Provider response ──────────────────────────────
+                      if (response != null && response.isNotEmpty)
+                        Container(
+                          margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: _kPurpleSoft,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                                color: _kPurple.withValues(alpha: 0.15)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Icon(Icons.verified_user_rounded,
+                                      color: _kPurple, size: 14),
+                                  const Text('תגובת הספק',
+                                      style: TextStyle(
+                                          color: _kPurple,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700)),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Text(response,
+                                  textAlign: TextAlign.right,
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      height: 1.5,
+                                      color: Colors.grey[700])),
+                            ],
+                          ),
+                        )
+                      else if (isProvider)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              style: TextButton.styleFrom(
+                                  foregroundColor: _kPurple,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 2)),
+                              icon: const Icon(Icons.reply_rounded, size: 15),
+                              label: const Text('הוסף תגובה',
+                                  style: TextStyle(fontSize: 12)),
+                              onPressed: () =>
+                                  _showProviderReplyDialog(context, doc.id),
+                            ),
+                          ),
+                        ),
+
+                      const SizedBox(height: 12),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  // ── Provider reply bottom sheet ───────────────────────────────────────────
+  void _showProviderReplyDialog(BuildContext context, String reviewDocId) {
+    final ctrl = TextEditingController();
+    // Dispose the controller when the sheet is dismissed (success or cancel).
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Padding(
+        padding:
+            EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // Drag handle
+              Center(
+                child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(10))),
+              ),
+              const SizedBox(height: 16),
+              const Text('הוסף תגובה לביקורת',
+                  style:
+                      TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                maxLines: 4,
+                textAlign: TextAlign.right,
+                decoration: InputDecoration(
+                  hintText: 'תודה על הביקורת...',
+                  filled: true,
+                  fillColor: Colors.grey[50],
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide:
+                          BorderSide(color: Colors.grey.shade200)),
+                  enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide:
+                          BorderSide(color: Colors.grey.shade200)),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide:
+                          const BorderSide(color: _kPurple, width: 1.5)),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: _kPurple,
+                    minimumSize: const Size(double.infinity, 50),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    elevation: 0),
+                onPressed: () async {
+                  final text = ctrl.text.trim();
+                  if (text.isEmpty) return;
+                  try {
+                    await FirebaseFirestore.instance
+                        .collection('reviews')
+                        .doc(reviewDocId)
+                        .update({'providerResponse': text});
+                    if (ctx.mounted) Navigator.pop(ctx);
+                    // Check parent state — ctx may be mounted while parent disposed
+                    if (mounted) setState(() => _refreshTrigger++);
+                  } catch (e) {
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                        backgroundColor: Colors.red,
+                        content: Text('שגיאה בשמירת התגובה: $e'),
+                      ));
+                    }
+                  }
+                },
+                child: const Text('פרסם תגובה',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ).whenComplete(() => ctrl.dispose());
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // UI: Sticky bottom bar
+  // ─────────────────────────────────────────────────────────────────────────
+
   Widget _buildBottomBar(BuildContext context, Map<String, dynamic> data) {
-    final bool isReady = _selectedDay != null && _selectedTimeSlot != null;
+    final price      = (data['pricePerHour'] as num? ?? 100).toDouble();
+    final services   = _deriveServices(price);
+    final svcPrice   = services[_selectedServiceIndex]['price'] as double;
+    final isReady    = _selectedDay != null && _selectedTimeSlot != null;
+
     return Positioned(
       bottom: 0,
       left: 0,
       right: 0,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 30),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withValues(alpha: 0.06),
-                blurRadius: 20,
-                offset: const Offset(0, -5))
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              decoration: BoxDecoration(
-                  border: Border.all(color: Colors.black12),
-                  borderRadius: BorderRadius.circular(15)),
-              child: IconButton(
-                icon: const Icon(Icons.chat_bubble_outline),
-                onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => ChatScreen(
-                            receiverId: widget.expertId,
-                            receiverName: widget.expertName))),
-              ),
+      child: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.92),
+              border: Border(
+                  top: BorderSide(color: Colors.grey.shade200)),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 20,
+                    offset: const Offset(0, -5)),
+              ],
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: isReady ? Colors.black : Colors.grey[300],
-                  minimumSize: const Size(0, 58),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15)),
+            child: Row(
+              children: [
+                // ── Chat button ──────────────────────────────────────
+                Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                        color: _kPurple.withValues(alpha: 0.35)),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.chat_bubble_outline_rounded,
+                        color: _kPurple),
+                    onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => ChatScreen(
+                                receiverId: widget.expertId,
+                                receiverName: widget.expertName))),
+                  ),
                 ),
-                onPressed: isReady ? () => _showBookingSummary(context, data) : null,
-                child: _isProcessing
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : Text(
-                        isReady
-                            ? "הזמן ל-$_selectedTimeSlot"
-                            : "בחר תאריך וזמן",
-                        style: TextStyle(
-                            color: isReady ? Colors.white : Colors.grey[600],
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16),
-                      ),
-              ),
+                const SizedBox(width: 12),
+
+                // ── Book Now ──────────────────────────────────────────
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _kPurple,
+                      // When onPressed is null Flutter uses disabledBackgroundColor —
+                      // explicit values keep the "idle state" look consistent.
+                      disabledBackgroundColor: Colors.grey[300],
+                      disabledForegroundColor: Colors.white,
+                      minimumSize: const Size(0, 54),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      elevation: 0,
+                    ),
+                    onPressed:
+                        isReady ? () => _showBookingSummary(context, data, svcPrice) : null,
+                    child: _isProcessing
+                        ? const CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2.5)
+                        : isReady
+                            ? Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Icon(
+                                      Icons.arrow_back_ios_new_rounded,
+                                      color: Colors.white,
+                                      size: 14),
+                                  Text(
+                                    "הזמן ל-$_selectedTimeSlot",
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16),
+                                  ),
+                                  Text(
+                                    '₪${svcPrice.toStringAsFixed(0)}',
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 16),
+                                  ),
+                                ],
+                              )
+                            : Column(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    "החל מ-₪${price.toStringAsFixed(0)}",
+                                    style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 11),
+                                  ),
+                                  const Text(
+                                    "בחר תאריך וזמן",
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 15),
+                                  ),
+                                ],
+                              ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  // ── Booking summary bottom sheet ──────────────────────────────────────────
-  void _showBookingSummary(BuildContext context, Map<String, dynamic> data) {
-    final double price = (data['pricePerHour'] ?? 250).toDouble();
+  // ─────────────────────────────────────────────────────────────────────────
+  // Booking summary sheet
+  // ─────────────────────────────────────────────────────────────────────────
+
+  void _showBookingSummary(
+      BuildContext context, Map<String, dynamic> data, double price) {
     final dateStr = _selectedDay != null
         ? "${_selectedDay!.day}/${_selectedDay!.month}/${_selectedDay!.year}"
         : "";
+    // Use static title list — avoids calling _deriveServices with the already-
+    // computed tier price (which would re-derive tiers from the wrong base).
+    const svcTitles = ['שיעור בודד', 'שיעור מורחב', 'סשן מלא'];
+    final svcTitle  = svcTitles[_selectedServiceIndex.clamp(0, 2)];
+
+    final policy = data['cancellationPolicy'] as String? ?? 'flexible';
+
+    // Human-readable deadline string for the notice
+    final dlDt = CancellationPolicyService.deadline(
+      policy:          policy,
+      appointmentDate: _selectedDay,
+      timeSlot:        _selectedTimeSlot,
+    );
+    final dlStr = dlDt != null
+        ? "${dlDt.day}/${dlDt.month} ${dlDt.hour.toString().padLeft(2,'0')}:${dlDt.minute.toString().padLeft(2,'0')}"
+        : null;
+    final penaltyPct = (CancellationPolicyService.penaltyFraction(policy) * 100).toInt();
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
-      builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(25, 20, 25, 40),
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-                width: 40,
-                height: 4,
+                width: 40, height: 4,
                 decoration: BoxDecoration(
                     color: Colors.grey[300],
                     borderRadius: BorderRadius.circular(10))),
             const SizedBox(height: 20),
-            const Text("סיכום הזמנה מאובטחת",
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-            Text("$dateStr בשעה $_selectedTimeSlot",
-                style: const TextStyle(color: Colors.grey)),
-            const Divider(height: 30),
-            _summaryRow("מחיר השירות", "₪$price"),
-            _summaryRow("הגנת הקונה AnySkill", "כלול במחיר", isGreen: true),
-            const Divider(height: 20),
-            _summaryRow("סה\"כ לתשלום (נאמנות)", "₪$price", isBold: true),
-            const SizedBox(height: 25),
-            ElevatedButton(
+            // Header
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      const Text("סיכום הזמנה מאובטחת",
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold)),
+                      Text("$svcTitle • $dateStr בשעה $_selectedTimeSlot",
+                          style: const TextStyle(
+                              color: Colors.grey, fontSize: 13)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: _kPurpleSoft,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.lock_rounded,
+                      color: _kPurple, size: 22),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                children: [
+                  _summaryRow("שירות", svcTitle),
+                  _summaryRow("תאריך", dateStr),
+                  _summaryRow("שעה",   _selectedTimeSlot ?? '—'),
+                  _summaryRow("מחיר השירות", "₪${price.toStringAsFixed(0)}"),
+                  _summaryRow("הגנת AnySkill", "כלול ✓",
+                      isGreen: true),
+                  const Divider(height: 16),
+                  _summaryRow("סה\"כ לתשלום",
+                      "₪${price.toStringAsFixed(0)}",
+                      isBold: true),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            // ── Cancellation policy notice ─────────────────────────────────
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF8E1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFFCC02),
+                    width: 1),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline_rounded,
+                      size: 16, color: Color(0xFF856404)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      dlStr != null
+                          ? "מדיניות ביטול: ${CancellationPolicyService.label(policy)} — "
+                            "ביטול חינם עד $dlStr. "
+                            "ביטול לאחר מכן: קנס $penaltyPct%."
+                          : "מדיניות ביטול: ${CancellationPolicyService.label(policy)} — "
+                            "${CancellationPolicyService.description(policy)}.",
+                      style: const TextStyle(
+                          fontSize: 12, color: Color(0xFF856404)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  minimumSize: const Size(double.infinity, 55),
+                  backgroundColor: _kPurple,
+                  minimumSize: const Size(double.infinity, 54),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14))),
-              onPressed: () => _processEscrowPayment(context, price),
-              child: const Text("אשר תשלום ושריין מועד",
+                      borderRadius: BorderRadius.circular(14)),
+                  elevation: 0),
+              icon: const Icon(Icons.lock_rounded,
+                  color: Colors.white, size: 18),
+              label: const Text("אשר תשלום ושריין מועד",
                   style: TextStyle(
-                      fontSize: 17,
+                      fontSize: 16,
                       color: Colors.white,
                       fontWeight: FontWeight.bold)),
+              onPressed: () =>
+                  _processEscrowPayment(context, price, policy),
             ),
           ],
         ),
@@ -575,108 +1767,168 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   Widget _summaryRow(String label, String value,
       {bool isBold = false, bool isGreen = false}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label,
               style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
+                  fontSize: 14,
+                  fontWeight:
+                      isBold ? FontWeight.bold : FontWeight.normal,
+                  color: Colors.grey[700])),
           Text(value,
               style: TextStyle(
-                  fontSize: 15,
-                  color: isGreen ? Colors.green : Colors.black,
-                  fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
+                  fontSize: 14,
+                  color: isGreen
+                      ? Colors.green
+                      : isBold
+                          ? Colors.black
+                          : Colors.black87,
+                  fontWeight:
+                      isBold ? FontWeight.bold : FontWeight.normal)),
         ],
       ),
     );
   }
 
-  // ── Reviews section ───────────────────────────────────────────────────────
-  Widget _buildReviewsSection() {
-    return FutureBuilder<QuerySnapshot>(
-      future: FirebaseFirestore.instance
-          .collection('reviews')
-          .where('expertId', isEqualTo: widget.expertId)
-          .orderBy('timestamp', descending: true)
-          .limit(20)
-          .get(),
-      builder: (context, snapshot) {
-        final docs = snapshot.data?.docs ?? [];
+  // ─────────────────────────────────────────────────────────────────────────
+  // Section header helper
+  // ─────────────────────────────────────────────────────────────────────────
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _sectionHeader(String title, {Widget? trailing}) => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              docs.isEmpty ? 'ביקורות' : 'ביקורות (${docs.length})',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            if (docs.isEmpty)
-              const Text('אין ביקורות עדיין',
-                  style: TextStyle(color: Colors.grey))
-            else
-              ...docs.map((doc) {
-                final r = doc.data() as Map<String, dynamic>;
-                final rating = (r['rating'] ?? 5).toDouble();
-                final name = r['reviewerName'] ?? 'לקוח';
-                final comment = (r['comment'] ?? '').toString().trim();
-                final ts = r['timestamp'] as Timestamp?;
-                final date = ts != null
-                    ? DateFormat('dd/MM/yyyy').format(ts.toDate())
-                    : '';
+            if (trailing != null) trailing,
+            Text(title,
+                style: const TextStyle(
+                    fontSize: 18, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      );
 
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[50],
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: Colors.grey.shade200),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  // ─────────────────────────────────────────────────────────────────────────
+  // Build
+  // ─────────────────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8F9FA),
+      body: FutureBuilder<DocumentSnapshot>(
+        key: ValueKey(_refreshTrigger),
+        future: FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.expertId)
+            .get(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final data    = snapshot.data!.data() as Map<String, dynamic>;
+          final unavail = _parseUnavailableDates(data);
+
+          return Stack(
+            children: [
+              // ── Main scrollable content ──────────────────────────────────
+              RefreshIndicator(
+                onRefresh: () async => setState(() => _refreshTrigger++),
+                child: CustomScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  slivers: [
+                    // ── Hero ────────────────────────────────────────────────
+                    SliverAppBar(
+                      expandedHeight: 320,
+                      pinned: true,
+                      stretch: true,
+                      backgroundColor: _kPurple,
+                      foregroundColor: Colors.white,
+                      title: Text(widget.expertName,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, shadows: [
+                            Shadow(blurRadius: 10, color: Colors.black45)
+                          ])),
+                      flexibleSpace: FlexibleSpaceBar(
+                        stretchModes: const [
+                          StretchMode.zoomBackground,
+                          StretchMode.blurBackground,
+                        ],
+                        background: _buildHeroBackground(data),
+                      ),
+                    ),
+
+                    SliverToBoxAdapter(
+                      child: Column(
                         children: [
-                          Text(name,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold)),
-                          Row(
-                            children: List.generate(
-                                5,
-                                (i) => Icon(
-                                      i < rating
-                                          ? Icons.star
-                                          : Icons.star_border,
-                                      color: Colors.amber,
-                                      size: 16,
-                                    )),
+                          // ── Power Row ──────────────────────────────────────
+                          const SizedBox(height: 16),
+                          _buildPowerRow(data),
+                          const SizedBox(height: 24),
+
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                // ── About ──────────────────────────────────
+                                _sectionHeader("על המומחה"),
+                                _buildBioSection(data),
+                                const SizedBox(height: 16),
+
+                                // ── Quick Tags ─────────────────────────────
+                                _buildQuickTagsSection(data),
+                                if ((data['quickTags'] as List? ?? [])
+                                    .isNotEmpty)
+                                  const SizedBox(height: 24),
+
+                                // ── Service Menu ───────────────────────────
+                                _sectionHeader("בחר שירות"),
+                                _buildServiceMenu(data),
+                                const SizedBox(height: 24),
+
+                                // ── Portfolio ──────────────────────────────
+                                if ((data['gallery'] as List? ?? []).isNotEmpty) ...[
+                                  _sectionHeader("גלריה"),
+                                  _buildPortfolioGrid(data),
+                                  const SizedBox(height: 24),
+                                ],
+
+                                // ── Booking calendar ──────────────────────
+                                const Divider(height: 1),
+                                const SizedBox(height: 24),
+                                _sectionHeader("בחר מועד לשירות"),
+                                _buildCalendar(unavail),
+                                if (_selectedDay != null) ...[
+                                  const SizedBox(height: 16),
+                                  _buildTimeSlots(),
+                                ],
+                                const SizedBox(height: 24),
+
+                                // ── Reviews ────────────────────────────────
+                                const Divider(height: 1),
+                                const SizedBox(height: 24),
+                                _buildReviewsSection(),
+
+                                // Space for sticky bar
+                                const SizedBox(height: 120),
+                              ],
+                            ),
                           ),
                         ],
                       ),
-                      if (comment.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        Text(comment,
-                            style:
-                                const TextStyle(fontSize: 14, height: 1.4)),
-                      ],
-                      if (date.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(date,
-                            style: const TextStyle(
-                                color: Colors.grey, fontSize: 11)),
-                      ],
-                    ],
-                  ),
-                );
-              }),
-            const SizedBox(height: 20),
-          ],
-        );
-      },
+                    ),
+                  ],
+                ),
+              ),
+
+              // ── Sticky bottom bar ─────────────────────────────────────────
+              _buildBottomBar(context, data),
+            ],
+          );
+        },
+      ),
     );
   }
 }

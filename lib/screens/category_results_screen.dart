@@ -1,11 +1,18 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
 import 'expert_profile_screen.dart';
 import '../utils/expert_filter.dart';
 import '../services/location_service.dart';
-import '../services/gamification_service.dart';
+import '../services/search_ranking_service.dart';
 import '../widgets/level_badge.dart';
+import '../constants/quick_tags.dart';
+
+// Brand colours (shared with the rest of the app)
+const _kPurple     = Color(0xFF6366F1);
+const _kPurpleSoft = Color(0xFFF0F0FF);
+const _kGold       = Color(0xFFFBBF24);
 
 class CategoryResultsScreen extends StatefulWidget {
   final String categoryName;
@@ -62,6 +69,654 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       return map;
     }).toList();
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Availability bottom sheet
+  // ─────────────────────────────────────────────────────────────────────────
+
+  void _showAvailabilitySheet(
+      BuildContext context, Map<String, dynamic> data, String expertId) {
+    // Parse the provider's blocked dates (ISO-8601 strings: 'YYYY-MM-DD')
+    final blocked = ((data['unavailableDates'] as List?) ?? [])
+        .map((d) => d.toString().substring(0, 10))
+        .toSet();
+
+    // Compute the next 7 calendar days, then keep only the 3 first available
+    final today = DateTime.now();
+    final slots = <DateTime>[];
+    for (int i = 1; i <= 14 && slots.length < 3; i++) {
+      final day = today.add(Duration(days: i));
+      final key = '${day.year.toString().padLeft(4, '0')}-'
+          '${day.month.toString().padLeft(2, '0')}-'
+          '${day.day.toString().padLeft(2, '0')}';
+      if (!blocked.contains(key)) slots.add(day);
+    }
+
+    // Fixed time options shown for each available day
+    const times = ['09:00', '11:00', '14:00', '16:00'];
+    final dayLabels = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+    final monthLabels = [
+      'ינו׳', 'פבר׳', 'מרץ', 'אפר׳', 'מאי', 'יוני',
+      'יולי', 'אוג׳', 'ספט׳', 'אוק׳', 'נוב׳', 'דצמ׳',
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // Drag handle
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  data['name'] ?? 'מומחה',
+                  style: const TextStyle(color: Colors.grey, fontSize: 13),
+                ),
+                const Text(
+                  'הסלוטים הפנויים הקרובים',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            if (slots.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(
+                  child: Text('אין זמינות ב-14 הימים הקרובים',
+                      style: TextStyle(color: Colors.grey, fontSize: 14)),
+                ),
+              )
+            else
+              SizedBox(
+                height: 130,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  reverse: true,             // RTL scroll feels natural
+                  itemCount: slots.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  itemBuilder: (ctx, i) {
+                    final day = slots[i];
+                    final dayName  = dayLabels[day.weekday % 7];
+                    final dateStr  = '${day.day} ${monthLabels[day.month - 1]}';
+                    return Container(
+                      width: 130,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: _kPurpleSoft,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: _kPurple.withValues(alpha: 0.25)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(dayName,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: _kPurple,
+                                  fontSize: 14)),
+                          Text(dateStr,
+                              style: TextStyle(
+                                  color: Colors.grey[600], fontSize: 12)),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            alignment: WrapAlignment.end,
+                            children: times.map((t) => GestureDetector(
+                              onTap: () {
+                                Navigator.pop(ctx);
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => ExpertProfileScreen(
+                                      expertId: expertId,
+                                      expertName: data['name'] ?? 'מומחה',
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                      color: _kPurple.withValues(alpha: 0.4)),
+                                ),
+                                child: Text(t,
+                                    style: const TextStyle(
+                                        fontSize: 11,
+                                        color: _kPurple,
+                                        fontWeight: FontWeight.w600)),
+                              ),
+                            )).toList(),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _kPurple,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 48),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  elevation: 0,
+                ),
+                onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ExpertProfileScreen(
+                        expertId: expertId,
+                        expertName: data['name'] ?? 'מומחה',
+                      ),
+                    ),
+                  );
+                },
+                child: const Text('להזמנה מלאה',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Card: Action Image (left 38%)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildActionImage(Map<String, dynamic> data, bool isOnline) {
+    final gallery = (data['gallery'] as List?)?.cast<String>() ?? [];
+    final actionImg =
+        gallery.isNotEmpty ? gallery.first : (data['profileImage'] as String? ?? '');
+    final hasImg = actionImg.isNotEmpty;
+
+    // Trust badges to overlay on the image
+    final orderCount  = (data['orderCount'] as num?)?.toInt() ?? 0;
+    final respTime    = (data['responseTimeMinutes'] as num?)?.toInt() ?? 0;
+    final rating      = (data['rating'] as num?)?.toDouble() ?? 0;
+    final reviewsCount = (data['reviewsCount'] as num?)?.toInt() ?? 0;
+
+    final badges = <String>[];
+    if (orderCount >= 5) badges.add('🔥 $orderCount הזמנות');
+    if (respTime > 0 && respTime <= 10) badges.add('⚡ מגיב תוך $respTime ד׳');
+    if (rating >= 4.8 && reviewsCount >= 3) badges.add('⭐ מוביל');
+
+    return ClipRRect(
+      borderRadius: const BorderRadius.only(
+        topRight: Radius.circular(16),
+        bottomRight: Radius.circular(16),
+      ),
+      child: SizedBox(
+        width: 130,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // ── Image or placeholder ──────────────────────────────────────
+            hasImg
+                ? Image.network(
+                    actionImg,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _imagePlaceholder(),
+                  )
+                : _imagePlaceholder(),
+
+            // ── Dark gradient for text readability ────────────────────────
+            if (badges.isNotEmpty || isOnline)
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.55),
+                      ],
+                      stops: const [0.45, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+
+            // ── Online dot ────────────────────────────────────────────────
+            if (isOnline)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.circle, color: Color(0xFF22C55E), size: 7),
+                      SizedBox(width: 3),
+                      Text('זמין',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+              ),
+
+            // ── Trust badges (bottom of image) ────────────────────────────
+            if (badges.isNotEmpty)
+              Positioned(
+                bottom: 8,
+                left: 6,
+                right: 6,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: badges.map((b) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 3),
+                          color: Colors.black.withValues(alpha: 0.40),
+                          child: Text(
+                            b,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                    ),
+                  )).toList(),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Branded placeholder shown when the provider hasn't uploaded a portfolio image.
+  Widget _imagePlaceholder() {
+    return Container(
+      color: _kPurpleSoft,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.add_photo_alternate_outlined,
+              size: 32, color: _kPurple.withValues(alpha: 0.5)),
+          const SizedBox(height: 6),
+          Text(
+            'הוסף\nתמונת\nפרופיל',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                fontSize: 10,
+                color: _kPurple.withValues(alpha: 0.6),
+                height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Quick Tags row (shown in the details panel)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildQuickTagsRow(List<String> tagKeys) {
+    // Resolve keys → display data, ignore unknown keys, cap at 2
+    final resolved = tagKeys
+        .map(quickTagByKey)
+        .whereType<Map<String, String>>()
+        .take(2)
+        .toList();
+    if (resolved.isEmpty) return const SizedBox.shrink();
+
+    return Wrap(
+      spacing: 5,
+      runSpacing: 4,
+      alignment: WrapAlignment.end,
+      children: resolved.map((t) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color: _kPurpleSoft,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _kPurple.withValues(alpha: 0.18)),
+        ),
+        child: Text(
+          '${t['emoji']} ${t['label']}',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            color: _kPurple.withValues(alpha: 0.85),
+          ),
+        ),
+      )).toList(),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Card: Details panel (right 62%)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildExpertDetails(
+    Map<String, dynamic> data,
+    bool isVerified,
+    bool isPromoted,
+    bool isOnline,
+    String expertId,
+  ) {
+    final name        = data['name'] as String? ?? 'מומחה';
+    final price       = data['pricePerHour'] ?? 100;
+    final rating      = (data['rating'] as num?)?.toDouble() ?? 5.0;
+    final reviewsCount = (data['reviewsCount'] as num?)?.toInt() ?? 0;
+    final bio         = data['aboutMe'] as String? ?? '';
+    final tagKeys     = ((data['quickTags'] as List?) ?? []).cast<String>();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // ── Price (top-right, most prominent) ───────────────────────────
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Level badge on the left
+              if ((data['xp'] as num? ?? 0) > 0)
+                LevelBadge(xp: (data['xp'] as num).toInt(), size: 16),
+
+              // Price
+              RichText(
+                text: TextSpan(
+                  style: const TextStyle(fontFamily: 'Heebo'),
+                  children: [
+                    TextSpan(
+                      text: '₪$price',
+                      style: const TextStyle(
+                          color: _kPurple,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 18),
+                    ),
+                    const TextSpan(
+                      text: ' / שע',
+                      style: TextStyle(
+                          color: Colors.grey,
+                          fontSize: 11,
+                          fontWeight: FontWeight.normal),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+
+          // ── Name + verification + promoted ──────────────────────────────
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              if (isPromoted)
+                Container(
+                  margin: const EdgeInsets.only(left: 5),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.amber[50],
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.amber.shade300),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.star_rounded,
+                          color: Colors.amber[700], size: 10),
+                      const SizedBox(width: 3),
+                      Text('מומלץ',
+                          style: TextStyle(
+                              fontSize: 9,
+                              color: Colors.amber[800],
+                              fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+              if (isVerified) ...[
+                const SizedBox(width: 4),
+                const Icon(Icons.verified,
+                    color: Color(0xFF1877F2), size: 15),
+              ],
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  name,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+
+          // ── Bio (1 line) ─────────────────────────────────────────────────
+          if (bio.isNotEmpty)
+            Text(
+              bio,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.right,
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            ),
+          if (bio.isNotEmpty) const SizedBox(height: 4),
+
+          // ── Quick Tags ───────────────────────────────────────────────────
+          _buildQuickTagsRow(tagKeys),
+          if (tagKeys.isNotEmpty) const SizedBox(height: 4),
+
+          // ── Rating + location ────────────────────────────────────────────
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              // Distance (leftmost — least important)
+              if (_currentPosition != null) ...() {
+                final lat = (data['latitude']  as num?)?.toDouble();
+                final lng = (data['longitude'] as num?)?.toDouble();
+                if (lat == null || lng == null) return <Widget>[];
+                final label = LocationService.distanceLabel(
+                    _currentPosition!.latitude,
+                    _currentPosition!.longitude,
+                    lat, lng);
+                return [
+                  const Icon(Icons.location_on_rounded,
+                      size: 11, color: Colors.grey),
+                  const SizedBox(width: 2),
+                  Text(label,
+                      style: const TextStyle(
+                          fontSize: 11, color: Colors.grey)),
+                  const SizedBox(width: 8),
+                ];
+              }(),
+              // Stars
+              Icon(Icons.star_rounded, color: _kGold, size: 14),
+              const SizedBox(width: 2),
+              Text(
+                rating.toStringAsFixed(1),
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 12),
+              ),
+              const SizedBox(width: 3),
+              Text(
+                '($reviewsCount)',
+                style: TextStyle(color: Colors.grey[500], fontSize: 11),
+              ),
+            ],
+          ),
+
+          const Spacer(),
+
+          // ── "When are they free?" ghost button ──────────────────────────
+          SizedBox(
+            width: double.infinity,
+            height: 32,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                side: BorderSide(color: _kPurple.withValues(alpha: 0.45)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                foregroundColor: _kPurple,
+              ),
+              icon: const Icon(Icons.calendar_today_rounded, size: 13),
+              label: const Text('מתי פנוי?',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              onPressed: () =>
+                  _showAvailabilitySheet(context, data, expertId),
+            ),
+          ),
+          const SizedBox(height: 6),
+
+          // ── Book Now — primary CTA ───────────────────────────────────────
+          SizedBox(
+            width: double.infinity,
+            height: 36,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _kPurple,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                padding: EdgeInsets.zero,
+              ),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ExpertProfileScreen(
+                    expertId: expertId,
+                    expertName: name,
+                  ),
+                ),
+              ),
+              child: const Text('הזמן עכשיו',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 13)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Full expert card
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildExpertCard(Map<String, dynamic> data) {
+    final isVerified = data['isVerified'] as bool? ?? false;
+    final isOnline   = data['isOnline']   as bool? ?? false;
+    final isPromoted = data['isPromoted'] as bool? ?? false;
+    final expertId   = data['uid'] as String? ?? '';
+
+    return GestureDetector(
+      // Tap anywhere on card = open profile
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ExpertProfileScreen(
+            expertId: expertId,
+            expertName: data['name'] ?? 'מומחה',
+          ),
+        ),
+      ),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: isPromoted
+              ? Border.all(color: Colors.amber.shade300, width: 1.5)
+              : Border.all(color: Colors.grey.shade100),
+          boxShadow: [
+            BoxShadow(
+              color: isPromoted
+                  ? Colors.amber.withValues(alpha: 0.18)
+                  : Colors.black.withValues(alpha: 0.07),
+              blurRadius: isPromoted ? 20 : 12,
+              spreadRadius: isPromoted ? 1 : 0,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        // IntrinsicHeight lets the image column match the details column height
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // ── Action image (left ~38%) ─────────────────────────────────
+              ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 185, maxWidth: 130),
+                child: SizedBox(
+                  width: 130,
+                  child: _buildActionImage(data, isOnline),
+                ),
+              ),
+              // ── Details (right ~62%) ──────────────────────────────────────
+              Expanded(
+                child: _buildExpertDetails(
+                    data, isVerified, isPromoted, isOnline, expertId),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Scaffold & list
+  // ─────────────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -121,19 +776,17 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
-                  color: _filterUnder100
-                      ? Colors.pinkAccent
-                      : Colors.white,
+                  color: _filterUnder100 ? _kPurple : Colors.white,
                   borderRadius: BorderRadius.circular(50),
                   border: Border.all(
                     color: _filterUnder100
-                        ? Colors.pinkAccent
+                        ? _kPurple
                         : Colors.grey.shade300,
                   ),
                   boxShadow: _filterUnder100
                       ? [
                           BoxShadow(
-                            color: Colors.pinkAccent.withValues(alpha: 0.3),
+                            color: _kPurple.withValues(alpha: 0.25),
                             blurRadius: 8,
                             offset: const Offset(0, 3),
                           )
@@ -145,18 +798,14 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                   children: [
                     Icon(Icons.attach_money,
                         size: 14,
-                        color: _filterUnder100
-                            ? Colors.white
-                            : Colors.grey[600]),
+                        color: _filterUnder100 ? Colors.white : Colors.grey[600]),
                     const SizedBox(width: 6),
                     Text(
                       'עד 100 ₪',
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
-                        color: _filterUnder100
-                            ? Colors.white
-                            : Colors.grey[800],
+                        color: _filterUnder100 ? Colors.white : Colors.grey[800],
                       ),
                     ),
                   ],
@@ -214,371 +863,86 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     }
 
     final all = (snapshot.data ?? []).toList();
-        // 1) Promoted providers always float to the top
-        all.sort((a, b) {
-          final aPromoted = (a['isPromoted'] as bool? ?? false) ? 0 : 1;
-          final bPromoted = (b['isPromoted'] as bool? ?? false) ? 0 : 1;
-          return aPromoted.compareTo(bPromoted);
-        });
-        // 2) Within each group, sort by proximity × XP boost
-        if (_currentPosition != null) {
-          final myLat = _currentPosition!.latitude;
-          final myLng = _currentPosition!.longitude;
-          // Stable sub-sort: keep promoted at top, sort each half by proximity
-          final promoted    = all.where((e) => e['isPromoted'] == true).toList();
-          final notPromoted = all.where((e) => e['isPromoted'] != true).toList();
-          for (final group in [promoted, notPromoted]) {
-            group.sort((a, b) {
-              final xpA    = (a['xp'] as num? ?? 0).toInt();
-              final xpB    = (b['xp'] as num? ?? 0).toInt();
-              final boostA = GamificationService.proximityBoost(xpA);
-              final boostB = GamificationService.proximityBoost(xpB);
-              final rawA = LocationService.distanceMeters(myLat, myLng,
-                  (a['latitude']  as num?)?.toDouble(),
-                  (a['longitude'] as num?)?.toDouble());
-              final rawB = LocationService.distanceMeters(myLat, myLng,
-                  (b['latitude']  as num?)?.toDouble(),
-                  (b['longitude'] as num?)?.toDouble());
-              if (rawA == null && rawB == null) return 0;
-              if (rawA == null) return 1;
-              if (rawB == null) return -1;
-              return (rawA * boostA).compareTo(rawB * boostB);
-            });
-          }
-          all
-            ..clear()
-            ..addAll(promoted)
-            ..addAll(notPromoted);
-        }
-        final experts = filterExperts(
-          all,
-          query: _searchQuery,
-          underHundred: _filterUnder100,
-        );
+    // ── Unified weighted ranking formula ──────────────────────────────────
+    // Score = (XP × 0.6) + (Distance_Score × 0.2) + (ActiveStoryBonus × 0.2)
+    //         + Promoted_Add (200 if isPromoted — always floats above non-promoted)
+    //
+    // All component scores are normalised 0–100 before weighting.
+    // See SearchRankingService for full documentation.
+    SearchRankingService.sortExperts(
+      all,
+      myLat:      _currentPosition?.latitude,
+      myLng:      _currentPosition?.longitude,
+      distanceFn: (myLat, myLng, lat, lng) =>
+          LocationService.distanceMeters(myLat, myLng, lat, lng),
+    );
+    final experts = filterExperts(
+      all,
+      query: _searchQuery,
+      underHundred: _filterUnder100,
+    );
 
-        if (experts.isEmpty) {
-          final hasFilters = _searchQuery.isNotEmpty || _filterUnder100;
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 40),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(24),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(Icons.person_search_outlined,
-                        size: 56, color: Colors.grey[400]),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    hasFilters ? "לא נמצאו תוצאות" : 'אין מומחים ב${widget.categoryName} עדיין',
-                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    hasFilters
-                        ? "נסה לשנות את החיפוש או לבטל את הפילטר"
-                        : "היה הראשון להצטרף לקטגוריה זו!",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 14, color: Colors.grey[500]),
-                  ),
-                  if (hasFilters) ...[
-                    const SizedBox(height: 28),
-                    OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      ),
-                      icon: const Icon(Icons.filter_alt_off),
-                      label: const Text("נקה פילטרים"),
-                      onPressed: () => setState(() {
-                        _searchQuery = '';
-                        _filterUnder100 = false;
-                      }),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          );
-        }
-
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: experts.length,
-          itemBuilder: (context, index) {
-            final data       = experts[index];
-            final isVerified  = data['isVerified']  ?? false;
-            final isOnline    = data['isOnline']    ?? false;
-            final isPromoted  = data['isPromoted']  as bool? ?? false;
-            final expertId    = data['uid']          ?? '';
-
-            return GestureDetector(
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => ExpertProfileScreen(
-                    expertId: expertId,
-                    expertName: data['name'] ?? 'מומחה',
-                  ),
-                ),
-              ),
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 15),
-                padding: const EdgeInsets.all(12),
+    if (experts.isEmpty) {
+      final hasFilters = _searchQuery.isNotEmpty || _filterUnder100;
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 40),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: isPromoted
-                      ? Border.all(color: Colors.amber.shade300, width: 1.5)
-                      : null,
-                  boxShadow: isPromoted
-                      ? [
-                          BoxShadow(
-                            color: Colors.amber.withValues(alpha: 0.25),
-                            blurRadius: 18,
-                            spreadRadius: 2,
-                            offset: const Offset(0, 4),
-                          ),
-                        ]
-                      : [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.05),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          )
-                        ],
-                ),
-                child: Row(
-                  children: [
-                    Stack(children: [
-                      CircleAvatar(
-                        radius: 35,
-                        backgroundColor: Colors.blue[50],
-                        backgroundImage: (data['profileImage'] != null &&
-                                data['profileImage'] != '')
-                            ? NetworkImage(data['profileImage'])
-                            : null,
-                        child:
-                            (data['profileImage'] == null ||
-                                    data['profileImage'] == '')
-                                ? const Icon(Icons.person, size: 35)
-                                : null,
-                      ),
-                      if (isOnline)
-                        Positioned(
-                          right: 0,
-                          bottom: 2,
-                          child: Container(
-                            width: 14,
-                            height: 14,
-                            decoration: BoxDecoration(
-                              color: Colors.green,
-                              shape: BoxShape.circle,
-                              border:
-                                  Border.all(color: Colors.white, width: 2),
-                            ),
-                          ),
-                        ),
-                    ]),
-                    const SizedBox(width: 15),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(children: [
-                            Text(data['name'] ?? 'מומחה',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 17)),
-                            if (isVerified) ...[
-                              const SizedBox(width: 4),
-                              const Icon(Icons.verified,
-                                  color: Color(0xFF1877F2), size: 17),
-                            ],
-                            if ((data['xp'] as num? ?? 0) > 0) ...[
-                              const SizedBox(width: 6),
-                              LevelBadge(
-                                  xp: (data['xp'] as num).toInt(),
-                                  size: 18),
-                            ],
-                            if (isPromoted) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 7, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.amber[50],
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(color: Colors.amber.shade300),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.star_rounded,
-                                        color: Colors.amber[700], size: 10),
-                                    const SizedBox(width: 3),
-                                    Text("מומלץ",
-                                        style: TextStyle(
-                                            fontSize: 10,
-                                            color: Colors.amber[800],
-                                            fontWeight: FontWeight.w700)),
-                                  ],
-                                ),
-                              ),
-                            ],
-                            if (isOnline) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFE8F8EE),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.circle,
-                                        color: Color(0xFF22C55E), size: 7),
-                                    SizedBox(width: 3),
-                                    Text("זמין",
-                                        style: TextStyle(
-                                            fontSize: 10,
-                                            color: Color(0xFF16A34A),
-                                            fontWeight: FontWeight.w600)),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ]),
-                          const SizedBox(height: 2),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  data['aboutMe'] ?? 'לחץ לצפייה בפרטים...',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                      color: Colors.grey[600], fontSize: 13),
-                                ),
-                              ),
-                              if ((data['responseTimeMinutes'] ?? 0) > 0) ...[
-                                const SizedBox(width: 6),
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(Icons.bolt_rounded,
-                                        size: 12, color: Color(0xFF6366F1)),
-                                    Text(
-                                      "~${data['responseTimeMinutes']}ד'",
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        color: Color(0xFF6366F1),
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ],
-                          ),
-                          const SizedBox(height: 5),
-                          Row(children: [
-                            const Icon(Icons.star,
-                                color: Colors.amber, size: 16),
-                            Text(' ${data['rating'] ?? '5.0'} ',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold)),
-                            Text('(${data['reviewsCount'] ?? '0'})',
-                                style: const TextStyle(
-                                    color: Colors.grey, fontSize: 11)),
-                            // Distance badge
-                            if (_currentPosition != null) ...() {
-                              final lat = (data['latitude']  as num?)?.toDouble();
-                              final lng = (data['longitude'] as num?)?.toDouble();
-                              if (lat == null || lng == null) return <Widget>[];
-                              final label = LocationService.distanceLabel(
-                                  _currentPosition!.latitude,
-                                  _currentPosition!.longitude,
-                                  lat, lng);
-                              return [
-                                const SizedBox(width: 6),
-                                Row(mainAxisSize: MainAxisSize.min, children: [
-                                  const Icon(Icons.location_on_rounded,
-                                      size: 11, color: Color(0xFF6366F1)),
-                                  const SizedBox(width: 2),
-                                  Text(label,
-                                      style: const TextStyle(
-                                          fontSize: 11,
-                                          color: Color(0xFF6366F1),
-                                          fontWeight: FontWeight.w600)),
-                                ]),
-                              ];
-                            }(),
-                            const Spacer(),
-                            Text(
-                              '₪${data['pricePerHour'] ?? '100'}',
-                              style: const TextStyle(
-                                color: Colors.green,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-                            const Text(' / שעה',
-                                style: TextStyle(
-                                    color: Colors.grey, fontSize: 11)),
-                          ]),
-                          // Social proof — shown only when provider has bookings
-                          if ((data['orderCount'] ?? 0) > 0) ...[
-                            const SizedBox(height: 5),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFFFF3ED),
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(
-                                        color: const Color(0xFFFF6B35)
-                                            .withValues(alpha: 0.35)),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Text("🔥",
-                                          style: TextStyle(fontSize: 11)),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        'הוזמן ${data['orderCount']} פעמים',
-                                        style: const TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w600,
-                                          color: Color(0xFFD4520A),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                    color: _kPurpleSoft, shape: BoxShape.circle),
+                child: Icon(Icons.person_search_outlined,
+                    size: 56, color: _kPurple.withValues(alpha: 0.5)),
               ),
-            );
-          },
-        );
+              const SizedBox(height: 24),
+              Text(
+                hasFilters
+                    ? "לא נמצאו תוצאות"
+                    : 'אין מומחים ב${widget.categoryName} עדיין',
+                style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                hasFilters
+                    ? "נסה לשנות את החיפוש או לבטל את הפילטר"
+                    : "היה הראשון להצטרף לקטגוריה זו!",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+              ),
+              if (hasFilters) ...[
+                const SizedBox(height: 28),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                  icon: const Icon(Icons.filter_alt_off),
+                  label: const Text("נקה פילטרים"),
+                  onPressed: () => setState(() {
+                    _searchQuery = '';
+                    _filterUnder100 = false;
+                  }),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      itemCount: experts.length,
+      itemBuilder: (_, index) => _buildExpertCard(experts[index]),
+    );
   }
 }
