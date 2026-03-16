@@ -10,13 +10,13 @@ import 'admin_screen.dart';
 import 'chat_list_screen.dart';
 import 'system_wallet_screen.dart';
 import 'my_bookings_screen.dart';
-import 'search_screen/search_page.dart';
 import 'opportunities_screen.dart';
 import 'my_requests_screen.dart';
 import '../services/location_service.dart';
 import '../services/ai_analysis_service.dart';
 import '../onboarding/app_tour.dart';
 import '../main.dart' show PendingNotification;
+import 'home_tab.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -215,7 +215,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         // confuses AdminScreen with OpportunitiesScreen even when roles
         // arrive asynchronously from Firestore.
         final List<Widget> tabs = [
-          _nestedTab(0, const SearchPage()),
+          _nestedTab(0, HomeTab(
+            userData: data,
+            currentUserId: currentUser?.uid ?? '',
+            isOnline: isOnline,
+            onToggleOnline: () => _setOnlineStatus(!isOnline),
+            onGoToBookings: () => setState(() => _selectedIndex = 1),
+            onGoToChat: () => setState(() => _selectedIndex = 2),
+            onOpenQuickRequest: () => _showQuickRequestSheet(context, data),
+          )),
           _nestedTab(1, MyBookingsScreen(onGoToSearch: goToSearch)),
           _nestedTab(2, ChatListScreen(onGoToSearch: goToSearch)),
           _buildUserWallet(data),          // idx 3 — plain Scaffold, no Navigator key
@@ -268,19 +276,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           body: Stack(
             children: [
               IndexedStack(index: safeIndex, children: tabs),
-              // כפתור אופליין/אונליין צף - מופיע רק בדף החיפוש
-              if (safeIndex == 0) ...[
-                Positioned(
-                  bottom: 25,
-                  left: 20,
-                  child: FloatingActionButton.extended(
-                    elevation: 8,
-                    backgroundColor: isOnline ? Colors.green[600] : Colors.grey[900],
-                    onPressed: () => FirebaseFirestore.instance.collection('users').doc(currentUser?.uid).update({'isOnline': !isOnline}),
-                    label: Text(isOnline ? "אונליין" : "אופליין", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                    icon: Icon(isOnline ? Icons.bolt : Icons.power_settings_new, color: Colors.white),
-                  ),
-                ),
+              // כפתור בקשה מהירה — מופיע רק בדף החיפוש
+              if (safeIndex == 0)
                 Positioned(
                   bottom: 25,
                   right: 20,
@@ -292,7 +289,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     icon: const Icon(Icons.campaign_rounded, color: Colors.white),
                   ),
                 ),
-              ],
             ],
           ),
           bottomNavigationBar: _buildEliteBottomNav(isAdmin, isProvider, serviceType, safeIndex),
@@ -402,9 +398,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             unselectedFontSize: 11,
             items: [
               const BottomNavigationBarItem(
-                icon: Icon(Icons.search_outlined),
-                activeIcon: Icon(Icons.search),
-                label: 'חיפוש'
+                icon: Icon(Icons.home_outlined),
+                activeIcon: Icon(Icons.home),
+                label: 'בית'
               ),
               // Bookings badge — shows NEW jobs since last tab visit
               BottomNavigationBarItem(

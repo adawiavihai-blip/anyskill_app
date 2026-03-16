@@ -1954,7 +1954,7 @@ exports.marketopportunitymonitor = onDocumentCreated(
 // Reads the points value from settings_gamification/{eventId} so admins can
 // tune every event without a code deploy.
 // After updating XP the function recalculates the user's level using the
-// thresholds stored in settings_gamification/__levels__.
+// thresholds stored in settings_gamification/app_levels.
 //
 // Call from Flutter:
 //   await FirebaseFunctions.instance
@@ -1992,7 +1992,7 @@ exports.updateUserXP = onCall(
         // ── 3. Read level thresholds (with sensible defaults) ─────────────
         const levelsSnap = await db
             .collection("settings_gamification")
-            .doc("__levels__")
+            .doc("app_levels")
             .get();
 
         const levels          = levelsSnap.data() || {};
@@ -2150,7 +2150,7 @@ exports.onStoryPublished = onDocumentCreated(
         // Read level thresholds
         const levelsSnap = await db
             .collection("settings_gamification")
-            .doc("__levels__")
+            .doc("app_levels")
             .get();
         const levels          = levelsSnap.data() || {};
         const silverThreshold = levels.silver ?? 500;
@@ -2530,7 +2530,7 @@ exports.processCancellation = onCall(
                 const points    = eventSnap.exists
                     ? (typeof eventSnap.data().points === "number" ? eventSnap.data().points : -100)
                     : -100;
-                const levelsSnap      = await db.collection("settings_gamification").doc("__levels__").get();
+                const levelsSnap      = await db.collection("settings_gamification").doc("app_levels").get();
                 const levels          = levelsSnap.data() || {};
                 const silverThreshold = levels.silver ?? 500;
                 const goldThreshold   = levels.gold   ?? 2000;

@@ -3,25 +3,41 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 
-class NotificationsScreen extends StatelessWidget {
+class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
 
-  String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
+  @override
+  State<NotificationsScreen> createState() => _NotificationsScreenState();
+}
 
-  Stream<QuerySnapshot> get _stream => FirebaseFirestore.instance
-      .collection('notifications')
-      .where('userId', isEqualTo: _uid)
-      .orderBy('createdAt', descending: true)
-      .limit(50)
-      .snapshots();
+class _NotificationsScreenState extends State<NotificationsScreen> {
+  final String _uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+
+  late final Stream<QuerySnapshot> _stream;
+
+  @override
+  void initState() {
+    super.initState();
+    _stream = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('userId', isEqualTo: _uid)
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .snapshots();
+
+    // Mark all as read when the screen opens so the badge resets immediately
+    WidgetsBinding.instance.addPostFrameCallback((_) => _markAllRead());
+  }
 
   Future<void> _markAllRead() async {
-    final batch = FirebaseFirestore.instance.batch();
+    if (_uid.isEmpty) return;
     final unread = await FirebaseFirestore.instance
         .collection('notifications')
         .where('userId', isEqualTo: _uid)
         .where('isRead', isEqualTo: false)
         .get();
+    if (unread.docs.isEmpty) return;
+    final batch = FirebaseFirestore.instance.batch();
     for (final doc in unread.docs) {
       batch.update(doc.reference, {'isRead': true});
     }
@@ -177,10 +193,15 @@ class _NotifIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (icon, color) = switch (type) {
-      'new_booking'  => (Icons.calendar_today_rounded, Colors.purple),
-      'job_status'   => (Icons.check_circle_outline,   Colors.green),
-      'chat'         => (Icons.chat_bubble_outline,    Colors.blue),
-      _              => (Icons.notifications_outlined,  Colors.grey),
+      'new_booking'  => (Icons.calendar_today_rounded,    Colors.purple),
+      'job_status'   => (Icons.check_circle_outline,      Colors.green),
+      'chat'         => (Icons.chat_bubble_outline,       Colors.blue),
+      'interest'     => (Icons.flash_on_rounded,          Colors.orange),
+      'verified'     => (Icons.verified_rounded,          Colors.blue),
+      'review'       => (Icons.star_rounded,              const Color(0xFFF59E0B)),
+      'vip_expiry'   => (Icons.workspace_premium_rounded, const Color(0xFFD97706)),
+      'payment'      => (Icons.account_balance_wallet,    Colors.green),
+      _              => (Icons.notifications_outlined,    Colors.grey),
     };
     return Container(
       padding: const EdgeInsets.all(10),

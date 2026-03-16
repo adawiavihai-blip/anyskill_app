@@ -4,155 +4,424 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ChatUIHelper {
-  // עיצוב בועת הודעה כללית
+  // ── Main entry point ──────────────────────────────────────────────────────
   static Widget buildMessageBubble({
     required BuildContext context,
     required Map<String, dynamic> data,
     required bool isMe,
+    VoidCallback? onPaymentTap,
   }) {
-    String type = data['type'] ?? 'text';
-    String msg = data['message'] ?? "";
-    var timestamp = data['timestamp'];
-    bool isRead = data['isRead'] ?? false;
+    final String type  = data['type'] ?? 'text';
+    final String msg   = data['message'] ?? '';
+    final dynamic ts   = data['timestamp'];
+    final bool isRead  = data['isRead'] ?? false;
 
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 10),
-        padding: const EdgeInsets.all(12),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-        decoration: BoxDecoration(
-          color: isMe ? const Color(0xFF007AFF) : Colors.white,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(isMe ? 16 : 0),
-            bottomRight: Radius.circular(isMe ? 0 : 16),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 5,
-              offset: const Offset(0, 2),
-            )
-          ],
-        ),
-        child: Column(
-          // QA: יישור לפי השולח
-          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-          children: [
-            _buildContentByType(type, msg, isMe),
-            const SizedBox(height: 4),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildTimestamp(timestamp, isMe),
-                if (isMe) ...[
-                  const SizedBox(width: 4),
-                  Icon(
-                    Icons.done_all,
-                    size: 15,
-                    color: isRead ? Colors.cyanAccent : Colors.white70,
-                  ),
-                ],
-              ],
-            ),
-          ],
-        ),
+    // Full-width transaction cards
+    if (type == 'payment_request') {
+      return _TransactionCard(data: data, isMe: isMe, onTap: onPaymentTap);
+    }
+    if (type == 'payment_complete') {
+      return _PaymentCompleteCard(data: data);
+    }
+
+    // Standard message bubble
+    return Padding(
+      padding: EdgeInsets.only(
+        top: 2,
+        bottom: 2,
+        left:  isMe ? 60 : 10,
+        right: isMe ? 10 : 60,
       ),
-    );
-  }
-
-  // חלוקה לפי סוג הודעה - QA: פתרון לבעיית ה-Build ב-Web
-  static Widget _buildContentByType(String type, String msg, bool isMe) {
-    switch (type) {
-      case 'image':
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Image.network(
-            msg,
-            loadingBuilder: (context, child, loadingProgress) {
-              if (loadingProgress == null) return child;
-              return const Padding(
-                padding: EdgeInsets.all(20),
-                child: CircularProgressIndicator(strokeWidth: 2),
-              );
-            },
-            errorBuilder: (c, e, s) => const Icon(Icons.broken_image, color: Colors.grey),
+      child: Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          padding: EdgeInsets.fromLTRB(
+            type == 'image' ? 4 : 13,
+            type == 'image' ? 4 : 10,
+            type == 'image' ? 4 : 13,
+            type == 'image' ? 4 : 6,
           ),
-        );
-      case 'location':
-        return InkWell(
-          onTap: () => launchUrl(Uri.parse(msg)),
-          child: Row(
+          decoration: BoxDecoration(
+            color: isMe ? const Color(0xFF6366F1) : Colors.white,
+            borderRadius: BorderRadius.only(
+              topLeft:     const Radius.circular(18),
+              topRight:    const Radius.circular(18),
+              bottomLeft:  Radius.circular(isMe ? 18 : 4),
+              bottomRight: Radius.circular(isMe ? 4 : 18),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: isMe
+                    ? const Color(0xFF6366F1).withValues(alpha: 0.22)
+                    : Colors.black.withValues(alpha: 0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+            border: isMe
+                ? null
+                : Border.all(color: Colors.grey.shade100),
+          ),
+          child: Column(
+            crossAxisAlignment:
+                isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.location_on, color: Colors.red, size: 20),
-              const SizedBox(width: 5),
-              Text(
-                "צפה במיקום",
-                style: TextStyle(
-                  color: isMe ? Colors.white : Colors.blue,
-                  decoration: TextDecoration.underline,
-                  fontWeight: FontWeight.bold,
-                ),
+              _buildContent(type, msg, isMe),
+              const SizedBox(height: 3),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _Timestamp(ts: ts, isMe: isMe),
+                  if (isMe) ...[
+                    const SizedBox(width: 3),
+                    Icon(
+                      Icons.done_all_rounded,
+                      size: 13,
+                      color: isRead
+                          ? Colors.lightBlueAccent
+                          : Colors.white.withValues(alpha: 0.45),
+                    ),
+                  ],
+                ],
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  // ── Content by type ───────────────────────────────────────────────────────
+  static Widget _buildContent(String type, String msg, bool isMe) {
+    switch (type) {
+      case 'image':
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Image.network(
+            msg,
+            width: 220,
+            fit: BoxFit.cover,
+            loadingBuilder: (_, child, prog) => prog == null
+                ? child
+                : const SizedBox(
+                    width: 220,
+                    height: 140,
+                    child: Center(child: CircularProgressIndicator(strokeWidth: 2))),
+            errorBuilder: (_, __, ___) =>
+                const Icon(Icons.broken_image, color: Colors.grey),
+          ),
         );
+
+      case 'location':
+        return GestureDetector(
+          onTap: () => launchUrl(Uri.parse(msg)),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: isMe
+                  ? Colors.white.withValues(alpha: 0.15)
+                  : Colors.blue.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: isMe
+                    ? Colors.white.withValues(alpha: 0.3)
+                    : Colors.blue.withValues(alpha: 0.25),
+              ),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.location_on_rounded,
+                  color: isMe ? Colors.white : Colors.redAccent, size: 18),
+              const SizedBox(width: 6),
+              Text(
+                'צפה במיקום',
+                style: TextStyle(
+                  color: isMe ? Colors.white : Colors.blue[700],
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  decoration: TextDecoration.underline,
+                ),
+              ),
+            ]),
+          ),
+        );
+
       default:
-        // QA: שימוש ב-TextAlign במקום TextDirection עוקף את שגיאת הקומפילציה
         return Text(
           msg,
-          textAlign: TextAlign.right, 
+          textAlign: TextAlign.right,
           style: TextStyle(
-            color: isMe ? Colors.white : Colors.black87,
-            fontSize: 16,
+            color: isMe ? Colors.white : const Color(0xFF1A1A2E),
+            fontSize: 15,
+            height: 1.4,
           ),
         );
     }
   }
 
-  // עיצוב הזמן בתחתית הבועה
-  static Widget _buildTimestamp(dynamic timestamp, bool isMe) {
-    if (timestamp == null) return const SizedBox.shrink();
-    
-    DateTime date;
-    if (timestamp is Timestamp) {
-      date = timestamp.toDate();
-    } else {
-      date = DateTime.now();
-    }
-    
-    String time = DateFormat('HH:mm').format(date);
-    
-    return Text(
-      time,
-      style: TextStyle(
-        fontSize: 10,
-        color: isMe ? Colors.white70 : Colors.grey,
-      ),
-    );
-  }
-
-  // עיצוב הודעת מערכת
+  // ── System alert pill ─────────────────────────────────────────────────────
   static Widget buildSystemAlert(String msg) {
     return Center(
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
-        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
+        margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 40),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
         decoration: BoxDecoration(
-          color: Colors.grey[200],
+          color: const Color(0xFFF1F5F9),
           borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.grey.shade200),
         ),
         child: Text(
           msg,
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-            color: Colors.black54,
+          style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey[600],
+              fontWeight: FontWeight.w500),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Timestamp helper widget ───────────────────────────────────────────────────
+
+class _Timestamp extends StatelessWidget {
+  final dynamic ts;
+  final bool isMe;
+  const _Timestamp({required this.ts, required this.isMe});
+
+  @override
+  Widget build(BuildContext context) {
+    if (ts == null) return const SizedBox.shrink();
+    final date = ts is Timestamp ? (ts as Timestamp).toDate() : DateTime.now();
+    return Text(
+      DateFormat('HH:mm').format(date),
+      style: TextStyle(
+        fontSize: 10,
+        color: isMe
+            ? Colors.white.withValues(alpha: 0.55)
+            : Colors.grey[400],
+      ),
+    );
+  }
+}
+
+// ── Transaction request card ──────────────────────────────────────────────────
+
+class _TransactionCard extends StatelessWidget {
+  final Map<String, dynamic> data;
+  final bool isMe;
+  final VoidCallback? onTap;
+
+  const _TransactionCard({
+    required this.data,
+    required this.isMe,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final amount      = (data['amount'] as num? ?? 0).toDouble();
+    final description = data['message'] as String? ?? 'בקשת תשלום';
+    final ts          = data['timestamp'];
+
+    final amountStr = amount % 1 == 0
+        ? '₪${amount.toInt()}'
+        : '₪${amount.toStringAsFixed(2)}';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: isMe
+                ? [const Color(0xFF4F46E5), const Color(0xFF7C3AED)]
+                : [const Color(0xFF1C1917), const Color(0xFF2D2520)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFF59E0B).withValues(alpha: 0.22),
+              blurRadius: 18,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // ── Header ──────────────────────────────────────────────────
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF59E0B).withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                          color: const Color(0xFFF59E0B).withValues(alpha: 0.40)),
+                    ),
+                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.bolt_rounded,
+                          size: 12, color: Color(0xFFF59E0B)),
+                      SizedBox(width: 4),
+                      Text('בקשת תשלום',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFFF59E0B),
+                              fontWeight: FontWeight.bold)),
+                    ]),
+                  ),
+                  const Icon(Icons.payments_rounded,
+                      color: Colors.white38, size: 18),
+                ],
+              ),
+              const SizedBox(height: 14),
+
+              // ── Amount ──────────────────────────────────────────────────
+              Text(
+                amountStr,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 34,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: -1,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                description,
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.6), fontSize: 13),
+              ),
+
+              const SizedBox(height: 14),
+              Divider(color: Colors.white.withValues(alpha: 0.10), height: 1),
+              const SizedBox(height: 14),
+
+              // ── Action ──────────────────────────────────────────────────
+              if (!isMe) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFF59E0B),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    icon: const Icon(Icons.lock_rounded, size: 16),
+                    label: const Text('אשר ושלם',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 14)),
+                    onPressed: onTap,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(Icons.shield_rounded,
+                      size: 11,
+                      color: Colors.white.withValues(alpha: 0.35)),
+                  const SizedBox(width: 4),
+                  Text('התשלום מוגן בנאמנות על ידי AnySkill',
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.white.withValues(alpha: 0.35))),
+                ]),
+              ] else ...[
+                Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  const Icon(Icons.hourglass_top_rounded,
+                      size: 13, color: Colors.white38),
+                  const SizedBox(width: 5),
+                  Text('ממתין לאישור הלקוח',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.45))),
+                ]),
+              ],
+              const SizedBox(height: 8),
+              _Timestamp(ts: ts, isMe: true),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Payment complete card ─────────────────────────────────────────────────────
+
+class _PaymentCompleteCard extends StatelessWidget {
+  final Map<String, dynamic> data;
+  const _PaymentCompleteCard({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final amount = (data['amount'] as num? ?? 0).toDouble();
+    final ts     = data['timestamp'];
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF0FFF4),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+              color: const Color(0xFF22C55E).withValues(alpha: 0.40)),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF22C55E).withValues(alpha: 0.10),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: const BoxDecoration(
+                      color: Color(0xFFDCFCE7), shape: BoxShape.circle),
+                  child: const Icon(Icons.check_rounded,
+                      color: Color(0xFF16A34A), size: 20),
+                ),
+                const Text('תשלום הושלם! 🎉',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                        color: Color(0xFF16A34A))),
+              ],
+            ),
+            if (amount > 0) ...[
+              const SizedBox(height: 8),
+              Text(
+                amount % 1 == 0
+                    ? '₪${amount.toInt()}'
+                    : '₪${amount.toStringAsFixed(2)}',
+                style: const TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF16A34A)),
+              ),
+            ],
+            const SizedBox(height: 6),
+            _Timestamp(ts: ts, isMe: false),
+          ],
         ),
       ),
     );

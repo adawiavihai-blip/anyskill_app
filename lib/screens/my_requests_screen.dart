@@ -1,6 +1,8 @@
+// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:video_player/video_player.dart';
 import 'expert_profile_screen.dart';
 import 'chat_screen.dart';
 import '../services/ai_analysis_service.dart';
@@ -329,7 +331,8 @@ class _InterestedProvidersSheet extends StatefulWidget {
 class _InterestedProvidersSheetState
     extends State<_InterestedProvidersSheet> {
   List<Map<String, dynamic>>? _providers;
-  int _topMatchIdx = 0;
+  int _bestValueIdx = -1;
+  int _fastestResponseIdx = -1;
 
   @override
   void initState() {
@@ -362,10 +365,34 @@ class _InterestedProvidersSheetState
             .compareTo(AiAnalysisService.scoreProvider(
                 a, widget.requestDescription)));
 
+    // Best Value = lowest pricePerHour (among providers with a set price)
+    int bestValueIdx = -1;
+    int lowestPrice = 999999;
+    for (int i = 0; i < providers.length; i++) {
+      final price = (providers[i]['pricePerHour'] as num? ?? 0).toInt();
+      if (price > 0 && price < lowestPrice) {
+        lowestPrice = price;
+        bestValueIdx = i;
+      }
+    }
+
+    // Fastest Response = highest orderCount (proxy), excluding bestValue slot
+    int fastestResponseIdx = -1;
+    int highestOrders = -1;
+    for (int i = 0; i < providers.length; i++) {
+      if (i == bestValueIdx) continue;
+      final orders = (providers[i]['orderCount'] as num? ?? 0).toInt();
+      if (orders > highestOrders) {
+        highestOrders = orders;
+        fastestResponseIdx = i;
+      }
+    }
+
     if (mounted) {
       setState(() {
         _providers = providers;
-        _topMatchIdx = providers.isNotEmpty ? 0 : 0; // highest score is index 0 after sort
+        _bestValueIdx = bestValueIdx;
+        _fastestResponseIdx = fastestResponseIdx;
       });
     }
   }
@@ -437,16 +464,20 @@ class _InterestedProvidersSheetState
                           controller: scrollCtrl,
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 40),
                           itemCount: _providers!.length,
-                          itemBuilder: (ctx, index) =>
-                              _ProviderMatchCard(
-                                provider: _providers![index],
-                                isTopMatch: index == _topMatchIdx,
-                                score: AiAnalysisService.scoreProvider(
-                                    _providers![index],
-                                    widget.requestDescription),
-                                requestDescription:
-                                    widget.requestDescription,
-                              ),
+                          itemBuilder: (ctx, index) => _ProviderMatchCard(
+                            key: ValueKey(_providers![index]['uid']),
+                            provider: _providers![index],
+                            isTopMatch: index == 0,
+                            score: AiAnalysisService.scoreProvider(
+                                _providers![index],
+                                widget.requestDescription),
+                            requestDescription: widget.requestDescription,
+                            badge: index == _bestValueIdx
+                                ? _ComparisonBadge.bestValue
+                                : index == _fastestResponseIdx
+                                    ? _ComparisonBadge.fastestResponse
+                                    : _ComparisonBadge.none,
+                          ),
                         ),
             ),
           ],
@@ -456,47 +487,151 @@ class _InterestedProvidersSheetState
   }
 }
 
-// ─── Provider match card (with Top Match badge) ───────────────────────────────
+// ─── Comparison badge type ────────────────────────────────────────────────────
 
-class _ProviderMatchCard extends StatelessWidget {
+enum _ComparisonBadge { none, bestValue, fastestResponse }
+
+// ─── Provider match card ──────────────────────────────────────────────────────
+
+class _ProviderMatchCard extends StatefulWidget {
   final Map<String, dynamic> provider;
   final bool isTopMatch;
   final double score;
   final String requestDescription;
+  final _ComparisonBadge badge;
 
   const _ProviderMatchCard({
+    super.key,
     required this.provider,
     required this.isTopMatch,
     required this.score,
     required this.requestDescription,
+    this.badge = _ComparisonBadge.none,
   });
 
   @override
+  State<_ProviderMatchCard> createState() => _ProviderMatchCardState();
+}
+
+class _ProviderMatchCardState extends State<_ProviderMatchCard> {
+  VideoPlayerController? _videoCtrl;
+  bool _videoReady = false;
+  String? _lastHiredAgo;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVideoUrl();
+    _loadLastHired();
+  }
+
+  Future<void> _loadVideoUrl() async {
+    final uid = widget.provider['uid'] as String? ?? '';
+    if (uid.isEmpty) return;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('stories')
+          .doc(uid)
+          .get();
+      final videoUrl =
+          ((doc.data() ?? {})['videoUrl'] as String?) ?? '';
+      if (videoUrl.isEmpty || !mounted) return;
+      final ctrl =
+          VideoPlayerController.networkUrl(Uri.parse(videoUrl));
+      await ctrl.initialize();
+      ctrl.setVolume(0);
+      ctrl.setLooping(true);
+      ctrl.play();
+      if (mounted) {
+        setState(() {
+          _videoCtrl = ctrl;
+          _videoReady = true;
+        });
+      } else {
+        ctrl.dispose();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadLastHired() async {
+    final uid = widget.provider['uid'] as String? ?? '';
+    if (uid.isEmpty) return;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('jobs')
+          .where('expertId', isEqualTo: uid)
+          .where('status', isEqualTo: 'completed')
+          .orderBy('createdAt', descending: true)
+          .limit(1)
+          .get();
+      if (snap.docs.isEmpty || !mounted) return;
+      final ts =
+          snap.docs.first.data()['createdAt'] as Timestamp?;
+      if (ts == null) return;
+      final diff = DateTime.now().difference(ts.toDate());
+      String label;
+      if (diff.inMinutes < 60) {
+        label = "לפני ${diff.inMinutes} דק'";
+      } else if (diff.inHours < 24) {
+        label = "לפני ${diff.inHours} שע'";
+      } else {
+        label = "לפני ${diff.inDays} ימים";
+      }
+      if (mounted) setState(() => _lastHiredAgo = label);
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _videoCtrl?.dispose();
+    super.dispose();
+  }
+
+  // ── Confidence score label ──────────────────────────────────────────────────
+  String _confidenceLabel() {
+    final rating =
+        (widget.provider['rating'] as num? ?? 5.0).toDouble();
+    final orders =
+        (widget.provider['orderCount'] as num? ?? 0).toInt();
+    final xp = (widget.provider['xp'] as num? ?? 0).toInt();
+    final composite = (rating / 5.0) * 40.0 +
+        (orders.clamp(0, 50) / 50.0) * 40.0 +
+        (xp.clamp(0, 500) / 500.0) * 20.0;
+    if (composite >= 85) return 'Top 5% באזורך';
+    if (composite >= 65) return 'Top 10% באזורך';
+    final successRate =
+        ((rating / 5.0) * 100).toInt().clamp(0, 100);
+    return '$successRate% שיעור הצלחה';
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final name = (provider['name'] ?? 'מומחה') as String;
-    final rating = (provider['rating'] as num? ?? 5.0).toDouble();
-    final reviewsCount = (provider['reviewsCount'] as num? ?? 0).toInt();
-    final serviceType = (provider['serviceType'] ?? '') as String;
-    final aboutMe = (provider['aboutMe'] ?? '') as String;
-    final profileImage = (provider['profileImage'] ?? '') as String;
-    final isVerified = (provider['isVerified'] ?? false) as bool;
-    final orderCount = (provider['orderCount'] as num? ?? 0).toInt();
-    final uid = (provider['uid'] ?? '') as String;
-    final scorePercent = (score / 100.0).clamp(0.0, 1.0);
+    final p = widget.provider;
+    final name = (p['name'] ?? 'מומחה') as String;
+    final rating = (p['rating'] as num? ?? 5.0).toDouble();
+    final reviewsCount = (p['reviewsCount'] as num? ?? 0).toInt();
+    final serviceType = (p['serviceType'] ?? '') as String;
+    final aboutMe = (p['aboutMe'] ?? '') as String;
+    final profileImage = (p['profileImage'] ?? '') as String;
+    final isVerified = (p['isVerified'] ?? false) as bool;
+    final orderCount = (p['orderCount'] as num? ?? 0).toInt();
+    final pricePerHour = (p['pricePerHour'] as num? ?? 0).toInt();
+    final uid = (p['uid'] ?? '') as String;
+    final scorePercent = (widget.score / 100.0).clamp(0.0, 1.0);
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
+      margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: isTopMatch
+        border: widget.isTopMatch
             ? Border.all(
                 color: const Color(0xFFFFB800).withValues(alpha: 0.6),
                 width: 2)
             : Border.all(color: Colors.grey.shade100),
         boxShadow: [
           BoxShadow(
-            color: isTopMatch
+            color: widget.isTopMatch
                 ? const Color(0xFFFFB800).withValues(alpha: 0.12)
                 : Colors.black.withValues(alpha: 0.05),
             blurRadius: 14,
@@ -504,26 +639,78 @@ class _ProviderMatchCard extends StatelessWidget {
           ),
         ],
       ),
-      child: Stack(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Top Match golden banner ────────────────────────────────────
+          if (widget.isTopMatch)
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius:
+                    BorderRadius.vertical(top: Radius.circular(18)),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('🏆', style: TextStyle(fontSize: 13)),
+                  SizedBox(width: 6),
+                  Text(
+                    'התאמה הטובה ביותר',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
           Padding(
-            padding: EdgeInsets.fromLTRB(14, isTopMatch ? 42 : 14, 14, 14),
+            padding: const EdgeInsets.all(14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Provider info row
+                // ── Provider info row ──────────────────────────────────
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    CircleAvatar(
-                      radius: 30,
-                      backgroundColor: Colors.blue[50],
-                      backgroundImage: profileImage.isNotEmpty
-                          ? NetworkImage(profileImage)
-                          : null,
-                      child: profileImage.isEmpty
-                          ? const Icon(Icons.person, size: 28)
-                          : null,
-                    ),
+                    // Avatar with video indicator
+                    Stack(children: [
+                      CircleAvatar(
+                        radius: 30,
+                        backgroundColor: Colors.blue[50],
+                        backgroundImage: profileImage.isNotEmpty
+                            ? NetworkImage(profileImage)
+                            : null,
+                        child: profileImage.isEmpty
+                            ? const Icon(Icons.person, size: 28)
+                            : null,
+                      ),
+                      if (_videoReady)
+                        Positioned(
+                          bottom: 0,
+                          right: 0,
+                          child: Container(
+                            width: 18,
+                            height: 18,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF6366F1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.play_arrow_rounded,
+                                size: 12, color: Colors.white),
+                          ),
+                        ),
+                    ]),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -547,7 +734,7 @@ class _ProviderMatchCard extends StatelessWidget {
                           Row(children: [
                             const Icon(Icons.star,
                                 color: Colors.amber, size: 14),
-                            Text(' $rating',
+                            Text(' ${rating.toStringAsFixed(1)}',
                                 style: const TextStyle(
                                     fontWeight: FontWeight.bold,
                                     fontSize: 13)),
@@ -556,9 +743,7 @@ class _ProviderMatchCard extends StatelessWidget {
                                     color: Colors.grey, fontSize: 12)),
                             if (orderCount > 0) ...[
                               const SizedBox(width: 8),
-                              const Text('🔥',
-                                  style: TextStyle(fontSize: 12)),
-                              Text(' $orderCount הזמנות',
+                              Text('🔥 $orderCount הזמנות',
                                   style: const TextStyle(
                                       fontSize: 11,
                                       color: Color(0xFFD4520A),
@@ -568,9 +753,34 @@ class _ProviderMatchCard extends StatelessWidget {
                         ],
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    // ── Confidence Score badge ─────────────────────────
+                    _buildConfidenceBadge(),
                   ],
                 ),
 
+                // ── Video Intro Preview ────────────────────────────────
+                if (_videoReady && _videoCtrl != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: SizedBox(
+                        height: 140,
+                        width: double.infinity,
+                        child: FittedBox(
+                          fit: BoxFit.cover,
+                          child: SizedBox(
+                            width: _videoCtrl!.value.size.width,
+                            height: _videoCtrl!.value.size.height,
+                            child: VideoPlayer(_videoCtrl!),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // ── Bio ───────────────────────────────────────────────
                 if (aboutMe.isNotEmpty) ...[
                   const SizedBox(height: 10),
                   Text(
@@ -584,155 +794,282 @@ class _ProviderMatchCard extends StatelessWidget {
                   ),
                 ],
 
-                // Match score bar
-                const SizedBox(height: 12),
-                Row(
+                // ── Social proof + price + comparison badges ───────────
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
-                    Text('התאמה',
-                        style: TextStyle(
-                            fontSize: 11, color: Colors.grey[500])),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: scorePercent,
-                          minHeight: 5,
-                          backgroundColor: Colors.grey[100],
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            isTopMatch
-                                ? const Color(0xFFFFB800)
-                                : const Color(0xFF6366F1),
-                          ),
-                        ),
+                    if (_lastHiredAgo != null)
+                      _chip(
+                        icon: Icons.circle,
+                        iconColor: Colors.green,
+                        iconSize: 7,
+                        label: 'נשכר $_lastHiredAgo',
+                        bg: Colors.green[50]!,
+                        fg: Colors.green[700]!,
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '${(scorePercent * 100).toInt()}%',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: isTopMatch
-                            ? const Color(0xFFD97706)
-                            : const Color(0xFF6366F1),
+                    if (pricePerHour > 0)
+                      _chip(
+                        icon: Icons.attach_money_rounded,
+                        iconColor: const Color(0xFF6366F1),
+                        label: '₪$pricePerHour / שעה',
+                        bg: const Color(0xFFF0F0FF),
+                        fg: const Color(0xFF6366F1),
                       ),
-                    ),
+                    if (widget.badge != _ComparisonBadge.none)
+                      _buildComparisonBadge(),
                   ],
                 ),
 
+                // ── AnySkill Verified + Escrow badge ──────────────────
+                const SizedBox(height: 10),
+                Tooltip(
+                  triggerMode: TooltipTriggerMode.tap,
+                  message:
+                      'הכסף מוחזק בנאמנות על ידי AnySkill ומועבר למומחה רק לאחר אישורך בסיום העבודה.',
+                  preferBelow: false,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E293B),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: const TextStyle(
+                      color: Colors.white, fontSize: 12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0FFF4),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                          color: const Color(0xFF22C55E)
+                              .withValues(alpha: 0.5)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.shield_rounded,
+                            size: 14, color: Color(0xFF16A34A)),
+                        const SizedBox(width: 6),
+                        const Text(
+                          'AnySkill Verified — תשלום מאובטח בנאמנות',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF16A34A),
+                              fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(Icons.info_outline_rounded,
+                            size: 12,
+                            color: const Color(0xFF16A34A)
+                                .withValues(alpha: 0.7)),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // ── Match score bar ────────────────────────────────────
+                const SizedBox(height: 12),
+                Row(children: [
+                  Text('התאמה',
+                      style: TextStyle(
+                          fontSize: 11, color: Colors.grey[500])),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: scorePercent,
+                        minHeight: 5,
+                        backgroundColor: Colors.grey[100],
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          widget.isTopMatch
+                              ? const Color(0xFFFFB800)
+                              : const Color(0xFF6366F1),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${(scorePercent * 100).toInt()}%',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: widget.isTopMatch
+                          ? const Color(0xFFD97706)
+                          : const Color(0xFF6366F1),
+                    ),
+                  ),
+                ]),
+
                 const SizedBox(height: 14),
 
-                // Action buttons
+                // ── Action bar ─────────────────────────────────────────
+                Row(children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(
+                            color: Color(0xFF6366F1)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 10),
+                      ),
+                      icon: const Icon(Icons.chat_bubble_outline,
+                          size: 16, color: Color(0xFF6366F1)),
+                      label: const Text('שוחח עכשיו',
+                          style: TextStyle(
+                              color: Color(0xFF6366F1),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600)),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ChatScreen(
+                              receiverId: uid,
+                              receiverName: name,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6366F1),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 10),
+                      ),
+                      icon: const Icon(Icons.lock_rounded,
+                          size: 16, color: Colors.white),
+                      label: const Text('אשר ושלם',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600)),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ExpertProfileScreen(
+                              expertId: uid,
+                              expertName: name,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ]),
+
+                // Escrow caption
+                const SizedBox(height: 6),
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(
-                              color: Color(0xFF6366F1)),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 10),
-                        ),
-                        icon: const Icon(Icons.chat_bubble_outline,
-                            size: 16, color: Color(0xFF6366F1)),
-                        label: const Text('שלח הודעה',
-                            style: TextStyle(
-                                color: Color(0xFF6366F1),
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600)),
-                        onPressed: () {
-                          Navigator.pop(context);
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => ChatScreen(
-                                receiverId: uid,
-                                receiverName: name,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.black,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 10),
-                        ),
-                        icon: const Icon(Icons.person_outline,
-                            size: 16, color: Colors.white),
-                        label: const Text('פרופיל',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600)),
-                        onPressed: () {
-                          Navigator.pop(context);
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => ExpertProfileScreen(
-                                expertId: uid,
-                                expertName: name,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
+                    Icon(Icons.lock_outline_rounded,
+                        size: 11, color: Colors.grey[400]),
+                    const SizedBox(width: 4),
+                    Text('הכסף מוגן עד סיום העבודה',
+                        style: TextStyle(
+                            fontSize: 10, color: Colors.grey[400])),
                   ],
                 ),
               ],
             ),
           ),
-
-          // ── Top Match badge (golden banner, top of card) ──────────────
-          if (isTopMatch)
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius:
-                      BorderRadius.vertical(top: Radius.circular(18)),
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text('🏆', style: TextStyle(fontSize: 13)),
-                    SizedBox(width: 6),
-                    Text(
-                      'התאמה הטובה ביותר',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                        letterSpacing: 0.3,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
         ],
       ),
+    );
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
+  Widget _buildConfidenceBadge() {
+    final label = _confidenceLabel();
+    final isTop = label.startsWith('Top');
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        gradient: isTop
+            ? const LinearGradient(
+                colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)])
+            : const LinearGradient(
+                colors: [Color(0xFF059669), Color(0xFF10B981)]),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(label,
+          style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _buildComparisonBadge() {
+    final isBestValue = widget.badge == _ComparisonBadge.bestValue;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: isBestValue
+            ? Colors.green[600]
+            : const Color(0xFF2563EB),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(
+          isBestValue
+              ? Icons.savings_rounded
+              : Icons.bolt_rounded,
+          size: 11,
+          color: Colors.white,
+        ),
+        const SizedBox(width: 3),
+        Text(
+          isBestValue ? 'הכי משתלם' : 'תגובה מהירה',
+          style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.bold),
+        ),
+      ]),
+    );
+  }
+
+  static Widget _chip({
+    required IconData icon,
+    required Color iconColor,
+    required String label,
+    required Color bg,
+    required Color fg,
+    double iconSize = 13,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: iconSize, color: iconColor),
+        const SizedBox(width: 4),
+        Text(label,
+            style: TextStyle(
+                fontSize: 11,
+                color: fg,
+                fontWeight: FontWeight.w600)),
+      ]),
     );
   }
 }

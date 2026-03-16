@@ -79,7 +79,7 @@ class ChatService {
         .snapshots()
         .map((snap) {
       if (!snap.exists) return 0;
-      final data = snap.data() as Map<String, dynamic>? ?? {};
+      final data = snap.data() ?? {};
       return (data['unreadCount_$userId'] as int?) ?? 0;
     });
   }

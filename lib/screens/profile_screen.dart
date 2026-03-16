@@ -284,7 +284,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final now         = DateTime.now();
     final isActive    = isPromoted && expiryDate != null && expiryDate.isAfter(now);
     final isExpired   = isPromoted && expiryDate != null && !expiryDate.isAfter(now);
-    final daysLeft    = isActive ? expiryDate!.difference(now).inDays + 1 : 0;
+    final daysLeft    = isActive ? expiryDate.difference(now).inDays + 1 : 0;
 
     if (isActive) {
       // Active VIP card
@@ -461,7 +461,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _showVipSheet(BuildContext context, Map<String, dynamic> data) {
     final balance = (data['balance'] as num? ?? 0).toDouble();
     final hasBalance = balance >= 99;
-    bool _isLoading = false;
+    bool isLoading = false;
 
     showModalBottomSheet(
       context: context,
@@ -592,9 +592,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         borderRadius: BorderRadius.circular(16)),
                     elevation: 0,
                   ),
-                  onPressed: hasBalance && !_isLoading
+                  onPressed: hasBalance && !isLoading
                       ? () async {
-                          setSheet(() => _isLoading = true);
+                          setSheet(() => isLoading = true);
                           try {
                             await FirebaseFunctions.instance
                                 .httpsCallable('activateVipSubscription')
@@ -617,7 +617,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             }
                           } catch (e) {
                             if (ctx.mounted) {
-                              setSheet(() => _isLoading = false);
+                              setSheet(() => isLoading = false);
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                     backgroundColor: Colors.red,
@@ -627,7 +627,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           }
                         }
                       : null,
-                  child: _isLoading
+                  child: isLoading
                       ? const SizedBox(
                           width: 22,
                           height: 22,

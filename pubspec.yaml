@@ -28,7 +28,17 @@ dependencies:
   connectivity_plus: ^7.0.0
   cloud_functions: ^6.0.7
   table_calendar: ^3.2.0
-  web: ^1.1.0
+  showcaseview: ^3.0.0
+  google_sign_in: ^6.2.1
+  fl_chart: ^1.2.0
+  flutter_secure_storage: ^9.2.2
+  shimmer: ^3.0.0
+  shared_preferences: ^2.5.3
+
+dependency_overrides:
+  # fl_chart 1.x calls translateByDouble/scaleByDouble which were added
+  # in vector_math 2.1.5. The Flutter SDK pins 2.1.4, so we unlock it here.
+  vector_math: ^2.1.5
 
 dev_dependencies:
   flutter_test:
@@ -36,15 +46,39 @@ dev_dependencies:
   flutter_lints: ^5.0.0
   fake_cloud_firestore: ^4.0.2
   flutter_launcher_icons: ^0.14.2
+  flutter_native_splash: ^2.4.3
 
+# ── App icon generation (run: dart run flutter_launcher_icons) ─────────────────
 flutter_launcher_icons:
   android: "ic_launcher"
   ios: true
   remove_alpha_ios: true
   image_path: "assets/images/LOGO.png"
   min_sdk_android: 21
+  # Adaptive icon for Android 8.0+ — logo on dark-indigo background
+  adaptive_icon_background: "#1E1B4B"
+  adaptive_icon_foreground: "assets/images/LOGO.png"
   web:
-    generate: false
+    generate: true
+    image_path: "assets/images/LOGO.png"
+    background_color: "#1E1B4B"
+    theme_color: "#6366F1"
+
+# ── Native splash screen (run: dart run flutter_native_splash:create) ──────────
+flutter_native_splash:
+  # Dark indigo background to match the app theme
+  color: "#1E1B4B"
+  color_dark: "#1E1B4B"
+  image: assets/images/LOGO.png
+  image_dark: assets/images/LOGO.png
+  # Keep splash visible until Flutter marks it ready
+  android_12:
+    image: assets/images/LOGO.png
+    icon_background_color: "#1E1B4B"
+    image_dark: assets/images/LOGO.png
+    icon_background_color_dark: "#1E1B4B"
+  fullscreen: true
+  web: false
 
 flutter:
   uses-material-design: true

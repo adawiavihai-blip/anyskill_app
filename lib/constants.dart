@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 // זו הרשימה המרכזית. כל האפליקציה תמשוך מכאן את השמות.
 // אם תשנה כאן ל"כושר", זה ישתנה אוטומטית גם ב"גלה" וגם ב"עריכה".
+// ignore: constant_identifier_names
 const List<Map<String, dynamic>> APP_CATEGORIES = [
   {'name': 'שיפוצים',       'icon': Icons.build,              'iconName': 'build',              'img': 'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=500'},
   {'name': 'ניקיון',         'icon': Icons.cleaning_services,  'iconName': 'cleaning_services',  'img': 'https://images.unsplash.com/photo-1581578731548-c64695cc6958?w=500'},

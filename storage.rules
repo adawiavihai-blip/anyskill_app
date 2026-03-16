@@ -1,0 +1,23 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // חוק לצילומי פרופיל - כולם יכולים לראות (כדי שיופיעו בחיפוש), רק בעל הפרופיל מעלה
+    match /profile_images/{userId}/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // חוק לקבצי צ'אט (תמונות והקלטות קוליות)
+    match /chats/{chatId}/{allPaths=**} {
+      // רק משתמש שחלק מהצ'אט (ה-UID שלו מופיע בתוך שם התיקייה) יכול לקרוא ולהעלות
+      allow read, write: if request.auth != null && 
+        request.auth.uid in chatId.split('_');
+    }
+
+    // הגנה כללית על שאר הקבצים
+    match /{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.token.email_verified == true;
+    }
+  }
+}

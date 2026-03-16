@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -127,9 +128,10 @@ class _SignUpScreenState extends State<SignUpScreen>
         'isVerified':       false,
         'isCustomer':       !isProvider,
         'isProvider':       isProvider,
-        'termsAccepted':    true,
-        'agreedToTerms':    true,
-        'termsVersion':     'March_2026',
+        // ── ToS consent trail ──────────────────────────────────────────────
+        'tos_agreed':       true,
+        'tos_version':      '2.0',
+        'tos_agreed_at':    FieldValue.serverTimestamp(),
         'onboardingComplete': false,
         'tourComplete':     false,
         'createdAt':        FieldValue.serverTimestamp(),
@@ -211,9 +213,10 @@ class _SignUpScreenState extends State<SignUpScreen>
           'isVerified':       false,
           'isCustomer':       !isProvider,
           'isProvider':       isProvider,
-          'termsAccepted':    true,
-          'agreedToTerms':    true,
-          'termsVersion':     'March_2026',
+          // ── ToS consent trail ────────────────────────────────────────────
+          'tos_agreed':       true,
+          'tos_version':      '2.0',
+          'tos_agreed_at':    FieldValue.serverTimestamp(),
           'onboardingComplete': false,
           'tourComplete':     false,
           'createdAt':        FieldValue.serverTimestamp(),
@@ -1030,53 +1033,89 @@ class _SignUpScreenState extends State<SignUpScreen>
 
   // ── Terms row ─────────────────────────────────────────────────────────────────
   Widget _buildTermsRow() {
-    return Row(
-      children: [
-        Expanded(
-          child: GestureDetector(
-            onTap: _showTerms,
+    // Individual TapGestureRecognizers so each link can be tapped separately
+    // while the checkbox is tapped independently.
+    final tosTap = TapGestureRecognizer()..onTap = _showTerms;
+    final privacyTap = TapGestureRecognizer()..onTap = _showTerms;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _termsOk
+            ? const Color(0xFFF0F0FF)
+            : const Color(0xFFFAFAFF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _termsOk ? _kPurple : Colors.grey.shade200,
+          width: 1.2,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Label ──────────────────────────────────────────────────────────
+          Expanded(
             child: RichText(
               textAlign: TextAlign.right,
               text: TextSpan(
-                text: 'קראתי ואני מאשר/ת את ',
-                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-                children: const [
+                style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.55,
+                    color: Colors.grey[700]),
+                children: [
+                  const TextSpan(
+                    text: 'אני מאשר/ת שקראתי והסכמתי ל',
+                  ),
                   TextSpan(
-                    text: 'תנאי השימוש ומדיניות הפרטיות',
-                    style: TextStyle(
+                    text: 'תנאי השימוש',
+                    recognizer: tosTap,
+                    style: const TextStyle(
                       color: _kPurple,
                       fontWeight: FontWeight.bold,
                       decoration: TextDecoration.underline,
                       decorationColor: _kPurple,
                     ),
                   ),
+                  const TextSpan(text: ' ול'),
+                  TextSpan(
+                    text: 'מדיניות הפרטיות',
+                    recognizer: privacyTap,
+                    style: const TextStyle(
+                      color: _kPurple,
+                      fontWeight: FontWeight.bold,
+                      decoration: TextDecoration.underline,
+                      decorationColor: _kPurple,
+                    ),
+                  ),
+                  const TextSpan(text: ' של AnySkill (גרסה 2.0)'),
                 ],
               ),
             ),
           ),
-        ),
-        const SizedBox(width: 8),
-        GestureDetector(
-          onTap: () => setState(() => _termsOk = !_termsOk),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              color: _termsOk ? _kPurple : Colors.transparent,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: _termsOk ? _kPurple : Colors.grey.shade400,
-                width: 1.5,
+          const SizedBox(width: 10),
+          // ── Checkbox ───────────────────────────────────────────────────────
+          GestureDetector(
+            onTap: () => setState(() => _termsOk = !_termsOk),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color: _termsOk ? _kPurple : Colors.transparent,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: _termsOk ? _kPurple : Colors.grey.shade400,
+                  width: 1.5,
+                ),
               ),
+              child: _termsOk
+                  ? const Icon(Icons.check_rounded,
+                      color: Colors.white, size: 16)
+                  : null,
             ),
-            child: _termsOk
-                ? const Icon(Icons.check_rounded,
-                    color: Colors.white, size: 16)
-                : null,
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

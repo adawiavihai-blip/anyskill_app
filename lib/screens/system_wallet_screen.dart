@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
-import 'dart:convert';
-import 'package:web/web.dart' as web;
+import '../utils/web_utils.dart';
 
 class SystemWalletScreen extends StatefulWidget {
   const SystemWalletScreen({super.key});
@@ -66,7 +65,7 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
       sb.write('\uFEFF');
       sb.writeln('תאריך,תיאור,עמלה (₪)');
       for (final doc in snapshot.docs) {
-        final tx = doc.data() as Map<String, dynamic>;
+        final tx = doc.data();
         final date = (tx['timestamp'] as Timestamp?)?.toDate();
         final dateStr = date != null ? DateFormat('dd/MM/yyyy HH:mm').format(date) : '';
         final desc = (tx['description'] ?? 'עסקה: ${tx['jobId'] ?? ''}')
@@ -76,16 +75,9 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
         sb.writeln('$dateStr,$desc,$amount');
       }
 
-      final encoded = base64Encode(utf8.encode(sb.toString()));
       final filename =
           'anyskill_earnings_${DateFormat('yyyyMMdd').format(DateTime.now())}.csv';
-      final anchor =
-          web.document.createElement('a') as web.HTMLAnchorElement;
-      anchor.href = 'data:text/csv;charset=utf-8;base64,$encoded';
-      anchor.download = filename;
-      web.document.body!.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
+      triggerCsvDownload(sb.toString(), filename);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

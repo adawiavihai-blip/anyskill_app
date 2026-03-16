@@ -32,7 +32,9 @@ class _ReceiptSheet extends StatelessWidget {
     final total      = (jobData['totalPaidByCustomer'] as num? ?? 0).toDouble();
     final commission = (jobData['commissionAmount']    as num? ?? 0).toDouble();
     final net        = (jobData['netAmountForExpert']  as num? ?? 0).toDouble();
-    final feePct     = total > 0 ? (commission / total * 100).round() : 0;
+    // Guard against legacy corrupted data (commission > total means wrong format stored)
+    final feePctRaw  = total > 0 ? (commission / total * 100) : 0.0;
+    final feePct     = (feePctRaw > 100 || feePctRaw < 0) ? 0 : feePctRaw.round();
 
     final customerName = jobData['customerName'] as String? ?? '—';
     final expertName   = jobData['expertName']   as String? ?? '—';
@@ -107,7 +109,7 @@ class _ReceiptSheet extends StatelessWidget {
                   _priceRow("מחיר השירות",         "₪${net.toStringAsFixed(2)}"),
                   const SizedBox(height: 8),
                   _priceRow(
-                    "עמלת פלטפורמה ($feePct%)",
+                    feePct > 0 ? "עמלת פלטפורמה ($feePct%)" : "עמלת פלטפורמה",
                     "₪${commission.toStringAsFixed(2)}",
                     isGrey: true,
                   ),

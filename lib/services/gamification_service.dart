@@ -13,7 +13,7 @@ class GamificationService {
   GamificationService._();
 
   // ── Thresholds (updated at runtime via loadThresholds()) ─────────────────
-  // These match the defaults seeded into settings_gamification/__levels__
+  // These match the defaults seeded into settings_gamification/app_levels
   static int silverThreshold = 500;
   static int goldThreshold   = 2000;
 
@@ -24,7 +24,7 @@ class GamificationService {
     try {
       final doc = await FirebaseFirestore.instance
           .collection('settings_gamification')
-          .doc('__levels__')
+          .doc('app_levels')
           .get();
       final d = doc.data() ?? {};
       final silver = (d['silver'] as num?)?.toInt();

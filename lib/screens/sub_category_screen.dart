@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/category_service.dart';
+import '../widgets/category_image_card.dart';
 import 'category_results_screen.dart';
 
 class SubCategoryScreen extends StatelessWidget {
@@ -152,31 +153,8 @@ class _SubCategoryCard extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Background image
-            imageUrl.isNotEmpty
-                ? Image.network(
-                    imageUrl,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(color: Colors.grey[200]),
-                    loadingBuilder: (_, child, progress) =>
-                        progress == null ? child : Container(color: Colors.grey[100]),
-                  )
-                : Container(color: Colors.grey[200]),
-
-            // Dark gradient overlay
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.transparent,
-                    Colors.black.withValues(alpha: 0.68),
-                  ],
-                  stops: const [0.4, 1.0],
-                ),
-              ),
-            ),
+            // Background image with shimmer + branded gradient fallback
+            CategoryImageBackground(imageUrl: imageUrl),
 
             // Name + icon at bottom
             Positioned(

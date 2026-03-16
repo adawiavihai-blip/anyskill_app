@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'permission_service.dart';
 
 class LocationService {
   LocationService._();
@@ -35,29 +36,74 @@ class LocationService {
     }
   }
 
-  // ── Permission-aware request (shows premium dialog once) ───────────────────
-  /// Shows our premium in-app dialog before the system prompt.
-  /// Returns null if the user declines or permission is permanently denied.
+  // ── Permission-aware request (shows premium dialog ONCE) ──────────────────
+  /// Shows our premium in-app dialog before the OS prompt — but only once.
+  /// Subsequent calls respect the stored answer from SharedPreferences:
+  ///   granted → silently get position (no dialog)
+  ///   denied  → return null immediately (no dialog, no OS prompt)
   static Future<Position?> requestAndGet(BuildContext context) async {
     if (_cached != null) return _cached;
 
-    LocationPermission perm = await Geolocator.checkPermission();
+    // ── 1. Check locally-stored answer ─────────────────────────────────────
+    final stored = await PermissionService.getLocationStatus();
 
-    if (perm == LocationPermission.deniedForever) {
+    if (stored == PermissionService.denied) {
+      // User already said no — respect it, never re-prompt.
+      return null;
+    }
+
+    if (stored == PermissionService.granted) {
+      // Previously granted — verify OS hasn't revoked it (silent check).
+      final perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.whileInUse ||
+          perm == LocationPermission.always) {
+        return _fetchPosition();
+      }
+      // OS permission was revoked — update local record and fall through.
+      await PermissionService.saveLocationStatus(PermissionService.denied);
       if (context.mounted) _showDeniedSnack(context);
       return null;
     }
 
-    if (perm == LocationPermission.denied) {
-      if (!context.mounted) return null;
-      final proceed = await _showPermissionDialog(context);
-      if (!proceed) return null;
-      perm = await Geolocator.requestPermission();
+    // ── 2. Never asked yet — check current OS status ────────────────────────
+    final perm = await Geolocator.checkPermission();
+
+    if (perm == LocationPermission.deniedForever) {
+      await PermissionService.saveLocationStatus(PermissionService.denied);
+      if (context.mounted) _showDeniedSnack(context);
+      return null;
     }
 
     if (perm == LocationPermission.whileInUse ||
         perm == LocationPermission.always) {
+      // OS already granted (e.g. from location_module or a previous install).
+      await PermissionService.saveLocationStatus(PermissionService.granted);
       return _fetchPosition();
+    }
+
+    // ── 3. Show our branded in-app dialog (the only time we ever show it) ───
+    if (!context.mounted) return null;
+    final proceed = await _showPermissionDialog(context);
+
+    if (!proceed) {
+      // User tapped "לא עכשיו" — store denied so we never show the dialog again.
+      await PermissionService.saveLocationStatus(PermissionService.denied);
+      return null;
+    }
+
+    // ── 4. User agreed — now ask the OS ─────────────────────────────────────
+    final granted = await Geolocator.requestPermission();
+
+    if (granted == LocationPermission.whileInUse ||
+        granted == LocationPermission.always) {
+      await PermissionService.saveLocationStatus(PermissionService.granted);
+      return _fetchPosition();
+    }
+
+    // OS denied (or permanently denied)
+    await PermissionService.saveLocationStatus(PermissionService.denied);
+    if (granted == LocationPermission.deniedForever && context.mounted) {
+      _showDeniedSnack(context);
     }
     return null;
   }

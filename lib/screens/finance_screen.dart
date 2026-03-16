@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import '../widgets/banner_carousel.dart';
+import 'withdrawal_modal.dart';
 
 class FinanceScreen extends StatelessWidget {
   const FinanceScreen({super.key});
@@ -29,12 +31,17 @@ class FinanceScreen extends StatelessWidget {
           return Column(
             children: [
               const SizedBox(height: 20),
-              _buildBalanceCard(balance),
+              _buildBalanceCard(context, uid, balance),
+              // ── Promotional banners ── below balance card, before history ──
               const Padding(
-                padding: EdgeInsets.all(15),
+                padding: EdgeInsets.symmetric(vertical: 14),
+                child: BannerCarousel(),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(15, 0, 15, 10),
                 child: Align(
-                  alignment: Alignment.centerRight, 
-                  child: Text("פעולות אחרונות", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))
+                  alignment: Alignment.centerRight,
+                  child: Text("פעולות אחרונות", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 ),
               ),
               Expanded(child: _buildTransactionList(uid)),
@@ -45,21 +52,109 @@ class FinanceScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBalanceCard(double balance) {
+  Widget _buildBalanceCard(BuildContext context, String uid, double balance) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 15),
-      padding: const EdgeInsets.all(30),
       width: double.infinity,
       decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [Colors.blue[900]!, Colors.blue[600]!]),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: Colors.blue.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 5))],
-      ),
-      child: Column(
-        children: [
-          const Text("יתרה אישית זמינה", style: TextStyle(color: Colors.white70, fontSize: 16)),
-          Text("₪${balance.toStringAsFixed(2)}", style: const TextStyle(color: Colors.white, fontSize: 40, fontWeight: FontWeight.bold)),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1E3A5F), Color(0xFF2D6A9F)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF1E3A5F).withValues(alpha: 0.40),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
         ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // ── Header row ──────────────────────────────────────────────
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.shield_rounded, size: 13, color: Colors.white70),
+                    const SizedBox(width: 5),
+                    Text(
+                      'נאמנות AnySkill',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.white.withValues(alpha: 0.75),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ]),
+                ),
+                const Icon(Icons.account_balance_wallet_rounded,
+                    color: Colors.white38, size: 22),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // ── Balance ──────────────────────────────────────────────────
+            Text(
+              'יתרה ניתנת למשיכה',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.65),
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '₪${balance.toStringAsFixed(2)}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 44,
+                fontWeight: FontWeight.bold,
+                letterSpacing: -1,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'מינימום למשיכה: ₪50',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.45),
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 22),
+
+            // ── Withdraw button ──────────────────────────────────────────
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: const Color(0xFF1E3A5F),
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                icon: const Icon(Icons.savings_rounded, size: 18),
+                label: const Text(
+                  'משוך כספים',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+                onPressed: () => showWithdrawalModal(context, uid, balance),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

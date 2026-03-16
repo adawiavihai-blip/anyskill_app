@@ -1,37 +1,43 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <base href="$FLUTTER_BASE_HREF">
-  <meta charset="UTF-8">
-  <title>AnySkill</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
-
-  <link rel="manifest" href="manifest.json">
-  <script src="flutter.js" defer></script>
-</head>
-<body style="margin: 0; padding: 0; background-color: #f4f7f9;">
-  <script>
-    // הגדרות בסיסיות כדי ש-Flutter יוכל לתקשר עם ה-Database
-    const firebaseConfig = {
-      apiKey: "AIzaSyDybWlbmpqTG-cvqxTQrirtDsqv17LBHzk",
-      projectId: "anyskill-6fdf3",
-      messagingSenderId: "1056580918501",
-      appId: "1:1056580918501:web:4f0d36c57f7396c4d35eb7"
-    };
-    firebase.initializeApp(firebaseConfig);
-
-    window.addEventListener('load', function(ev) {
-      _flutter.loader.loadEntrypoint({
-        onEntrypointLoaded: async function(engineInitializer) {
-          const engine = await engineInitializer.initializeEngine();
-          await engine.runApp();
+{
+    "name": "AnySkill Elite",
+    "short_name": "AnySkill",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#1E1B4B",
+    "theme_color": "#6366F1",
+    "description": "פלטפורמת שירותים מקצועיים — מצא ספקים, הזמן שירותים, נהל תשלומים",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "categories": [
+        "productivity",
+        "business"
+    ],
+    "lang": "he",
+    "dir": "rtl",
+    "screenshots": [],
+    "shortcuts": [],
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
         }
-      });
-    });
-  </script>
-</body>
-</html>
+    ]
+}

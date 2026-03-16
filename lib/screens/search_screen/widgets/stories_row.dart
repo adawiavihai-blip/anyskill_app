@@ -856,19 +856,28 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
       final serviceType = userData['serviceType']  as String? ?? '';
 
       // 2. Upload video to Firebase Storage
-      final bytes     = await _pickedVideo!.readAsBytes();
+      final bytes    = await _pickedVideo!.readAsBytes();
+      // Detect the actual MIME type — iOS returns video/quicktime (.mov),
+      // Android returns video/mp4, web may return video/webm, etc.
+      final mimeType = _pickedVideo!.mimeType ?? 'video/mp4';
+      // Preserve the original extension so Storage serves the right Content-Type.
+      final origName = _pickedVideo!.name;
+      final ext      = origName.contains('.')
+          ? origName.split('.').last.toLowerCase()
+          : 'mp4';
+
       final storageRef = FirebaseStorage.instance
           .ref()
-          .child('stories/${widget.uid}/video.mp4');
+          .child('stories/${widget.uid}/story.$ext');
 
       final uploadTask = storageRef.putData(
         bytes,
-        SettableMetadata(contentType: 'video/mp4'),
+        SettableMetadata(contentType: mimeType),
       );
 
       // Track upload progress
       uploadTask.snapshotEvents.listen((snap) {
-        if (!mounted) return;
+        if (!mounted || snap.totalBytes == 0) return;
         setState(() {
           _uploadProgress = snap.bytesTransferred / snap.totalBytes;
         });
@@ -922,7 +931,22 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
         ),
       );
     } catch (e) {
-      if (mounted) setState(() { _uploading = false; _errorMessage = 'שגיאה: $e'; });
+      if (mounted) {
+        setState(() {
+          _uploading = false;
+          // Translate common Firebase Storage errors to Hebrew
+          final msg = e.toString();
+          if (msg.contains('unauthorized') || msg.contains('permission')) {
+            _errorMessage = 'שגיאת הרשאה — נסה להתחבר מחדש';
+          } else if (msg.contains('canceled')) {
+            _errorMessage = 'ההעלאה בוטלה';
+          } else if (msg.contains('network') || msg.contains('timeout')) {
+            _errorMessage = 'שגיאת רשת — בדוק את החיבור ונסה שוב';
+          } else {
+            _errorMessage = 'שגיאה בהעלאה — נסה שוב';
+          }
+        });
+      }
     }
   }
 

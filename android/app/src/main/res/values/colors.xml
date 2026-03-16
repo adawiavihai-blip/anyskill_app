@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- FCM notification accent colour — matches the app's indigo theme -->
+    <color name="notification_color">#6366F1</color>
+	<color name="ic_launcher_background">#1E1B4B</color>
+</resources>

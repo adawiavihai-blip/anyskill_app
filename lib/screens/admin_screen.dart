@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
@@ -46,6 +47,20 @@ class _AdminScreenState extends State<AdminScreen> {
   StreamSubscription<QuerySnapshot>? _insTxSub;
   StreamSubscription<QuerySnapshot>? _insUnanswSub;
   StreamSubscription<QuerySnapshot>? _insBannersSub;
+
+  // ── Pulse (urgency) analytics ───────────────────────────────────────────────
+  int    _pulseUrgentTotal  = 0;
+  int    _pulseUrgentFilled = 0;
+  double _pulseRevenue      = 0;
+  double _pulseAvgHoursUrgent  = 0;
+  double _pulseAvgHoursRegular = 0;
+  bool   _pulseLoaded = false;
+
+  // ── Peak hours demand graph ─────────────────────────────────────────────────
+  List<int> _hourReqs = List.filled(24, 0);
+  List<int> _hourJobs = List.filled(24, 0);
+  String    _peakReco  = '';
+  bool      _peakLoaded = false;
 
   @override
   void initState() {
@@ -98,8 +113,14 @@ class _AdminScreenState extends State<AdminScreen> {
         _insTxLoaded      = false;
         _insUnanswLoaded  = false;
         _insBannersLoaded = false;
+        _pulseLoaded      = false;
+        _peakLoaded       = false;
       });
     }
+
+    // One-time async loaders for pulse analytics + peak hours
+    _loadPulseAnalytics();
+    _loadPeakHours();
 
     // 1. GMV — sum totalAmount of all completed jobs
     _insCompletedSub = FirebaseFirestore.instance
@@ -183,6 +204,146 @@ class _AdminScreenState extends State<AdminScreen> {
     }, onError: (_) {
       if (mounted) setState(() { _insBanners = []; _insBannersLoaded = true; });
     });
+  }
+
+  // ── Pulse analytics loader ─────────────────────────────────────────────────
+  Future<void> _loadPulseAnalytics() async {
+    try {
+      final db = FirebaseFirestore.instance;
+
+      // Fetch all job_requests — filter client-side to avoid composite index
+      final reqSnap = await db.collection('job_requests').limit(500).get();
+
+      int urgentTotal  = 0;
+      int urgentFilled = 0;
+      double urgentTimeSum   = 0;
+      int    urgentTimeCount = 0;
+      double regularTimeSum   = 0;
+      int    regularTimeCount = 0;
+
+      for (final d in reqSnap.docs) {
+        final data    = d.data();
+        final isUrg   = data['isUrgent'] == true;
+        final isClosed = (data['status'] as String?) == 'closed';
+        final created  = (data['createdAt'] as Timestamp?)?.toDate();
+        final updated  = (data['updatedAt'] as Timestamp?)?.toDate();
+
+        if (isUrg) {
+          urgentTotal++;
+          if (isClosed) {
+            urgentFilled++;
+            if (created != null && updated != null) {
+              urgentTimeSum += updated.difference(created).inMinutes.toDouble();
+              urgentTimeCount++;
+            }
+          }
+        } else if (isClosed && created != null && updated != null) {
+          regularTimeSum += updated.difference(created).inMinutes.toDouble();
+          regularTimeCount++;
+        }
+      }
+
+      // Revenue from urgent-tagged completed jobs
+      double revenue = 0;
+      final urgJobSnap = await db
+          .collection('jobs')
+          .where('status', isEqualTo: 'completed')
+          .where('isUrgent', isEqualTo: true)
+          .limit(500)
+          .get();
+      for (final d in urgJobSnap.docs) {
+        revenue += ((d.data())['totalAmount'] as num? ?? 0).toDouble();
+      }
+
+      if (mounted) {
+        setState(() {
+          _pulseUrgentTotal     = urgentTotal;
+          _pulseUrgentFilled    = urgentFilled;
+          _pulseRevenue         = revenue;
+          _pulseAvgHoursUrgent  = urgentTimeCount  > 0 ? urgentTimeSum  / urgentTimeCount  / 60 : 0;
+          _pulseAvgHoursRegular = regularTimeCount > 0 ? regularTimeSum / regularTimeCount / 60 : 0;
+          _pulseLoaded          = true;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _pulseLoaded = true);
+    }
+  }
+
+  // ── Peak hours loader ──────────────────────────────────────────────────────
+  Future<void> _loadPeakHours() async {
+    try {
+      final db     = FirebaseFirestore.instance;
+      final cutoff = Timestamp.fromDate(
+          DateTime.now().subtract(const Duration(days: 30)));
+
+      final results = await Future.wait([
+        db.collection('job_requests')
+            .where('createdAt', isGreaterThan: cutoff)
+            .limit(1000)
+            .get(),
+        db.collection('jobs')
+            .where('status', isEqualTo: 'completed')
+            .where('createdAt', isGreaterThan: cutoff)
+            .limit(1000)
+            .get(),
+      ]);
+
+      final List<int> hourReqs = List.filled(24, 0);
+      final List<int> hourJobs = List.filled(24, 0);
+      final List<int> dayReqs  = List.filled(7, 0); // Mon=0 … Sun=6
+
+      for (final d in results[0].docs) {
+        final ts = ((d.data())['createdAt'] as Timestamp?)?.toDate();
+        if (ts != null) {
+          hourReqs[ts.hour]++;
+          dayReqs[ts.weekday - 1]++;
+        }
+      }
+      for (final d in results[1].docs) {
+        final ts = ((d.data())['createdAt'] as Timestamp?)?.toDate();
+        if (ts != null) hourJobs[ts.hour]++;
+      }
+
+      // 3-hour rolling window with the highest demand gap
+      int peakStart = 17;
+      int maxGap    = -9999;
+      for (int h = 0; h < 22; h++) {
+        final gap = (hourReqs[h] + hourReqs[h + 1] + hourReqs[h + 2]) -
+            (hourJobs[h] + hourJobs[h + 1] + hourJobs[h + 2]);
+        if (gap > maxGap) {
+          maxGap    = gap;
+          peakStart = h;
+        }
+      }
+
+      // Most active day of week
+      int peakDayIdx = 0;
+      for (int i = 1; i < 7; i++) {
+        if (dayReqs[i] > dayReqs[peakDayIdx]) peakDayIdx = i;
+      }
+      const dayNames = ['שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת', 'ראשון'];
+      final reco = maxGap <= 0
+          ? 'ביקוש ואספקה מאוזנים — אין צורך ב-Auto-Pulse כרגע'
+          : 'המלצה: הפעל Auto-Pulse ביום ${dayNames[peakDayIdx]} בין $peakStart:00-${peakStart + 3}:00 למקסום הכנסות';
+
+      if (mounted) {
+        setState(() {
+          _hourReqs   = hourReqs;
+          _hourJobs   = hourJobs;
+          _peakReco   = reco;
+          _peakLoaded = true;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _hourReqs   = List.filled(24, 0);
+          _hourJobs   = List.filled(24, 0);
+          _peakLoaded = true;
+        });
+      }
+    }
   }
 
   // ── CSV Export ────────────────────────────────────────────────────────────
@@ -2488,6 +2649,14 @@ class _AdminScreenState extends State<AdminScreen> {
           ),
           const SizedBox(height: 16),
 
+          // ── Urgency & Pulse Analytics ─────────────────────────────────
+          _buildPulseAnalyticsCard(),
+          const SizedBox(height: 16),
+
+          // ── Peak Hours & Demand Graph ──────────────────────────────────
+          _buildPeakHoursCard(),
+          const SizedBox(height: 16),
+
           // ── Banner Analytics (real-time click counts) ─────────────────
           _monoCard(
             icon: Icons.bar_chart_rounded,
@@ -2649,6 +2818,391 @@ class _AdminScreenState extends State<AdminScreen> {
       ),
     );
   }
+
+  // ── Urgency & Pulse Analytics Card ───────────────────────────────────────
+  Widget _buildPulseAnalyticsCard() {
+    const amber  = Color(0xFFF59E0B);
+    const orange = Color(0xFFEA580C);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1C1917), Color(0xFF292524)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: amber.withValues(alpha: 0.18),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // ── Header ──────────────────────────────────────────────────────
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: amber.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.bolt_rounded, color: amber, size: 20),
+              ),
+              const Text(
+                'ניתוח Urgency & Pulse',
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                    color: Colors.white),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          if (!_pulseLoaded) ...[
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: CircularProgressIndicator(color: amber),
+              ),
+            ),
+          ] else ...[
+            // ── 3 metric tiles ────────────────────────────────────────────
+            Row(children: [
+              Expanded(child: _pulseTile(
+                icon: Icons.timer_rounded,
+                label: 'מהירות המרה',
+                value: _pulseAvgHoursUrgent < 0.1 && _pulseAvgHoursRegular < 0.1
+                    ? 'אין נתונים'
+                    : '${_pulseAvgHoursUrgent.toStringAsFixed(1)}h / ${_pulseAvgHoursRegular.toStringAsFixed(1)}h',
+                sub: 'Pulse vs. רגיל',
+                valueColor: amber,
+              )),
+              const SizedBox(width: 10),
+              Expanded(child: _pulseTile(
+                icon: Icons.check_circle_rounded,
+                label: 'אחוז מימוש',
+                value: _pulseUrgentTotal == 0
+                    ? '—'
+                    : '${(_pulseUrgentFilled / _pulseUrgentTotal * 100).toStringAsFixed(0)}%',
+                sub: '$_pulseUrgentFilled / $_pulseUrgentTotal בקשות',
+                valueColor: _pulseUrgentTotal > 0 &&
+                        _pulseUrgentFilled / _pulseUrgentTotal >= 0.6
+                    ? const Color(0xFF22C55E)
+                    : orange,
+              )),
+            ]),
+            const SizedBox(height: 10),
+
+            // ── Economic impact full-width tile ───────────────────────────
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: amber.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: amber.withValues(alpha: 0.25)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.attach_money_rounded, color: amber, size: 22),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '₪${_fmtNum(_pulseRevenue)}',
+                        style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: amber),
+                      ),
+                      const Text('הכנסות כלכליות מ-Pulse',
+                          style: TextStyle(fontSize: 11, color: Colors.white54)),
+                    ],
+                  ),
+                  const Spacer(),
+                  // Conversion speed bar
+                  if (_pulseAvgHoursUrgent > 0 && _pulseAvgHoursRegular > 0) ...[
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        _speedBar('Pulse', _pulseAvgHoursUrgent, amber,
+                            _pulseAvgHoursRegular),
+                        const SizedBox(height: 4),
+                        _speedBar('רגיל', _pulseAvgHoursRegular,
+                            Colors.white24, _pulseAvgHoursRegular),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _pulseTile({
+    required IconData icon,
+    required String label,
+    required String value,
+    required String sub,
+    required Color valueColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Icon(icon, size: 16, color: valueColor),
+          const SizedBox(height: 4),
+          Text(value,
+              style: TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.bold, color: valueColor)),
+          Text(sub,
+              style: const TextStyle(fontSize: 10, color: Colors.white38),
+              textAlign: TextAlign.right),
+          const SizedBox(height: 2),
+          Text(label,
+              style: const TextStyle(fontSize: 11, color: Colors.white60),
+              textAlign: TextAlign.right),
+        ],
+      ),
+    );
+  }
+
+  Widget _speedBar(String label, double hours, Color color, double max) {
+    final ratio = max > 0 ? (hours / max).clamp(0.0, 1.0) : 0.0;
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Text(label,
+          style: const TextStyle(fontSize: 9, color: Colors.white38)),
+      const SizedBox(width: 6),
+      ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: SizedBox(
+          width: 70,
+          height: 6,
+          child: LinearProgressIndicator(
+            value: ratio,
+            backgroundColor: Colors.white12,
+            valueColor: AlwaysStoppedAnimation<Color>(color),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  // ── Peak Hours & Demand Card ──────────────────────────────────────────────
+  Widget _buildPeakHoursCard() {
+    const amber  = Color(0xFFF59E0B);
+    const blue   = Color(0xFF3B82F6);
+
+    final maxVal = () {
+      int m = 1;
+      for (final v in [..._hourReqs, ..._hourJobs]) {
+        if (v > m) m = v;
+      }
+      return m.toDouble();
+    }();
+
+    final reqSpots  = List.generate(24, (h) => FlSpot(h.toDouble(), _hourReqs[h].toDouble()));
+    final jobSpots  = List.generate(24, (h) => FlSpot(h.toDouble(), _hourJobs[h].toDouble()));
+
+    return _monoCard(
+      icon: Icons.query_stats_rounded,
+      color: amber,
+      title: 'שעות שיא וביקוש',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // ── Line chart ────────────────────────────────────────────────
+          if (!_peakLoaded)
+            const SizedBox(
+              height: 160,
+              child: Center(child: CircularProgressIndicator(color: amber)),
+            )
+          else
+            SizedBox(
+              height: 160,
+              child: LineChart(
+                LineChartData(
+                  minX: 0, maxX: 23,
+                  minY: 0, maxY: maxVal * 1.25,
+                  lineBarsData: [
+                    // ── Requests line (amber) ──
+                    LineChartBarData(
+                      spots: reqSpots,
+                      isCurved: true,
+                      preventCurveOverShooting: true,
+                      color: amber,
+                      barWidth: 2.5,
+                      dotData: FlDotData(
+                        show: true,
+                        getDotPainter: (s, _, __, ___) => FlDotCirclePainter(
+                          radius: 3,
+                          color: amber,
+                          strokeWidth: 0,
+                        ),
+                      ),
+                      belowBarData: BarAreaData(
+                        show: true,
+                        gradient: LinearGradient(
+                          colors: [
+                            amber.withValues(alpha: 0.20),
+                            amber.withValues(alpha: 0.02),
+                          ],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                        ),
+                      ),
+                    ),
+                    // ── Completions line (blue) ──
+                    LineChartBarData(
+                      spots: jobSpots,
+                      isCurved: true,
+                      preventCurveOverShooting: true,
+                      color: blue,
+                      barWidth: 2,
+                      dotData: FlDotData(
+                        show: true,
+                        getDotPainter: (s, _, __, ___) => FlDotCirclePainter(
+                          radius: 2.5,
+                          color: blue,
+                          strokeWidth: 0,
+                        ),
+                      ),
+                      belowBarData: BarAreaData(show: false),
+                    ),
+                  ],
+                  // Shade the gap between requests and completions
+                  betweenBarsData: [
+                    BetweenBarsData(
+                      fromIndex: 0,
+                      toIndex: 1,
+                      color: amber.withValues(alpha: 0.12),
+                    ),
+                  ],
+                  titlesData: FlTitlesData(
+                    topTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false)),
+                    leftTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 28,
+                        interval: (maxVal / 3).ceilToDouble().clamp(1, 999),
+                        getTitlesWidget: (v, _) => Text(
+                          v.toInt().toString(),
+                          style: const TextStyle(
+                              fontSize: 9, color: Colors.grey),
+                        ),
+                      ),
+                    ),
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        interval: 4,
+                        reservedSize: 20,
+                        getTitlesWidget: (v, _) => Text(
+                          '${v.toInt()}h',
+                          style: const TextStyle(
+                              fontSize: 9, color: Colors.grey),
+                        ),
+                      ),
+                    ),
+                  ),
+                  gridData: FlGridData(
+                    show: true,
+                    drawVerticalLine: false,
+                    horizontalInterval:
+                        (maxVal / 3).ceilToDouble().clamp(1, 999),
+                    getDrawingHorizontalLine: (_) => FlLine(
+                      color: Colors.grey.withValues(alpha: 0.10),
+                      strokeWidth: 1,
+                    ),
+                  ),
+                  borderData: FlBorderData(show: false),
+                ),
+              ),
+            ),
+
+          const SizedBox(height: 10),
+
+          // ── Legend ────────────────────────────────────────────────────
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              _chartLegendDot(color: blue,  label: 'הזמנות הושלמו'),
+              const SizedBox(width: 14),
+              _chartLegendDot(color: amber, label: 'בקשות נפתחו'),
+            ],
+          ),
+
+          const SizedBox(height: 14),
+
+          // ── Recommendation box ────────────────────────────────────────
+          if (_peakLoaded && _peakReco.isNotEmpty)
+            Container(
+              width: double.infinity,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: amber.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: amber.withValues(alpha: 0.30)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.lightbulb_rounded,
+                      color: amber, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _peakReco,
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.orange[900],
+                          fontWeight: FontWeight.w600,
+                          height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chartLegendDot({required Color color, required String label}) =>
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        Text(label,
+            style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        const SizedBox(width: 5),
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+      ]);
 
   Widget _insightsMiniCard(String label, String value, Color color) {
     return Container(

@@ -3,12 +3,27 @@
 <head>
   <base href="$FLUTTER_BASE_HREF">
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>AnySkill Elite</title>
+
+  <!-- ── PWA / installability ───────────────────────────────────────────── -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#6366F1">
+  <meta name="mobile-web-app-capable" content="yes">
+
+  <!-- iOS Safari install support -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="AnySkill">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" sizes="512x512" href="icons/Icon-512.png">
+
+  <!-- Splash / tile colours for Windows / Android -->
+  <meta name="msapplication-TileColor" content="#1E1B4B">
+  <meta name="msapplication-TileImage" content="icons/Icon-192.png">
 
   <!-- Google Maps -->
   <script src="Maps.js" defer></script>
-
-  <link rel="manifest" href="manifest.json">
 
   <!-- Flutter engine — חייב להיטען לפני app_init.js -->
   <script src="flutter.js" defer></script>

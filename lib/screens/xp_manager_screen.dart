@@ -4,7 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 /// AnySkill — XP & Levels Manager
 /// Admin-only screen embedded as a tab in AdminScreen.
 /// Manages the settings_gamification collection:
-///   - __levels__ doc  : silver / gold thresholds
+///   - app_levels doc  : silver / gold thresholds
 ///   - all other docs  : XP event definitions (eventName, points, description)
 class XpManagerScreen extends StatefulWidget {
   const XpManagerScreen({super.key});
@@ -14,7 +14,7 @@ class XpManagerScreen extends StatefulWidget {
 }
 
 class _XpManagerScreenState extends State<XpManagerScreen> {
-  static const String _levelsDocId = '__levels__';
+  static const String _levelsDocId = 'app_levels';
   static const Color _indigo = Color(0xFF6366F1);
 
   // Level thresholds state
@@ -206,7 +206,7 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
           final pts   = int.tryParse(ptsCtrl.text.trim());
           if (docId.isEmpty || pts == null || nameCtrl.text.trim().isEmpty) return;
           if (docId == _levelsDocId) {
-            _snack('המזהה "__levels__" שמור למערכת', isError: true);
+            _snack('המזהה "app_levels" שמור למערכת', isError: true);
             return;
           }
           await FirebaseFirestore.instance
