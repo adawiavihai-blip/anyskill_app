@@ -585,13 +585,26 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen> {
   void _onUpdate() {
     if (!mounted) return;
     setState(() {});
-    // Auto-close when video finishes
+    // Auto-navigate to expert profile when video finishes
     if (_ctrl.value.isInitialized &&
         !_ctrl.value.isPlaying &&
         _ctrl.value.position >= _ctrl.value.duration &&
         _ctrl.value.duration > Duration.zero) {
-      Navigator.of(context).pop();
+      _goToProfile();
     }
+  }
+
+  void _goToProfile() {
+    Navigator.of(context).pop();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ExpertProfileScreen(
+          expertId:   widget.providerUid,
+          expertName: widget.providerName,
+        ),
+      ),
+    );
   }
 
   void _incrementViewCount() {
@@ -769,20 +782,9 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen> {
                     ),
                   ),
                   const Spacer(),
-                  // Book CTA
+                  // View Profile CTA
                   GestureDetector(
-                    onTap: () {
-                      Navigator.of(context).pop();
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => ExpertProfileScreen(
-                            expertId:   widget.providerUid,
-                            expertName: widget.providerName,
-                          ),
-                        ),
-                      );
-                    },
+                    onTap: _goToProfile,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 22, vertical: 12),
@@ -802,14 +804,14 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen> {
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text('הזמן עכשיו',
+                          Text('צפה בפרופיל',
                               style: TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 14)),
                           SizedBox(width: 6),
-                          Icon(Icons.arrow_back_ios_rounded,
-                              color: Colors.white, size: 14),
+                          Icon(Icons.person_outline_rounded,
+                              color: Colors.white, size: 16),
                         ],
                       ),
                     ),

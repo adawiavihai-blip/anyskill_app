@@ -25,6 +25,40 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   bool _providerLoaded = false;
   final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
 
+  // ── Loading overlay controller ─────────────────────────────────────────────
+  // We store the dialog's own BuildContext so we can ALWAYS pop exactly that
+  // route — never accidentally popping a parent route.
+  BuildContext? _loadingDialogCtx;
+
+  void _showLoadingOverlay() {
+    debugPrint('QA: Opening loading dialog');
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        _loadingDialogCtx = ctx;
+        return const PopScope(
+          canPop: false,
+          child: Center(
+            child: Material(
+              color: Colors.transparent,
+              child: CircularProgressIndicator(color: Colors.white),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _hideLoadingOverlay() {
+    debugPrint('QA: Dismissing loading dialog');
+    final ctx = _loadingDialogCtx;
+    _loadingDialogCtx = null;
+    if (ctx != null && ctx.mounted && Navigator.canPop(ctx)) {
+      Navigator.of(ctx).pop();
+    }
+  }
+
   // ── Calendar / availability state ─────────────────────────────────────────
   Set<DateTime> _unavailableDates = {};
   DateTime _calendarFocusedDay = DateTime.now();
@@ -139,47 +173,49 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
       String jobId,
       Map<String, dynamic> jobData,
       double amount) async {
-    final strDone = AppLocalizations.of(context).bookingCompleted;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (c) =>
-          const Center(child: CircularProgressIndicator(color: Colors.white)),
-    );
+    // Capture l10n before any await (async-gap safety).
+    final l10n = AppLocalizations.of(context);
 
-    final error = await PaymentModule.releaseEscrowFundsWithError(
-      jobId: jobId,
-      expertId: jobData['expertId'] ?? '',
-      expertName: jobData['expertName'] ?? 'מומחה',
-      customerName: jobData['customerName'] ?? 'לקוח',
-      totalAmount: amount,
-    );
+    _showLoadingOverlay();
 
-    if (context.mounted) Navigator.pop(context);
+    String? error;
+    try {
+      error = await PaymentModule.releaseEscrowFundsWithError(
+        jobId: jobId,
+        expertId: jobData['expertId'] ?? '',
+        expertName: jobData['expertName'] ?? 'מומחה',
+        customerName: jobData['customerName'] ?? 'לקוח',
+        totalAmount: amount,
+      );
+    } catch (e) {
+      debugPrint('QA: Unexpected error in _handleCompleteJob: $e');
+      error = e.toString();
+    } finally {
+      _hideLoadingOverlay();
+    }
+
+    if (!context.mounted) return;
 
     if (error == null) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              backgroundColor: Colors.green,
-              content: Text(strDone)),
-        );
-        _showRatingDialog(context, jobData['expertId'], jobId);
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            backgroundColor: Colors.green,
+            content: Text(l10n.bookingCompleted)),
+      );
+      _showRatingDialog(context, jobData['expertId'] ?? '', jobId);
     } else {
-      if (context.mounted) {
-        showDialog(
-          context: context,
-          builder: (c) => AlertDialog(
-            title: Text(AppLocalizations.of(context).releasePaymentError),
-            content: SelectableText(error),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(c), child: Text(AppLocalizations.of(context).close)),
-            ],
-          ),
-        );
-      }
+      showDialog(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: Text(l10n.releasePaymentError),
+          content: SelectableText(error!),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(c),
+                child: Text(l10n.close)),
+          ],
+        ),
+      );
     }
   }
 

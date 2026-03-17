@@ -479,44 +479,110 @@ class _ChatScreenState extends State<ChatScreen> {
             buttonText:  'אשר ושחרר 💚',
             buttonColor: const Color(0xFF16A34A),
             onTap: () async {
-              final nav  = Navigator.of(context);
-              final msg  = ScaffoldMessenger.of(context);
+              // Capture the dialog's own context so we always pop exactly
+              // this route — not a parent route that may have changed.
+              BuildContext? loadingCtx;
+
+              void hideLoading() {
+                debugPrint('QA: Dismissing loading dialog');
+                final ctx = loadingCtx;
+                loadingCtx = null;
+                if (ctx != null && ctx.mounted && Navigator.canPop(ctx)) {
+                  Navigator.of(ctx).pop();
+                }
+              }
+
+              debugPrint('QA: Opening loading dialog');
               showDialog(
                 context: context,
                 barrierDismissible: false,
-                builder: (_) => const Center(
-                    child: CircularProgressIndicator()),
+                builder: (ctx) {
+                  loadingCtx = ctx;
+                  return const PopScope(
+                    canPop: false,
+                    child: Center(
+                      child: Material(
+                        color: Colors.transparent,
+                        child: CircularProgressIndicator(color: Colors.white),
+                      ),
+                    ),
+                  );
+                },
               );
 
-              final realName = await _currentUserName();
-              final error = await PaymentModule.releaseEscrowFundsWithError(
-                jobId:        jobDoc.id,
-                expertId:     jobData['expertId'] ?? widget.receiverId,
-                expertName:   widget.receiverName,
-                customerName: realName,
-                totalAmount:  (jobData['totalAmount'] ??
-                        jobData['totalPaidByCustomer'] ??
-                        0.0)
-                    .toDouble(),
-              );
+              String? error;
+              try {
+                final realName = await _currentUserName();
+                error = await PaymentModule.releaseEscrowFundsWithError(
+                  jobId:        jobDoc.id,
+                  expertId:     jobData['expertId'] ?? widget.receiverId,
+                  expertName:   widget.receiverName,
+                  customerName: realName,
+                  totalAmount:  (jobData['totalAmount'] ??
+                          jobData['totalPaidByCustomer'] ??
+                          0.0)
+                      .toDouble(),
+                );
+              } catch (e) {
+                debugPrint('QA: Unexpected error in releaseEscrow: $e');
+                error = e.toString();
+              } finally {
+                hideLoading();
+              }
 
-              nav.pop();
               if (!context.mounted) return;
 
               if (error == null) {
-                msg.showSnackBar(const SnackBar(
-                    content: Text('התשלום שוחרר בהצלחה! 🎉'),
-                    backgroundColor: Colors.green));
+                showDialog(
+                  context: context,
+                  builder: (c) => AlertDialog(
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20)),
+                    contentPadding: const EdgeInsets.fromLTRB(24, 28, 24, 0),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 64, height: 64,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFDCFCE7),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.check_circle_rounded,
+                              color: Color(0xFF16A34A), size: 36),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text('התשלום שוחרר בהצלחה! 🎉',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 17, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        const Text('הכסף הועבר למומחה.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: Color(0xFF64748B), fontSize: 13)),
+                        const SizedBox(height: 20),
+                      ],
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(c),
+                        child: const Text('סגור',
+                            style: TextStyle(color: Color(0xFF6366F1))),
+                      ),
+                    ],
+                  ),
+                );
               } else {
                 showDialog(
                   context: context,
                   builder: (c) => AlertDialog(
                     title: const Text('שגיאה בשחרור התשלום'),
-                    content: SelectableText(error),
+                    content: SelectableText(error!),
                     actions: [
                       TextButton(
                           onPressed: () => Navigator.pop(c),
-                          child: Text(AppLocalizations.of(context).close))
+                          child: Text(AppLocalizations.of(context).close)),
                     ],
                   ),
                 );
