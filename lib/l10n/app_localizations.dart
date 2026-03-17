@@ -573,6 +573,9 @@ final Map<String, Map<String, String>> _translations = {
     'financePaidTo':          'שילמת ל-{name}',
     'financeReceivedFrom':    'קיבלת מ-{name}',
     'financeProcessing':      'מעבד...',
+    'financePending':         'בהמתנה',
+    'financeAddFunds':        'הוסף כסף',
+    'financeAddFundsInfo':    'הכסף בארנק מגיע אוטומטית לאחר שהלקוח משלם ומאשר את העבודה. אין צורך להוסיף כסף באופן ידני.',
 
     // ── Withdrawal modal ──────────────────────────────────────────────────
     'withdrawMinBalance':     'יתרה מינימלית למשיכה: ₪{amount}',
@@ -1401,6 +1404,9 @@ final Map<String, Map<String, String>> _translations = {
     'financePaidTo':          'Paid to {name}',
     'financeReceivedFrom':    'Received from {name}',
     'financeProcessing':      'Processing...',
+    'financePending':         'Pending',
+    'financeAddFunds':        'Add Funds',
+    'financeAddFundsInfo':    'Wallet balance is added automatically once a client pays and approves your work. No manual top-up required.',
 
     // ── Withdrawal modal ──────────────────────────────────────────────────
     'withdrawMinBalance':     'Minimum withdrawal balance: ₪{amount}',
@@ -2229,6 +2235,9 @@ final Map<String, Map<String, String>> _translations = {
     'financePaidTo':          'Pagado a {name}',
     'financeReceivedFrom':    'Recibido de {name}',
     'financeProcessing':      'Procesando...',
+    'financePending':         'Pendiente',
+    'financeAddFunds':        'Añadir Fondos',
+    'financeAddFundsInfo':    'El saldo se agrega automáticamente cuando el cliente paga y aprueba tu trabajo. No se requiere recarga manual.',
 
     // ── Withdrawal modal ──────────────────────────────────────────────────
     'withdrawMinBalance':     'Saldo mínimo para retiro: ₪{amount}',
@@ -3099,6 +3108,9 @@ class AppLocalizations {
   String financePaidTo(String name)     => _tp('financePaidTo', {'name': name});
   String financeReceivedFrom(String name) => _tp('financeReceivedFrom', {'name': name});
   String get financeProcessing          => _t('financeProcessing');
+  String get financePending             => _t('financePending');
+  String get financeAddFunds            => _t('financeAddFunds');
+  String get financeAddFundsInfo        => _t('financeAddFundsInfo');
 
   // ── Withdrawal modal ─────────────────────────────────────────────────────────
   String withdrawMinBalance(int amount) => _tp('withdrawMinBalance', {'amount': '$amount'});

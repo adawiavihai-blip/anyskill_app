@@ -7,6 +7,8 @@ import '../l10n/app_localizations.dart';
 import '../services/visual_fetcher_service.dart';
 import '../widgets/category_image_card.dart';
 import 'category_results_screen.dart';
+import 'notifications_screen.dart';
+import 'business_ai_screen.dart';
 import 'sub_category_screen.dart';
 import 'search_screen/search_page.dart';
 import 'search_screen/widgets/stories_row.dart';
@@ -366,9 +368,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
               if (isProvider)
                 GestureDetector(
                   onTap: () {
-                    // Flip locally first (instant feedback), then push to
-                    // Firestore via the parent callback. The _onlineSub
-                    // listener will confirm the final Firestore value.
                     setState(() => _isOnline = !_isOnline);
                     widget.onToggleOnline();
                   },
@@ -414,6 +413,33 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     ),
                   ),
                 ),
+
+              if (isProvider) const SizedBox(width: 8),
+
+              // ── Notifications bell with unread badge ──────────────────
+              _buildNotificationBell(),
+
+              const SizedBox(width: 6),
+
+              // ── AI Support Assistant ──────────────────────────────────
+              GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const BusinessAiScreen()),
+                ),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEEF2FF),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                        color: const Color(0xFF6366F1).withValues(alpha: 0.3)),
+                  ),
+                  child: const Icon(Icons.smart_toy_rounded,
+                      size: 18, color: Color(0xFF6366F1)),
+                ),
+              ),
             ],
           ),
 
@@ -465,6 +491,70 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
           ),
         ],
       ),
+    );
+  }
+
+  // ── Notification bell with live unread badge ───────────────────────────────
+
+  Widget _buildNotificationBell() {
+    final uid = widget.currentUserId;
+    if (uid.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('notifications')
+          .where('userId', isEqualTo: uid)
+          .where('isRead', isEqualTo: false)
+          .limit(20)
+          .snapshots(),
+      builder: (context, snap) {
+        final unread = snap.data?.docs.length ?? 0;
+        return GestureDetector(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+          ),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.notifications_none_rounded,
+                    size: 20, color: Color(0xFF1A1A2E)),
+              ),
+              if (unread > 0)
+                Positioned(
+                  top: -2,
+                  right: -2,
+                  child: Container(
+                    width: 16,
+                    height: 16,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFEF4444),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        unread > 9 ? '9+' : '$unread',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 

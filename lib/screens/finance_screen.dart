@@ -1,52 +1,191 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import '../widgets/banner_carousel.dart';
 import 'withdrawal_modal.dart';
 import '../l10n/app_localizations.dart';
 
-class FinanceScreen extends StatelessWidget {
+// ── Palette ───────────────────────────────────────────────────────────────────
+const _kCardStart  = Color(0xFF1A0E3C);
+const _kCardMid    = Color(0xFF3D1F8B);
+const _kCardEnd    = Color(0xFF6D28D9);
+const _kChartLine  = Color(0xFF6366F1);
+
+class FinanceScreen extends StatefulWidget {
   const FinanceScreen({super.key});
 
   @override
+  State<FinanceScreen> createState() => _FinanceScreenState();
+}
+
+class _FinanceScreenState extends State<FinanceScreen>
+    with SingleTickerProviderStateMixin {
+  // ── Count-up animation ────────────────────────────────────────────────────
+  late AnimationController _countCtrl;
+  late Animation<double>   _countAnim;
+  bool   _animStarted = false;
+  double _animTarget   = 0;
+
+  // ── 7-day earnings chart ──────────────────────────────────────────────────
+  List<double> _dailyEarnings = List.filled(7, 0); // index 0 = 6 days ago
+  bool _chartLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _countCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    );
+    _countAnim = const AlwaysStoppedAnimation(0);
+    _loadChartData();
+  }
+
+  @override
+  void dispose() {
+    _countCtrl.dispose();
+    super.dispose();
+  }
+
+  // Starts the counter once. Re-calling with the same value is a no-op.
+  void _startCountUp(double balance) {
+    if (_animStarted && balance == _animTarget) return;
+    _animStarted = true;
+    _animTarget  = balance;
+    _countCtrl.reset();
+    _countAnim = Tween<double>(begin: 0, end: balance).animate(
+      CurvedAnimation(parent: _countCtrl, curve: Curves.easeOutCubic),
+    );
+    _countCtrl.forward();
+  }
+
+  Future<void> _loadChartData() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (uid.isEmpty) return;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('transactions')
+          .where('receiverId', isEqualTo: uid)
+          .limit(200)
+          .get();
+
+      final earnings = List<double>.filled(7, 0);
+      final now      = DateTime.now();
+      for (final doc in snap.docs) {
+        final d   = doc.data();
+        final ts  = d['timestamp'] as Timestamp?;
+        final amt = (d['amount'] as num?)?.toDouble() ?? 0;
+        if (ts == null || amt <= 0) continue;
+        final daysAgo = now.difference(ts.toDate()).inDays;
+        if (daysAgo >= 0 && daysAgo < 7) {
+          earnings[6 - daysAgo] += amt;
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _dailyEarnings = earnings;
+          _chartLoaded   = true;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _chartLoaded = true);
+    }
+  }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
+
+  @override
   Widget build(BuildContext context) {
-    final String uid = FirebaseAuth.instance.currentUser?.uid ?? "";
+    final uid  = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final l10n = AppLocalizations.of(context);
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF0F4FF),
       appBar: AppBar(
-        title: Text(AppLocalizations.of(context).financeTitle, style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(l10n.financeTitle,
+            style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0.5,
       ),
       body: StreamBuilder<DocumentSnapshot>(
-        stream: FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        stream: FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .snapshots(),
+        builder: (context, userSnap) {
+          final userData =
+              userSnap.data?.data() as Map<String, dynamic>? ?? {};
+          final balance =
+              (userData['balance'] as num? ?? 0).toDouble();
+          final pending =
+              (userData['pendingBalance'] as num? ?? 0).toDouble();
 
-          final l10n = AppLocalizations.of(context);
-          var userData = snapshot.data?.data() as Map<String, dynamic>? ?? {};
-          double balance = (userData['balance'] ?? 0.0).toDouble();
+          // Kick off the count-up once data arrives
+          if (userSnap.connectionState != ConnectionState.waiting) {
+            WidgetsBinding.instance
+                .addPostFrameCallback((_) => _startCountUp(balance));
+          }
 
-          return Column(
-            children: [
-              const SizedBox(height: 20),
-              _buildBalanceCard(context, uid, balance),
-              // ── Promotional banners ── below balance card, before history ──
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 14),
-                child: BannerCarousel(),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(15, 0, 15, 10),
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: Text(l10n.financeRecentActivity, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          return CustomScrollView(
+            slivers: [
+              // ── Loading state ────────────────────────────────────────
+              if (userSnap.connectionState == ConnectionState.waiting)
+                const SliverFillRemaining(
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else ...[
+
+                // ── Premium glass card ─────────────────────────────────
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+                    child: _buildGlassCard(context, uid, balance, pending),
+                  ),
                 ),
-              ),
-              Expanded(child: _buildTransactionList(uid)),
+
+                // ── 7-day earnings chart ──────────────────────────────
+                if (_chartLoaded) ...[
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+                      child: _buildEarningsChart(context),
+                    ),
+                  ),
+                ],
+
+                // ── Promo banners ─────────────────────────────────────
+                const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 14),
+                    child: BannerCarousel(),
+                  ),
+                ),
+
+                // ── Section title ─────────────────────────────────────
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        l10n.financeRecentActivity,
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // ── Transactions ──────────────────────────────────────
+                _buildTransactionSliver(uid),
+
+                const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
+              ],
             ],
           );
         },
@@ -54,106 +193,237 @@ class FinanceScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBalanceCard(BuildContext context, String uid, double balance) {
+  // ── Glassmorphism balance card ─────────────────────────────────────────────
+
+  Widget _buildGlassCard(
+      BuildContext context, String uid, double balance, double pending) {
     final l10n = AppLocalizations.of(context);
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 15),
-      width: double.infinity,
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFF1E3A5F), Color(0xFF2D6A9F)],
+          colors: [_kCardStart, _kCardMid, _kCardEnd],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.18),
+          width: 1.5,
+        ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF1E3A5F).withValues(alpha: 0.40),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
+            color: _kCardEnd.withValues(alpha: 0.50),
+            blurRadius: 36,
+            offset: const Offset(0, 14),
+          ),
+          BoxShadow(
+            color: Colors.white.withValues(alpha: 0.05),
+            blurRadius: 1,
+            offset: const Offset(0, 1),
           ),
         ],
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(26),
+        child: Stack(
           children: [
-            // ── Header row ──────────────────────────────────────────────
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.shield_rounded, size: 13, color: Colors.white70),
-                    const SizedBox(width: 5),
-                    Text(
-                      l10n.financeTrustBadge,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withValues(alpha: 0.75),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
+            // Glass shimmer orbs
+            Positioned(
+              top: -50,
+              right: -40,
+              child: Container(
+                width: 200,
+                height: 200,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(colors: [
+                    Colors.white.withValues(alpha: 0.10),
+                    Colors.transparent,
                   ]),
                 ),
-                const Icon(Icons.account_balance_wallet_rounded,
-                    color: Colors.white38, size: 22),
-              ],
-            ),
-            const SizedBox(height: 20),
-
-            // ── Balance ──────────────────────────────────────────────────
-            Text(
-              l10n.financeAvailableBalance,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.65),
-                fontSize: 14,
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              '₪${balance.toStringAsFixed(2)}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 44,
-                fontWeight: FontWeight.bold,
-                letterSpacing: -1,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              l10n.financeMinWithdraw,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.45),
-                fontSize: 12,
-              ),
-            ),
-            const SizedBox(height: 22),
-
-            // ── Withdraw button ──────────────────────────────────────────
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFF1E3A5F),
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+            Positioned(
+              bottom: -60,
+              left: -30,
+              child: Container(
+                width: 160,
+                height: 160,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(colors: [
+                    const Color(0xFFA78BFA).withValues(alpha: 0.25),
+                    Colors.transparent,
+                  ]),
                 ),
-                icon: const Icon(Icons.savings_rounded, size: 18),
-                label: Text(
-                  l10n.financeWithdrawButton,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                ),
-                onPressed: () => showWithdrawalModal(context, uid, balance),
+              ),
+            ),
+
+            // Card content
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  // ── Header: chip + badge ─────────────────────────────
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // Trust badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.2)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.shield_rounded,
+                                size: 12, color: Colors.white70),
+                            const SizedBox(width: 5),
+                            Text(
+                              l10n.financeTrustBadge,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.white.withValues(alpha: 0.80),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // EMV-style chip
+                      _buildChipIcon(),
+                    ],
+                  ),
+
+                  const SizedBox(height: 22),
+
+                  // ── Balance label ────────────────────────────────────
+                  Text(
+                    l10n.financeAvailableBalance,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.65),
+                      fontSize: 13,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+
+                  // ── Animated count-up ────────────────────────────────
+                  AnimatedBuilder(
+                    animation: _countCtrl,
+                    builder: (_, __) => Text(
+                      '₪${_countAnim.value.toStringAsFixed(0)}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 46,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: -1.5,
+                        height: 1.1,
+                      ),
+                    ),
+                  ),
+
+                  // ── Pending balance ──────────────────────────────────
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.hourglass_top_rounded,
+                                size: 11,
+                                color: Colors.white.withValues(alpha: 0.65)),
+                            const SizedBox(width: 4),
+                            Text(
+                              '₪${pending.toStringAsFixed(0)} ${l10n.financePending}',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.65),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 4),
+                  Text(
+                    l10n.financeMinWithdraw,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.38),
+                      fontSize: 11,
+                    ),
+                  ),
+
+                  const SizedBox(height: 22),
+
+                  // ── Action buttons ───────────────────────────────────
+                  Row(
+                    children: [
+                      // Add Funds — solid accent
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: _kCardMid,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                          ),
+                          icon: const Icon(Icons.add_rounded, size: 17),
+                          label: Text(
+                            l10n.financeAddFunds,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                          onPressed: () => _showAddFundsInfo(context),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      // Withdraw — semi-transparent
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            side: BorderSide(
+                                color: Colors.white.withValues(alpha: 0.50),
+                                width: 1.5),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                            backgroundColor:
+                                Colors.white.withValues(alpha: 0.10),
+                          ),
+                          icon: const Icon(Icons.savings_rounded, size: 17),
+                          label: Text(
+                            l10n.financeWithdrawButton,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                          onPressed: () =>
+                              showWithdrawalModal(context, uid, balance),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ],
@@ -162,68 +432,398 @@ class FinanceScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildTransactionList(String uid) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('transactions')
-          .where(Filter.or(Filter('senderId', isEqualTo: uid), Filter('receiverId', isEqualTo: uid)))
-          .snapshots(), 
-      builder: (context, snapshot) {
-        final l10n = AppLocalizations.of(context);
-        if (snapshot.hasError) return Center(child: Text(l10n.financeError(snapshot.error.toString())));
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+  // ── EMV-style chip icon ────────────────────────────────────────────────────
 
-        var docs = snapshot.data!.docs;
+  Widget _buildChipIcon() {
+    return Container(
+      width: 42,
+      height: 30,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.white.withValues(alpha: 0.35),
+            Colors.white.withValues(alpha: 0.18),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+            color: Colors.white.withValues(alpha: 0.45), width: 1),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            height: 1,
+            margin: const EdgeInsets.symmetric(horizontal: 5),
+            color: Colors.white.withValues(alpha: 0.45),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                  width: 10,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.25),
+                    borderRadius: BorderRadius.circular(2),
+                  )),
+              const SizedBox(width: 3),
+              Container(
+                  width: 10,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.25),
+                    borderRadius: BorderRadius.circular(2),
+                  )),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Container(
+            height: 1,
+            margin: const EdgeInsets.symmetric(horizontal: 5),
+            color: Colors.white.withValues(alpha: 0.45),
+          ),
+        ],
+      ),
+    );
+  }
 
-        if (docs.isEmpty) {
-          return Center(child: Text(l10n.financeNoTransactions, style: const TextStyle(color: Colors.grey)));
-        }
+  // ── 7-day earnings line chart ──────────────────────────────────────────────
 
-        // מיון ידני
-        docs.sort((a, b) {
-          var dateA = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-          var dateB = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-          if (dateA == null || dateB == null) return 0;
-          return dateB.compareTo(dateA);
-        });
+  Widget _buildEarningsChart(BuildContext context) {
+    final maxY =
+        _dailyEarnings.reduce((a, b) => a > b ? a : b);
+    final effectiveMax = maxY > 0 ? maxY * 1.25 : 100.0;
+    final total = _dailyEarnings.fold(0.0, (a, b) => a + b);
 
-        return ListView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          itemCount: docs.length,
-          itemBuilder: (context, index) {
-            var tx = docs[index].data() as Map<String, dynamic>;
-            bool isSender = tx['senderId'] == uid;
-            DateTime? date = (tx['timestamp'] as Timestamp?)?.toDate();
+    final spots = List.generate(
+      7,
+      (i) => FlSpot(i.toDouble(), _dailyEarnings[i]),
+    );
 
-            return Card(
-              elevation: 0,
-              margin: const EdgeInsets.symmetric(vertical: 5),
-              // כאן היה התיקון: השתמשתי ב-BorderSide במקום ב-Border.all
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(15), 
-                side: BorderSide(color: Colors.grey[200]!)
-              ),
-              child: ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: isSender ? Colors.red[50] : Colors.green[50],
-                  child: Icon(isSender ? Icons.arrow_upward : Icons.arrow_downward, color: isSender ? Colors.red : Colors.green, size: 20),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey.shade100),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // Title row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Total chip
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEEF2FF),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                title: Text(
-                  isSender ? l10n.financePaidTo(tx['receiverName'] ?? '') : l10n.financeReceivedFrom(tx['senderName'] ?? ''),
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text(date != null ? DateFormat('dd/MM/yyyy HH:mm').format(date) : l10n.financeProcessing),
-                trailing: Text(
-                  "${isSender ? '-' : '+'} ₪${tx['amount']}",
-                  style: TextStyle(
+                child: Text(
+                  '₪${total.toStringAsFixed(0)}',
+                  style: const TextStyle(
+                    fontSize: 13,
                     fontWeight: FontWeight.bold,
-                    color: isSender ? Colors.red : Colors.green,
+                    color: _kChartLine,
                   ),
                 ),
               ),
-            );
-          },
+              const Text(
+                'הכנסות 7 ימים אחרונים',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1A1A2E)),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 18),
+
+          SizedBox(
+            height: 110,
+            child: LineChart(
+              LineChartData(
+                gridData: const FlGridData(show: false),
+                borderData: FlBorderData(show: false),
+                minX: 0,
+                maxX: 6,
+                minY: 0,
+                maxY: effectiveMax,
+                titlesData: FlTitlesData(
+                  leftTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false)),
+                  rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false)),
+                  topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false)),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 24,
+                      getTitlesWidget: (value, meta) {
+                        final daysAgo = 6 - value.toInt();
+                        final date = DateTime.now()
+                            .subtract(Duration(days: daysAgo));
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            DateFormat('E').format(date)
+                                .substring(0, 2),
+                            style: const TextStyle(
+                                fontSize: 10, color: Colors.grey),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                lineBarsData: [
+                  LineChartBarData(
+                    spots: spots,
+                    isCurved: true,
+                    curveSmoothness: 0.35,
+                    color: _kChartLine,
+                    barWidth: 2.5,
+                    isStrokeCapRound: true,
+                    dotData: FlDotData(
+                      show: true,
+                      getDotPainter: (spot, _, __, ___) =>
+                          FlDotCirclePainter(
+                        radius: spot.y > 0 ? 4 : 2.5,
+                        color: spot.y > 0
+                            ? _kChartLine
+                            : const Color(0xFFE2E8F0),
+                        strokeColor: Colors.white,
+                        strokeWidth: 1.5,
+                      ),
+                    ),
+                    belowBarData: BarAreaData(
+                      show: true,
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          _kChartLine.withValues(alpha: 0.18),
+                          _kChartLine.withValues(alpha: 0.0),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                lineTouchData: LineTouchData(
+                  touchTooltipData: LineTouchTooltipData(
+                    getTooltipColor: (_) => const Color(0xFF1A1A2E),
+                    getTooltipItems: (spots) => spots
+                        .map((s) => LineTooltipItem(
+                              '₪${s.y.toStringAsFixed(0)}',
+                              const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            ))
+                        .toList(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Transactions sliver ────────────────────────────────────────────────────
+
+  Widget _buildTransactionSliver(String uid) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('transactions')
+          .where(Filter.or(
+            Filter('senderId',   isEqualTo: uid),
+            Filter('receiverId', isEqualTo: uid),
+          ))
+          .snapshots(),
+      builder: (context, snap) {
+        final l10n = AppLocalizations.of(context);
+
+        if (snap.hasError) {
+          return SliverToBoxAdapter(
+            child: Center(
+                child: Text(l10n.financeError(snap.error.toString()))),
+          );
+        }
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.only(top: 32),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          );
+        }
+
+        final docs = [...?snap.data?.docs];
+        if (docs.isEmpty) {
+          return SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 40),
+              child: Center(
+                  child: Text(l10n.financeNoTransactions,
+                      style: const TextStyle(color: Colors.grey))),
+            ),
+          );
+        }
+
+        docs.sort((a, b) {
+          final tA = (a.data() as Map<String, dynamic>)['timestamp']
+              as Timestamp?;
+          final tB = (b.data() as Map<String, dynamic>)['timestamp']
+              as Timestamp?;
+          if (tA == null || tB == null) return 0;
+          return tB.compareTo(tA);
+        });
+
+        return SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) =>
+                  _buildTransactionTile(context, docs[index], uid),
+              childCount: docs.length,
+            ),
+          ),
         );
       },
+    );
+  }
+
+  Widget _buildTransactionTile(
+      BuildContext context, QueryDocumentSnapshot doc, String uid) {
+    final l10n    = AppLocalizations.of(context);
+    final tx      = doc.data() as Map<String, dynamic>;
+    final isIncome = tx['receiverId'] == uid;
+    final date    = (tx['timestamp'] as Timestamp?)?.toDate();
+    final amount  = (tx['amount'] as num?)?.toDouble() ?? 0;
+
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.symmetric(vertical: 5),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: Colors.grey.shade100),
+      ),
+      child: ListTile(
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        leading: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: isIncome
+                ? const Color(0xFFDCFCE7)
+                : const Color(0xFFFEF2F2),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            isIncome
+                ? Icons.south_west_rounded   // income = funds arriving
+                : Icons.north_east_rounded,  // payment = funds leaving
+            size: 20,
+            color: isIncome
+                ? const Color(0xFF16A34A)
+                : const Color(0xFFDC2626),
+          ),
+        ),
+        title: Text(
+          isIncome
+              ? l10n.financeReceivedFrom(tx['senderName'] ?? '')
+              : l10n.financePaidTo(tx['receiverName'] ?? ''),
+          style: const TextStyle(
+              fontWeight: FontWeight.bold, fontSize: 14),
+        ),
+        subtitle: Text(
+          date != null
+              ? DateFormat('dd/MM/yyyy HH:mm').format(date)
+              : l10n.financeProcessing,
+          style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+        ),
+        trailing: Text(
+          '${isIncome ? '+' : '-'} ₪${amount.toStringAsFixed(0)}',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 15,
+            color: isIncome
+                ? const Color(0xFF16A34A)
+                : const Color(0xFFDC2626),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Add Funds info sheet ───────────────────────────────────────────────────
+
+  void _showAddFundsInfo(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEEF2FF),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.account_balance_wallet_rounded,
+                  size: 32, color: _kChartLine),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              l10n.financeAddFunds,
+              style: const TextStyle(
+                  fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              l10n.financeAddFundsInfo,
+              textAlign: TextAlign.center,
+              style:
+                  TextStyle(fontSize: 14, color: Colors.grey[600], height: 1.6),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
