@@ -1,4 +1,5 @@
 // ignore_for_file: use_build_context_synchronously
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -12,6 +13,21 @@ import '../l10n/app_localizations.dart';
 // ── Palette ───────────────────────────────────────────────────────────────────
 const _kIndigo   = Color(0xFF6366F1);
 const _kUrgentOr = Color(0xFFF97316); // orange-500 — urgent border & CTA
+const _kAmber    = Color(0xFFF59E0B); // amber-400 — warm state
+
+// ── Temperature tiers (purely time-based) ─────────────────────────────────────
+// HOT  : posted < 10 minutes ago — pulsing orange border + HOT 🔥 badge
+// WARM : posted 10–60 minutes ago — solid amber border + ⏰ badge
+// COOL : posted > 60 minutes ago — standard indigo styling
+enum _CardTemperature { hot, warm, cool }
+
+_CardTemperature _temperatureOf(Timestamp? ts) {
+  if (ts == null) return _CardTemperature.cool;
+  final ageMin = DateTime.now().difference(ts.toDate()).inMinutes;
+  if (ageMin < 10) return _CardTemperature.hot;
+  if (ageMin < 60) return _CardTemperature.warm;
+  return _CardTemperature.cool;
+}
 
 // ── Entry widget ──────────────────────────────────────────────────────────────
 class OpportunitiesScreen extends StatefulWidget {
@@ -38,6 +54,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
   int        _urgentCompleted  = 0;   // progress toward AnySkill Boost
   DateTime?  _boostExpiry;            // non-null when boost is active
   double     _platformFee      = 0.15; // loaded from Firestore; 15 % default
+  Timer?     _tickTimer;              // periodic rebuild so temperature cools in real-time
 
   @override
   void initState() {
@@ -53,6 +70,17 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
     }
     _loadUserData();
     _loadPlatformFee();
+    // Rebuild every 60 s so "Posted X min ago" labels and card temperatures
+    // update without waiting for a Firestore event.
+    _tickTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tickTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadUserData() async {
@@ -208,22 +236,23 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
   }
 
   Stream<QuerySnapshot> _buildQuery() {
+    // Only fetch documents from the last 24 hours — keeps the board fresh
+    // and the Firestore read count low.
+    final cutoff = Timestamp.fromDate(
+        DateTime.now().subtract(const Duration(hours: 24)));
     var q = FirebaseFirestore.instance
         .collection('job_requests')
-        .where('status', isEqualTo: 'open');
+        .where('status',    isEqualTo: 'open')
+        .where('createdAt', isGreaterThan: cutoff);
     if (!widget.isAdmin && widget.serviceType.isNotEmpty) {
       q = q.where('category', isEqualTo: widget.serviceType);
     }
     return q.orderBy('createdAt', descending: true).limit(50).snapshots();
   }
 
-  bool _isUrgentData(Map<String, dynamic> d) {
-    final ts    = d['createdAt'] as Timestamp?;
-    if (ts == null) return false;
-    final age   = DateTime.now().difference(ts.toDate());
-    final count = (d['interestedCount'] ?? 0) as int;
-    return age.inHours < 3 && count >= 1;
-  }
+  // Used only for the AnySkill Boost counter — "hot" = < 10 min old.
+  bool _isUrgentData(Map<String, dynamic> d) =>
+      _temperatureOf(d['createdAt'] as Timestamp?) == _CardTemperature.hot;
 
   @override
   Widget build(BuildContext context) {
@@ -425,8 +454,17 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
               if (snapshot.hasError) {
                 return Center(child: Text(l10n.oppError('${snapshot.error}')));
               }
-              final docs     = snapshot.data?.docs ?? [];
-              final filtered = List<QueryDocumentSnapshot>.from(docs);
+              final docs = snapshot.data?.docs ?? [];
+              // Belt-and-suspenders: also hide any doc explicitly marked
+              // inactive (Option A manual close) or somehow older than 24 h.
+              final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+              final filtered = docs.where((doc) {
+                final d   = doc.data() as Map<String, dynamic>;
+                if (d['isActive'] == false) return false;
+                final ts  = d['createdAt'] as Timestamp?;
+                if (ts != null && ts.toDate().isBefore(cutoff)) return false;
+                return true;
+              }).toList();
 
               if (_currentPosition != null) {
                 filtered.sort((a, b) {
@@ -651,9 +689,11 @@ class _RequestCardState extends State<_RequestCard>
   late final AnimationController _ctrl;
   late final Animation<double>   _fade;
   late final Animation<Offset>   _slide;
-  // urgent pulse
+  // HOT-state pulse (border + glow)
   late final AnimationController _pulseCtrl;
   late final Animation<double>   _pulse;
+  // local clock — updates timeAgo label + cools card without Firestore event
+  Timer? _tickTimer;
 
   @override
   void initState() {
@@ -670,15 +710,23 @@ class _RequestCardState extends State<_RequestCard>
     _pulse = Tween<double>(begin: 0.3, end: 0.9)
         .animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
 
-    if (_isUrgent && widget.data['status'] != 'closed') {
+    if (_temperature == _CardTemperature.hot &&
+        widget.data['status'] != 'closed') {
       _pulseCtrl.repeat(reverse: true);
     }
+
+    // Rebuild every 30 s so the time label refreshes and the card cools down
+    // at the 10-minute and 60-minute boundaries without a Firestore event.
+    _tickTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void didUpdateWidget(_RequestCard old) {
     super.didUpdateWidget(old);
-    final shouldPulse = _isUrgent && widget.data['status'] != 'closed';
+    final shouldPulse = _temperature == _CardTemperature.hot &&
+        widget.data['status'] != 'closed';
     if (shouldPulse && !_pulseCtrl.isAnimating) {
       _pulseCtrl.repeat(reverse: true);
     } else if (!shouldPulse && _pulseCtrl.isAnimating) {
@@ -689,6 +737,7 @@ class _RequestCardState extends State<_RequestCard>
 
   @override
   void dispose() {
+    _tickTimer?.cancel();
     _ctrl.dispose();
     _pulseCtrl.dispose();
     super.dispose();
@@ -696,13 +745,8 @@ class _RequestCardState extends State<_RequestCard>
 
   // ── Computed properties ───────────────────────────────────────────────────
 
-  bool get _isUrgent {
-    final ts    = widget.data['createdAt'] as Timestamp?;
-    if (ts == null) return false;
-    final age   = DateTime.now().difference(ts.toDate());
-    final count = (widget.data['interestedCount'] ?? 0) as int;
-    return age.inHours < 3 && count >= 1;
-  }
+  _CardTemperature get _temperature =>
+      _temperatureOf(widget.data['createdAt'] as Timestamp?);
 
   /// Simulated viewers: time-windowed seed so the number shifts every 5 min
   /// but stays stable within a window. Returns 0 for requests older than 2 h.
@@ -741,10 +785,12 @@ class _RequestCardState extends State<_RequestCard>
     final interestedCount = (d['interestedCount'] ?? 0) as int;
     final providers       = List<String>.from(d['interestedProviders'] ?? []);
     final alreadyInterested = providers.contains(widget.currentUid);
-    final isClosed          = d['status'] == 'closed';
-    final isUrgent          = _isUrgent && !isClosed;
-    final viewers           = isUrgent ? _viewersNow() : 0;
-    final netLabel          = _netEarningsLabel();
+    final isClosed = d['status'] == 'closed';
+    final temp     = _temperature;
+    final isHot    = temp == _CardTemperature.hot  && !isClosed;
+    final isWarm   = temp == _CardTemperature.warm && !isClosed;
+    final viewers  = isHot ? _viewersNow() : 0;
+    final netLabel = _netEarningsLabel();
     final ts                = d['createdAt'] as Timestamp?;
     final timeAgo           = ts != null ? _timeAgo(ts.toDate()) : '';
     final location          = (d['location']    ?? '') as String;
@@ -756,13 +802,17 @@ class _RequestCardState extends State<_RequestCard>
 
     final headerGradient = isClosed
         ? LinearGradient(colors: [Colors.grey[200]!, Colors.grey[200]!])
-        : isUrgent
+        : isHot
             ? const LinearGradient(
-                colors: [Color(0xFFEA580C), Color(0xFFF97316)],
+                colors: [Color(0xFFDC2626), Color(0xFFF97316)],
                 begin: Alignment.topLeft, end: Alignment.bottomRight)
-            : const LinearGradient(
-                colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-                begin: Alignment.topLeft, end: Alignment.bottomRight);
+            : isWarm
+                ? const LinearGradient(
+                    colors: [Color(0xFFB45309), Color(0xFFF59E0B)],
+                    begin: Alignment.topLeft, end: Alignment.bottomRight)
+                : const LinearGradient(
+                    colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                    begin: Alignment.topLeft, end: Alignment.bottomRight);
 
     return FadeTransition(
       opacity: _fade,
@@ -775,19 +825,23 @@ class _RequestCardState extends State<_RequestCard>
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(22),
-              border: isUrgent
+              border: isHot
                   ? Border.all(
                       color: _kUrgentOr.withValues(alpha: _pulse.value),
                       width: 2.5)
-                  : null,
+                  : isWarm
+                      ? Border.all(color: _kAmber, width: 1.5)
+                      : null,
               boxShadow: [BoxShadow(
-                color: isUrgent
+                color: isHot
                     ? _kUrgentOr.withValues(alpha: _pulse.value * 0.22)
-                    : isClosed
-                        ? Colors.black.withValues(alpha: 0.04)
-                        : _kIndigo.withValues(alpha: 0.10),
-                blurRadius: isUrgent ? 22 : 18,
-                spreadRadius: isUrgent ? 2 : 0,
+                    : isWarm
+                        ? _kAmber.withValues(alpha: 0.18)
+                        : isClosed
+                            ? Colors.black.withValues(alpha: 0.04)
+                            : _kIndigo.withValues(alpha: 0.10),
+                blurRadius: isHot ? 24 : isWarm ? 16 : 18,
+                spreadRadius: isHot ? 2 : 0,
                 offset: const Offset(0, 5),
               )],
             ),
@@ -830,12 +884,25 @@ class _RequestCardState extends State<_RequestCard>
                                       color: isClosed ? Colors.grey[600] : Colors.white,
                                       fontWeight: FontWeight.bold, fontSize: 14)),
                               if (timeAgo.isNotEmpty)
-                                Text(timeAgo,
-                                    style: TextStyle(
-                                        color: isClosed
-                                            ? Colors.grey[400]
-                                            : Colors.white70,
-                                        fontSize: 11)),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (isHot) ...[
+                                      const Icon(Icons.circle,
+                                          size: 7, color: Color(0xFF4ADE80)),
+                                      const SizedBox(width: 4),
+                                    ],
+                                    Text(timeAgo,
+                                        style: TextStyle(
+                                            color: isClosed
+                                                ? Colors.grey[400]
+                                                : Colors.white70,
+                                            fontSize: 11,
+                                            fontWeight: isHot
+                                                ? FontWeight.w700
+                                                : FontWeight.normal)),
+                                  ],
+                                ),
                             ],
                           ),
                         ]),
@@ -872,8 +939,8 @@ class _RequestCardState extends State<_RequestCard>
                                 ),
                               ]),
                             ),
-                            // "High Demand" badge — urgent only
-                            if (isUrgent) ...[
+                            // Temperature badge
+                            if (isHot || isWarm) ...[
                               const SizedBox(height: 5),
                               Container(
                                 padding: const EdgeInsets.symmetric(
@@ -888,13 +955,18 @@ class _RequestCardState extends State<_RequestCard>
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const Text('🔥', style: TextStyle(fontSize: 10)),
+                                    Text(
+                                      isHot ? '🔥' : '⏰',
+                                      style: const TextStyle(fontSize: 10),
+                                    ),
                                     const SizedBox(width: 3),
-                                    Text(l10n.oppHighDemand,
-                                        style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.w800)),
+                                    Text(
+                                      isHot ? 'HOT' : l10n.oppHighDemand,
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w800),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -904,8 +976,8 @@ class _RequestCardState extends State<_RequestCard>
                       ],
                     ),
 
-                    // Social proof — viewers counter
-                    if (isUrgent && viewers > 0) ...[
+                    // Social proof — viewers counter (HOT only)
+                    if (isHot && viewers > 0) ...[
                       const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -1002,8 +1074,8 @@ class _RequestCardState extends State<_RequestCard>
                         );
                       }),
 
-                      // Financial transparency — urgent + budget present
-                      if (isUrgent && netLabel != null) ...[
+                      // Financial transparency — HOT + budget present
+                      if (isHot && netLabel != null) ...[
                         const SizedBox(height: 10),
                         Container(
                           padding: const EdgeInsets.symmetric(
@@ -1051,9 +1123,11 @@ class _RequestCardState extends State<_RequestCard>
                                 ? Colors.green[50]
                                 : isClosed
                                     ? Colors.grey[100]
-                                    : isUrgent
+                                    : isHot
                                         ? _kUrgentOr
-                                        : _kIndigo,
+                                        : isWarm
+                                            ? _kAmber
+                                            : _kIndigo,
                             foregroundColor: alreadyInterested
                                 ? Colors.green[700]
                                 : isClosed
@@ -1086,9 +1160,11 @@ class _RequestCardState extends State<_RequestCard>
                                           ? Icons.check_circle_outline_rounded
                                           : isClosed
                                               ? Icons.lock_outline_rounded
-                                              : isUrgent
+                                              : isHot
                                                   ? Icons.bolt_rounded
-                                                  : Icons.flash_on_rounded,
+                                                  : isWarm
+                                                      ? Icons.local_fire_department_rounded
+                                                      : Icons.flash_on_rounded,
                                       size: 19,
                                     ),
                                     const SizedBox(width: 7),
@@ -1097,7 +1173,7 @@ class _RequestCardState extends State<_RequestCard>
                                           ? l10n.oppAlreadyInterested
                                           : isClosed
                                               ? l10n.oppRequestClosedBtn
-                                              : isUrgent
+                                              : isHot
                                                   ? l10n.oppTakeOpportunity
                                                   : l10n.oppInterested,
                                       style: const TextStyle(
@@ -1109,8 +1185,8 @@ class _RequestCardState extends State<_RequestCard>
                         ),
                       ),
 
-                      // ── One-Tap Quick Bid (urgent, not yet responded) ────────
-                      if (isUrgent && !alreadyInterested && !isClosed) ...[
+                      // ── One-Tap Quick Bid (HOT only, not yet responded) ─────
+                      if (isHot && !alreadyInterested && !isClosed) ...[
                         const SizedBox(height: 8),
                         SizedBox(
                           width: double.infinity,
