@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'sign_up_screen.dart';
 import '../services/credentials_service.dart';
+import '../l10n/app_localizations.dart';
 
 // ── Brand tokens ──────────────────────────────────────────────────────────────
 const _kPurple      = Color(0xFF6366F1);
@@ -66,30 +67,20 @@ class _LoginScreenState extends State<LoginScreen> {
       RegExp(r'^[\w\.\+\-]+@[\w\-]+\.[a-z]{2,}$', caseSensitive: false)
           .hasMatch(v.trim());
 
-  String _mapError(String code) {
-    const map = {
-      'user-not-found':       'לא נמצא משתמש עם האימייל הזה',
-      'wrong-password':       'הסיסמה שגויה — נסו שנית',
-      'invalid-credential':   'אימייל או סיסמה שגויים',
-      'invalid-email':        'כתובת האימייל אינה תקינה',
-      'user-disabled':        'חשבון זה הושבת',
-      'too-many-requests':    'יותר מדי ניסיונות — נסו שוב עוד כמה דקות',
-      'network-request-failed': 'שגיאת רשת — בדקו חיבור',
-    };
-    return map[code] ?? 'שגיאה בהתחברות, נסו שנית';
-  }
+  String _mapError(String code, AppLocalizations l10n) => l10n.authError(code);
 
   // ── Login logic ───────────────────────────────────────────────────────────────
   Future<void> _login() async {
     final email = _emailCtrl.text.trim();
     final pass  = _passCtrl.text.trim();
 
+    final l10n = AppLocalizations.of(context);
     if (email.isEmpty || pass.isEmpty) {
-      _snack('נא למלא אימייל וסיסמה', Colors.orange);
+      _snack(l10n.errorEmptyFields, Colors.orange);
       return;
     }
     if (!_emailValid(email)) {
-      _snack('כתובת אימייל אינה תקינה', Colors.orange);
+      _snack(l10n.errorInvalidEmail, Colors.orange);
       return;
     }
 
@@ -107,13 +98,15 @@ class _LoginScreenState extends State<LoginScreen> {
       }
       // Auth state change → AuthWrapper handles navigation automatically.
     } on FirebaseAuthException catch (e) {
-      if (mounted) _snack(_mapError(e.code), _kRed);
+      if (mounted) _snack(_mapError(e.code, AppLocalizations.of(context)), _kRed);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _loginGoogle() async {
+    // Capture l10n before the first await to avoid BuildContext across async gap.
+    final newUserBio = AppLocalizations.of(context).googleNewUserBio;
     setState(() => _isLoading = true);
     try {
       UserCredential cred;
@@ -147,7 +140,7 @@ class _LoginScreenState extends State<LoginScreen> {
           'reviewsCount':   0,
           'pricePerHour':   0.0,
           'serviceType':    '',
-          'aboutMe':        'לקוח חדש ב-AnySkill',
+          'aboutMe':        newUserBio,
           'profileImage':   user.photoURL ?? '',
           'gallery':        [],
           'quickTags':      [],
@@ -163,75 +156,52 @@ class _LoginScreenState extends State<LoginScreen> {
         });
       }
     } catch (_) {
-      if (mounted) _snack('שגיאה בהתחברות עם Google', _kRed);
+      if (mounted) _snack(AppLocalizations.of(context).errorGoogleLogin, _kRed);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _loginApple() async {
-    _snack('התחברות עם Apple תהיה זמינה בקרוב', Colors.black87);
+    _snack(AppLocalizations.of(context).loginAppleComingSoon, Colors.black87);
     // TODO: implement with sign_in_with_apple package
   }
 
   void _showForgotPassword() {
     final ctrl = TextEditingController();
+    final l10n = AppLocalizations.of(context);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(ctx).viewInsets.bottom),
+        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
         child: Container(
           margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24)),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
           padding: const EdgeInsets.fromLTRB(24, 20, 24, 36),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Handle
-              Center(
-                child: Container(
-                  width: 40, height: 4,
-                  decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(10)),
-                ),
-              ),
+              Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)))),
               const SizedBox(height: 20),
-              const Text('איפוס סיסמה',
-                  style: TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.bold)),
+              Text(l10n.forgotPasswordTitle, textAlign: TextAlign.start, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              Text('הזינו את האימייל שלכם ונשלח לינק לאיפוס',
-                  style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+              Text(l10n.forgotPasswordSubtitle, textAlign: TextAlign.start, style: TextStyle(color: Colors.grey[600], fontSize: 14)),
               const SizedBox(height: 20),
               TextField(
                 controller: ctrl,
-                textAlign: TextAlign.right,
-                textDirection: TextDirection.rtl,
+                textAlign: TextAlign.start,
                 keyboardType: TextInputType.emailAddress,
                 decoration: InputDecoration(
-                  labelText: 'כתובת אימייל',
+                  labelText: l10n.forgotPasswordEmail,
                   prefixIcon: const Icon(Icons.email_outlined, size: 20),
                   filled: true,
                   fillColor: const Color(0xFFF5F5FF),
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide:
-                        BorderSide(color: Colors.grey.shade200),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide:
-                        const BorderSide(color: _kPurple, width: 1.5),
-                  ),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: Colors.grey.shade200)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: _kPurple, width: 1.5)),
                 ),
               ),
               const SizedBox(height: 20),
@@ -241,41 +211,25 @@ class _LoginScreenState extends State<LoginScreen> {
                   onPressed: () async {
                     final email = ctrl.text.trim();
                     if (!_emailValid(email)) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('כתובת אימייל אינה תקינה'),
-                          backgroundColor: Colors.orange,
-                        ),
-                      );
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.errorInvalidEmail), backgroundColor: Colors.orange));
                       return;
                     }
                     try {
-                      await FirebaseAuth.instance
-                          .sendPasswordResetEmail(email: email);
+                      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
                       if (ctx.mounted) Navigator.pop(ctx);
-                      if (mounted) {
-                        _snack('לינק לאיפוס נשלח לאימייל שלך ✉️',
-                            _kGreen);
-                      }
+                      if (mounted) _snack(l10n.forgotPasswordSuccess, _kGreen);
                     } catch (_) {
-                      if (mounted) {
-                        _snack('שגיאה — בדקו שהאימייל רשום במערכת',
-                            _kRed);
-                      }
+                      if (mounted) _snack(l10n.forgotPasswordError, _kRed);
                     }
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _kPurple,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     elevation: 0,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
-                  child: const Text('שלח לינק לאיפוס',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15)),
+                  child: Text(l10n.forgotPasswordSubmit,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
                 ),
               ),
             ],
@@ -298,6 +252,7 @@ class _LoginScreenState extends State<LoginScreen> {
   // ── Build ────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5FF),
       body: CustomScrollView(
@@ -327,10 +282,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     // Section title
-                    const Text(
-                      'כניסה לחשבון',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
+                    Text(
+                      l10n.loginAccountTitle,
+                      textAlign: TextAlign.start,
+                      style: const TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.bold,
                         color: Color(0xFF1E1B4B),
@@ -338,17 +293,16 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'ברוכים השבים! המומחים מחכים לכם',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
-                          fontSize: 13, color: Colors.grey[500]),
+                      l10n.loginWelcomeBack,
+                      textAlign: TextAlign.start,
+                      style: TextStyle(fontSize: 13, color: Colors.grey[500]),
                     ),
                     const SizedBox(height: 28),
 
                     // Email
                     _buildField(
                       ctrl: _emailCtrl,
-                      label: 'כתובת אימייל',
+                      label: l10n.loginEmail,
                       icon: Icons.email_outlined,
                       keyboardType: TextInputType.emailAddress,
                       isValid: _emailOk,
@@ -360,7 +314,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     // Password
                     _buildField(
                       ctrl: _passCtrl,
-                      label: 'סיסמה',
+                      label: l10n.loginPassword,
                       icon: Icons.lock_outline_rounded,
                       obscure: _obscurePass,
                       suffix: IconButton(
@@ -414,7 +368,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                                 const SizedBox(width: 6),
                                 Text(
-                                  'זכור אותי',
+                                  l10n.loginRememberMe,
                                   style: TextStyle(
                                     fontSize: 13,
                                     color: _rememberMe
@@ -437,8 +391,8 @@ class _LoginScreenState extends State<LoginScreen> {
                               tapTargetSize:
                                   MaterialTapTargetSize.shrinkWrap,
                             ),
-                            child: const Text(
-                              'שכחתי סיסמה',
+                            child: Text(
+                              l10n.loginForgotPassword,
                               style: TextStyle(
                                 color: _kPurple,
                                 fontSize: 13,
@@ -491,13 +445,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         child: RichText(
                           text: TextSpan(
-                            text: 'אין לך חשבון? ',
-                            style: TextStyle(
-                                color: Colors.grey[600],
-                                fontSize: 14),
-                            children: const [
+                            text: l10n.loginNoAccount,
+                            style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                            children: [
                               TextSpan(
-                                text: 'הירשם בחינם עכשיו',
+                                text: l10n.loginSignUpFree,
                                 style: TextStyle(
                                   color: _kPurple,
                                   fontWeight: FontWeight.bold,
@@ -524,6 +476,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ── Hero ──────────────────────────────────────────────────────────────────────
   Widget _buildHero() {
+    final l10n = AppLocalizations.of(context);
     return Container(
       height: 300,
       decoration: const BoxDecoration(
@@ -593,7 +546,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                         Text(
-                          'AnySkill — הכישרון שלך, השירות שלהם',
+                          l10n.appSlogan,
                           style: TextStyle(
                             color:
                                 Colors.white.withValues(alpha: 0.85),
@@ -632,11 +585,11 @@ class _LoginScreenState extends State<LoginScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    _StatChip(value: '10K+', label: 'מקצוענים'),
+                    _StatChip(value: '10K+', label: l10n.loginStats10k),
                     const SizedBox(width: 12),
-                    _StatChip(value: '50+', label: 'קטגוריות'),
+                    _StatChip(value: '50+', label: l10n.loginStats50),
                     const SizedBox(width: 12),
-                    _StatChip(value: '4.9★', label: 'דירוג'),
+                    _StatChip(value: '4.9★', label: l10n.loginStats49),
                   ],
                 ),
               ],
@@ -684,8 +637,7 @@ class _LoginScreenState extends State<LoginScreen> {
         controller: ctrl,
         obscureText: obscure,
         keyboardType: keyboardType,
-        textAlign: TextAlign.right,
-        textDirection: TextDirection.rtl,
+        textAlign: TextAlign.start,
         onChanged: onChanged,
         decoration: InputDecoration(
           labelText: label,
@@ -721,6 +673,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildLoginButton() {
+    final l10n = AppLocalizations.of(context);
     if (_isLoading) {
       return const Center(
         child: SizedBox(
@@ -755,8 +708,8 @@ class _LoginScreenState extends State<LoginScreen> {
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16)),
         ),
-        child: const Text(
-          'כניסה לחשבון →',
+        child: Text(
+          l10n.loginButton,
           style: TextStyle(
             color: Colors.white,
             fontSize: 17,
@@ -769,13 +722,14 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildSocialDivider() {
+    final l10n = AppLocalizations.of(context);
     return Row(
       children: [
         Expanded(child: Divider(color: Colors.grey.shade200)),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Text(
-            'או היכנסו עם',
+            l10n.loginOrWith,
             style: TextStyle(
                 fontSize: 12,
                 color: Colors.grey[500],

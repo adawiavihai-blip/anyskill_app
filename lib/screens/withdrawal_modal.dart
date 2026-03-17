@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import '../l10n/app_localizations.dart';
 
 // ─── Israeli banks list ───────────────────────────────────────────────────────
 const _kBanks = [
@@ -25,9 +26,9 @@ const double _kMinWithdraw = 50.0;
 void showWithdrawalModal(
     BuildContext context, String uid, double balance) {
   if (balance < _kMinWithdraw) {
+    final l10n = AppLocalizations.of(context);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(
-          'יתרה מינימלית למשיכה: ₪${_kMinWithdraw.toInt()}'),
+      content: Text(l10n.withdrawMinBalance(_kMinWithdraw.toInt())),
       backgroundColor: Colors.orange[800],
     ));
     return;
@@ -105,7 +106,7 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
         _userName   = d['name'] as String? ?? '';
         _taxStatus  = d['taxStatus'] as String?;
         _certUrl    = d['taxCertificateUrl'] as String?;
-        if (_certUrl != null) _certName = 'אישור קיים';
+        if (_certUrl != null) _certName = AppLocalizations.of(context).withdrawExistingCert;
         final bank  = d['bankDetails'] as Map<String, dynamic>?;
         if (bank != null) {
           _bankName             = bank['bankName'] as String?;
@@ -152,7 +153,7 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _errorText = 'שגיאה בהעלאת הקובץ — נסה שוב');
+      if (mounted) setState(() => _errorText = AppLocalizations.of(context).withdrawUploadError);
     } finally {
       if (mounted) setState(() => _uploadingCert = false);
     }
@@ -161,17 +162,18 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
   // ── Submit ────────────────────────────────────────────────────────────────
 
   Future<void> _submit() async {
+    final l10n = AppLocalizations.of(context);
     if (!(_formKey.currentState?.validate() ?? false)) return;
     if (_bankName == null) {
-      setState(() => _errorText = 'בחר שם בנק');
+      setState(() => _errorText = l10n.withdrawSelectBankError);
       return;
     }
     if (_taxStatus == 'business' && _certUrl == null) {
-      setState(() => _errorText = 'יש להעלות אישור עוסק לפני המשך');
+      setState(() => _errorText = l10n.withdrawNoCertError);
       return;
     }
     if (!_taxDeclarationOk) {
-      setState(() => _errorText = 'יש לאשר את הצהרת האחריות למס לפני המשך');
+      setState(() => _errorText = l10n.withdrawNoDeclarationError);
       return;
     }
 
@@ -224,10 +226,11 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
       // 3. Append to transaction history
       final txRef = db.collection('transactions').doc();
       batch.set(txRef, {
+        'userId':      widget.uid,      // required by wallet history stream query
         'senderId':    widget.uid,
         'senderName':  _userName,
         'receiverId':  'bank',
-        'receiverName': 'משיכה לחשבון בנק — בטיפול',
+        'receiverName': l10n.withdrawBankTransferPending,
         'amount':      widget.balance,
         'amountStr':   amtStr,
         'type':        'withdrawal_pending',
@@ -243,7 +246,7 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
       if (mounted) setState(() => _step = 2);
     } catch (e) {
       if (mounted) {
-        setState(() => _errorText = 'שגיאה בשליחת הבקשה — נסה שוב');
+        setState(() => _errorText = l10n.withdrawSubmitError);
       }
     } finally {
       if (mounted) setState(() => _submitting = false);
@@ -326,6 +329,7 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildTaxChoice() {
+    final l10n = AppLocalizations.of(context);
     final amtStr = widget.balance % 1 == 0
         ? '₪${widget.balance.toInt()}'
         : '₪${widget.balance.toStringAsFixed(2)}';
@@ -335,17 +339,17 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // ── Security header ────────────────────────────────────────────────
-        _SecurityHeader(amount: amtStr),
+        _SecurityHeader(amount: amtStr, label: l10n.withdrawAvailableBalance),
         const SizedBox(height: 24),
 
-        const Text(
-          'בחר את סטטוס המס שלך',
+        Text(
+          l10n.withdrawTaxStatusTitle,
           textAlign: TextAlign.right,
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 6),
         Text(
-          'נדרש לעיבוד התשלום בהתאם לחוק',
+          l10n.withdrawTaxStatusSubtitle,
           textAlign: TextAlign.right,
           style: TextStyle(fontSize: 13, color: Colors.grey[500]),
         ),
@@ -356,8 +360,8 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
           icon:       Icons.store_rounded,
           iconBg:     const Color(0xFFF0F0FF),
           iconColor:  const Color(0xFF6366F1),
-          title:      'בעל עסק רשום',
-          subtitle:   'עוסק פטור / עוסק מורשה / חברה',
+          title:      l10n.withdrawTaxBusiness,
+          subtitle:   l10n.withdrawTaxBusinessSub,
           badge:      null,
           onTap: () => setState(() {
             _taxStatus = 'business';
@@ -371,9 +375,9 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
           icon:       Icons.person_rounded,
           iconBg:     const Color(0xFFF0FFF4),
           iconColor:  const Color(0xFF16A34A),
-          title:      'פרטי (ללא רישיון עסק)',
-          subtitle:   'שכיר / עצמאי ללא תיק במס הכנסה',
-          badge:      'קל ומהיר',
+          title:      l10n.withdrawTaxIndividual,
+          subtitle:   l10n.withdrawTaxIndividualSub,
+          badge:      l10n.withdrawTaxIndividualBadge,
           onTap: () => setState(() {
             _taxStatus = 'individual';
             _step      = 1;
@@ -385,7 +389,7 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
         Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           Icon(Icons.lock_rounded, size: 12, color: Colors.grey[400]),
           const SizedBox(width: 5),
-          Text('הפרטים שלך מאובטחים ומוצפנים',
+          Text(l10n.withdrawEncryptedNotice,
               style: TextStyle(fontSize: 11, color: Colors.grey[400])),
         ]),
       ],
@@ -397,6 +401,7 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildDetailsForm() {
+    final l10n = AppLocalizations.of(context);
     final isBusiness = _taxStatus == 'business';
 
     return Form(
@@ -414,7 +419,7 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
             ),
             const Spacer(),
             Text(
-              isBusiness ? 'בעל עסק רשום' : 'פרטי (ללא רישיון)',
+              isBusiness ? l10n.withdrawBusinessFormTitle : l10n.withdrawIndividualFormTitle,
               style: const TextStyle(
                   fontWeight: FontWeight.bold, fontSize: 16),
             ),
@@ -444,22 +449,22 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  const Row(
+                  Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      Text('חשבונית לשכיר — שירות השותף שלנו',
-                          style: TextStyle(
+                      Text(l10n.withdrawIndividualTitle,
+                          style: const TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 13,
                               color: Color(0xFF16A34A))),
-                      SizedBox(width: 6),
-                      Icon(Icons.handshake_rounded,
+                      const SizedBox(width: 6),
+                      const Icon(Icons.handshake_rounded,
                           color: Color(0xFF16A34A), size: 16),
                     ],
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'אין לך עוסק? אין בעיה! דרך שירות "חשבונית לשכיר" נוכל לבצע את התשלום בצורה חוקית לחלוטין. תחול עמלת שירות קטנה.',
+                    l10n.withdrawIndividualDesc,
                     textAlign: TextAlign.right,
                     style: TextStyle(
                         fontSize: 12,
@@ -474,30 +479,33 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
 
           // ── Business: certificate upload ───────────────────────────────
           if (isBusiness) ...[
-            _SectionLabel(label: 'אישור עוסק'),
+            _SectionLabel(label: l10n.withdrawCertSection),
             const SizedBox(height: 8),
             _CertUploadTile(
-              certName:  _certName,
-              uploading: _uploadingCert,
-              onTap:     _pickAndUploadCert,
+              certName:    _certName,
+              uploading:   _uploadingCert,
+              onTap:       _pickAndUploadCert,
+              uploadLabel: l10n.withdrawCertUploadBtn,
+              replaceLabel: l10n.withdrawCertReplace,
+              hintLabel:   l10n.withdrawCertHint,
             ),
             const SizedBox(height: 18),
           ],
 
           // ── Bank details ───────────────────────────────────────────────
-          _SectionLabel(label: 'פרטי חשבון בנק'),
+          _SectionLabel(label: l10n.withdrawBankSection),
           const SizedBox(height: 10),
 
           // Bank name dropdown
           DropdownButtonFormField<String>(
             value: _kBanks.contains(_bankName) ? _bankName : null,
             isExpanded: true,
-            decoration: _inputDeco(label: 'שם הבנק', icon: Icons.account_balance_rounded),
+            decoration: _inputDeco(label: l10n.withdrawBankName, icon: Icons.account_balance_rounded),
             items: _kBanks
                 .map((b) => DropdownMenuItem(value: b, child: Text(b, textAlign: TextAlign.right)))
                 .toList(),
             onChanged: (v) => setState(() => _bankName = v),
-            validator: (v) => v == null ? 'חובה לבחור בנק' : null,
+            validator: (v) => v == null ? l10n.withdrawBankRequired : null,
           ),
           const SizedBox(height: 10),
 
@@ -509,9 +517,9 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
                 keyboardType: TextInputType.number,
                 textAlign: TextAlign.right,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: _inputDeco(label: 'מספר סניף', icon: Icons.pin_rounded),
+                decoration: _inputDeco(label: l10n.withdrawBankBranch, icon: Icons.pin_rounded),
                 validator: (v) =>
-                    (v == null || v.isEmpty) ? 'חובה' : null,
+                    (v == null || v.isEmpty) ? l10n.withdrawBranchRequired : null,
               ),
             ),
             const SizedBox(width: 10),
@@ -522,9 +530,9 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
                 keyboardType: TextInputType.number,
                 textAlign: TextAlign.right,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: _inputDeco(label: 'מספר חשבון', icon: Icons.numbers_rounded),
+                decoration: _inputDeco(label: l10n.withdrawBankAccount, icon: Icons.numbers_rounded),
                 validator: (v) =>
-                    (v == null || v.length < 4) ? 'מינ\' 4 ספרות' : null,
+                    (v == null || v.length < 4) ? l10n.withdrawAccountMinDigits : null,
               ),
             ),
           ]),
@@ -586,20 +594,19 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
                             fontSize: 12,
                             height: 1.55,
                             color: Colors.grey[700]),
-                        children: const [
+                        children: [
                           TextSpan(
-                            text: 'אני מצהיר/ה על אחריותי הבלעדית לדיווח מס כחוק ',
+                            text: l10n.withdrawDeclarationText,
                           ),
                           TextSpan(
-                            text: '(סעיף 6 בתקנון)',
-                            style: TextStyle(
+                            text: l10n.withdrawDeclarationSection,
+                            style: const TextStyle(
                               fontWeight: FontWeight.bold,
                               color: Color(0xFF0EA5E9),
                             ),
                           ),
                           TextSpan(
-                            text:
-                                '. ידוע לי כי AnySkill אינה מעסיקתי ואינה מנכה מס במקור.',
+                            text: l10n.withdrawDeclarationSuffix,
                           ),
                         ],
                       ),
@@ -658,7 +665,7 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
                           color: Colors.white, size: 18),
                       const SizedBox(width: 8),
                       Text(
-                        'שלח בקשת משיכה — ${widget.balance % 1 == 0 ? "₪${widget.balance.toInt()}" : "₪${widget.balance.toStringAsFixed(2)}"}',
+                        l10n.withdrawSubmitButton(widget.balance % 1 == 0 ? '₪${widget.balance.toInt()}' : '₪${widget.balance.toStringAsFixed(2)}'),
                         style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
@@ -674,7 +681,7 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
           Row(mainAxisAlignment: MainAxisAlignment.center, children: [
             Icon(Icons.lock_rounded, size: 12, color: Colors.grey[400]),
             const SizedBox(width: 5),
-            Text('הפרטים הבנקאיים שלך מוצפנים ומאובטחים',
+            Text(l10n.withdrawBankEncryptedNotice,
                 style: TextStyle(fontSize: 11, color: Colors.grey[400])),
           ]),
         ],
@@ -687,6 +694,7 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildSuccess() {
+    final l10n = AppLocalizations.of(context);
     final amtStr = widget.balance % 1 == 0
         ? '₪${widget.balance.toInt()}'
         : '₪${widget.balance.toStringAsFixed(2)}';
@@ -722,12 +730,12 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
         ),
         const SizedBox(height: 18),
 
-        const Text('הבקשה התקבלה! 🎉',
+        Text(l10n.withdrawSuccessTitle,
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
         const SizedBox(height: 6),
         Text(
-          'בקשת משיכה של $amtStr נשלחה לעיבוד',
+          l10n.withdrawSuccessSubtitle(amtStr),
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 14, color: Colors.grey[600]),
         ),
@@ -741,30 +749,30 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: Colors.grey.shade100),
           ),
-          child: const Column(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               _TimelineRow(
                 icon:   Icons.mark_email_read_rounded,
-                color:  Color(0xFF6366F1),
-                title:  'הבקשה התקבלה',
-                sub:    'מספר אסמכתא נשלח למייל',
+                color:  const Color(0xFF6366F1),
+                title:  l10n.withdrawTimeline1Title,
+                sub:    l10n.withdrawTimeline1Sub,
                 done:   true,
                 isLast: false,
               ),
               _TimelineRow(
                 icon:   Icons.manage_search_rounded,
-                color:  Color(0xFFF59E0B),
-                title:  'בדיקה ואימות',
-                sub:    'צוות AnySkill מאמת את הפרטים',
+                color:  const Color(0xFFF59E0B),
+                title:  l10n.withdrawTimeline2Title,
+                sub:    l10n.withdrawTimeline2Sub,
                 done:   false,
                 isLast: false,
               ),
               _TimelineRow(
                 icon:   Icons.account_balance_rounded,
-                color:  Color(0xFF22C55E),
-                title:  'כסף בחשבון',
-                sub:    'עד 3-5 ימי עסקים',
+                color:  const Color(0xFF22C55E),
+                title:  l10n.withdrawTimeline3Title,
+                sub:    l10n.withdrawTimeline3Sub,
                 done:   false,
                 isLast: true,
               ),
@@ -790,7 +798,7 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'יתרתך תעודכן לאחר עיבוד הבקשה על ידי הצוות. לשאלות: support@anyskill.co.il',
+                  l10n.withdrawSuccessNotice,
                   textAlign: TextAlign.right,
                   style: TextStyle(
                       fontSize: 11,
@@ -814,8 +822,8 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
                   borderRadius: BorderRadius.circular(16)),
             ),
             onPressed: () => Navigator.pop(context),
-            child: const Text('סגור',
-                style: TextStyle(
+            child: Text(AppLocalizations.of(context).close,
+                style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
                     fontSize: 15)),
@@ -858,7 +866,8 @@ class _WithdrawalModalState extends State<WithdrawalModal> {
 
 class _SecurityHeader extends StatelessWidget {
   final String amount;
-  const _SecurityHeader({required this.amount});
+  final String label;
+  const _SecurityHeader({required this.amount, required this.label});
 
   @override
   Widget build(BuildContext context) {
@@ -886,7 +895,7 @@ class _SecurityHeader extends StatelessWidget {
                     letterSpacing: -0.5),
               ),
               Text(
-                'יתרה זמינה למשיכה',
+                label,
                 style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.6),
                     fontSize: 12),
@@ -1038,11 +1047,17 @@ class _CertUploadTile extends StatelessWidget {
   final String? certName;
   final bool uploading;
   final VoidCallback onTap;
+  final String uploadLabel;
+  final String replaceLabel;
+  final String hintLabel;
 
   const _CertUploadTile({
     required this.certName,
     required this.uploading,
     required this.onTap,
+    required this.uploadLabel,
+    required this.replaceLabel,
+    required this.hintLabel,
   });
 
   @override
@@ -1087,7 +1102,7 @@ class _CertUploadTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    uploaded ? certName! : 'העלה אישור עוסק',
+                    uploaded ? certName! : uploadLabel,
                     textAlign: TextAlign.right,
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
@@ -1098,9 +1113,7 @@ class _CertUploadTile extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    uploaded
-                        ? 'לחץ להחלפה'
-                        : 'JPG / PNG — אישור עוסק פטור/מורשה',
+                    uploaded ? replaceLabel : hintLabel,
                     textAlign: TextAlign.right,
                     style: TextStyle(
                         fontSize: 11, color: Colors.grey[500]),

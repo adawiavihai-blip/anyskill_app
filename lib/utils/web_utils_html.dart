@@ -17,3 +17,8 @@ void triggerCsvDownload(String content, String filename) {
     ..setAttribute('download', filename))
     .click();
 }
+
+/// Opens [url] in a new browser tab.
+void openUrl(String url) {
+  html.window.open(url, '_blank');
+}

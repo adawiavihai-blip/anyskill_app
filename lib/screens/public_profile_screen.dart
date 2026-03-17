@@ -5,6 +5,7 @@ import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'chat_screen.dart';
 import 'my_bookings_screen.dart';
+import '../l10n/app_localizations.dart'; // ignore: unused_import — will be used in future i18n pass
 
 class PublicProfileScreen extends StatefulWidget {
   final String userId;

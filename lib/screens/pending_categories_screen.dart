@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/category_ai_service.dart';
+import '../l10n/app_localizations.dart';
 
 // ── Colour tokens ─────────────────────────────────────────────────────────────
 const _kPurple = Color(0xFF6366F1);
@@ -19,9 +20,9 @@ class PendingCategoriesScreen extends StatelessWidget {
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          'קטגוריות ממתינות לאישור',
-          style: TextStyle(
+        title: Text(
+          AppLocalizations.of(context).pendingCatsTitle,
+          style: const TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 17,
               color: Color(0xFF0F172A)),
@@ -61,7 +62,7 @@ class PendingCategoriesScreen extends StatelessWidget {
             children: [
               if (pending.isNotEmpty) ...[
                 _SectionHeader(
-                    label: 'ממתינות לאישור',
+                    label: AppLocalizations.of(context).pendingCatsSectionPending,
                     count: pending.length,
                     color: _kAmber),
                 const SizedBox(height: 8),
@@ -73,7 +74,7 @@ class PendingCategoriesScreen extends StatelessWidget {
               if (reviewed.isNotEmpty) ...[
                 const SizedBox(height: 20),
                 _SectionHeader(
-                    label: 'טופלו', count: reviewed.length, color: Colors.grey),
+                    label: AppLocalizations.of(context).pendingCatsSectionReviewed, count: reviewed.length, color: Colors.grey),
                 const SizedBox(height: 8),
                 ...reviewed.map((d) => _ReviewedCard(
                       data: d.data() as Map<String, dynamic>,
@@ -145,8 +146,9 @@ class _PendingCardState extends State<_PendingCard> {
       await CategoryAiService.reviewPending(
           pendingId: widget.docId, action: action);
       if (mounted) {
+        final l10n = AppLocalizations.of(context);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(action == 'approve' ? '✅ קטגוריה אושרה ופורסמה!' : '🗑 קטגוריה נדחתה'),
+          content: Text(action == 'approve' ? l10n.pendingCatsApproved : l10n.pendingCatsRejected),
           backgroundColor: action == 'approve' ? _kGreen : _kRed,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -155,7 +157,7 @@ class _PendingCardState extends State<_PendingCard> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('שגיאה: $e'),
+          content: Text(AppLocalizations.of(context).pendingCatsErrorPrefix(e.toString())),
           backgroundColor: _kRed,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -232,7 +234,7 @@ class _PendingCardState extends State<_PendingCard> {
               const SizedBox(height: 4),
               Align(
                 alignment: Alignment.centerRight,
-                child: Text('תת-קטגוריה: $subName',
+                child: Text(AppLocalizations.of(context).pendingCatsSubCategory(subName),
                     style: TextStyle(
                         fontSize: 12,
                         color: Colors.grey.shade600)),
@@ -244,9 +246,9 @@ class _PendingCardState extends State<_PendingCard> {
             const SizedBox(height: 10),
 
             // ── Detail rows ────────────────────────────────────────────────
-            _DetailRow(label: 'תיאור הספק', value: desc),
+            _DetailRow(label: AppLocalizations.of(context).pendingCatsProviderDesc, value: desc),
             const SizedBox(height: 6),
-            _DetailRow(label: 'הנמקת AI', value: reasoning),
+            _DetailRow(label: AppLocalizations.of(context).pendingCatsAiReason, value: reasoning),
 
             if (keywords.isNotEmpty) ...[
               const SizedBox(height: 8),
@@ -290,7 +292,7 @@ class _PendingCardState extends State<_PendingCard> {
                         const Icon(Icons.image_outlined,
                             size: 13, color: _kPurple),
                         const SizedBox(width: 4),
-                        const Text('פרומפט לתמונה (Midjourney/DALL-E)',
+                        Text(AppLocalizations.of(context).pendingCatsImagePrompt,
                             style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
@@ -323,8 +325,8 @@ class _PendingCardState extends State<_PendingCard> {
                           onPressed: () => _act('reject'),
                           icon: const Icon(Icons.close_rounded,
                               size: 16, color: _kRed),
-                          label: const Text('דחה',
-                              style: TextStyle(color: _kRed)),
+                          label: Text(AppLocalizations.of(context).pendingCatsReject,
+                              style: const TextStyle(color: _kRed)),
                           style: OutlinedButton.styleFrom(
                             side: BorderSide(
                                 color: _kRed.withValues(alpha: 0.4)),
@@ -343,8 +345,8 @@ class _PendingCardState extends State<_PendingCard> {
                           onPressed: () => _act('approve'),
                           icon: const Icon(Icons.check_rounded,
                               size: 16, color: Colors.white),
-                          label: const Text('אשר ופרסם',
-                              style: TextStyle(
+                          label: Text(AppLocalizations.of(context).pendingCatsApprove,
+                              style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold)),
                           style: ElevatedButton.styleFrom(
@@ -411,7 +413,7 @@ class _ReviewedCard extends StatelessWidget {
                   : _kRed.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(20),
             ),
-            child: Text(isApproved ? 'אושר' : 'נדחה',
+            child: Text(isApproved ? AppLocalizations.of(context).pendingCatsStatusApproved : AppLocalizations.of(context).pendingCatsStatusRejected,
                 style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
@@ -469,13 +471,13 @@ class _EmptyState extends StatelessWidget {
           Icon(Icons.check_circle_outline_rounded,
               size: 64, color: _kGreen.withValues(alpha: 0.4)),
           const SizedBox(height: 16),
-          const Text('אין קטגוריות ממתינות',
-              style: TextStyle(
+          Text(AppLocalizations.of(context).pendingCatsEmptyTitle,
+              style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: Color(0xFF374151))),
           const SizedBox(height: 6),
-          Text('כל הקטגוריות אושרו או שעדיין לא נוצרו',
+          Text(AppLocalizations.of(context).pendingCatsEmptySubtitle,
               style: TextStyle(fontSize: 13, color: Colors.grey.shade500)),
         ],
       ),

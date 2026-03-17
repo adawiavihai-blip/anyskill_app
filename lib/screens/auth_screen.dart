@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});

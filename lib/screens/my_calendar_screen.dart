@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
+import '../l10n/app_localizations.dart';
 
 class MyCalendarScreen extends StatefulWidget {
   const MyCalendarScreen({super.key});
@@ -67,17 +68,18 @@ class _MyCalendarScreenState extends State<MyCalendarScreen> {
     }
   }
 
-  String _statusLabel(String? status) {
+  String _statusLabel(String? status, AppLocalizations l10n) {
     switch (status) {
-      case 'paid_escrow':      return 'ממתין לביצוע';
-      case 'expert_completed': return 'ממתין לאישור';
-      case 'completed':        return 'הושלם';
+      case 'paid_escrow':      return l10n.calendarStatusPending;
+      case 'expert_completed': return l10n.calendarStatusWaiting;
+      case 'completed':        return l10n.calendarStatusCompleted;
       default:                 return status ?? '';
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final selectedEvents = _eventsForDay(_selectedDay ?? _focusedDay);
 
     return Scaffold(
@@ -86,14 +88,14 @@ class _MyCalendarScreenState extends State<MyCalendarScreen> {
         backgroundColor: Colors.white,
         elevation: 0.5,
         centerTitle: true,
-        title: const Text(
-          'היומן שלי',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+        title: Text(
+          l10n.calendarTitle,
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
         ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
-            tooltip: 'רענן',
+            tooltip: l10n.calendarRefresh,
             onPressed: () {
               setState(() => _events.clear());
               _loadJobs();
@@ -187,13 +189,13 @@ class _MyCalendarScreenState extends State<MyCalendarScreen> {
           // ── Event list ─────────────────────────────────────────────────────
           Expanded(
             child: selectedEvents.isEmpty
-                ? const Center(
+                ? Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.event_available, size: 48, color: Colors.grey),
-                        SizedBox(height: 8),
-                        Text('אין הזמנות ביום זה', style: TextStyle(color: Colors.grey)),
+                        const Icon(Icons.event_available, size: 48, color: Colors.grey),
+                        const SizedBox(height: 8),
+                        Text(l10n.calendarNoEvents, style: const TextStyle(color: Colors.grey)),
                       ],
                     ),
                   )
@@ -204,7 +206,7 @@ class _MyCalendarScreenState extends State<MyCalendarScreen> {
                       final job = selectedEvents[i];
                       final status = job['status'] as String?;
                       final time   = job['appointmentTime'] as String? ?? '';
-                      final customer = job['customerName'] as String? ?? 'לקוח';
+                      final customer = job['customerName'] as String? ?? l10n.disputePartyCustomer;
                       final amount = (job['totalAmount'] as num?)?.toStringAsFixed(0) ?? '—';
 
                       return Card(
@@ -231,7 +233,7 @@ class _MyCalendarScreenState extends State<MyCalendarScreen> {
                               Row(children: [
                                 Icon(Icons.circle, size: 8, color: _statusColor(status)),
                                 const SizedBox(width: 4),
-                                Text(_statusLabel(status), style: TextStyle(fontSize: 12, color: _statusColor(status))),
+                                Text(_statusLabel(status, l10n), style: TextStyle(fontSize: 12, color: _statusColor(status))),
                               ]),
                             ],
                           ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../utils/price_formatter.dart';
 import '../../expert_profile_screen.dart';
+import '../../../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
 
 class ExpertCard extends StatelessWidget {
   final String  expertId;

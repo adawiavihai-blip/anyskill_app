@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/category_service.dart';
 import '../widgets/category_image_card.dart';
 import 'category_results_screen.dart';
+import '../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
 
 class SubCategoryScreen extends StatelessWidget {
   final String parentId;

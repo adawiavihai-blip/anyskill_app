@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
 
 class CustomSearchBar extends StatefulWidget {
   final Function(String)? onChanged;

@@ -13,6 +13,7 @@ import 'chat_modules/chat_logic_module.dart';
 import 'chat_modules/safety_module.dart';
 import 'chat_modules/chat_stream_module.dart';
 import 'expert_profile_screen.dart';
+import '../l10n/app_localizations.dart';
 
 class ChatScreen extends StatefulWidget {
   final String receiverId;
@@ -239,7 +240,7 @@ class _ChatScreenState extends State<ChatScreen> {
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('ביטול')),
+              child: Text(AppLocalizations.of(context).cancel)),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF6366F1),
@@ -515,7 +516,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     actions: [
                       TextButton(
                           onPressed: () => Navigator.pop(c),
-                          child: const Text('סגור'))
+                          child: Text(AppLocalizations.of(context).close))
                     ],
                   ),
                 );

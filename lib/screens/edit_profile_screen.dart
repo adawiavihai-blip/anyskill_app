@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
+import '../l10n/app_localizations.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -138,33 +139,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _saveProfile() async {
+    final l10n = AppLocalizations.of(context);
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("נא להזין שם"), backgroundColor: Colors.orange));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.validationNameRequired), backgroundColor: Colors.orange));
       return;
     }
     if (name.length < 2) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("השם חייב להכיל לפחות 2 תווים"), backgroundColor: Colors.orange));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.validationNameLength), backgroundColor: Colors.orange));
       return;
     }
 
     if (!_isCustomer && !_isProvider) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("יש לבחור לפחות תפקיד אחד")));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.validationRoleRequired)));
       return;
     }
 
     if (_isProvider) {
       if (_selectedCategory == null) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("נא לבחור תחום התמחות"), backgroundColor: Colors.orange));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.validationCategoryRequired), backgroundColor: Colors.orange));
         return;
       }
       final price = double.tryParse(_priceController.text.trim());
       if (price == null) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("המחיר חייב להיות מספר תקין"), backgroundColor: Colors.orange));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.validationPriceInvalid), backgroundColor: Colors.orange));
         return;
       }
       if (price <= 0) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("המחיר חייב להיות גדול מ-0"), backgroundColor: Colors.orange));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.validationPricePositive), backgroundColor: Colors.orange));
         return;
       }
     }
@@ -173,6 +175,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
+    final savedSuccess = l10n.saveSuccess;
+    String saveErrMsg(Object e) => l10n.saveError('$e');
 
     try {
       // Resolve the most-specific category name (sub → main → null)
@@ -208,10 +212,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       });
       if (mounted) {
         navigator.pop();
-        messenger.showSnackBar(const SnackBar(backgroundColor: Colors.green, content: Text("הפרופיל עודכן בהצלחה!")));
+        messenger.showSnackBar(SnackBar(backgroundColor: Colors.green, content: Text(savedSuccess)));
       }
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text("שגיאה בשמירה: $e")));
+      messenger.showSnackBar(SnackBar(content: Text(saveErrMsg(e))));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -222,13 +226,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text("עריכת פרופיל Elite", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(AppLocalizations.of(context).editProfileTitle, style: const TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true,
         actions: [IconButton(onPressed: _saveProfile, icon: const Icon(Icons.check, color: Colors.blue, size: 30))],
       ),
-      body: _isLoading 
+      body: _isLoading
         ? const Center(child: CircularProgressIndicator())
-        : SingleChildScrollView(
+        : Builder(builder: (context) {
+            final l10n = AppLocalizations.of(context);
+            return SingleChildScrollView(
             padding: const EdgeInsets.all(25),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -257,24 +263,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ),
                 const SizedBox(height: 30),
 
-                const Text("שם מלא", style: TextStyle(fontWeight: FontWeight.bold)),
-                TextField(controller: _nameController, textAlign: TextAlign.right, decoration: const InputDecoration(hintText: "איך יקראו לך באפליקציה?")),
-                
+                Text(l10n.profileFieldName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                TextField(controller: _nameController, textAlign: TextAlign.start, decoration: InputDecoration(hintText: l10n.profileFieldNameHint)),
+
                 const SizedBox(height: 25),
-                
-                const Text("הגדרת תפקיד", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+
+                Text(l10n.profileFieldRole, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     FilterChip(
-                      label: const Text("נותן שירות"),
+                      label: Text(l10n.roleProvider),
                       selected: _isProvider,
                       onSelected: (val) => setState(() => _isProvider = val),
                       selectedColor: Colors.green[100],
                     ),
                     const SizedBox(width: 10),
                     FilterChip(
-                      label: const Text("לקוח"),
+                      label: Text(l10n.roleCustomer),
                       selected: _isCustomer,
                       onSelected: (val) => setState(() => _isCustomer = val),
                       selectedColor: Colors.blue[100],
@@ -285,11 +291,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 if (_isProvider) ...[
                   const SizedBox(height: 25),
                   // ── Main Category dropdown ──────────────────────────────
-                  const Text("תחום התמחות (ראשי)", style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(l10n.profileFieldCategoryMain, style: const TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
                   DropdownButtonFormField<String>(
                     value: _mainCategories.any((c) => c['id'] == _selectedMainCatId) ? _selectedMainCatId : null,
-                    hint: const Text("בחר תחום", textAlign: TextAlign.right),
+                    hint: Text(l10n.profileFieldCategoryMainHint, textAlign: TextAlign.right),
                     items: _mainCategories.map((c) => DropdownMenuItem(
                       value: c['id'] as String,
                       child: Text(c['name'] as String? ?? '', textAlign: TextAlign.right),
@@ -304,11 +310,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   // ── Sub-Category dropdown (shown only when subs exist) ──
                   if (_subCategories.isNotEmpty) ...[
                     const SizedBox(height: 16),
-                    const Text("התמחות ספציפית (תת-קטגוריה)", style: TextStyle(fontWeight: FontWeight.bold)),
+                    Text(l10n.profileFieldCategorySub, style: const TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 6),
                     DropdownButtonFormField<String>(
                       value: _subCategories.any((c) => c['id'] == _selectedSubCatId) ? _selectedSubCatId : null,
-                      hint: const Text("בחר התמחות", textAlign: TextAlign.right),
+                      hint: Text(l10n.profileFieldCategorySubHint, textAlign: TextAlign.right),
                       items: _subCategories.map((c) => DropdownMenuItem(
                         value: c['id'] as String,
                         child: Text(c['name'] as String? ?? '', textAlign: TextAlign.right),
@@ -320,29 +326,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   const SizedBox(height: 20),
 
                   // ── Tax ID ──────────────────────────────────────────────
-                  const Text("ח.פ / ת.ז (לחשבוניות)", style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(l10n.profileFieldTaxId, style: const TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
-                  const Text("יופיע בקבלות הדיגיטליות שנשלחות ללקוחות",
-                      style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  Text(l10n.profileFieldTaxIdHelp,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
                   const SizedBox(height: 8),
                   TextField(
                     controller: _taxIdController,
                     keyboardType: TextInputType.number,
-                    textAlign: TextAlign.right,
+                    textAlign: TextAlign.start,
                     decoration: InputDecoration(
-                      hintText: "לדוגמה: 123456789",
+                      hintText: l10n.profileFieldTaxIdHint,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                       prefixIcon: const Icon(Icons.receipt_long_outlined, color: Colors.grey),
                     ),
                   ),
                   const SizedBox(height: 20),
 
-                  const Text("מחיר לשעה (₪)", style: TextStyle(fontWeight: FontWeight.bold)),
-                  TextField(controller: _priceController, keyboardType: TextInputType.number, textAlign: TextAlign.right, decoration: const InputDecoration(hintText: "כמה תרצה להרוויח?")),
+                  Text(l10n.profileFieldPrice, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  TextField(controller: _priceController, keyboardType: TextInputType.number, textAlign: TextAlign.start, decoration: InputDecoration(hintText: l10n.profileFieldPriceHint)),
                   const SizedBox(height: 20),
-                  const Text("זמן תגובה ממוצע", style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(l10n.profileFieldResponseTime, style: const TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
-                  const Text("כמה מהר אתה בדרך כלל מגיב להודעות?", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  Text(l10n.profileFieldResponseTimeHint, style: const TextStyle(fontSize: 12, color: Colors.grey)),
                   const SizedBox(height: 10),
                   Align(
                     alignment: Alignment.centerRight,
@@ -369,7 +375,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                 ),
                               ),
                               child: Text(
-                                minutes == 60 ? 'שעה' : '~$minutesד\'',
+                                minutes == 60 ? l10n.timeOneHour : '~$minutesד\'',
                                 style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
@@ -392,23 +398,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      "${_selectedQuickTags.length}/3 נבחרו",
+                      l10n.editProfileTagsSelected(_selectedQuickTags.length),
                       style: TextStyle(
                           fontSize: 12,
                           color: _selectedQuickTags.length >= 3
                               ? const Color(0xFF6366F1)
                               : Colors.grey),
                     ),
-                    const Text("תגיות מהירות (Quick Tags)",
-                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    Text(l10n.editProfileQuickTags,
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
                   ],
                 ),
                 const SizedBox(height: 4),
-                const Align(
-                  alignment: Alignment.centerRight,
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
                   child: Text(
-                    "בחר עד 3 תגיות שיוצגו על הכרטיס שלך",
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                    l10n.editProfileTagsHint,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -471,14 +477,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 const SizedBox(height: 25),
 
                 // ── Cancellation Policy picker ─────────────────────────────
-                const Text("מדיניות ביטול",
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(l10n.editProfileCancellationPolicy,
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 4),
-                const Align(
-                  alignment: Alignment.centerRight,
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
                   child: Text(
-                    "לקוחות יראו מדיניות זו לפני ביצוע ההזמנה",
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                    l10n.editProfileCancellationHint,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -547,11 +553,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ),
 
                 const SizedBox(height: 25),
-                const Text("תיאור אישי (About)", style: TextStyle(fontWeight: FontWeight.bold)),
-                TextField(controller: _aboutController, maxLines: 4, textAlign: TextAlign.right, decoration: const InputDecoration(border: OutlineInputBorder(), hintText: "ספר קצת על הניסיון שלך...")),
-                
+                Text(l10n.editProfileAbout, style: const TextStyle(fontWeight: FontWeight.bold)),
+                TextField(controller: _aboutController, maxLines: 4, textAlign: TextAlign.start, decoration: InputDecoration(border: const OutlineInputBorder(), hintText: l10n.editProfileAboutHint)),
+
                 const SizedBox(height: 30),
-                const Text("גלריית עבודות (הוכחת יכולת)", style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(l10n.editProfileGallery, style: const TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 10),
                 GridView.builder(
                   shrinkWrap: true,
@@ -588,12 +594,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     backgroundColor: Colors.black,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))
                   ),
-                  child: const Text("שמור שינויים", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  child: Text(l10n.saveChanges, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                 ),
                 const SizedBox(height: 50),
               ],
             ),
-          ),
+          );
+        }), // Builder
     );
   }
 }

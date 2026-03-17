@@ -1,0 +1,88 @@
+{
+  "@@locale": "en",
+  "@@last_modified": "2026-03-17",
+
+  "appName": "AnySkill",
+
+  "greetingMorning":   "Good Morning",
+  "greetingAfternoon": "Good Afternoon",
+  "greetingEvening":   "Good Evening",
+  "greetingNight":     "Good Night",
+
+  "searchPlaceholder": "Search for a professional, service...",
+  "searchTitle":       "Search",
+  "discoverCategories":"Discover Categories",
+
+  "tabHome":     "Home",
+  "tabBookings": "Bookings",
+  "tabChat":     "Chat",
+  "tabWallet":   "Wallet",
+  "tabProfile":  "Profile",
+
+  "statusPaidEscrow":       "Awaiting Approval",
+  "statusExpertCompleted":  "Completed — Awaiting Your Approval",
+  "statusCompleted":        "Completed",
+  "statusCancelled":        "Cancelled",
+  "statusDispute":          "In Dispute",
+  "statusPendingPayment":   "Pending Payment",
+
+  "bookNow":        "Book Now",
+  "quickRequest":   "Quick Request",
+  "openChat":       "Open Chat",
+  "cancel":         "Cancel",
+  "confirm":        "Confirm",
+  "submit":         "Submit",
+  "save":           "Save",
+  "close":          "Close",
+  "back":           "Back",
+  "next":           "Next",
+
+  "walletBalance":      "Available Balance",
+  "walletMinWithdraw":  "Minimum withdrawal: ₪50",
+  "withdrawFunds":      "Withdraw Funds",
+  "withdrawalPending":  "Withdrawal Request Pending",
+
+  "loginTitle":    "Welcome to AnySkill",
+  "loginSubtitle": "Israel's Leading Professionals Platform",
+  "loginEmail":    "Email Address",
+  "loginPassword": "Password",
+  "loginButton":   "Sign In",
+  "signupButton":  "Sign Up",
+  "forgotPassword":"Forgot Password",
+
+  "profileProvider": "Service Provider",
+  "profileCustomer": "Customer",
+  "profileRating":   "Rating",
+  "profileReviews":  "Reviews",
+  "profileOrders":   "Orders",
+
+  "errorNetworkTitle":  "No Internet Connection",
+  "errorNetworkBody":   "Check your network connection and try again",
+  "errorGeneric":       "An error occurred. Please try again",
+  "errorProfileLoad":   "Error loading profile",
+
+  "tosTitle":   "Terms of Service",
+  "tosVersion": "Version 2.0",
+  "tosAgree":   "I have read and agree to the Terms",
+
+  "urgentProviderLabel": "Pulse",
+  "urgentCustomerLabel": "Urgent",
+  "urgentOpenButton":    "Open",
+
+  "trendingBadge":       "Trending",
+  "subCategoryPrompt":   "Choose Specialty",
+
+  "emptyActivityTitle":  "No activity yet",
+  "emptyActivityCta":    "Post your first request →",
+
+  "onlineStatus":  "Available",
+  "offlineStatus": "Unavailable",
+
+  "currencySymbol": "₪",
+
+  "taxDeclarationText": "I declare sole responsibility for reporting my income taxes as required by law (Section 6 of the Terms). I understand that AnySkill is not my employer and does not withhold taxes.",
+
+  "reviewsPlaceholder":  "Tell us about your experience...",
+  "reviewSubmit":        "Submit Review",
+  "ratingLabel":         "Rate this service"
+}

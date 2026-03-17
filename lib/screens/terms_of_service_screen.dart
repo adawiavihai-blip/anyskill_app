@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../l10n/app_localizations.dart';
 
 // Brand tokens
 const _kPurple     = Color(0xFF6366F1);
@@ -26,9 +27,9 @@ class TermsOfServiceScreen extends StatelessWidget {
             onPressed: () => Navigator.pop(context, false),
           ),
           centerTitle: true,
-          title: const Text(
-            'תנאי שימוש ופרטיות',
-            style: TextStyle(
+          title: Text(
+            AppLocalizations.of(context).tosFullTitle,
+            style: const TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.bold,
                 color: Colors.black87),
@@ -52,9 +53,9 @@ class TermsOfServiceScreen extends StatelessWidget {
                           color: _kPurpleSoft,
                           borderRadius: BorderRadius.circular(20),
                         ),
-                        child: const Text(
-                          'עדכון אחרון: מרץ 2026  |  גרסה 2.0',
-                          style: TextStyle(
+                        child: Text(
+                          AppLocalizations.of(context).tosLastUpdated,
+                          style: const TextStyle(
                               fontSize: 12,
                               color: _kPurple,
                               fontWeight: FontWeight.w600),
@@ -64,7 +65,7 @@ class TermsOfServiceScreen extends StatelessWidget {
                     const SizedBox(height: 8),
                     Center(
                       child: Text(
-                        'הסכם זה מחייב. אנא קרא/י בעיון לפני אישור.',
+                        AppLocalizations.of(context).tosBindingNotice,
                         style: TextStyle(
                             fontSize: 12,
                             color: Colors.grey[500]),
@@ -562,9 +563,9 @@ class _AcceptButton extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14)),
             elevation: 0,
           ),
-          child: const Text(
-            'קראתי, הבנתי ומסכים/ה לתנאים',
-            style: TextStyle(
+          child: Text(
+            AppLocalizations.of(context).tosAcceptButton,
+            style: const TextStyle(
                 color: Colors.white,
                 fontSize: 15,
                 fontWeight: FontWeight.bold),

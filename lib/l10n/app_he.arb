@@ -1,0 +1,88 @@
+{
+  "@@locale": "he",
+  "@@last_modified": "2026-03-17",
+
+  "appName": "AnySkill",
+
+  "greetingMorning":   "בוקר טוב",
+  "greetingAfternoon": "אחה\"צ טובות",
+  "greetingEvening":   "ערב טוב",
+  "greetingNight":     "לילה טוב",
+
+  "searchPlaceholder": "חפש מקצוען, שירות...",
+  "searchTitle":       "חיפוש",
+  "discoverCategories":"גלה קטגוריות",
+
+  "tabHome":     "בית",
+  "tabBookings": "הזמנות",
+  "tabChat":     "צ'אט",
+  "tabWallet":   "ארנק",
+  "tabProfile":  "פרופיל",
+
+  "statusPaidEscrow":       "ממתין לאישור",
+  "statusExpertCompleted":  "הושלם — ממתין לאישורך",
+  "statusCompleted":        "הושלם",
+  "statusCancelled":        "בוטל",
+  "statusDispute":          "במחלוקת",
+  "statusPendingPayment":   "ממתין לתשלום",
+
+  "bookNow":        "הזמן עכשיו",
+  "quickRequest":   "בקשה מהירה",
+  "openChat":       "פתח שיחה",
+  "cancel":         "ביטול",
+  "confirm":        "אישור",
+  "submit":         "שלח",
+  "save":           "שמור",
+  "close":          "סגור",
+  "back":           "חזרה",
+  "next":           "הבא",
+
+  "walletBalance":      "יתרה ניתנת למשיכה",
+  "walletMinWithdraw":  "מינימום למשיכה: ₪50",
+  "withdrawFunds":      "משוך כספים",
+  "withdrawalPending":  "בקשת משיכה בטיפול",
+
+  "loginTitle":    "ברוכים הבאים ל-AnySkill",
+  "loginSubtitle": "פלטפורמת המקצוענים המובילה בישראל",
+  "loginEmail":    "כתובת אימייל",
+  "loginPassword": "סיסמה",
+  "loginButton":   "כניסה",
+  "signupButton":  "הרשמה",
+  "forgotPassword":"שכחתי סיסמה",
+
+  "profileProvider": "ספק שירות",
+  "profileCustomer": "לקוח",
+  "profileRating":   "דירוג",
+  "profileReviews":  "ביקורות",
+  "profileOrders":   "הזמנות",
+
+  "errorNetworkTitle":  "אין חיבור לאינטרנט",
+  "errorNetworkBody":   "בדוק את חיבור הרשת ונסה שוב",
+  "errorGeneric":       "אירעה שגיאה. נסה שוב",
+  "errorProfileLoad":   "שגיאה בטעינת הפרופיל",
+
+  "tosTitle":   "תנאי שימוש",
+  "tosVersion": "גרסה 2.0",
+  "tosAgree":   "קראתי ומסכים/ה לתנאים",
+
+  "urgentProviderLabel": "Pulse",
+  "urgentCustomerLabel": "דחוף",
+  "urgentOpenButton":    "פתח",
+
+  "trendingBadge":       "טרנד",
+  "subCategoryPrompt":   "בחר התמחות",
+
+  "emptyActivityTitle":  "אין פעילות עדיין",
+  "emptyActivityCta":    "פרסם בקשה ראשונה →",
+
+  "onlineStatus":  "זמין",
+  "offlineStatus": "לא זמין",
+
+  "currencySymbol": "₪",
+
+  "taxDeclarationText": "אני מצהיר/ה על אחריותי הבלעדית לדיווח מס כחוק (סעיף 6 בתקנון). ידוע לי כי AnySkill אינה מעסיקתי ואינה מנכה מס במקור.",
+
+  "reviewsPlaceholder":  "ספר לנו על החוויה שלך...",
+  "reviewSubmit":        "שלח ביקורת",
+  "ratingLabel":         "דרג את השירות"
+}

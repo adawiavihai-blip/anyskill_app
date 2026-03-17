@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../l10n/app_localizations.dart';
 
 /// AnySkill — XP & Levels Manager
 /// Admin-only screen embedded as a tab in AdminScreen.
@@ -140,7 +141,7 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
     final gold   = int.tryParse(_goldCtrl.text.trim());
 
     if (silver == null || gold == null || silver <= 0 || gold <= silver) {
-      _snack('כסף חייב להיות > 0 וזהב חייב להיות > כסף', isError: true);
+      _snack(AppLocalizations.of(context).xpLevelsError, isError: true);
       return;
     }
 
@@ -151,7 +152,7 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
 
     if (!mounted) return;
     setState(() { _silverThreshold = silver; _goldThreshold = gold; });
-    _snack('סף הרמות עודכן ✓');
+    _snack(AppLocalizations.of(context).xpLevelsSaved);
   }
 
   // ── Dialogs ───────────────────────────────────────────────────────────────
@@ -163,7 +164,7 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
     showDialog(
       context: context,
       builder: (ctx) => _eventDialog(
-        title:    'עריכת אירוע XP',
+        title:    AppLocalizations.of(context).xpEditEventTitle,
         idCtrl:   null,
         nameCtrl: nameCtrl,
         ptsCtrl:  ptsCtrl,
@@ -180,9 +181,10 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
                 'description': descCtrl.text.trim(),
               });
           if (ctx.mounted) Navigator.pop(ctx);
-          _snack('האירוע עודכן ✓');
+          if (!mounted) return;
+          _snack(AppLocalizations.of(context).xpEventUpdated);
         },
-        actionLabel: 'שמור',
+        actionLabel: AppLocalizations.of(context).xpSaveAction,
       ),
     );
   }
@@ -196,7 +198,7 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
     showDialog(
       context: context,
       builder: (ctx) => _eventDialog(
-        title:    'הוספת אירוע XP חדש',
+        title:    AppLocalizations.of(context).xpAddEventTitle,
         idCtrl:   idCtrl,
         nameCtrl: nameCtrl,
         ptsCtrl:  ptsCtrl,
@@ -206,7 +208,7 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
           final pts   = int.tryParse(ptsCtrl.text.trim());
           if (docId.isEmpty || pts == null || nameCtrl.text.trim().isEmpty) return;
           if (docId == _levelsDocId) {
-            _snack('המזהה "app_levels" שמור למערכת', isError: true);
+            _snack(AppLocalizations.of(context).xpReservedId, isError: true);
             return;
           }
           await FirebaseFirestore.instance
@@ -218,9 +220,10 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
                 'description': descCtrl.text.trim(),
               });
           if (ctx.mounted) Navigator.pop(ctx);
-          _snack('האירוע נוסף ✓');
+          if (!mounted) return;
+          _snack(AppLocalizations.of(context).xpEventAdded);
         },
-        actionLabel: 'הוסף',
+        actionLabel: AppLocalizations.of(context).xpAddAction,
       ),
     );
   }
@@ -230,12 +233,12 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('מחיקת אירוע', style: TextStyle(fontWeight: FontWeight.bold)),
-        content: Text('למחוק את האירוע "$name"?\nפעולה זו אינה הפיכה.'),
+        title: Text(AppLocalizations.of(ctx).xpDeleteEventTitle, style: const TextStyle(fontWeight: FontWeight.bold)),
+        content: Text(AppLocalizations.of(ctx).xpDeleteEventConfirm(name)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('ביטול'),
+            child: Text(AppLocalizations.of(ctx).cancel),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
@@ -245,9 +248,10 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
                   .doc(docId)
                   .delete();
               if (ctx.mounted) Navigator.pop(ctx);
-              _snack('האירוע נמחק');
+              if (!mounted) return;
+              _snack(AppLocalizations.of(context).xpEventDeleted);
             },
-            child: const Text('מחק', style: TextStyle(color: Colors.white)),
+            child: Text(AppLocalizations.of(ctx).delete, style: const TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -275,22 +279,22 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (idCtrl != null) ...[
-                _dialogField(idCtrl, 'מזהה אירוע (באנגלית, ללא רווחים)', hint: 'e.g. late_delivery'),
+                _dialogField(idCtrl, AppLocalizations.of(ctx).xpFieldId, hint: AppLocalizations.of(ctx).xpFieldIdHint),
                 const SizedBox(height: 12),
               ],
-              _dialogField(nameCtrl, 'שם האירוע בעברית'),
+              _dialogField(nameCtrl, AppLocalizations.of(ctx).xpFieldName),
               const SizedBox(height: 12),
-              _dialogField(ptsCtrl, 'נקודות XP (שלילי = עונש)',
+              _dialogField(ptsCtrl, AppLocalizations.of(ctx).xpFieldPoints,
                   inputType: const TextInputType.numberWithOptions(signed: true)),
               const SizedBox(height: 12),
-              _dialogField(descCtrl, 'תיאור קצר'),
+              _dialogField(descCtrl, AppLocalizations.of(ctx).xpFieldDesc),
             ],
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('ביטול'),
+            child: Text(AppLocalizations.of(ctx).cancel),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -350,7 +354,7 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
           onPressed:       _showAddEventDialog,
           backgroundColor: _indigo,
           icon:  const Icon(Icons.add_rounded, color: Colors.white),
-          label: const Text('הוסף אירוע', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          label: Text(AppLocalizations.of(context).xpAddEventButton, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         ),
         body: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
@@ -371,11 +375,11 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
                   child: const Icon(Icons.stars_rounded, color: Colors.white, size: 22),
                 ),
                 const SizedBox(width: 12),
-                const Column(
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('XP & מערכת רמות', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                    Text('הגדרת אירועים, נקודות וסף עליית רמה', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    Text(AppLocalizations.of(context).xpManagerTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                    Text(AppLocalizations.of(context).xpManagerSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
                   ],
                 ),
               ],
@@ -391,7 +395,7 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
               children: [
                 Container(width: 4, height: 22, decoration: BoxDecoration(color: _indigo, borderRadius: BorderRadius.circular(2))),
                 const SizedBox(width: 10),
-                const Text('אירועי XP', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                Text(AppLocalizations.of(context).xpEventsSection, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
                 const Spacer(),
                 StreamBuilder<QuerySnapshot>(
                   stream: FirebaseFirestore.instance.collection('settings_gamification').snapshots(),
@@ -400,7 +404,7 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
                     return Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                       decoration: BoxDecoration(color: _indigo.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
-                      child: Text('$count אירועים', style: const TextStyle(color: _indigo, fontSize: 12, fontWeight: FontWeight.w600)),
+                      child: Text(AppLocalizations.of(context).xpEventsCount(count), style: const TextStyle(color: _indigo, fontSize: 12, fontWeight: FontWeight.w600)),
                     );
                   },
                 ),
@@ -422,7 +426,7 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
                   );
                 }
                 if (snap.hasError) {
-                  return Center(child: Text('שגיאה: ${snap.error}', style: const TextStyle(color: Colors.red)));
+                  return Center(child: Text(AppLocalizations.of(context).xpErrorPrefix(snap.error.toString()), style: const TextStyle(color: Colors.red)));
                 }
                 final docs = (snap.data?.docs ?? [])
                     .where((d) => d.id != _levelsDocId)
@@ -436,10 +440,10 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    child: const Center(
-                      child: Text('אין אירועים עדיין.\nלחץ "הוסף אירוע" להתחלה.',
+                    child: Center(
+                      child: Text(AppLocalizations.of(context).xpEventsEmpty,
                           textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.grey, fontSize: 14)),
+                          style: const TextStyle(color: Colors.grey, fontSize: 14)),
                     ),
                   );
                 }
@@ -472,23 +476,23 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(children: [
-            Icon(Icons.emoji_events_rounded, color: Colors.white, size: 20),
-            SizedBox(width: 8),
-            Text('סף עליית רמה', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          Row(children: [
+            const Icon(Icons.emoji_events_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Text(AppLocalizations.of(context).xpLevelsTitle, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
           ]),
           const SizedBox(height: 6),
-          const Text(
-            'הגדר את מינימום ה-XP הנדרש לכל רמה.',
-            style: TextStyle(color: Colors.white70, fontSize: 12),
+          Text(
+            AppLocalizations.of(context).xpLevelsSubtitle,
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
           ),
           const SizedBox(height: 16),
           Row(children: [
-            Expanded(child: _levelField('🥉 ברונזה', null, isFixed: true)),
+            Expanded(child: _levelField('🥉 ${AppLocalizations.of(context).xpLevelBronze}', null, isFixed: true)),
             const SizedBox(width: 10),
-            Expanded(child: _levelField('🥈 כסף', _silverCtrl)),
+            Expanded(child: _levelField('🥈 ${AppLocalizations.of(context).xpLevelSilver}', _silverCtrl)),
             const SizedBox(width: 10),
-            Expanded(child: _levelField('🥇 זהב', _goldCtrl)),
+            Expanded(child: _levelField('🥇 ${AppLocalizations.of(context).xpLevelGold}', _goldCtrl)),
           ]),
           const SizedBox(height: 14),
           SizedBox(
@@ -502,7 +506,7 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
                 padding: const EdgeInsets.symmetric(vertical: 13),
               ),
               onPressed: _levelsLoaded ? _saveLevels : null,
-              child: const Text('שמור סף רמות', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              child: Text(AppLocalizations.of(context).xpSaveLevels, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
             ),
           ),
           const SizedBox(height: 10),
@@ -550,14 +554,15 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
   }
 
   Widget _buildLevelPreviewRow() {
+    final l10n   = AppLocalizations.of(context);
     final silver = int.tryParse(_silverCtrl.text) ?? _silverThreshold;
     final gold   = int.tryParse(_goldCtrl.text)   ?? _goldThreshold;
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        _previewBadge('ברונזה', '0–${silver - 1}', const Color(0xFFCD7F32)),
-        _previewBadge('כסף',    '$silver–${gold - 1}', const Color(0xFF9CA3AF)),
-        _previewBadge('זהב',    '$gold+', const Color(0xFFF59E0B)),
+        _previewBadge(l10n.xpLevelBronze, '0–${silver - 1}', const Color(0xFFCD7F32)),
+        _previewBadge(l10n.xpLevelSilver, '$silver–${gold - 1}', const Color(0xFF9CA3AF)),
+        _previewBadge(l10n.xpLevelGold,   '$gold+', const Color(0xFFF59E0B)),
       ],
     );
   }
@@ -638,13 +643,13 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
             IconButton(
               icon: const Icon(Icons.edit_rounded, color: _indigo, size: 20),
               onPressed: () => _showEditEventDialog(docId, data),
-              tooltip: 'ערוך',
+              tooltip: AppLocalizations.of(context).xpTooltipEdit,
             ),
             // Delete
             IconButton(
               icon: Icon(Icons.delete_outline_rounded, color: Colors.red[300], size: 20),
               onPressed: () => _confirmDeleteEvent(docId, name),
-              tooltip: 'מחק',
+              tooltip: AppLocalizations.of(context).xpTooltipDelete,
             ),
           ],
         ),

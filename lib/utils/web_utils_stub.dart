@@ -5,3 +5,4 @@ String? sessionGet(String key) => null;
 void sessionSet(String key, String value) {}
 void pageReload() {}
 void triggerCsvDownload(String content, String filename) {}
+void openUrl(String url) {}

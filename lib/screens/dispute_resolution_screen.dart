@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
+import '../l10n/app_localizations.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Colours & constants
@@ -112,11 +113,11 @@ class _StatsBar extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _statItem('$count', 'מחלוקות פתוחות', Icons.gavel_rounded),
+          _statItem('$count', AppLocalizations.of(context).disputeOpenDisputes, Icons.gavel_rounded),
           Container(width: 1, height: 36, color: Colors.white30),
           _statItem(
             '₪${totalLocked.toStringAsFixed(0)}',
-            'נעול בנאמנות',
+            AppLocalizations.of(context).disputeLockedEscrow,
             Icons.lock_rounded,
           ),
         ],
@@ -212,7 +213,7 @@ class _DisputeCard extends StatelessWidget {
                                 fontWeight: FontWeight.bold),
                           ),
                           Text(
-                            'נעול בנאמנות',
+                            AppLocalizations.of(context).disputeLockedEscrow,
                             style: TextStyle(
                                 fontSize: 11,
                                 color: Colors.grey[500]),
@@ -246,13 +247,13 @@ class _DisputeCard extends StatelessWidget {
               // ── Parties ────────────────────────────────────────────
               _partyRow(
                 icon:  Icons.person_outline_rounded,
-                label: 'לקוח',
+                label: AppLocalizations.of(context).disputePartyCustomer,
                 name:  job['customerName'] as String? ?? job['customerId'] as String? ?? '—',
               ),
               const SizedBox(height: 4),
               _partyRow(
                 icon:  Icons.build_circle_outlined,
-                label: 'ספק',
+                label: AppLocalizations.of(context).disputePartyProvider,
                 name:  job['expertName'] as String? ?? job['expertId'] as String? ?? '—',
               ),
 
@@ -297,7 +298,7 @@ class _DisputeCard extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   Text(
-                    'לחץ לפרטים ופעולות',
+                    AppLocalizations.of(context).disputeTapForDetails,
                     style: TextStyle(
                         fontSize: 11,
                         color: _kIndigo.withValues(alpha: 0.7)),
@@ -402,7 +403,7 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
       if (mounted) {
         setState(() => _resolving = false);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content:         Text('שגיאה: $e'),
+          content:         Text(AppLocalizations.of(context).disputeErrorPrefix(e.toString())),
           backgroundColor: _kRed,
         ));
       }
@@ -410,16 +411,18 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
   }
 
   String _resolvedMessage(String r) {
+    final l10n = AppLocalizations.of(context);
     switch (r) {
-      case 'refund':  return '✅ הסכום הוחזר ללקוח. הודעה נשלחה לשני הצדדים.';
-      case 'release': return '✅ הסכום שוחרר למומחה. הודעה נשלחה לשני הצדדים.';
-      default:        return '⚖️ פשרה בוצעה. הודעה נשלחה לשני הצדדים.';
+      case 'refund':  return l10n.disputeResolvedRefund;
+      case 'release': return l10n.disputeResolvedRelease;
+      default:        return l10n.disputeResolvedSplit;
     }
   }
 
   // ── Confirmation dialog with amount breakdown ──────────────────────────────
 
   Future<bool> _showConfirmDialog(String resolution) async {
+    final l10n    = AppLocalizations.of(context);
     final feePct  = 0.10; // displayed estimate — real value read server-side
     final half    = _amount / 2;
     final netExp  = _amount * (1 - feePct);
@@ -430,20 +433,29 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
 
     switch (resolution) {
       case 'refund':
-        title       = 'החזר מלא ללקוח';
-        body        = '₪${_amount.toStringAsFixed(0)} יוחזרו ל${_job['customerName'] ?? 'לקוח'}.\nהמומחה לא יקבל תשלום.';
+        title       = l10n.disputeConfirmRefund;
+        body        = l10n.disputeRefundBody(
+          _amount.toStringAsFixed(0),
+          _job['customerName'] ?? l10n.disputePartyCustomer,
+        );
         headerColor = _kRed;
         break;
       case 'release':
-        title       = 'שחרור למומחה';
-        body        = '₪${netExp.toStringAsFixed(0)} יועברו ל${_job['expertName'] ?? 'מומחה'}\n(לאחר עמלת ${(feePct * 100).toStringAsFixed(0)}%).';
+        title       = l10n.disputeConfirmRelease;
+        body        = l10n.disputeReleaseBody(
+          netExp.toStringAsFixed(0),
+          _job['expertName'] ?? l10n.requestsDefaultExpert,
+          (feePct * 100).toStringAsFixed(0),
+        );
         headerColor = _kGreen;
         break;
       default: // split
-        title       = 'פשרה 50/50';
-        body        = '₪${half.toStringAsFixed(0)} → לקוח\n'
-            '₪${halfNet.toStringAsFixed(0)} → מומחה (לאחר עמלה)\n'
-            '₪${(half - halfNet).toStringAsFixed(0)} → הפלטפורמה';
+        title       = l10n.disputeConfirmSplit;
+        body        = l10n.disputeSplitBody(
+          half.toStringAsFixed(0),
+          halfNet.toStringAsFixed(0),
+          (half - halfNet).toStringAsFixed(0),
+        );
         headerColor = _kOrange;
     }
 
@@ -483,16 +495,16 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
                 color: const Color(0xFFFFF3CD),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Row(
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.info_outline_rounded,
+                  const Icon(Icons.info_outline_rounded,
                       size: 16, color: Color(0xFF856404)),
-                  SizedBox(width: 6),
+                  const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      'פעולה זו אינה הפיכה. ההחלטה תישמר ו-FCM יישלח לשני הצדדים.',
-                      style: TextStyle(
+                      AppLocalizations.of(ctx).disputeIrreversible,
+                      style: const TextStyle(
                           fontSize: 12, color: Color(0xFF856404)),
                     ),
                   ),
@@ -504,7 +516,7 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child:     const Text('ביטול'),
+            child: Text(AppLocalizations.of(ctx).cancel),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -513,8 +525,8 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
                   borderRadius: BorderRadius.circular(10)),
             ),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('אשר',
-                style: TextStyle(
+            child: Text(AppLocalizations.of(ctx).confirm,
+                style: const TextStyle(
                     color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
@@ -562,13 +574,13 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('מרכז בוררות',
-                          style: TextStyle(
+                      Text(AppLocalizations.of(context).disputeArbitrationCenter,
+                          style: const TextStyle(
                               fontSize: 19,
                               fontWeight: FontWeight.bold)),
                       Text(
-                        'מזהה: ${_jobId.substring(0, 8)}…  •  '
-                        '₪${_amount.toStringAsFixed(0)} נעול',
+                        '${AppLocalizations.of(context).disputeIdPrefix} ${_jobId.substring(0, 8)}…  •  '
+                        '₪${_amount.toStringAsFixed(0)} ${AppLocalizations.of(context).disputeLockedSuffix}',
                         style: TextStyle(
                             fontSize: 12,
                             color: Colors.grey[500]),
@@ -592,13 +604,13 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
                   children: [
                     // ── Parties ──────────────────────────────────
                     _sectionHeader(
-                        Icons.people_alt_rounded, 'צדדים'),
+                        Icons.people_alt_rounded, AppLocalizations.of(context).disputePartiesSection),
                     const SizedBox(height: 8),
                     Row(children: [
                       Expanded(
                           child: _PartyCard(
                         icon:  Icons.person_rounded,
-                        role:  'לקוח',
+                        role:  AppLocalizations.of(context).disputePartyCustomer,
                         name:  _job['customerName'] as String? ?? '—',
                         color: _kIndigo,
                       )),
@@ -606,7 +618,7 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
                       Expanded(
                           child: _PartyCard(
                         icon:  Icons.build_circle_rounded,
-                        role:  'ספק',
+                        role:  AppLocalizations.of(context).disputePartyProvider,
                         name:  _job['expertName'] as String? ?? '—',
                         color: _kGreen,
                       )),
@@ -615,12 +627,12 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
 
                     // ── Dispute reason ───────────────────────────
                     _sectionHeader(
-                        Icons.report_problem_rounded, 'סיבת המחלוקת'),
+                        Icons.report_problem_rounded, AppLocalizations.of(context).disputeReasonSection),
                     const SizedBox(height: 8),
                     if (reason.isNotEmpty)
                       _ReasonCard(reason: reason, openedAt: ts)
                     else
-                      Text('לא הוזנה סיבה.',
+                      Text(AppLocalizations.of(context).disputeNoReason,
                           style:
                               TextStyle(color: Colors.grey[500])),
                     const SizedBox(height: 16),
@@ -628,7 +640,7 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
                     // ── Chat history ─────────────────────────────
                     _sectionHeader(
                         Icons.chat_bubble_outline_rounded,
-                        'היסטוריית שיחה (10 הודעות אחרונות)'),
+                        AppLocalizations.of(context).disputeChatHistory),
                     const SizedBox(height: 8),
                     _ChatHistorySection(chatRoomId: _chatRoomId),
                     const SizedBox(height: 20),
@@ -636,14 +648,14 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
                     // ── Admin note ───────────────────────────────
                     _sectionHeader(
                         Icons.sticky_note_2_outlined,
-                        'הערת מנהל (אופציונלי)'),
+                        AppLocalizations.of(context).disputeAdminNote),
                     const SizedBox(height: 8),
                     TextField(
                       controller: _noteCtrl,
                       maxLines:   3,
                       textDirection: ui.TextDirection.rtl,
                       decoration: InputDecoration(
-                        hintText: 'הוסף הערה שתישמר ברשומת ההחלטה...',
+                        hintText: AppLocalizations.of(context).disputeAdminNoteHint,
                         filled:   true,
                         fillColor: _kBg,
                         border: OutlineInputBorder(
@@ -656,7 +668,7 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
                     if (adminNote.isNotEmpty) ...[
                       const SizedBox(height: 6),
                       Text(
-                        'הערה קיימת: $adminNote',
+                        AppLocalizations.of(context).disputeExistingNote(adminNote),
                         style: TextStyle(
                             fontSize: 11,
                             color: Colors.grey[500],
@@ -667,17 +679,17 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
 
                     // ── Action buttons ───────────────────────────
                     _sectionHeader(
-                        Icons.balance_rounded, 'פעולות בוררות'),
+                        Icons.balance_rounded, AppLocalizations.of(context).disputeActionsSection),
                     const SizedBox(height: 12),
                     if (_resolving)
-                      const Center(
+                      Center(
                         child: Padding(
-                          padding: EdgeInsets.symmetric(vertical: 24),
+                          padding: const EdgeInsets.symmetric(vertical: 24),
                           child: Column(
                             children: [
-                              CircularProgressIndicator(),
-                              SizedBox(height: 10),
-                              Text('מבצע פעולה...'),
+                              const CircularProgressIndicator(),
+                              const SizedBox(height: 10),
+                              Text(AppLocalizations.of(context).disputeResolving),
                             ],
                           ),
                         ),
@@ -685,24 +697,24 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
                     else ...[
                       _ActionButton(
                         icon:    Icons.undo_rounded,
-                        label:   'החזר ללקוח',
-                        sublabel: 'החזר מלא ₪${_amount.toStringAsFixed(0)}',
+                        label:   AppLocalizations.of(context).disputeRefundLabel,
+                        sublabel: AppLocalizations.of(context).disputeRefundSublabel(_amount.toStringAsFixed(0)),
                         color:   _kRed,
                         onTap:   () => _resolve('refund'),
                       ),
                       const SizedBox(height: 10),
                       _ActionButton(
                         icon:    Icons.check_circle_rounded,
-                        label:   'שחרר למומחה',
-                        sublabel: 'לאחר עמלה (≈₪${(_amount * 0.9).toStringAsFixed(0)})',
+                        label:   AppLocalizations.of(context).disputeReleaseLabel,
+                        sublabel: AppLocalizations.of(context).disputeReleaseSublabel((_amount * 0.9).toStringAsFixed(0)),
                         color:   _kGreen,
                         onTap:   () => _resolve('release'),
                       ),
                       const SizedBox(height: 10),
                       _ActionButton(
                         icon:    Icons.balance_rounded,
-                        label:   'פשרה 50/50',
-                        sublabel: '₪${(_amount / 2).toStringAsFixed(0)} לכל צד',
+                        label:   AppLocalizations.of(context).disputeSplitLabel,
+                        sublabel: AppLocalizations.of(context).disputeSplitSublabel((_amount / 2).toStringAsFixed(0)),
                         color:   _kOrange,
                         onTap:   () => _resolve('split'),
                       ),
@@ -798,7 +810,7 @@ class _ReasonCard extends StatelessWidget {
                 const SizedBox(width: 6),
                 if (openedAt != null)
                   Text(
-                    'נפתח ב-${DateFormat('dd/MM/yyyy HH:mm').format(openedAt!)}',
+                    AppLocalizations.of(context).disputeOpenedAt(DateFormat('dd/MM/yyyy HH:mm').format(openedAt!)),
                     style: TextStyle(
                         fontSize: 11,
                         color: Colors.orange[700]),
@@ -831,8 +843,8 @@ class _ChatHistorySection extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: _kBg, borderRadius: BorderRadius.circular(12)),
-        child: const Text('אין מזהה שיחה.',
-            style: TextStyle(color: Colors.grey)),
+        child: Text(AppLocalizations.of(context).disputeNoChatId,
+            style: const TextStyle(color: Colors.grey)),
       );
     }
 
@@ -856,8 +868,8 @@ class _ChatHistorySection extends StatelessWidget {
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: _kBg, borderRadius: BorderRadius.circular(12)),
-            child: const Text('אין הודעות בשיחה.',
-                style: TextStyle(color: Colors.grey)),
+            child: Text(AppLocalizations.of(context).disputeNoMessages,
+                style: const TextStyle(color: Colors.grey)),
           );
         }
 
@@ -883,7 +895,7 @@ class _ChatHistorySection extends StatelessWidget {
               }
 
               return _ChatMsgRow(
-                text:      type == 'text' ? text : _typeLabel(type),
+                text:      type == 'text' ? text : _typeLabel(type, context),
                 senderId:  sid,
                 ts:        ts,
                 isSystem:  false,
@@ -895,11 +907,12 @@ class _ChatHistorySection extends StatelessWidget {
     );
   }
 
-  String _typeLabel(String type) {
+  String _typeLabel(String type, BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     switch (type) {
-      case 'image':    return '📷 תמונה';
-      case 'location': return '📍 מיקום';
-      case 'audio':    return '🎤 הקלטה';
+      case 'image':    return l10n.disputeTypeImage;
+      case 'location': return l10n.disputeTypeLocation;
+      case 'audio':    return l10n.disputeTypeAudio;
       default:         return type;
     }
   }
@@ -994,7 +1007,7 @@ class _SystemMsgRow extends StatelessWidget {
               color: Colors.grey[200],
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text('מערכת',
+            child: Text(AppLocalizations.of(context).disputeSystemSender,
                 style:
                     TextStyle(fontSize: 10, color: Colors.grey[600])),
           ),
@@ -1113,11 +1126,11 @@ class _EmptyState extends StatelessWidget {
                   size: 64, color: _kGreen),
             ),
             const SizedBox(height: 20),
-            const Text('אין מחלוקות פתוחות',
-                style: TextStyle(
+            Text(AppLocalizations.of(context).disputeEmptyTitle,
+                style: const TextStyle(
                     fontSize: 20, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            Text('כל הפעולות מסודרות 🎉',
+            Text(AppLocalizations.of(context).disputeEmptySubtitle,
                 style: TextStyle(color: Colors.grey[500])),
           ],
         ),

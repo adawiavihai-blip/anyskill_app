@@ -10,13 +10,12 @@ import '../category_results_screen.dart';
 import '../sub_category_screen.dart';
 import '../notifications_screen.dart';
 import '../expert_profile_screen.dart';
-import 'package:showcaseview/showcaseview.dart';
 import '../help_center_screen.dart';
 import '../../services/category_service.dart';
 import '../../services/visual_fetcher_service.dart';
 import '../../widgets/category_image_card.dart';
 import '../../onboarding/app_tour.dart';
-import 'widgets/stories_row.dart';
+import '../../l10n/app_localizations.dart';
 
 // ─── Discover / Search page ──────────────────────────────────────────────────
 
@@ -79,23 +78,25 @@ class _SearchPageState extends State<SearchPage> {
 
   // ── Time-based greeting ─────────────────────────────────────────────────────
 
-  String _getGreeting() {
+  String _getGreeting(AppLocalizations l10n) {
     final h = DateTime.now().hour;
-    if (h >= 6  && h < 12) return 'בוקר טוב ☀️';
-    if (h >= 12 && h < 17) return 'אחה"צ טובות 🌤️';
-    if (h >= 17 && h < 22) return 'ערב טוב 🌙';
-    return 'לילה טוב ✨';
+    if (h >= 6  && h < 12) return '${l10n.greetingMorning} ☀️';
+    if (h >= 12 && h < 17) return '${l10n.greetingAfternoon} 🌤️';
+    if (h >= 17 && h < 22) return '${l10n.greetingEvening} 🌙';
+    return '${l10n.greetingNight} ✨';
   }
 
-  String _getGreetingSubtitle() {
+  String _getGreetingSubtitle(AppLocalizations l10n) {
     final h = DateTime.now().hour;
-    if (h >= 6  && h < 12) return 'מה צריך לסדר הבוקר?';
-    if (h >= 12 && h < 17) return 'מחפש מקצוען? זה הזמן';
-    if (h >= 17 && h < 22) return 'פינוק בערב? מגיע לך!';
-    return 'גלה מומחים מובילים';
+    if (h >= 6  && h < 12) return l10n.greetingSubMorning;
+    if (h >= 12 && h < 17) return l10n.greetingSubAfternoon;
+    if (h >= 17 && h < 22) return l10n.greetingSubEvening;
+    return l10n.greetingSubNight;
   }
 
-  List<Map<String, dynamic>> _getTimeSuggestions() {
+  List<Map<String, dynamic>> _getTimeSuggestions(AppLocalizations l10n) {
+    // Suggestion labels are category names that are used for Firestore queries
+    // and are always stored/queried in Hebrew — keep them as-is.
     final h = DateTime.now().hour;
     if (h >= 6 && h < 12) {
       return [
@@ -129,8 +130,8 @@ class _SearchPageState extends State<SearchPage> {
     ];
   }
 
-  Widget _buildSuggestedRow() {
-    final suggestions = _getTimeSuggestions();
+  Widget _buildSuggestedRow(AppLocalizations l10n) {
+    final suggestions = _getTimeSuggestions(l10n);
     return Padding(
       padding: const EdgeInsets.fromLTRB(0, 2, 0, 2),
       child: SizedBox(
@@ -181,11 +182,11 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   // ── Search bar ──────────────────────────────────────────────────────────────
-  Widget _buildSearchBar() {
+  Widget _buildSearchBar(AppLocalizations l10n) {
     return AnyShowcase(
       tourKey: tourClientSearchKey,
-      title: '🔍 חיפוש מומחים',
-      description: 'הקלידו שם, קטגוריה, או סוג שירות — AnySkill ימצא את הספק המתאים לכם',
+      title: l10n.searchTourSearchTitle,
+      description: l10n.searchTourSearchDesc,
       child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: TextField(
@@ -197,7 +198,7 @@ class _SearchPageState extends State<SearchPage> {
         textAlign: TextAlign.right,
         textDirection: TextDirection.rtl,
         decoration: InputDecoration(
-          hintText: 'מה תרצה ללמוד היום?',
+          hintText: l10n.searchHintExperts,
           hintStyle: TextStyle(color: Colors.grey[400], fontSize: 15),
           suffixIcon: const Padding(
             padding: EdgeInsets.only(left: 14),
@@ -268,6 +269,7 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final bool isAdmin =
         FirebaseAuth.instance.currentUser?.email == 'adawiavihai@gmail.com';
 
@@ -297,7 +299,7 @@ class _SearchPageState extends State<SearchPage> {
                       IconButton(
                         icon: const Icon(Icons.help_outline_rounded, size: 22),
                         color: const Color(0xFF6366F1),
-                        tooltip: 'מרכז עזרה',
+                        tooltip: l10n.helpCenterTooltip,
                         onPressed: () => Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -322,7 +324,7 @@ class _SearchPageState extends State<SearchPage> {
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         Text(
-                          _getGreeting(),
+                          _getGreeting(l10n),
                           style: const TextStyle(
                               fontSize: 26, fontWeight: FontWeight.bold),
                           overflow: TextOverflow.ellipsis,
@@ -330,7 +332,7 @@ class _SearchPageState extends State<SearchPage> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          _getGreetingSubtitle(),
+                          _getGreetingSubtitle(l10n),
                           style: const TextStyle(
                               fontSize: 13, color: Colors.grey),
                           overflow: TextOverflow.ellipsis,
@@ -346,7 +348,7 @@ class _SearchPageState extends State<SearchPage> {
             const SizedBox(height: 8),
 
             // ── Search bar ────────────────────────────────────────────────
-            _buildSearchBar(),
+            _buildSearchBar(l10n),
 
             const SizedBox(height: 6),
 
@@ -357,24 +359,14 @@ class _SearchPageState extends State<SearchPage> {
               child: _searchQuery.isEmpty
                   ? AnyShowcase(
                       tourKey: tourClientSuggestionsKey,
-                      title: '⚡ קטגוריות מומלצות',
-                      description: 'AnySkill מציע שירותים בהתאם לשעה ביום — בוקר לתיקונים, ערב לספא ורווחה',
-                      child: _buildSuggestedRow(),
+                      title: l10n.searchTourSuggestionsTitle,
+                      description: l10n.searchTourSuggestionsDesc,
+                      child: _buildSuggestedRow(l10n),
                     )
                   : const SizedBox.shrink(),
             ),
 
             const SizedBox(height: 6),
-
-            // ── Skills Stories row ─────────────────────────────────────
-            // Collapses automatically when empty or when user is typing.
-            AnimatedSize(
-              duration: const Duration(milliseconds: 280),
-              curve: Curves.easeInOut,
-              child: _searchQuery.isEmpty
-                  ? StoriesRow(isProvider: _isProvider)
-                  : const SizedBox.shrink(),
-            ),
 
             // ── Categories ────────────────────────────────────────────────
             Expanded(
@@ -389,11 +381,11 @@ class _SearchPageState extends State<SearchPage> {
                   }
 
                   if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                    return const Center(
+                    return Center(
                       child: Text(
-                        "לא נמצאו קטגוריות.\nבצע אתחול מלוח הניהול.",
+                        l10n.searchNoCategoriesBody,
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey, fontSize: 15),
+                        style: const TextStyle(color: Colors.grey, fontSize: 15),
                       ),
                     );
                   }
@@ -443,7 +435,7 @@ class _SearchPageState extends State<SearchPage> {
                               size: 60, color: Colors.grey[300]),
                           const SizedBox(height: 12),
                           Text(
-                            'לא נמצאו תוצאות עבור "$_searchQuery"',
+                            l10n.searchNoResultsFor(_searchQuery),
                             style: const TextStyle(
                                 color: Colors.grey, fontSize: 15),
                           ),
@@ -461,20 +453,9 @@ class _SearchPageState extends State<SearchPage> {
 
                       return CustomScrollView(
                         slivers: [
-                          // ── Credits card + Inspiration feed (search empty) ──
-                          if (_searchQuery.isEmpty) ...[
+                          // ── Credits card (search empty) ──────────────────
+                          if (_searchQuery.isEmpty)
                             const SliverToBoxAdapter(child: _CreditsCard()),
-                            // client tour step 3
-                            SliverToBoxAdapter(
-                              child: AnyShowcase(
-                                tourKey: tourClientFeedKey,
-                                title: '✨ פיד ההשראה',
-                                description: 'עבודות אמיתיות מהאפליקציה — לחצו על כרטיס לפרופיל הספק המלא',
-                                tooltipPosition: TooltipPosition.top,
-                                child: const _InspirationFeed(),
-                              ),
-                            ),
-                          ],
 
                           // Section label
                           SliverToBoxAdapter(
@@ -482,8 +463,8 @@ class _SearchPageState extends State<SearchPage> {
                               padding: const EdgeInsets.fromLTRB(20, 4, 20, 6),
                               child: Text(
                                 _searchQuery.isEmpty
-                                    ? "קטגוריות"
-                                    : 'תוצאות עבור "$_searchQuery"',
+                                    ? l10n.searchSectionCategories
+                                    : l10n.searchSectionResultsFor(_searchQuery),
                                 style: const TextStyle(
                                     fontSize: 17,
                                     fontWeight: FontWeight.bold),
@@ -631,11 +612,11 @@ class _FeaturedProviderCardState extends State<_FeaturedProviderCard>
     super.dispose();
   }
 
-  String _urgencyText() {
+  String _urgencyText(AppLocalizations l10n) {
     final h = DateTime.now().hour;
-    if (h >= 6  && h < 13) return '🔴 נותר מקום 1 בלבד להיום!';
-    if (h >= 13 && h < 20) return '⚡ נותרו 2 מקומות לשבוע זה';
-    return '⏰ בדרך כלל מוזמן 3 ימים מראש';
+    if (h >= 6  && h < 13) return l10n.searchUrgencyMorning;
+    if (h >= 13 && h < 20) return l10n.searchUrgencyAfternoon;
+    return l10n.searchUrgencyEvening;
   }
 
   Future<void> _pickDate() async {
@@ -681,18 +662,19 @@ class _FeaturedProviderCardState extends State<_FeaturedProviderCard>
   }
 
   Widget _buildCard() {
+    final l10n     = AppLocalizations.of(context);
     final d        = _data!;
-    final name     = d['name']         as String? ?? 'מומחה';
-    final title    = d['serviceType']  as String? ?? 'מומחה מוסמך';
+    final name     = d['name']         as String? ?? l10n.searchDefaultExpert;
+    final title    = d['serviceType']  as String? ?? l10n.searchDefaultTitle;
     final price    = (d['pricePerHour'] as num? ?? 100).toInt();
     final rating   = (d['rating']       as num? ?? 5.0);
-    final city     = d['city']          as String? ?? 'שכונתך';
+    final city     = d['city']          as String? ?? l10n.searchDefaultCity;
     final photo    = d['profileImage']  as String? ?? '';
     final online   = d['isOnline']      as bool? ?? false;
     final verified = d['isVerified']    as bool? ?? false;
 
     final dateLabel = _selectedDate == null
-        ? 'מתי פנוי?'
+        ? l10n.searchDatePickerHint
         : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}';
 
     return GestureDetector(
@@ -751,8 +733,8 @@ class _FeaturedProviderCardState extends State<_FeaturedProviderCard>
                                   ),
                                   borderRadius: BorderRadius.circular(20),
                                 ),
-                                child: const Text('⭐ מומלץ',
-                                    style: TextStyle(
+                                child: Text(l10n.searchRecommendedBadge,
+                                    style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 10,
                                         fontWeight: FontWeight.bold)),
@@ -845,7 +827,7 @@ class _FeaturedProviderCardState extends State<_FeaturedProviderCard>
                                   ),
                                   const SizedBox(width: 4),
                                   Text(
-                                    online ? 'זמין עכשיו' : 'לא זמין',
+                                    online ? l10n.onlineStatus : l10n.offlineStatus,
                                     style: TextStyle(
                                         fontSize: 11,
                                         fontWeight: FontWeight.w600,
@@ -868,9 +850,9 @@ class _FeaturedProviderCardState extends State<_FeaturedProviderCard>
                                           fontSize: 16,
                                           fontWeight: FontWeight.w900),
                                     ),
-                                    const TextSpan(
-                                      text: ' / שעה',
-                                      style: TextStyle(
+                                    TextSpan(
+                                      text: l10n.searchPerHour,
+                                      style: const TextStyle(
                                           fontSize: 11,
                                           color: Colors.grey,
                                           fontWeight: FontWeight.normal),
@@ -894,13 +876,13 @@ class _FeaturedProviderCardState extends State<_FeaturedProviderCard>
                   children: [
                     _ServiceChip(
                       icon: Icons.calendar_month_rounded,
-                      label: 'זמין בסופ"ש',
+                      label: l10n.searchChipWeekend,
                       color: const Color(0xFF8B5CF6),
                     ),
                     const SizedBox(width: 6),
                     _ServiceChip(
                       icon: Icons.home_rounded,
-                      label: 'ביקור בית',
+                      label: l10n.searchChipHomeVisit,
                       color: const Color(0xFF007AFF),
                     ),
                   ],
@@ -937,8 +919,8 @@ class _FeaturedProviderCardState extends State<_FeaturedProviderCard>
                             ],
                           ),
                           alignment: Alignment.center,
-                          child: const Text('הזמן עכשיו',
-                              style: TextStyle(
+                          child: Text(l10n.bookNow,
+                              style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 14)),
@@ -990,7 +972,7 @@ class _FeaturedProviderCardState extends State<_FeaturedProviderCard>
 
                 // ── Urgency nudge ─────────────────────────────────────────────
                 Text(
-                  _urgencyText(),
+                  _urgencyText(l10n),
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                       fontSize: 11,
@@ -1248,13 +1230,13 @@ class _CategoryCardState extends State<_CategoryCard> {
                     ),
                     if (widget.hasSubs) ...[
                       const SizedBox(height: 4),
-                      const Row(
+                      Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
-                          Icon(Icons.keyboard_arrow_left,
+                          const Icon(Icons.keyboard_arrow_left,
                               color: Colors.white70, size: 14),
-                          Text("בחר התמחות",
-                              style: TextStyle(
+                          Text(AppLocalizations.of(context).subCategoryPrompt,
+                              style: const TextStyle(
                                   color: Colors.white70, fontSize: 11)),
                         ],
                       ),
@@ -1301,14 +1283,14 @@ class _CategoryCardState extends State<_CategoryCard> {
                         ),
                       ],
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text("🔥", style: TextStyle(fontSize: 11)),
-                        SizedBox(width: 3),
+                        const Text("🔥", style: TextStyle(fontSize: 11)),
+                        const SizedBox(width: 3),
                         Text(
-                          "טרנד",
-                          style: TextStyle(
+                          AppLocalizations.of(context).trendingBadge,
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
@@ -1409,7 +1391,7 @@ class _EditCategorySheetState extends State<_EditCategorySheet> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text("שגיאה בשמירה: $e"),
+              content: Text(AppLocalizations.of(context).editCategorySaveError('$e')),
               backgroundColor: Colors.red),
         );
       }
@@ -1420,6 +1402,7 @@ class _EditCategorySheetState extends State<_EditCategorySheet> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Container(
       padding: EdgeInsets.fromLTRB(
           24, 16, 24, MediaQuery.of(context).viewInsets.bottom + 32),
@@ -1438,9 +1421,9 @@ class _EditCategorySheetState extends State<_EditCategorySheet> {
                 borderRadius: BorderRadius.circular(10)),
           ),
           const SizedBox(height: 22),
-          const Text(
-            "עריכת קטגוריה",
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          Text(
+            l10n.editCategoryTitle,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 24),
           GestureDetector(
@@ -1467,15 +1450,15 @@ class _EditCategorySheetState extends State<_EditCategorySheet> {
                       color: Colors.black.withValues(alpha: 0.3),
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    child: const Column(
+                    child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.add_photo_alternate_outlined,
+                        const Icon(Icons.add_photo_alternate_outlined,
                             color: Colors.white, size: 34),
-                        SizedBox(height: 6),
-                        Text("לחץ להחלפת תמונה",
-                            style:
-                                TextStyle(color: Colors.white, fontSize: 13)),
+                        const SizedBox(height: 6),
+                        Text(l10n.editCategoryChangePic,
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 13)),
                       ],
                     ),
                   ),
@@ -1488,7 +1471,7 @@ class _EditCategorySheetState extends State<_EditCategorySheet> {
             controller: _nameController,
             textAlign: TextAlign.right,
             decoration: InputDecoration(
-              labelText: "שם קטגוריה",
+              labelText: l10n.editCategoryNameLabel,
               border:
                   OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
               prefixIcon: const Icon(Icons.label_outline),
@@ -1505,8 +1488,8 @@ class _EditCategorySheetState extends State<_EditCategorySheet> {
             ),
             child: _isSaving
                 ? const CircularProgressIndicator(color: Colors.white)
-                : const Text("שמור שינויים",
-                    style: TextStyle(
+                : Text(l10n.saveChanges,
+                    style: const TextStyle(
                         color: Colors.white,
                         fontSize: 16,
                         fontWeight: FontWeight.bold)),
@@ -1567,6 +1550,7 @@ class _CreditsCardState extends State<_CreditsCard> {
   Widget build(BuildContext context) {
     if (!_loaded || _credits == 0) return const SizedBox.shrink();
 
+    final l10n       = AppLocalizations.of(context);
     final progress   = (_credits % _milestone) / _milestone;
     final remaining  = _milestone - (_credits % _milestone);
     final tierNumber = _credits ~/ _milestone;
@@ -1606,7 +1590,7 @@ class _CreditsCardState extends State<_CreditsCard> {
                           color: const Color(0xFFFBBF24),
                           borderRadius: BorderRadius.circular(20),
                         ),
-                        child: Text('$discount% הנחה זמינה!',
+                        child: Text(l10n.creditsDiscountAvailable(discount),
                             style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 11,
@@ -1615,7 +1599,7 @@ class _CreditsCardState extends State<_CreditsCard> {
                       const SizedBox(width: 8),
                     ],
                     Text(
-                      'עוד $remaining להנחה הבאה',
+                      l10n.creditsToNextDiscount(remaining),
                       style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.75),
                           fontSize: 11),
@@ -1630,8 +1614,8 @@ class _CreditsCardState extends State<_CreditsCard> {
                             fontSize: 22,
                             fontWeight: FontWeight.w900)),
                     const SizedBox(width: 4),
-                    const Text('קרדיטים',
-                        style: TextStyle(
+                    Text(l10n.creditsLabel,
+                        style: const TextStyle(
                             color: Colors.white70, fontSize: 12)),
                     const SizedBox(width: 6),
                     const Icon(Icons.stars_rounded,
@@ -1672,250 +1656,6 @@ class _CreditsCardState extends State<_CreditsCard> {
   }
 }
 
-// ─── Inspiration Feed — isolated StatefulWidget ────────────────────────────────
-//
-// Reads `completed_works` collection (written by Cloud Function on job completion).
-// Shows a horizontally scrollable feed of recently completed works.
-// Hidden when the collection is empty.
-
-class _InspirationFeed extends StatefulWidget {
-  const _InspirationFeed();
-  @override
-  State<_InspirationFeed> createState() => _InspirationFeedState();
-}
-
-class _InspirationFeedState extends State<_InspirationFeed> {
-  static const double _cardW = 155.0;
-  static const double _cardH = 195.0;
-
-  StreamSubscription<QuerySnapshot>? _sub;
-  List<Map<String, dynamic>> _works   = [];
-  bool                        _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _sub = FirebaseFirestore.instance
-        .collection('completed_works')
-        .orderBy('completedAt', descending: true)
-        .limit(10)
-        .snapshots()
-        .listen((snap) {
-          if (!mounted) return;
-          setState(() {
-            _works   = snap.docs
-                .map((d) => d.data())
-                .toList();
-            _loading = false;
-          });
-        }, onError: (_) {
-          if (mounted) setState(() => _loading = false);
-        });
-  }
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_loading || _works.isEmpty) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          // ── Header ──────────────────────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFECFDF5),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Text('חדש',
-                      style: TextStyle(
-                          color: Color(0xFF065F46),
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold)),
-                ),
-                const Text('השראה — עבודות שהושלמו',
-                    style: TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.bold)),
-              ],
-            ),
-          ),
-
-          // ── Horizontal cards ─────────────────────────────────────────────
-          SizedBox(
-            height: _cardH,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              reverse: true,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              itemCount: _works.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
-              itemBuilder: (context, i) {
-                final work        = _works[i];
-                final coverImage  = work['coverImage']  as String? ?? '';
-                final expertName  = work['expertName']  as String? ?? 'מומחה';
-                final serviceType = work['serviceType'] as String? ?? '';
-                final city        = work['city']        as String? ?? '';
-                final expertId    = work['expertId']    as String? ?? '';
-
-                return GestureDetector(
-                  onTap: () {
-                    if (expertId.isEmpty) return;
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ExpertProfileScreen(
-                          expertId: expertId,
-                          expertName: expertName,
-                        ),
-                      ),
-                    );
-                  },
-                  child: Container(
-                    width: _cardW,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      color: const Color(0xFFF0F0FF),
-                    ),
-                    clipBehavior: Clip.hardEdge,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        // Cover image
-                        coverImage.isNotEmpty
-                            ? Image.network(coverImage,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) =>
-                                    _InspirationFeedState._placeholder())
-                            : _InspirationFeedState._placeholder(),
-
-                        // Gradient overlay
-                        Positioned.fill(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.transparent,
-                                  Colors.black
-                                      .withValues(alpha: 0.78)
-                                ],
-                                stops: const [0.4, 1.0],
-                              ),
-                            ),
-                          ),
-                        ),
-
-                        // Expert info (bottom)
-                        Positioned(
-                          bottom: 10,
-                          left: 8,
-                          right: 8,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(expertName,
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis),
-                              if (serviceType.isNotEmpty)
-                                Text(serviceType,
-                                    style: TextStyle(
-                                        color: Colors.white
-                                            .withValues(alpha: 0.75),
-                                        fontSize: 10),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis),
-                            ],
-                          ),
-                        ),
-
-                        // City badge (top-left)
-                        if (city.isNotEmpty)
-                          Positioned(
-                            top: 8,
-                            left: 8,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 7, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: Colors.black54,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(Icons.location_on_rounded,
-                                      color: Colors.white, size: 9),
-                                  const SizedBox(width: 2),
-                                  Text(city,
-                                      style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 9)),
-                                ],
-                              ),
-                            ),
-                          ),
-
-                        // "Completed" badge (top-right)
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 7, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: Colors.green.shade600
-                                  .withValues(alpha: 0.9),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: const Text('הושלם ✓',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.bold)),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static Widget _placeholder() => Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: const Icon(Icons.work_rounded, color: Colors.white54, size: 40),
-      );
-}
 
 // ─── Compact online/offline status toggle ────────────────────────────────────
 
@@ -1927,8 +1667,9 @@ class _OnlineToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Tooltip(
-      message: isOnline ? 'לחץ להיות לא זמין' : 'לחץ להיות זמין',
+      message: isOnline ? l10n.onlineToggleOff : l10n.onlineToggleOn,
       child: GestureDetector(
         onTap: onTap,
         child: Container(
@@ -1946,7 +1687,7 @@ class _OnlineToggle extends StatelessWidget {
               _GlowDot(isOnline: isOnline),
               const SizedBox(width: 5),
               Text(
-                isOnline ? 'זמין' : 'לא זמין',
+                isOnline ? l10n.onlineStatus : l10n.offlineStatus,
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w700,

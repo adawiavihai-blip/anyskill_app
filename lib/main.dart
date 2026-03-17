@@ -10,10 +10,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'utils/web_utils.dart';
 import 'services/permission_service.dart';
+import 'services/locale_provider.dart';
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/onboarding_screen.dart';
+import 'l10n/app_localizations.dart';
 
 // גרסה 1.0.4 - שחרור תקיעה וייצוב סופי
 const String currentAppVersion = "1.0.4";
@@ -59,6 +61,9 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Load saved locale BEFORE first frame so there's no flash of wrong language.
+  await LocaleProvider.init();
+
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   if (kIsWeb) {
@@ -84,19 +89,32 @@ class AnySkillApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: rootNavigatorKey,
-      debugShowCheckedModeBanner: false,
-      title: 'AnySkill Elite',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF007AFF)),
-        scaffoldBackgroundColor: Colors.white,
-        textTheme: GoogleFonts.heeboTextTheme(Theme.of(context).textTheme).apply(
-          fontFamilyFallback: ['NotoSansHebrew'],
-        ),
-      ),
-      home: const AuthWrapper(),
+    // ListenableBuilder rebuilds MaterialApp whenever the user switches language.
+    return ListenableBuilder(
+      listenable: LocaleProvider.instance,
+      builder: (context, _) {
+        final locale = LocaleProvider.instance.locale;
+        return MaterialApp(
+          navigatorKey: rootNavigatorKey,
+          debugShowCheckedModeBanner: false,
+          title: 'AnySkill',
+          // ── i18n: persisted locale (default: Hebrew RTL) ─────────────────
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales:       AppLocalizations.supportedLocales,
+          locale:                 locale,
+          // Auto-resolve RTL/LTR: GlobalMaterialLocalizations handles directionality
+          // for Hebrew (RTL) and English/Spanish (LTR) automatically.
+          theme: ThemeData(
+            useMaterial3: true,
+            colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF007AFF)),
+            scaffoldBackgroundColor: Colors.white,
+            textTheme: GoogleFonts.heeboTextTheme(Theme.of(context).textTheme).apply(
+              fontFamilyFallback: ['NotoSansHebrew'],
+            ),
+          ),
+          home: const AuthWrapper(),
+        );
+      },
     );
   }
 }
@@ -232,17 +250,21 @@ class _AuthWrapperState extends State<AuthWrapper> {
               ],
             ),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            child: Directionality(
-              textDirection: TextDirection.rtl,
-              child: Row(
+            child: Builder(builder: (ctx) {
+              final l10n = AppLocalizations.of(ctx);
+              return Directionality(
+                textDirection: l10n.isCurrentRtl
+                    ? TextDirection.rtl
+                    : TextDirection.ltr,
+                child: Row(
                 children: [
                   const Icon(Icons.system_update_alt_rounded,
                       color: Colors.white, size: 22),
                   const SizedBox(width: 10),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'שדרגנו את AnySkill עבורך!\nגרסה חדשה זמינה לשיפור הביצועים 🚀',
-                      style: TextStyle(
+                      l10n.updateBannerText,
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -272,8 +294,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: const Text('עדכן עכשיו',
-                        style: TextStyle(
+                    child: Text(l10n.updateNowButton,
+                        style: const TextStyle(
                             fontSize: 13, fontWeight: FontWeight.bold)),
                   ),
                   // ── Dismiss (×) ────────────────────────────────────────────
@@ -293,8 +315,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
                     ),
                   ),
                 ],
-              ),
-            ),
+              ), // Row
+            ); // Directionality
+            }), // Builder
           ),
         ),
       ),
@@ -383,7 +406,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
             behavior: SnackBarBehavior.floating,
             duration: const Duration(seconds: 4),
             action: SnackBarAction(
-              label: 'פתח',
+              label: AppLocalizations.of(ctx).notifOpen,
               textColor: Colors.white,
               onPressed: () => _navigateFromMessage(message),
             ),

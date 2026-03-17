@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../services/category_service.dart';
+import '../../../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
 
 class CategoryPills extends StatelessWidget {
   final String selectedCategory;

@@ -17,6 +17,7 @@ import '../services/ai_analysis_service.dart';
 import '../onboarding/app_tour.dart';
 import '../main.dart' show PendingNotification;
 import 'home_tab.dart';
+import '../l10n/app_localizations.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -82,6 +83,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _chatStream = FirebaseFirestore.instance
         .collection('chats')
         .where('users', arrayContains: uid)
+        .limit(50)       // 🔒 cap: prevents unbounded read for power users
         .snapshots();
     _transactionStream = FirebaseFirestore.instance
         .collection('transactions')
@@ -103,6 +105,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           .collection('jobs')
           .where('customerId', isEqualTo: uid)
           .where('status', isEqualTo: 'expert_completed')
+          .limit(100)    // 🔒 badge never needs more than 100 actionable jobs
           .snapshots()
           .listen((s) { if (mounted) setState(() => _bookingsCustBadge = s.docs.length); });
 
@@ -111,6 +114,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           .collection('jobs')
           .where('expertId', isEqualTo: uid)
           .where('status', isEqualTo: 'paid_escrow')
+          .limit(100)    // 🔒 badge never needs more than 100 actionable jobs
           .snapshots()
           .listen((s) { if (mounted) setState(() => _bookingsExpertBadge = s.docs.length); });
     }
@@ -359,6 +363,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return StreamBuilder<QuerySnapshot>(
       stream: _chatStream,
       builder: (context, snapshot) {
+        final l10n = AppLocalizations.of(context);
         int unreadCount = 0;
         if (snapshot.hasData) {
           for (final doc in snapshot.data!.docs) {
@@ -397,10 +402,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             selectedFontSize: 11,
             unselectedFontSize: 11,
             items: [
-              const BottomNavigationBarItem(
-                icon: Icon(Icons.home_outlined),
-                activeIcon: Icon(Icons.home),
-                label: 'בית'
+              BottomNavigationBarItem(
+                icon: const Icon(Icons.home_outlined),
+                activeIcon: const Icon(Icons.home),
+                label: l10n.tabHome,
               ),
               // Bookings badge — shows NEW jobs since last tab visit
               BottomNavigationBarItem(
@@ -414,7 +419,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   isLabelVisible: _bookingsVisibleBadge > 0,
                   child: const Icon(Icons.receipt_long),
                 ),
-                label: 'הזמנות',
+                label: l10n.tabBookings,
               ),
               // Chat badge — existing unread count logic
               BottomNavigationBarItem(
@@ -428,7 +433,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   isLabelVisible: unreadCount > 0,
                   child: const Icon(Icons.chat_bubble),
                 ),
-                label: 'צ\'אט',
+                label: l10n.tabChat,
               ),
               // Wallet — provider tour target
               BottomNavigationBarItem(
@@ -440,7 +445,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   child: const Icon(Icons.account_balance_wallet_outlined),
                 ),
                 activeIcon: const Icon(Icons.account_balance_wallet),
-                label: 'ארנק',
+                label: l10n.tabWallet,
               ),
               // Profile — provider tour target
               BottomNavigationBarItem(
@@ -452,7 +457,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   child: const Icon(Icons.person_outline),
                 ),
                 activeIcon: const Icon(Icons.person),
-                label: 'פרופיל',
+                label: l10n.tabProfile,
               ),
               // Opportunities badge — new requests in provider's category (index 5)
               if (isProvider) ...[

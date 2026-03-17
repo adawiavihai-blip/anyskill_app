@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import '../l10n/app_localizations.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
@@ -56,14 +57,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF7F9FC),
       appBar: AppBar(
-        title: const Text("התראות", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(AppLocalizations.of(context).notificationsTitle, style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0,
         actions: [
           TextButton(
             onPressed: _markAllRead,
-            child: const Text("נקה הכל", style: TextStyle(color: Colors.grey)),
+            child: Text(AppLocalizations.of(context).notifClearAll, style: const TextStyle(color: Colors.grey)),
           ),
         ],
       ),
@@ -156,11 +157,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   String _formatTime(DateTime dt) {
+    final l10n = AppLocalizations.of(context);
     final now = DateTime.now();
     final diff = now.difference(dt);
-    if (diff.inMinutes < 1) return 'עכשיו';
-    if (diff.inMinutes < 60) return 'לפני ${diff.inMinutes} דק\'';
-    if (diff.inHours < 24) return 'לפני ${diff.inHours} שעות';
+    if (diff.inMinutes < 1) return l10n.timeNow;
+    if (diff.inMinutes < 60) return l10n.timeMinutesAgo(diff.inMinutes);
+    if (diff.inHours < 24) return l10n.timeHoursAgo(diff.inHours);
     return DateFormat('dd/MM HH:mm').format(dt);
   }
 
@@ -175,10 +177,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             child: Icon(Icons.notifications_none_outlined, size: 56, color: Colors.grey[400]),
           ),
           const SizedBox(height: 20),
-          const Text("אין התראות עדיין",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+          Text(AppLocalizations.of(context).notifEmptyTitle,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
           const SizedBox(height: 8),
-          Text("פעולות בחשבון שלך יופיעו כאן",
+          Text(AppLocalizations.of(context).notifEmptySubtitle,
               style: TextStyle(fontSize: 14, color: Colors.grey[500])),
         ],
       ),

@@ -9,6 +9,7 @@ import 'package:table_calendar/table_calendar.dart';
 import 'chat_screen.dart';
 import '../constants/quick_tags.dart';
 import '../services/cancellation_policy_service.dart';
+import '../l10n/app_localizations.dart';
 
 // Brand tokens
 const _kPurple     = Color(0xFF6366F1);
@@ -16,16 +17,32 @@ const _kPurpleSoft = Color(0xFFF0F0FF);
 const _kGold       = Color(0xFFFBBF24);
 
 // Trait tag catalog — keys stored in reviews/{id}.traitTags
+// Labels are resolved at runtime via _traitLabel() for i18n.
 const _kTraitTags = [
-  {'key': 'punctual',      'emoji': '⏰', 'label': 'תמיד בזמן'},
-  {'key': 'professional',  'emoji': '💼', 'label': 'מקצועי/ת'},
-  {'key': 'communicative', 'emoji': '💬', 'label': 'תקשורת מעולה'},
-  {'key': 'patient',       'emoji': '🤗', 'label': 'סבלני/ת'},
-  {'key': 'knowledgeable', 'emoji': '🎓', 'label': 'בעל/ת ידע'},
-  {'key': 'friendly',      'emoji': '😊', 'label': 'ידידותי/ת'},
-  {'key': 'creative',      'emoji': '🎨', 'label': 'יצירתי/ת'},
-  {'key': 'flexible',      'emoji': '🔄', 'label': 'גמיש/ה'},
+  {'key': 'punctual',      'emoji': '⏰'},
+  {'key': 'professional',  'emoji': '💼'},
+  {'key': 'communicative', 'emoji': '💬'},
+  {'key': 'patient',       'emoji': '🤗'},
+  {'key': 'knowledgeable', 'emoji': '🎓'},
+  {'key': 'friendly',      'emoji': '😊'},
+  {'key': 'creative',      'emoji': '🎨'},
+  {'key': 'flexible',      'emoji': '🔄'},
 ];
+
+/// Returns the i18n label for a trait key. Falls back to the key itself.
+String _traitLabel(String key, AppLocalizations l10n) {
+  switch (key) {
+    case 'punctual':      return l10n.traitPunctual;
+    case 'professional':  return l10n.traitProfessional;
+    case 'communicative': return l10n.traitCommunicative;
+    case 'patient':       return l10n.traitPatient;
+    case 'knowledgeable': return l10n.traitKnowledgeable;
+    case 'friendly':      return l10n.traitFriendly;
+    case 'creative':      return l10n.traitCreative;
+    case 'flexible':      return l10n.traitFlexible;
+    default:              return key;
+  }
+}
 
 class ExpertProfileScreen extends StatefulWidget {
   final String expertId;
@@ -75,23 +92,24 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // Derived service tiers (no separate Firestore collection needed)
   // ─────────────────────────────────────────────────────────────────────────
 
-  List<Map<String, dynamic>> _deriveServices(double pricePerHour) => [
+  List<Map<String, dynamic>> _deriveServices(
+      double pricePerHour, AppLocalizations l10n) => [
         {
-          'title':    'שיעור בודד',
-          'subtitle': 'מפגש אישי אחד',
-          'duration': "60 דק'",
+          'title':    l10n.serviceSingleLesson,
+          'subtitle': l10n.serviceSingleSubtitle,
+          'duration': l10n.serviceSingle60min,
           'price':    pricePerHour,
         },
         {
-          'title':    'שיעור מורחב',
-          'subtitle': 'כולל סיכום ומשימות',
-          'duration': "90 דק'",
+          'title':    l10n.serviceExtendedLesson,
+          'subtitle': l10n.serviceExtendedSubtitle,
+          'duration': l10n.serviceExtended90min,
           'price':    (pricePerHour * 1.4).roundToDouble(),
         },
         {
-          'title':    'סשן מלא',
-          'subtitle': 'עבודה מעמיקה + תכנית אישית',
-          'duration': "120 דק'",
+          'title':    l10n.serviceFullSession,
+          'subtitle': l10n.serviceFullSubtitle,
+          'duration': l10n.serviceFullSession120min,
           'price':    (pricePerHour * 1.8).roundToDouble(),
         },
       ];
@@ -134,6 +152,15 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     if (_isProcessing) return;
     setState(() => _isProcessing = true);
 
+    // Capture l10n strings before any await (context may be gone after await)
+    final l10n = AppLocalizations.of(context);
+    final msgInsufficientBalance = l10n.expertInsufficientBalance;
+    final msgEscrowSuccess       = l10n.expertEscrowSuccess;
+    final msgTransactionTitle    = l10n.expertTransactionTitle(widget.expertName);
+    final dateStr = _selectedDay != null
+        ? '${_selectedDay!.day}/${_selectedDay!.month}'
+        : '';
+
     final firestore = FirebaseFirestore.instance;
     final String currentUserId =
         FirebaseAuth.instance.currentUser?.uid ?? "";
@@ -165,7 +192,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             (customerSnap['balance'] ?? 0.0).toDouble();
 
         if (currentBalance < totalPrice) {
-          throw "אין מספיק יתרה בארנק לביצוע ההזמנה";
+          throw msgInsufficientBalance;
         }
 
         // Calculate cancellation deadline based on provider's policy
@@ -210,20 +237,22 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         transaction.set(firestore.collection('transactions').doc(), {
           'userId':    currentUserId,
           'amount':    -totalPrice,
-          'title':     "תשלום מאובטח: ${widget.expertName}",
+          'title':     msgTransactionTitle,
           'timestamp': FieldValue.serverTimestamp(),
           'status':    'escrow',
         });
       });
 
       await _sendSystemNotification(
-          chatRoomId, totalPrice, expertNetEarnings, currentUserId);
+          chatRoomId, totalPrice, expertNetEarnings, currentUserId,
+          systemMsg: l10n.expertSystemMessage(
+              dateStr, _selectedTimeSlot ?? '', expertNetEarnings.toStringAsFixed(0)));
 
       if (mounted) {
         navigator.pop();
-        messenger.showSnackBar(const SnackBar(
+        messenger.showSnackBar(SnackBar(
           backgroundColor: Colors.green,
-          content: Text("התור שוריין והתשלום הופקד בנאמנות!"),
+          content: Text(msgEscrowSuccess),
         ));
       }
     } catch (e) {
@@ -237,16 +266,13 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   }
 
   Future<void> _sendSystemNotification(
-      String chatRoomId, double total, double net, String currentUserId) async {
+      String chatRoomId, double total, double net, String currentUserId,
+      {required String systemMsg}) async {
     final chatRef =
         FirebaseFirestore.instance.collection('chats').doc(chatRoomId);
-    final dateStr = _selectedDay != null
-        ? "${_selectedDay!.day}/${_selectedDay!.month}"
-        : "";
     await chatRef.collection('messages').add({
       'senderId': 'system',
-      'message':
-          "🔒 הזמנה חדשה לתאריך $dateStr בשעה $_selectedTimeSlot!\nסכום שיעבור אליך: ₪$net",
+      'message':  systemMsg,
       'type':      'text',
       'timestamp': FieldValue.serverTimestamp(),
     });
@@ -259,7 +285,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // UI: Hero gallery carousel
   // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildHeroBackground(Map<String, dynamic> data) {
+  Widget _buildHeroBackground(Map<String, dynamic> data, AppLocalizations l10n) {
     final gallery      = (data['gallery'] as List? ?? []).cast<String>();
     final profileImage = data['profileImage'] as String? ?? '';
     final images       = [...gallery];
@@ -334,13 +360,13 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                               color: _kGold,
                               borderRadius: BorderRadius.circular(20),
                             ),
-                            child: const Row(
+                            child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.star_rounded,
+                                const Icon(Icons.star_rounded,
                                     size: 11, color: Colors.white),
-                                SizedBox(width: 3),
-                                Text('מומלץ',
+                                const SizedBox(width: 3),
+                                Text(l10n.expertRecommendedBadge,
                                     style: TextStyle(
                                         color: Colors.white,
                                         fontSize: 11,
@@ -410,7 +436,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // UI: Power Row (trust stats horizontal scroll)
   // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildPowerRow(Map<String, dynamic> data) {
+  Widget _buildPowerRow(Map<String, dynamic> data, AppLocalizations l10n) {
     final rating       = (data['rating']       as num? ?? 5.0).toDouble();
     final reviewsCount = (data['reviewsCount'] as num? ?? 0).toInt();
     final orderCount   = (data['orderCount']   as num? ?? 0).toInt();
@@ -423,42 +449,42 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     final stats = <Map<String, dynamic>>[
       {
         'value': rating.toStringAsFixed(1),
-        'label': 'דירוג',
+        'label': l10n.expertStatRating,
         'icon':  Icons.star_rounded,
         'color': _kGold,
       },
       if (reviewsCount > 0)
         {
           'value': '$reviewsCount',
-          'label': 'ביקורות',
+          'label': l10n.expertStatReviews,
           'icon':  Icons.chat_bubble_outline_rounded,
           'color': Colors.blue,
         },
       if (repeatRate != null)
         {
           'value': '$repeatRate%',
-          'label': 'לקוחות חוזרים',
+          'label': l10n.expertStatRepeatClients,
           'icon':  Icons.repeat_rounded,
           'color': Colors.green,
         },
       if (respTime > 0)
         {
-          'value': "$respTimeד'",
-          'label': 'זמן תגובה',
+          'value': l10n.expertResponseTimeFormat(respTime),
+          'label': l10n.expertStatResponseTime,
           'icon':  Icons.bolt_rounded,
           'color': _kPurple,
         },
       if (orderCount > 0)
         {
           'value': '$orderCount',
-          'label': 'הזמנות',
+          'label': l10n.expertStatOrders,
           'icon':  Icons.local_fire_department_rounded,
           'color': Colors.orange,
         },
       if (xp > 0)
         {
           'value': '$xp XP',
-          'label': 'נקודות',
+          'label': l10n.expertStatXp,
           'icon':  Icons.emoji_events_rounded,
           'color': const Color(0xFF8B5CF6),
         },
@@ -548,8 +574,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // UI: Bio section
   // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildBioSection(Map<String, dynamic> data) {
-    final bio = data['aboutMe'] as String? ?? 'מומחה מוסמך בקהילת AnySkill.';
+  Widget _buildBioSection(Map<String, dynamic> data, AppLocalizations l10n) {
+    final bio = data['aboutMe'] as String? ?? l10n.expertBioPlaceholder;
     const maxLines = 3;
     final isLong   = bio.split('\n').length > maxLines || bio.length > 160;
 
@@ -570,7 +596,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             child: Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(
-                _bioExpanded ? 'הצג פחות ▲' : 'קרא עוד ▼',
+                _bioExpanded ? l10n.expertBioShowLess : l10n.expertBioReadMore,
                 style: const TextStyle(
                     color: _kPurple,
                     fontSize: 13,
@@ -586,9 +612,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // UI: Service menu
   // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildServiceMenu(Map<String, dynamic> data) {
+  Widget _buildServiceMenu(Map<String, dynamic> data, AppLocalizations l10n) {
     final price    = (data['pricePerHour'] as num? ?? 100).toDouble();
-    final services = _deriveServices(price);
+    final services = _deriveServices(price, l10n);
 
     return Column(
       children: List.generate(services.length, (i) {
@@ -879,12 +905,12 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // UI: Time slots
   // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildTimeSlots() {
+  Widget _buildTimeSlots(AppLocalizations l10n) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        const Text("בחר שעה",
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        Text(l10n.expertSelectTime,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 10),
         SizedBox(
           height: 48,
@@ -934,7 +960,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // UI: Reviews — Advanced Social Proof System
   // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildReviewsSection() {
+  Widget _buildReviewsSection(AppLocalizations l10n) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final isProvider = currentUid == widget.expertId;
 
@@ -991,15 +1017,15 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      '${docs.length} ביקורות',
+                      l10n.expertReviewsCount(docs.length),
                       style: const TextStyle(
                           color: _kPurple,
                           fontSize: 12,
                           fontWeight: FontWeight.w700),
                     ),
                   ),
-                const Text('ביקורות',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                Text(l10n.expertReviewsHeader,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 16),
@@ -1014,12 +1040,12 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(color: Colors.grey.shade200),
                 ),
-                child: const Column(
+                child: Column(
                   children: [
-                    Icon(Icons.star_border_rounded, size: 40, color: Colors.grey),
-                    SizedBox(height: 8),
-                    Text('אין ביקורות עדיין',
-                        style: TextStyle(color: Colors.grey, fontSize: 14)),
+                    const Icon(Icons.star_border_rounded, size: 40, color: Colors.grey),
+                    const SizedBox(height: 8),
+                    Text(l10n.expertNoReviews,
+                        style: const TextStyle(color: Colors.grey, fontSize: 14)),
                   ],
                 ),
               )
@@ -1104,7 +1130,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   children: sortedTraits.take(6).map((entry) {
                     final meta = _kTraitTags.firstWhere(
                         (t) => t['key'] == entry.key,
-                        orElse: () => {'emoji': '✓', 'label': entry.key});
+                        orElse: () => {'emoji': '✓'});
+                    final metaLabel = _traitLabel(entry.key, l10n);
                     return Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 6),
@@ -1132,7 +1159,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                           ),
                           const SizedBox(width: 5),
                           Text(
-                            '${meta['emoji']} ${meta['label']}',
+                            '${meta['emoji']} $metaLabel',
                             style: const TextStyle(
                                 color: _kPurple,
                                 fontSize: 12,
@@ -1151,7 +1178,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                 final doc      = docs[idx];
                 final r        = doc.data() as Map<String, dynamic>;
                 final rating   = (r['rating'] as num? ?? 5).toDouble();
-                final name     = r['reviewerName'] as String? ?? 'לקוח';
+                final name     = r['reviewerName'] as String? ?? l10n.expertDefaultReviewer;
                 final comment  = (r['comment'] ?? '').toString().trim();
                 final ts       = r['timestamp'] as Timestamp?;
                 final date     = ts != null
@@ -1205,7 +1232,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                     const Icon(Icons.verified_rounded,
                                         color: Colors.green, size: 12),
                                     const SizedBox(width: 3),
-                                    Text('הזמנה מאובטחת',
+                                    Text(l10n.expertVerifiedBooking,
                                         style: TextStyle(
                                             color: Colors.green[700],
                                             fontSize: 10,
@@ -1269,8 +1296,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                             children: tags.map((key) {
                               final meta = _kTraitTags.firstWhere(
                                   (t) => t['key'] == key,
-                                  orElse: () =>
-                                      {'emoji': '✓', 'label': key});
+                                  orElse: () => {'emoji': '✓'});
+                              final tagLabel = _traitLabel(key, l10n);
                               return Container(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 8, vertical: 3),
@@ -1281,7 +1308,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                       color: Colors.green.shade200),
                                 ),
                                 child: Text(
-                                  '${meta['emoji']} ${meta['label']}',
+                                  '${meta['emoji']} $tagLabel',
                                   style: TextStyle(
                                       fontSize: 11,
                                       color: Colors.green[800],
@@ -1340,8 +1367,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                 children: [
                                   const Icon(Icons.verified_user_rounded,
                                       color: _kPurple, size: 14),
-                                  const Text('תגובת הספק',
-                                      style: TextStyle(
+                                  Text(l10n.expertProviderResponse,
+                                      style: const TextStyle(
                                           color: _kPurple,
                                           fontSize: 12,
                                           fontWeight: FontWeight.w700)),
@@ -1368,8 +1395,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 8, vertical: 2)),
                               icon: const Icon(Icons.reply_rounded, size: 15),
-                              label: const Text('הוסף תגובה',
-                                  style: TextStyle(fontSize: 12)),
+                              label: Text(l10n.expertAddReply,
+                                  style: const TextStyle(fontSize: 12)),
                               onPressed: () =>
                                   _showProviderReplyDialog(context, doc.id),
                             ),
@@ -1396,7 +1423,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Padding(
+      builder: (ctx) {
+        final l10n = AppLocalizations.of(ctx);
+        return Padding(
         padding:
             EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
         child: Container(
@@ -1419,8 +1448,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                         borderRadius: BorderRadius.circular(10))),
               ),
               const SizedBox(height: 16),
-              const Text('הוסף תגובה לביקורת',
-                  style:
+              Text(l10n.expertAddReplyTitle,
+                  style: const
                       TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
               const SizedBox(height: 12),
               TextField(
@@ -1429,7 +1458,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                 maxLines: 4,
                 textAlign: TextAlign.right,
                 decoration: InputDecoration(
-                  hintText: 'תודה על הביקורת...',
+                  hintText: l10n.expertReplyHint,
                   filled: true,
                   fillColor: Colors.grey[50],
                   border: OutlineInputBorder(
@@ -1457,6 +1486,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                 onPressed: () async {
                   final text = ctrl.text.trim();
                   if (text.isEmpty) return;
+                  // Capture l10n error formatter before await
+                  final replyErrorFn = l10n.expertReplyError; // ignore: prefer_function_declarations_over_variables
                   try {
                     await FirebaseFirestore.instance
                         .collection('reviews')
@@ -1469,13 +1500,13 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                     if (ctx.mounted) {
                       ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
                         backgroundColor: Colors.red,
-                        content: Text('שגיאה בשמירת התגובה: $e'),
+                        content: Text(replyErrorFn('$e')),
                       ));
                     }
                   }
                 },
-                child: const Text('פרסם תגובה',
-                    style: TextStyle(
+                child: Text(l10n.expertPublishReply,
+                    style: const TextStyle(
                         color: Colors.white,
                         fontSize: 15,
                         fontWeight: FontWeight.bold)),
@@ -1483,7 +1514,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             ],
           ),
         ),
-      ),
+        );
+      },
     ).whenComplete(() => ctrl.dispose());
   }
 
@@ -1492,8 +1524,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildBottomBar(BuildContext context, Map<String, dynamic> data) {
+    final l10n       = AppLocalizations.of(context);
     final price      = (data['pricePerHour'] as num? ?? 100).toDouble();
-    final services   = _deriveServices(price);
+    final services   = _deriveServices(price, l10n);
     final svcPrice   = services[_selectedServiceIndex]['price'] as double;
     final isReady    = _selectedDay != null && _selectedTimeSlot != null;
 
@@ -1568,7 +1601,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                       color: Colors.white,
                                       size: 14),
                                   Text(
-                                    "הזמן ל-$_selectedTimeSlot",
+                                    l10n.expertBookForTime(_selectedTimeSlot ?? ''),
                                     style: const TextStyle(
                                         color: Colors.white,
                                         fontWeight: FontWeight.bold,
@@ -1588,14 +1621,14 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                     MainAxisAlignment.center,
                                 children: [
                                   Text(
-                                    "החל מ-₪${price.toStringAsFixed(0)}",
+                                    l10n.expertStartingFrom(price.toStringAsFixed(0)),
                                     style: const TextStyle(
                                         color: Colors.white70,
                                         fontSize: 11),
                                   ),
-                                  const Text(
-                                    "בחר תאריך וזמן",
-                                    style: TextStyle(
+                                  Text(
+                                    l10n.expertSelectDateTime,
+                                    style: const TextStyle(
                                         color: Colors.white,
                                         fontWeight: FontWeight.bold,
                                         fontSize: 15),
@@ -1618,12 +1651,13 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
 
   void _showBookingSummary(
       BuildContext context, Map<String, dynamic> data, double price) {
+    final l10n    = AppLocalizations.of(context);
     final dateStr = _selectedDay != null
         ? "${_selectedDay!.day}/${_selectedDay!.month}/${_selectedDay!.year}"
         : "";
-    // Use static title list — avoids calling _deriveServices with the already-
+    // Use l10n title list — avoids calling _deriveServices with the already-
     // computed tier price (which would re-derive tiers from the wrong base).
-    const svcTitles = ['שיעור בודד', 'שיעור מורחב', 'סשן מלא'];
+    final svcTitles = [l10n.serviceSingleLesson, l10n.serviceExtendedLesson, l10n.serviceFullSession];
     final svcTitle  = svcTitles[_selectedServiceIndex.clamp(0, 2)];
 
     final policy = data['cancellationPolicy'] as String? ?? 'flexible';
@@ -1665,10 +1699,10 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      const Text("סיכום הזמנה מאובטחת",
-                          style: TextStyle(
+                      Text(l10n.expertBookingSummaryTitle,
+                          style: const TextStyle(
                               fontSize: 18, fontWeight: FontWeight.bold)),
-                      Text("$svcTitle • $dateStr בשעה $_selectedTimeSlot",
+                      Text("$svcTitle • $dateStr $_selectedTimeSlot",
                           style: const TextStyle(
                               color: Colors.grey, fontSize: 13)),
                     ],
@@ -1695,14 +1729,14 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
               ),
               child: Column(
                 children: [
-                  _summaryRow("שירות", svcTitle),
-                  _summaryRow("תאריך", dateStr),
-                  _summaryRow("שעה",   _selectedTimeSlot ?? '—'),
-                  _summaryRow("מחיר השירות", "₪${price.toStringAsFixed(0)}"),
-                  _summaryRow("הגנת AnySkill", "כלול ✓",
+                  _summaryRow(l10n.expertSummaryRowService, svcTitle),
+                  _summaryRow(l10n.expertSummaryRowDate, dateStr),
+                  _summaryRow(l10n.expertSummaryRowTime, _selectedTimeSlot ?? '—'),
+                  _summaryRow(l10n.expertSummaryRowPrice, "₪${price.toStringAsFixed(0)}"),
+                  _summaryRow(l10n.expertSummaryRowProtection, l10n.expertSummaryRowIncluded,
                       isGreen: true),
                   const Divider(height: 16),
-                  _summaryRow("סה\"כ לתשלום",
+                  _summaryRow(l10n.expertSummaryRowTotal,
                       "₪${price.toStringAsFixed(0)}",
                       isBold: true),
                 ],
@@ -1728,11 +1762,13 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   Expanded(
                     child: Text(
                       dlStr != null
-                          ? "מדיניות ביטול: ${CancellationPolicyService.label(policy)} — "
-                            "ביטול חינם עד $dlStr. "
-                            "ביטול לאחר מכן: קנס $penaltyPct%."
-                          : "מדיניות ביטול: ${CancellationPolicyService.label(policy)} — "
-                            "${CancellationPolicyService.description(policy)}.",
+                          ? l10n.expertCancellationNotice(
+                              CancellationPolicyService.label(policy),
+                              dlStr,
+                              penaltyPct)
+                          : l10n.expertCancellationNoDeadline(
+                              CancellationPolicyService.label(policy),
+                              CancellationPolicyService.description(policy)),
                       style: const TextStyle(
                           fontSize: 12, color: Color(0xFF856404)),
                     ),
@@ -1750,8 +1786,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   elevation: 0),
               icon: const Icon(Icons.lock_rounded,
                   color: Colors.white, size: 18),
-              label: const Text("אשר תשלום ושריין מועד",
-                  style: TextStyle(
+              label: Text(l10n.expertConfirmPaymentButton,
+                  style: const TextStyle(
                       fontSize: 16,
                       color: Colors.white,
                       fontWeight: FontWeight.bold)),
@@ -1827,6 +1863,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
           if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
+          final l10n    = AppLocalizations.of(context);
           final data    = snapshot.data!.data() as Map<String, dynamic>;
           final unavail = _parseUnavailableDates(data);
 
@@ -1855,7 +1892,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                           StretchMode.zoomBackground,
                           StretchMode.blurBackground,
                         ],
-                        background: _buildHeroBackground(data),
+                        background: _buildHeroBackground(data, l10n),
                       ),
                     ),
 
@@ -1864,7 +1901,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                         children: [
                           // ── Power Row ──────────────────────────────────────
                           const SizedBox(height: 16),
-                          _buildPowerRow(data),
+                          _buildPowerRow(data, l10n),
                           const SizedBox(height: 24),
 
                           Padding(
@@ -1873,8 +1910,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 // ── About ──────────────────────────────────
-                                _sectionHeader("על המומחה"),
-                                _buildBioSection(data),
+                                _sectionHeader(l10n.expertSectionAbout),
+                                _buildBioSection(data, l10n),
                                 const SizedBox(height: 16),
 
                                 // ── Quick Tags ─────────────────────────────
@@ -1884,13 +1921,13 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                   const SizedBox(height: 24),
 
                                 // ── Service Menu ───────────────────────────
-                                _sectionHeader("בחר שירות"),
-                                _buildServiceMenu(data),
+                                _sectionHeader(l10n.expertSectionService),
+                                _buildServiceMenu(data, l10n),
                                 const SizedBox(height: 24),
 
                                 // ── Portfolio ──────────────────────────────
                                 if ((data['gallery'] as List? ?? []).isNotEmpty) ...[
-                                  _sectionHeader("גלריה"),
+                                  _sectionHeader(l10n.expertSectionGallery),
                                   _buildPortfolioGrid(data),
                                   const SizedBox(height: 24),
                                 ],
@@ -1898,18 +1935,18 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                 // ── Booking calendar ──────────────────────
                                 const Divider(height: 1),
                                 const SizedBox(height: 24),
-                                _sectionHeader("בחר מועד לשירות"),
+                                _sectionHeader(l10n.expertSectionSchedule),
                                 _buildCalendar(unavail),
                                 if (_selectedDay != null) ...[
                                   const SizedBox(height: 16),
-                                  _buildTimeSlots(),
+                                  _buildTimeSlots(l10n),
                                 ],
                                 const SizedBox(height: 24),
 
                                 // ── Reviews ────────────────────────────────
                                 const Divider(height: 1),
                                 const SizedBox(height: 24),
-                                _buildReviewsSection(),
+                                _buildReviewsSection(l10n),
 
                                 // Space for sticky bar
                                 const SizedBox(height: 120),

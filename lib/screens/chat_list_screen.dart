@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'chat_screen.dart';
+import '../l10n/app_localizations.dart';
 
 class ChatListScreen extends StatefulWidget {
   final VoidCallback? onGoToSearch;
@@ -37,7 +38,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("כל ההודעות סומנו כנקראו"), backgroundColor: Colors.green),
+          SnackBar(content: Text(AppLocalizations.of(context).markAllReadSuccess), backgroundColor: Colors.green),
         );
       }
     } catch (e) {
@@ -50,14 +51,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text("מחיקת שיחה", textAlign: TextAlign.right),
-        content: const Text("האם אתה בטוח שברצונך למחוק את כל היסטוריית השיחה?", textAlign: TextAlign.right),
+        title: Text(AppLocalizations.of(context).deleteChatTitle, textAlign: TextAlign.start),
+        content: Text(AppLocalizations.of(context).deleteChatContent, textAlign: TextAlign.start),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("ביטול")),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppLocalizations.of(context).cancel)),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text("מחק", style: TextStyle(color: Colors.white)),
+            child: Text(AppLocalizations.of(context).deleteChatConfirm, style: const TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -71,7 +72,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         }
         await FirebaseFirestore.instance.collection('chats').doc(chatId).delete();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("השיחה נמחקה")));
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).deleteChatSuccess)));
         }
       } catch (e) {
         debugPrint("Error deleting chat: $e");
@@ -81,19 +82,20 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (currentUserId.isEmpty) return const Scaffold(body: Center(child: Text("נא להתחבר מחדש")));
+    final l10n = AppLocalizations.of(context);
+    if (currentUserId.isEmpty) return Scaffold(body: Center(child: Text(l10n.notLoggedIn)));
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F9FC),
       appBar: AppBar(
-        title: const Text("הודעות", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 26, color: Colors.black)),
+        title: Text(l10n.chatListTitle, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 26, color: Colors.black)),
         elevation: 0,
         backgroundColor: Colors.transparent,
         centerTitle: false,
         actions: [
           IconButton(
             icon: const Icon(Icons.done_all, color: Colors.blue),
-            tooltip: "סמן הכל כנקרא",
+            tooltip: l10n.markAllReadTooltip,
             onPressed: _markAllAsRead,
           ),
         ],
@@ -139,7 +141,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                       builder: (context, userSnap) {
                         if (userSnap.connectionState == ConnectionState.waiting) return const SizedBox();
                         var userData = userSnap.data?.data() as Map<String, dynamic>? ?? {};
-                        String otherName = userData['name'] ?? "משתמש";
+                        String otherName = userData['name'] ?? AppLocalizations.of(context).chatUserDefault;
 
                         if (_searchQuery.isNotEmpty && !otherName.toLowerCase().contains(_searchQuery)) {
                           return const SizedBox.shrink();
@@ -169,11 +171,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
         ),
         child: TextField(
           onChanged: (value) => setState(() => _searchQuery = value.toLowerCase()),
-          decoration: const InputDecoration(
-            hintText: "חפש שיחה...",
-            prefixIcon: Icon(Icons.search, color: Colors.grey),
+          decoration: InputDecoration(
+            hintText: AppLocalizations.of(context).chatSearchHint,
+            prefixIcon: const Icon(Icons.search, color: Colors.grey),
             border: InputBorder.none,
-            contentPadding: EdgeInsets.symmetric(vertical: 12),
+            contentPadding: const EdgeInsets.symmetric(vertical: 12),
           ),
         ),
       ),
@@ -182,7 +184,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   Widget _buildChatTile(Map<String, dynamic> userData, Map<String, dynamic> chatData, String chatId, String otherId) {
     // הגנה על שדות ה-Message
-    String lastMsg = chatData['lastMessage'] ?? "הודעה חדשה";
+    final l10nTile = AppLocalizations.of(context);
+    String lastMsg = chatData['lastMessage'] ?? l10nTile.chatLastMessageDefault;
     Timestamp? lastTime = chatData['lastMessageTime'];
     
     // שליחת ה-ID הנכון לבדיקת הודעות שלא נקראו
@@ -204,7 +207,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
     return GestureDetector(
       onTap: () => Navigator.push(context, MaterialPageRoute(
-          builder: (context) => ChatScreen(receiverId: otherId, receiverName: userData['name'] ?? "משתמש"))),
+          builder: (context) => ChatScreen(receiverId: otherId, receiverName: userData['name'] ?? AppLocalizations.of(context).chatUserDefault))),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         padding: const EdgeInsets.all(14),
@@ -241,7 +244,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(userData['name'] ?? "משתמש", 
+                      Text(userData['name'] ?? l10nTile.chatUserDefault,
                         style: TextStyle(
                           fontWeight: unreadCount > 0 ? FontWeight.w900 : FontWeight.bold, 
                           fontSize: 16,
@@ -277,7 +280,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
               icon: const Icon(Icons.more_vert, color: Colors.grey, size: 20),
               onSelected: (v) => _deleteEntireChat(chatId),
               itemBuilder: (context) => [
-                const PopupMenuItem(value: 'del', child: Text("מחק שיחה", style: TextStyle(color: Colors.red)))
+                PopupMenuItem(value: 'del', child: Text(AppLocalizations.of(context).deleteChatTitle, style: const TextStyle(color: Colors.red)))
               ],
             ),
           ],
@@ -302,13 +305,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
               child: Icon(Icons.chat_bubble_outline, size: 56, color: Colors.grey[400]),
             ),
             const SizedBox(height: 24),
-            const Text(
-              "אין שיחות עדיין",
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
+            Text(
+              AppLocalizations.of(context).chatEmptyState,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
             ),
             const SizedBox(height: 8),
             Text(
-              "כשתיצור קשר עם מומחה, השיחה תופיע כאן",
+              AppLocalizations.of(context).searchPlaceholder,
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: Colors.grey[500]),
             ),
@@ -320,7 +323,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               ),
               icon: const Icon(Icons.search, color: Colors.white),
-              label: const Text("מצא מומחה", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+              label: Text(AppLocalizations.of(context).searchTitle, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
               onPressed: widget.onGoToSearch ?? () {},
             ),
           ],

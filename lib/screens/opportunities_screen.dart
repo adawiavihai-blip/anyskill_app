@@ -7,6 +7,7 @@ import 'chat_screen.dart';
 import '../services/location_service.dart';
 import '../services/gamification_service.dart';
 import '../widgets/level_badge.dart';
+import '../l10n/app_localizations.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const _kIndigo   = Color(0xFF6366F1);
@@ -99,15 +100,22 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
     final chatRoomId = _getChatRoomId(_uid, clientId);
 
     try {
+      final l10n = AppLocalizations.of(context);
+      final msgRequestUnavailable = l10n.oppRequestUnavailable;
+      final msgRequestClosed3     = l10n.oppRequestClosed3;
+      final msgAlreadyExpressed   = l10n.oppAlreadyExpressed;
+      final msgAlready3           = l10n.oppAlready3Interested;
+      final msgBoostEarned        = l10n.oppBoostEarned;
+      final msgInterestSuccess    = l10n.oppInterestSuccess;
       await db.runTransaction((tx) async {
         final snap = await tx.get(reqRef);
-        if (!snap.exists) throw 'הבקשה כבר לא זמינה';
+        if (!snap.exists) throw msgRequestUnavailable;
         final d         = snap.data()!;
         final count     = (d['interestedCount']    ?? 0) as int;
         final providers = List<String>.from(d['interestedProviders'] ?? []);
-        if (d['status'] == 'closed') throw 'הבקשה סגורה — כבר נמצאו 3 מתעניינים';
-        if (providers.contains(_uid)) throw 'כבר הבעת עניין בבקשה זו';
-        if (count >= 3) throw 'הבקשה כבר קיבלה 3 מתעניינים';
+        if (d['status'] == 'closed') throw msgRequestClosed3;
+        if (providers.contains(_uid)) throw msgAlreadyExpressed;
+        if (count >= 3) throw msgAlready3;
         final newCount = count + 1;
         tx.update(reqRef, {
           'interestedProviders':     FieldValue.arrayUnion([_uid]),
@@ -121,7 +129,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
       final chatRef = db.collection('chats').doc(chatRoomId);
       await chatRef.set({'users': [_uid, clientId]}, SetOptions(merge: true));
       final msg = customMessage ??
-          '💡 ${widget.providerName} הביע עניין בבקשת השירות שלך:\n"$description"';
+          AppLocalizations.of(context).oppInterestChatMessage(widget.providerName, description);
       await chatRef.collection('messages').add({
         'senderId':  'system',
         'message':   msg,
@@ -130,10 +138,11 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
       });
 
       // Notify client
+      final notifL10n = AppLocalizations.of(context);
       await db.collection('notifications').doc(clientId)
           .collection('userNotifications').add({
-        'title':        'מתעניין חדש בבקשתך!',
-        'body':         '${widget.providerName} מעוניין לבצע את השירות שביקשת',
+        'title':        notifL10n.oppNotifTitle,
+        'body':         notifL10n.oppNotifBody(widget.providerName),
         'type':         'interest',
         'requestId':    requestId,
         'providerId':   _uid,
@@ -164,12 +173,12 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
         }
         if (!context.mounted) return;
         if (boostEarned) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             backgroundColor: _kUrgentOr,
-            duration: Duration(seconds: 5),
+            duration: const Duration(seconds: 5),
             content: Text(
-              '🚀 הפרופיל שלך זינק לראש תוצאות החיפוש ל-24 שעות!',
-              style: TextStyle(fontWeight: FontWeight.bold),
+              msgBoostEarned,
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
           ));
           Navigator.push(context, MaterialPageRoute(
@@ -180,10 +189,10 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
       }
 
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         backgroundColor: Colors.green,
-        content: Text("הבעת עניין! הצ'אט עם הלקוח נפתח"),
-        duration: Duration(seconds: 3),
+        content: Text(msgInterestSuccess),
+        duration: const Duration(seconds: 3),
       ));
       Navigator.push(context, MaterialPageRoute(
         builder: (_) => ChatScreen(receiverId: clientId, receiverName: clientName),
@@ -218,6 +227,176 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+
+    // Hard-lock: if this provider is not yet verified, show the review screen.
+    if (!widget.isAdmin && _uid.isNotEmpty) {
+      return StreamBuilder<DocumentSnapshot>(
+        stream: FirebaseFirestore.instance.collection('users').doc(_uid).snapshots(),
+        builder: (context, snap) {
+          final data = snap.data?.data() as Map<String, dynamic>? ?? {};
+          final isProvider         = data['isProvider']         as bool? ?? false;
+          final isVerifiedProvider = data['isVerifiedProvider'] as bool? ?? true;
+
+          // Show lock screen only for providers who haven't been approved yet.
+          // Default true = existing users before this feature are unaffected.
+          if (isProvider && !isVerifiedProvider) {
+            return _buildUnderReviewScreen(AppLocalizations.of(context));
+          }
+
+          // Approved — show the normal screen
+          return _buildNormalScaffold(AppLocalizations.of(context));
+        },
+      );
+    }
+
+    return _buildNormalScaffold(l10n);
+  }
+
+  Widget _buildUnderReviewScreen(AppLocalizations l10n) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF0F4FF),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0.5,
+        centerTitle: true,
+        automaticallyImplyLeading: false,
+        title: Text(l10n.oppTitle,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Shield icon
+              Container(
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEEF2FF),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF6366F1).withValues(alpha: 0.15),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: const Icon(Icons.shield_outlined,
+                    color: Color(0xFF6366F1), size: 52),
+              ),
+              const SizedBox(height: 28),
+
+              Text(l10n.oppUnderReviewTitle,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1E1E2E))),
+              const SizedBox(height: 8),
+              Text(l10n.oppUnderReviewSubtitle,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 15,
+                      color: Color(0xFF6366F1),
+                      fontWeight: FontWeight.w600)),
+              const SizedBox(height: 20),
+              Text(l10n.oppUnderReviewBody,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 14, height: 1.6, color: Colors.grey[700])),
+              const SizedBox(height: 32),
+
+              // Progress steps
+              _buildReviewSteps(l10n),
+              const SizedBox(height: 28),
+
+              // Contact chip
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.email_outlined, size: 16, color: Colors.grey[600]),
+                    const SizedBox(width: 8),
+                    Text(l10n.oppUnderReviewContact,
+                        style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReviewSteps(AppLocalizations l10n) {
+    final steps = [
+      {'label': l10n.oppUnderReviewStep1, 'done': true},
+      {'label': l10n.oppUnderReviewStep2, 'done': false},
+      {'label': l10n.oppUnderReviewStep3, 'done': false},
+    ];
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(steps.length * 2 - 1, (i) {
+        if (i.isOdd) {
+          // Connector line
+          return Container(width: 28, height: 2, color: Colors.grey.shade300);
+        }
+        final step = steps[i ~/ 2];
+        final done = step['done'] as bool;
+        final active = i == 2; // step 2 = "Admin Review" = currently active
+        return Column(
+          children: [
+            Container(
+              width: 32, height: 32,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: done
+                    ? const Color(0xFF10B981)
+                    : active
+                        ? const Color(0xFF6366F1)
+                        : Colors.grey.shade200,
+              ),
+              child: Center(
+                child: done
+                    ? const Icon(Icons.check_rounded, color: Colors.white, size: 16)
+                    : active
+                        ? const SizedBox(
+                            width: 14, height: 14,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
+                        : Icon(Icons.lock_outline_rounded,
+                            color: Colors.grey.shade400, size: 14),
+              ),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: 70,
+              child: Text(step['label'] as String,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 10,
+                      color: done || active ? Colors.black87 : Colors.grey,
+                      fontWeight: done || active
+                          ? FontWeight.w600
+                          : FontWeight.normal)),
+            ),
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _buildNormalScaffold(AppLocalizations l10n) {
     return Scaffold(
       backgroundColor: const Color(0xFFF0F2F8),
       appBar: AppBar(
@@ -226,10 +405,10 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
         centerTitle: true,
         automaticallyImplyLeading: false,
         title: Column(children: [
-          const Text('לוח הזדמנויות',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          Text(l10n.oppTitle,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
           Text(
-            widget.serviceType.isEmpty ? 'כל הקטגוריות' : widget.serviceType,
+            widget.serviceType.isEmpty ? l10n.oppAllCategories : widget.serviceType,
             style: const TextStyle(fontSize: 12, color: Colors.grey),
           ),
         ]),
@@ -244,7 +423,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                 return const Center(child: CircularProgressIndicator());
               }
               if (snapshot.hasError) {
-                return Center(child: Text('שגיאה: ${snapshot.error}'));
+                return Center(child: Text(l10n.oppError('${snapshot.error}')));
               }
               final docs     = snapshot.data?.docs ?? [];
               final filtered = List<QueryDocumentSnapshot>.from(docs);
@@ -279,7 +458,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                   final doc         = filtered[index];
                   final d           = doc.data() as Map<String, dynamic>;
                   final clientId    = (d['clientId']    ?? '') as String;
-                  final clientName  = (d['clientName']  ?? 'לקוח') as String;
+                  final clientName  = (d['clientName']  ?? l10n.oppDefaultClient) as String;
                   final description = (d['description'] ?? '') as String;
                   return _RequestCard(
                     key:             ValueKey(doc.id),
@@ -297,10 +476,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                     onQuickBid: () => _expressInterest(
                       context, doc.id, clientId, clientName, description,
                       isUrgent: _isUrgentData(d),
-                      customMessage:
-                          'שלום $clientName! 👋\n'
-                          'אני ${widget.providerName} ואני זמין לבצע את השירות שביקשת '
-                          'מוקדם ככל האפשר.\nמה הזמינות שלך?',
+                      customMessage: l10n.oppQuickBidMessage(clientName, widget.providerName),
                     ),
                   );
                 },
@@ -314,6 +490,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
 
   // ── XP + AnySkill Boost banner ────────────────────────────────────────────
   Widget _buildXpBanner() {
+    final l10n      = AppLocalizations.of(context);
     final level     = GamificationService.levelFor(_xp);
     final progress  = GamificationService.levelProgress(_xp);
     final isGold    = level == ProviderLevel.gold;
@@ -344,11 +521,11 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                   fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
             ]),
             if (!isGold)
-              Text('עוד $xpToNext XP לרמת $nextName',
+              Text(l10n.oppXpToNextLevel(xpToNext, nextName),
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]))
             else
-              const Text('הגעת לרמה הגבוהה ביותר! 🏆',
-                  style: TextStyle(
+              Text(l10n.oppMaxLevel,
+                  style: const TextStyle(
                       fontSize: 12, color: Color(0xFFF59E0B), fontWeight: FontWeight.w600)),
           ]),
           const SizedBox(height: 8),
@@ -370,10 +547,10 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
             const SizedBox(width: 6),
             Expanded(
               child: isBoosted
-                  ? Text('🚀 פרופיל מוגבר! עד ${_boostTimeLabel()}',
+                  ? Text(l10n.oppProfileBoosted(_boostTimeLabel()),
                       style: const TextStyle(
                           fontSize: 11, color: _kUrgentOr, fontWeight: FontWeight.w700))
-                  : Text('AnySkill Boost: $_urgentCompleted/3 — השלם 3 משימות דחופות',
+                  : Text(l10n.oppBoostProgress(_urgentCompleted),
                       style: TextStyle(fontSize: 11, color: Colors.grey[600])),
             ),
             if (!isBoosted) ...[
@@ -397,11 +574,15 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
 
   String _boostTimeLabel() {
     if (_boostExpiry == null) return '';
+    final l10n = AppLocalizations.of(context);
     final diff = _boostExpiry!.difference(DateTime.now());
-    return diff.inHours >= 1 ? "${diff.inHours} שע'" : "${diff.inMinutes} ד'";
+    return diff.inHours >= 1
+        ? l10n.oppTimeHours(diff.inHours)
+        : l10n.oppTimeMinutes(diff.inMinutes);
   }
 
   Widget _buildEmptyState() {
+    final l10n  = AppLocalizations.of(context);
     final isCat = !widget.isAdmin && widget.serviceType.isNotEmpty;
     return Center(
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -421,13 +602,11 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
           child: const Icon(Icons.work_outline_rounded, color: Colors.white, size: 46),
         ),
         const SizedBox(height: 28),
-        Text(isCat ? 'אין הזדמנויות בתחום שלך כרגע' : 'אין בקשות פתוחות כרגע',
+        Text(isCat ? l10n.oppEmptyCategory : l10n.oppEmptyAll,
             style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 10),
         Text(
-          isCat
-              ? 'אין כרגע הזדמנויות חדשות בתחום שלך,\nנעדכן אותך כשיהיו 🔔'
-              : 'בקשות חדשות מלקוחות יופיעו כאן בזמן אמת\nהישאר ערני!',
+          isCat ? l10n.oppEmptyCategorySubtitle : l10n.oppEmptyAllSubtitle,
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 14, color: Colors.grey[500], height: 1.6),
         ),
@@ -547,15 +726,17 @@ class _RequestCardState extends State<_RequestCard>
   }
 
   String _timeAgo(DateTime dt) {
+    final l10n = AppLocalizations.of(context);
     final diff = DateTime.now().difference(dt);
-    if (diff.inMinutes < 1)  return 'הרגע';
-    if (diff.inMinutes < 60) return "לפני ${diff.inMinutes} דק'";
-    if (diff.inHours   < 24) return "לפני ${diff.inHours} שע'";
-    return 'לפני ${diff.inDays} ימים';
+    if (diff.inMinutes < 1)  return l10n.oppTimeJustNow;
+    if (diff.inMinutes < 60) return l10n.oppTimeMinAgo(diff.inMinutes);
+    if (diff.inHours   < 24) return l10n.oppTimeHourAgo(diff.inHours);
+    return l10n.oppTimeDayAgo(diff.inDays);
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n            = AppLocalizations.of(context);
     final d               = widget.data;
     final interestedCount = (d['interestedCount'] ?? 0) as int;
     final providers       = List<String>.from(d['interestedProviders'] ?? []);
@@ -569,7 +750,7 @@ class _RequestCardState extends State<_RequestCard>
     final location          = (d['location']    ?? '') as String;
     final category          = (d['category']    ?? '') as String;
     final description       = (d['description'] ?? '') as String;
-    final clientName        = (d['clientName']  ?? 'לקוח') as String;
+    final clientName        = (d['clientName']  ?? l10n.oppDefaultClient) as String;
     final clientLat         = (d['clientLat'] as num?)?.toDouble();
     final clientLng         = (d['clientLng'] as num?)?.toDouble();
 
@@ -683,7 +864,7 @@ class _RequestCardState extends State<_RequestCard>
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
-                                  isClosed ? 'סגור' : '$interestedCount/3',
+                                  isClosed ? l10n.close : '$interestedCount/3',
                                   style: TextStyle(
                                     color: isClosed ? Colors.grey[600] : Colors.white,
                                     fontSize: 12, fontWeight: FontWeight.w700,
@@ -704,13 +885,13 @@ class _RequestCardState extends State<_RequestCard>
                                       color: Colors.white.withValues(alpha: 0.5),
                                       width: 1),
                                 ),
-                                child: const Row(
+                                child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Text('🔥', style: TextStyle(fontSize: 10)),
-                                    SizedBox(width: 3),
-                                    Text('ביקוש גבוה',
-                                        style: TextStyle(
+                                    const Text('🔥', style: TextStyle(fontSize: 10)),
+                                    const SizedBox(width: 3),
+                                    Text(l10n.oppHighDemand,
+                                        style: const TextStyle(
                                             color: Colors.white,
                                             fontSize: 10,
                                             fontWeight: FontWeight.w800)),
@@ -743,7 +924,7 @@ class _RequestCardState extends State<_RequestCard>
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            '$viewers מקצוענים צופים בהזדמנות זו כרגע',
+                            l10n.oppViewersNow(viewers),
                             style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 11,
@@ -840,8 +1021,8 @@ class _RequestCardState extends State<_RequestCard>
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('רווח נקי משוער',
-                                    style: TextStyle(
+                                Text(l10n.oppEstimatedEarnings,
+                                    style: const TextStyle(
                                         fontSize: 10, color: Color(0xFF059669))),
                                 Text(netLabel,
                                     style: const TextStyle(
@@ -851,7 +1032,7 @@ class _RequestCardState extends State<_RequestCard>
                               ],
                             ),
                             const Spacer(),
-                            Text('אחרי עמלת AnySkill',
+                            Text(l10n.oppAfterFee,
                                 style: TextStyle(
                                     fontSize: 10, color: Colors.grey[500])),
                           ]),
@@ -913,12 +1094,12 @@ class _RequestCardState extends State<_RequestCard>
                                     const SizedBox(width: 7),
                                     Text(
                                       alreadyInterested
-                                          ? 'הבעת עניין ✓'
+                                          ? l10n.oppAlreadyInterested
                                           : isClosed
-                                              ? 'הבקשה סגורה'
+                                              ? l10n.oppRequestClosedBtn
                                               : isUrgent
-                                                  ? 'קח את ההזדמנות!'
-                                                  : 'אני מעוניין!',
+                                                  ? l10n.oppTakeOpportunity
+                                                  : l10n.oppInterested,
                                       style: const TextStyle(
                                           fontWeight: FontWeight.bold,
                                           fontSize: 15),
@@ -945,13 +1126,13 @@ class _RequestCardState extends State<_RequestCard>
                             ),
                             onPressed:
                                 widget.isProcessing ? null : widget.onQuickBid,
-                            child: const Row(
+                            child: Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.send_rounded, size: 16),
-                                SizedBox(width: 7),
-                                Text('מענה מהיר — שלח הצעה אוטומטית',
-                                    style: TextStyle(
+                                const Icon(Icons.send_rounded, size: 16),
+                                const SizedBox(width: 7),
+                                Text(l10n.oppQuickBid,
+                                    style: const TextStyle(
                                         fontWeight: FontWeight.w600,
                                         fontSize: 13)),
                               ],
@@ -971,14 +1152,14 @@ class _RequestCardState extends State<_RequestCard>
                             color: const Color(0xFFF0F0FF),
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Row(children: [
-                            Icon(Icons.account_balance_wallet_rounded,
+                          child: Row(children: [
+                            const Icon(Icons.account_balance_wallet_rounded,
                                 size: 14, color: _kIndigo),
-                            SizedBox(width: 7),
+                            const SizedBox(width: 7),
                             Expanded(
                               child: Text(
-                                'לאחר סיום העבודה — רווחך יועבר לארנק AnySkill שלך',
-                                style: TextStyle(
+                                l10n.oppWalletHint,
+                                style: const TextStyle(
                                     fontSize: 11,
                                     color: _kIndigo,
                                     fontWeight: FontWeight.w600),

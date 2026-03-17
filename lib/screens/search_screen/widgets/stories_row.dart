@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
 import '../../../services/gamification_service.dart';
 import '../../expert_profile_screen.dart';
+import '../../../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Colour palette used throughout this file
@@ -38,6 +39,8 @@ class _StoriesRowState extends State<StoriesRow> {
 
   @override
   Widget build(BuildContext context) {
+    // QA: StoriesRow is rendering
+    debugPrint('QA: StoriesRow.build — isProvider=${widget.isProvider}');
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('stories')
@@ -46,89 +49,163 @@ class _StoriesRowState extends State<StoriesRow> {
           .limit(20)
           .snapshots(),
       builder: (context, snap) {
+        debugPrint('QA: StoriesRow snap — state=${snap.connectionState} docs=${snap.data?.docs.length}');
+
+        // ── Loading skeleton — shown until first Firestore frame ──────────
+        if (snap.connectionState == ConnectionState.waiting) {
+          return _StoriesShell(
+            activeCount: 0,
+            child: SizedBox(
+              height: 98,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: 5,
+                separatorBuilder: (_, __) => const SizedBox(width: 14),
+                itemBuilder: (_, __) => _ShimmerCircle(),
+              ),
+            ),
+          );
+        }
+
         final allDocs   = snap.data?.docs ?? [];
         final ownDoc    = allDocs.where((d) => d.id == _uid).firstOrNull;
         final otherDocs = allDocs.where((d) => d.id != _uid).toList();
 
-        // Hide the row completely if there are no stories and the user is not
-        // a provider (nothing to display, not even an upload slot).
-        if (allDocs.isEmpty && !widget.isProvider) return const SizedBox.shrink();
-        if (!widget.isProvider && otherDocs.isEmpty) return const SizedBox.shrink();
-
         final itemCount = (widget.isProvider ? 1 : 0) + otherDocs.length;
 
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ── Section label ──────────────────────────────────────────
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 2, 20, 8),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 3, height: 16,
-                      decoration: BoxDecoration(
-                        color: _kGradStart,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(width: 7),
-                    const Text(
-                      'סיפורי מיומנות',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                    ),
-                    if (allDocs.isNotEmpty) ...[
-                      const SizedBox(width: 8),
-                      _activeBadge(allDocs.length),
-                    ],
-                  ],
+        // ── No stories + not a provider → show empty placeholder row ─────
+        if (itemCount == 0) {
+          return _StoriesShell(
+            activeCount: 0,
+            child: SizedBox(
+              height: 98,
+              child: Center(
+                child: Text(
+                  'עדיין אין סטוריז פעילים',
+                  style: TextStyle(color: Colors.grey[400], fontSize: 13),
                 ),
               ),
+            ),
+          );
+        }
 
-              // ── Horizontal avatar list ─────────────────────────────────
-              SizedBox(
-                height: 98,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  itemCount: itemCount,
-                  separatorBuilder: (_, __) => const SizedBox(width: 14),
-                  itemBuilder: (ctx, i) {
-                    if (widget.isProvider && i == 0) {
-                      return _MyStorySlot(
-                        uid:       _uid,
-                        ownDoc:    ownDoc,
-                        onUploaded: () => setState(() {}),
-                      );
-                    }
-                    final doc  = otherDocs[widget.isProvider ? i - 1 : i];
-                    final data = doc.data() as Map<String, dynamic>;
-                    return _StoryCircle(uid: doc.id, data: data);
-                  },
-                ),
-              ),
-              const SizedBox(height: 4),
-            ],
+        return _StoriesShell(
+          activeCount: allDocs.length,
+          child: SizedBox(
+            height: 98,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: itemCount,
+              separatorBuilder: (_, __) => const SizedBox(width: 14),
+              itemBuilder: (ctx, i) {
+                if (widget.isProvider && i == 0) {
+                  return _MyStorySlot(
+                    uid:       _uid,
+                    ownDoc:    ownDoc,
+                    onUploaded: () => setState(() {}),
+                  );
+                }
+                final doc  = otherDocs[widget.isProvider ? i - 1 : i];
+                final data = doc.data() as Map<String, dynamic>;
+                return _StoryCircle(uid: doc.id, data: data);
+              },
+            ),
           ),
         );
       },
     );
   }
+}
 
-  Widget _activeBadge(int count) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF0F0FF),
-          borderRadius: BorderRadius.circular(10),
+// ─────────────────────────────────────────────────────────────────────────────
+// Shell widget — section label + active badge + arbitrary child
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _StoriesShell extends StatelessWidget {
+  final int    activeCount;
+  final Widget child;
+
+  const _StoriesShell({required this.activeCount, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+            child: Row(
+              children: [
+                Container(
+                  width: 3, height: 16,
+                  decoration: BoxDecoration(
+                    color: _kGradStart,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 7),
+                const Text(
+                  'סטורי נותני השירות',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                ),
+                if (activeCount > 0) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0F0FF),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '$activeCount פעיל${activeCount == 1 ? '' : 'ים'}',
+                      style: const TextStyle(
+                        fontSize: 11, color: _kGradStart, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          child,
+          const SizedBox(height: 4),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Loading shimmer circle placeholder
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ShimmerCircle extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 64, height: 64,
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            shape: BoxShape.circle,
+          ),
         ),
-        child: Text(
-          '$count פעיל${count == 1 ? '' : 'ים'}',
-          style: const TextStyle(
-            fontSize: 11, color: _kGradStart, fontWeight: FontWeight.w600),
+        const SizedBox(height: 6),
+        Container(
+          width: 44, height: 9,
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(4),
+          ),
         ),
-      );
+      ],
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

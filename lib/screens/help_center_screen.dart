@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../constants/help_knowledge_base.dart';
+import '../l10n/app_localizations.dart';
 
 // ── Brand tokens ─────────────────────────────────────────────────────────────
 const Color _kPurple     = Color(0xFF6366F1);
@@ -46,15 +47,8 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
     // Welcome message
     await Future.delayed(const Duration(milliseconds: 250));
     if (!mounted) return;
-    _addBot(
-      _isProvider
-          ? 'שלום! אני עוזר המומחים של AnySkill 👋\n'
-            'כאן תמצאו טיפים לניהול הפרופיל, השגת הזמנות, ועוד.\n\n'
-            'במה אוכל לעזור היום?'
-          : 'שלום! אני עוזר הלקוחות של AnySkill 👋\n'
-            'יש לי תשובות לכל שאלה — בחרו מהרשימה או כתבו בחופשיות.\n\n'
-            'במה אוכל לעזור?',
-    );
+    final l10n = AppLocalizations.of(context);
+    _addBot(_isProvider ? l10n.helpCenterProviderWelcome : l10n.helpCenterCustomerWelcome);
     if (mounted) setState(() => _loaded = true);
   }
 
@@ -119,6 +113,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
   }
 
   PreferredSizeWidget _buildAppBar() {
+    final l10n = AppLocalizations.of(context);
     return AppBar(
       backgroundColor: _kPurple,
       foregroundColor: Colors.white,
@@ -141,9 +136,9 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'מרכז העזרה',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              Text(
+                l10n.helpCenterTitle,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               Row(
                 children: [
@@ -157,7 +152,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    _isProvider ? 'תמיכת ספקים' : 'תמיכת לקוחות',
+                    _isProvider ? l10n.helpCenterProviderSupport : l10n.helpCenterCustomerSupport,
                     style: const TextStyle(
                         fontSize: 11, color: Colors.white70),
                   ),
@@ -171,6 +166,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
   }
 
   Widget _buildInputArea(List<String> chips) {
+    final l10n = AppLocalizations.of(context);
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
@@ -179,7 +175,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
         children: [
           // Section label
           Text(
-            _isProvider ? 'שאלות נפוצות לספקים' : 'שאלות נפוצות ללקוחות',
+            _isProvider ? l10n.helpCenterProviderFaq : l10n.helpCenterCustomerFaq,
             style: TextStyle(
               fontSize: 11,
               color: Colors.grey[500],
@@ -466,7 +462,7 @@ class _FreeTextInputState extends State<_FreeTextInput> {
             textInputAction: TextInputAction.send,
             onSubmitted: (_) => _submit(),
             decoration: InputDecoration(
-              hintText: 'כתוב שאלה חופשית...',
+              hintText: AppLocalizations.of(context).helpCenterInputHint,
               hintStyle:
                   TextStyle(color: Colors.grey[400], fontSize: 13),
               filled: true,

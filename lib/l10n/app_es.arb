@@ -1,0 +1,88 @@
+{
+  "@@locale": "es",
+  "@@last_modified": "2026-03-17",
+
+  "appName": "AnySkill",
+
+  "greetingMorning":   "Buenos Días",
+  "greetingAfternoon": "Buenas Tardes",
+  "greetingEvening":   "Buenas Noches",
+  "greetingNight":     "Buenas Noches",
+
+  "searchPlaceholder": "Busca un profesional, servicio...",
+  "searchTitle":       "Buscar",
+  "discoverCategories":"Descubrir Categorías",
+
+  "tabHome":     "Inicio",
+  "tabBookings": "Reservas",
+  "tabChat":     "Chat",
+  "tabWallet":   "Cartera",
+  "tabProfile":  "Perfil",
+
+  "statusPaidEscrow":       "En Espera de Aprobación",
+  "statusExpertCompleted":  "Completado — Esperando Tu Aprobación",
+  "statusCompleted":        "Completado",
+  "statusCancelled":        "Cancelado",
+  "statusDispute":          "En Disputa",
+  "statusPendingPayment":   "Pago Pendiente",
+
+  "bookNow":        "Reservar Ahora",
+  "quickRequest":   "Solicitud Rápida",
+  "openChat":       "Abrir Chat",
+  "cancel":         "Cancelar",
+  "confirm":        "Confirmar",
+  "submit":         "Enviar",
+  "save":           "Guardar",
+  "close":          "Cerrar",
+  "back":           "Atrás",
+  "next":           "Siguiente",
+
+  "walletBalance":      "Saldo Disponible",
+  "walletMinWithdraw":  "Retiro mínimo: ₪50",
+  "withdrawFunds":      "Retirar Fondos",
+  "withdrawalPending":  "Solicitud de Retiro Pendiente",
+
+  "loginTitle":    "Bienvenido a AnySkill",
+  "loginSubtitle": "La Plataforma Líder de Profesionales",
+  "loginEmail":    "Correo Electrónico",
+  "loginPassword": "Contraseña",
+  "loginButton":   "Iniciar Sesión",
+  "signupButton":  "Registrarse",
+  "forgotPassword":"Olvidé mi Contraseña",
+
+  "profileProvider": "Proveedor de Servicios",
+  "profileCustomer": "Cliente",
+  "profileRating":   "Calificación",
+  "profileReviews":  "Reseñas",
+  "profileOrders":   "Pedidos",
+
+  "errorNetworkTitle":  "Sin Conexión a Internet",
+  "errorNetworkBody":   "Verifica tu conexión y vuelve a intentarlo",
+  "errorGeneric":       "Ocurrió un error. Inténtalo de nuevo",
+  "errorProfileLoad":   "Error al cargar el perfil",
+
+  "tosTitle":   "Términos de Servicio",
+  "tosVersion": "Versión 2.0",
+  "tosAgree":   "He leído y acepto los Términos",
+
+  "urgentProviderLabel": "Pulse",
+  "urgentCustomerLabel": "Urgente",
+  "urgentOpenButton":    "Abrir",
+
+  "trendingBadge":       "Tendencia",
+  "subCategoryPrompt":   "Elegir Especialidad",
+
+  "emptyActivityTitle":  "Aún no hay actividad",
+  "emptyActivityCta":    "Publica tu primera solicitud →",
+
+  "onlineStatus":  "Disponible",
+  "offlineStatus": "No Disponible",
+
+  "currencySymbol": "₪",
+
+  "taxDeclarationText": "Declaro responsabilidad exclusiva por declarar mis impuestos conforme a la ley. Entiendo que AnySkill no es mi empleador y no retiene impuestos.",
+
+  "reviewsPlaceholder":  "Cuéntanos sobre tu experiencia...",
+  "reviewSubmit":        "Enviar Reseña",
+  "ratingLabel":         "Califica este servicio"
+}

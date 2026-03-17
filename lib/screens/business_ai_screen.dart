@@ -5,6 +5,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import '../services/business_ai_service.dart';
 import 'pending_categories_screen.dart';
+import '../l10n/app_localizations.dart';
 
 // ── Color tokens ──────────────────────────────────────────────────────────────
 const _kPurple = Color(0xFF6366F1);
@@ -54,6 +55,7 @@ class _BusinessAiScreenState extends State<BusinessAiScreen> {
   }
 
   Future<void> _saveThreshold(int value) async {
+    final msg = AppLocalizations.of(context).bizAiThresholdUpdated(value);
     setState(() => _thresholdSaving = true);
     await BusinessAiAlerts.setAlertThreshold(value);
     if (!mounted) return;
@@ -62,7 +64,7 @@ class _BusinessAiScreenState extends State<BusinessAiScreen> {
       _thresholdSaving = false;
     });
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('סף ההתראות עודכן ל-$value חיפושים'),
+      content: Text(msg),
       backgroundColor: _kGreen,
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -83,19 +85,20 @@ class _BusinessAiScreenState extends State<BusinessAiScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: const Color(0xFFF0F4FF),
       body: FutureBuilder<BusinessAiData>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(
+            return Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircularProgressIndicator(color: _kPurple),
-                  SizedBox(height: 16),
-                  Text('טוען בינה עסקית...', style: TextStyle(color: Colors.grey)),
+                  const CircularProgressIndicator(color: _kPurple),
+                  const SizedBox(height: 16),
+                  Text(l10n.bizAiLoading, style: const TextStyle(color: Colors.grey)),
                 ],
               ),
             );
@@ -107,14 +110,14 @@ class _BusinessAiScreenState extends State<BusinessAiScreen> {
                 children: [
                   const Icon(Icons.error_outline, color: _kRed, size: 48),
                   const SizedBox(height: 12),
-                  Text('שגיאה: ${snap.error}',
+                  Text(l10n.bizAiError('${snap.error}'),
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: _kRed)),
                   const SizedBox(height: 16),
                   ElevatedButton.icon(
                     onPressed: _refresh,
                     icon: const Icon(Icons.refresh),
-                    label: const Text('נסה שוב'),
+                    label: Text(l10n.retryButton),
                   ),
                 ],
               ),
@@ -161,7 +164,7 @@ class _BusinessAiScreenState extends State<BusinessAiScreen> {
                   child: TextButton.icon(
                     onPressed: _refresh,
                     icon: const Icon(Icons.refresh_rounded, size: 14),
-                    label: const Text('רענן נתונים', style: TextStyle(fontSize: 12)),
+                    label: Text(l10n.bizAiRefreshData, style: const TextStyle(fontSize: 12)),
                     style: TextButton.styleFrom(foregroundColor: Colors.grey),
                   ),
                 ),
@@ -174,6 +177,7 @@ class _BusinessAiScreenState extends State<BusinessAiScreen> {
   }
 
   Widget _buildHeader() {
+    final l10n = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -206,13 +210,13 @@ class _BusinessAiScreenState extends State<BusinessAiScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('בינה עסקית',
-                    style: TextStyle(
+                Text(l10n.bizAiTitle,
+                    style: const TextStyle(
                         color: Colors.white,
                         fontSize: 20,
                         fontWeight: FontWeight.w900)),
                 Text(
-                  'מגמות שוק • AI • תחזיות הכנסה',
+                  l10n.bizAiSubtitle,
                   style: TextStyle(
                       color: Colors.white.withValues(alpha: 0.75),
                       fontSize: 13),
@@ -231,7 +235,7 @@ class _BusinessAiScreenState extends State<BusinessAiScreen> {
                   color: _kAmber,
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Text('$_pendingCount ממתין',
+                child: Text(l10n.bizAiPending(_pendingCount),
                     style: const TextStyle(
                         color: Colors.white,
                         fontSize: 12,
@@ -259,10 +263,11 @@ class _AiOpsSection extends StatelessWidget {
         ? '—'
         : '${(stats.approvalRate * 100).round()}%';
 
+    final l10n = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SectionTitle(label: 'מרכז AI', icon: Icons.psychology_rounded, color: _kPurple),
+        _SectionTitle(label: l10n.bizAiSectionAiOps, icon: Icons.psychology_rounded, color: _kPurple),
         const SizedBox(height: 12),
 
         // ── 3 metric cards ────────────────────────────────────────────────────
@@ -270,11 +275,11 @@ class _AiOpsSection extends StatelessWidget {
           children: [
             Expanded(
               child: _MetricCard(
-                label:    'פעילות AI היום',
+                label:    l10n.bizAiActivityToday,
                 value:    stats.todayCount.toString(),
                 icon:     Icons.bolt_rounded,
                 color:    _kPurple,
-                subtitle: 'קטגוריות חדשות',
+                subtitle: l10n.bizAiNewCategories,
               ),
             ),
             const SizedBox(width: 10),
@@ -284,11 +289,11 @@ class _AiOpsSection extends StatelessWidget {
                     MaterialPageRoute(
                         builder: (_) => const PendingCategoriesScreen())),
                 child: _MetricCard(
-                  label:    'תור אישורים',
+                  label:    l10n.bizAiApprovalQueue,
                   value:    pendingCount.toString(),
                   icon:     Icons.pending_actions_rounded,
                   color:    pendingCount > 0 ? _kAmber : _kGreen,
-                  subtitle: 'לחץ לבדיקה ›',
+                  subtitle: l10n.bizAiTapToReview,
                   isHighlight: pendingCount > 0,
                 ),
               ),
@@ -296,11 +301,11 @@ class _AiOpsSection extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: _MetricCard(
-                label:    'דיוק מודל',
+                label:    l10n.bizAiModelAccuracy,
                 value:    pctLabel,
                 icon:     Icons.verified_rounded,
                 color:    stats.approvalRate >= 0.7 ? _kGreen : _kAmber,
-                subtitle: 'אושרו / סה"כ',
+                subtitle: l10n.bizAiApprovedTotal,
               ),
             ),
           ],
@@ -314,8 +319,8 @@ class _AiOpsSection extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                const Text('פירוט דיוק מודל AI',
-                    style: TextStyle(
+                Text(l10n.bizAiModelAccuracyDetail,
+                    style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 14,
                         color: _kSlate)),
@@ -372,11 +377,11 @@ class _AiOpsSection extends StatelessWidget {
                         mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _PieLegend(color: _kGreen,  label: 'אושרו', count: stats.approvedTotal),
+                          _PieLegend(color: _kGreen,  label: l10n.bizAiApproved, count: stats.approvedTotal),
                           const SizedBox(height: 10),
-                          _PieLegend(color: _kRed,    label: 'נדחו',  count: stats.rejectedTotal),
+                          _PieLegend(color: _kRed,    label: l10n.bizAiRejected,  count: stats.rejectedTotal),
                           const SizedBox(height: 10),
-                          _PieLegend(color: _kAmber,  label: 'ממתין', count: stats.pendingTotal),
+                          _PieLegend(color: _kAmber,  label: l10n.bizAiPendingLabel, count: stats.pendingTotal),
                         ],
                       ),
                     ],
@@ -389,7 +394,7 @@ class _AiOpsSection extends StatelessWidget {
         if (total == 0)
           _EmptyCard(
             icon:    Icons.smart_toy_outlined,
-            message: 'אין עדיין נתוני AI\nאחרי שספקים יירשמו, הסטטיסטיקה תופיע כאן',
+            message: l10n.bizAiNoData,
           ),
       ],
     );
@@ -406,10 +411,11 @@ class _MarketSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SectionTitle(label: 'ביקוש שוק', icon: Icons.trending_up_rounded, color: _kBlue),
+        _SectionTitle(label: l10n.bizAiSectionMarket, icon: Icons.trending_up_rounded, color: _kBlue),
         const SizedBox(height: 12),
 
         // Trending searches
@@ -432,8 +438,8 @@ class _MarketSection extends StatelessWidget {
                             fontWeight: FontWeight.bold)),
                   ),
                   const Spacer(),
-                  const Text('🔥 חיפושים פופולריים',
-                      style: TextStyle(
+                  Text(l10n.bizAiPopularSearches,
+                      style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 14,
                           color: _kSlate)),
@@ -441,7 +447,7 @@ class _MarketSection extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               if (trending.isEmpty)
-                _InlineEmpty(message: 'אין עדיין נתוני חיפוש — לוג יופיע אחרי שמשתמשים יחפשו')
+                _InlineEmpty(message: l10n.bizAiNoSearchData)
               else
                 ...trending.asMap().entries.map((e) => _TrendingRow(
                       rank:  e.key + 1,
@@ -475,24 +481,24 @@ class _MarketSection extends StatelessWidget {
                               fontWeight: FontWeight.bold)),
                     ),
                   const Spacer(),
-                  const Text('🎯 הזדמנויות שוק (אפס תוצאות)',
-                      style: TextStyle(
+                  Text(l10n.bizAiMarketOpportunities,
+                      style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 14,
                           color: _kSlate)),
                 ],
               ),
               const SizedBox(height: 4),
-              const Align(
+              Align(
                 alignment: Alignment.centerRight,
                 child: Text(
-                  'חיפושים שלא מצאו ספקים — גייס ספקים לנישות אלו',
-                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                  l10n.bizAiZeroResultsHint,
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
                 ),
               ),
               const SizedBox(height: 12),
               if (zeroResults.isEmpty)
-                _InlineEmpty(message: 'אין הזדמנויות ממתינות — כל החיפושים מוצאים ספקים 🎉')
+                _InlineEmpty(message: l10n.bizAiNoOpportunities)
               else
                 ...zeroResults.map((item) => _ZeroResultRow(item: item)),
             ],
@@ -522,11 +528,12 @@ class _FinancialSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final fmt = NumberFormat('#,##0.00', 'he_IL');
 
+    final l10n = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _SectionTitle(
-            label: 'תובנות פיננסיות', icon: Icons.attach_money_rounded, color: _kGreen),
+            label: l10n.bizAiSectionFinancial, icon: Icons.attach_money_rounded, color: _kGreen),
         const SizedBox(height: 12),
 
         // Commission forecast card
@@ -553,8 +560,8 @@ class _FinancialSection extends StatelessWidget {
                   const Icon(Icons.rocket_launch_rounded,
                       color: Colors.white, size: 24),
                   const SizedBox(width: 10),
-                  const Text('תחזית עמלות שבועית',
-                      style: TextStyle(
+                  Text(l10n.bizAiWeeklyForecast,
+                      style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
                           fontSize: 15)),
@@ -565,8 +572,8 @@ class _FinancialSection extends StatelessWidget {
                       color: Colors.white.withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(20),
                     ),
-                    child: const Text('7 ימים',
-                        style: TextStyle(
+                    child: Text(l10n.bizAiSevenDays,
+                        style: const TextStyle(
                             color: Colors.white,
                             fontSize: 11,
                             fontWeight: FontWeight.bold)),
@@ -578,7 +585,7 @@ class _FinancialSection extends StatelessWidget {
                 children: [
                   Expanded(
                     child: _ForecastTile(
-                      label:  'בפועל עד היום',
+                      label:  l10n.bizAiActualToDate,
                       amount: '₪${fmt.format(weeklyEarnings)}',
                       icon:   Icons.check_circle_outline,
                     ),
@@ -586,7 +593,7 @@ class _FinancialSection extends StatelessWidget {
                   Container(width: 1, height: 50, color: Colors.white.withValues(alpha: 0.3)),
                   Expanded(
                     child: _ForecastTile(
-                      label:  'תחזית שבועית',
+                      label:  l10n.bizAiWeeklyProjection,
                       amount: '₪${fmt.format(projectedWeekly)}',
                       icon:   Icons.trending_up_rounded,
                       isProjected: true,
@@ -605,17 +612,17 @@ class _FinancialSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              const Text('הכנסות 7 ימים אחרונים',
-                  style: TextStyle(
+              Text(l10n.bizAiLast7Days,
+                  style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 14,
                       color: _kSlate)),
               const SizedBox(height: 4),
-              const Align(
+              Align(
                 alignment: Alignment.centerRight,
                 child: Text(
-                  'עמלת הפלטפורמה יום אחר יום',
-                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                  l10n.bizAiDailyCommission,
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
                 ),
               ),
               const SizedBox(height: 16),
@@ -631,22 +638,22 @@ class _FinancialSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              const Text('קטגוריות עם הכנסה גבוהה',
-                  style: TextStyle(
+              Text(l10n.bizAiHighValueCategories,
+                  style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 14,
                       color: _kSlate)),
               const SizedBox(height: 4),
-              const Align(
+              Align(
                 alignment: Alignment.centerRight,
                 child: Text(
-                  'מחיר/שעה × מספר הזמנות לפי קטגוריה',
-                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                  l10n.bizAiHighValueHint,
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
                 ),
               ),
               const SizedBox(height: 16),
               if (highValueCategories.isEmpty)
-                _InlineEmpty(message: 'אין עדיין נתוני הזמנות')
+                _InlineEmpty(message: l10n.bizAiNoOrderData)
               else
                 SizedBox(
                   height: 220,
@@ -740,8 +747,9 @@ class _HighValueBarChart extends StatelessWidget {
           touchTooltipData: BarTouchTooltipData(
             getTooltipItem: (group, groupIndex, rod, rodIndex) {
               final cat = categories[group.x];
+              final l10n = AppLocalizations.of(context);
               return BarTooltipItem(
-                '${cat.name}\n₪${NumberFormat('#,##0').format(rod.toY)}\n${cat.providerCount} ספקים',
+                '${cat.name}\n₪${NumberFormat('#,##0').format(rod.toY)}\n${l10n.bizAiProviders(cat.providerCount)}',
                 const TextStyle(color: Colors.white, fontSize: 11),
               );
             },
@@ -960,8 +968,9 @@ class _ZeroResultRow extends StatelessWidget {
           children: [
             ElevatedButton(
               onPressed: () {
+                final l10n = AppLocalizations.of(context);
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  content: Text('גייס ספקים עבור: "${item.query}"'),
+                  content: Text(l10n.bizAiRecruitForQuery(item.query)),
                   backgroundColor: _kPurple,
                   behavior: SnackBarBehavior.floating,
                   shape: RoundedRectangleBorder(
@@ -978,7 +987,7 @@ class _ZeroResultRow extends StatelessWidget {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 elevation: 0,
               ),
-              child: const Text('גייס עכשיו'),
+              child: Builder(builder: (ctx) => Text(AppLocalizations.of(ctx).bizAiRecruitNow)),
             ),
             const Spacer(),
             Text('"${item.query}"',
@@ -1022,16 +1031,19 @@ class _ForecastTile extends StatelessWidget {
                   color: Colors.white.withValues(alpha: 0.75),
                   fontSize: 11)),
           if (isProjected)
-            Container(
-              margin: const EdgeInsets.only(top: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Text('תחזית',
-                  style: TextStyle(color: Colors.white, fontSize: 9)),
-            ),
+            Builder(builder: (ctx) {
+              final l10n = AppLocalizations.of(ctx);
+              return Container(
+                margin: const EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(l10n.bizAiForecastBadge,
+                    style: const TextStyle(color: Colors.white, fontSize: 9)),
+              );
+            }),
         ],
       );
 }
@@ -1121,11 +1133,12 @@ class _AlertsSectionState extends State<_AlertsSection> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _SectionTitle(
-            label: 'התראות חכמות',
+            label: l10n.bizAiSectionAlerts,
             icon:  Icons.notifications_active_rounded,
             color: _kRed),
         const SizedBox(height: 12),
@@ -1150,7 +1163,7 @@ class _AlertsSectionState extends State<_AlertsSection> {
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
-                        '${_sliderValue.round()} חיפושים',
+                        l10n.bizAiSearches(_sliderValue.round()),
                         style: const TextStyle(
                             color: _kPurple,
                             fontSize: 12,
@@ -1158,19 +1171,19 @@ class _AlertsSectionState extends State<_AlertsSection> {
                       ),
                     ),
                   const Spacer(),
-                  const Text('🔔 סף התראת ביקוש',
-                      style: TextStyle(
+                  Text(l10n.bizAiAlertThreshold,
+                      style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 14,
                           color: _kSlate)),
                 ],
               ),
               const SizedBox(height: 4),
-              const Align(
+              Align(
                 alignment: Alignment.centerRight,
                 child: Text(
-                  'שלח התראה כשמילת מפתח חסרה תחרוג X פעמים ב-24 שעות',
-                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                  l10n.bizAiAlertThresholdHint,
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
                 ),
               ),
               const SizedBox(height: 12),
@@ -1213,8 +1226,8 @@ class _AlertsSectionState extends State<_AlertsSection> {
                             borderRadius: BorderRadius.circular(10)),
                         padding: const EdgeInsets.symmetric(vertical: 8),
                       ),
-                      child: const Text('איפוס (5)',
-                          style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      child: Text(l10n.bizAiReset,
+                          style: const TextStyle(fontSize: 12, color: Colors.grey)),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -1225,8 +1238,8 @@ class _AlertsSectionState extends State<_AlertsSection> {
                           ? null
                           : () => widget.onSave(_sliderValue.round()),
                       icon: const Icon(Icons.save_rounded, size: 16),
-                      label: const Text('שמור סף',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      label: Text(l10n.bizAiSaveThreshold,
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: _kPurple,
                         foregroundColor: Colors.white,
@@ -1265,8 +1278,8 @@ class _AlertsSectionState extends State<_AlertsSection> {
                             fontWeight: FontWeight.bold)),
                   ),
                   const Spacer(),
-                  const Text('📋 היסטוריית התראות',
-                      style: TextStyle(
+                  Text(l10n.bizAiAlertHistory,
+                      style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 14,
                           color: _kSlate)),
@@ -1274,9 +1287,7 @@ class _AlertsSectionState extends State<_AlertsSection> {
               ),
               const SizedBox(height: 12),
               if (widget.recentAlerts.isEmpty)
-                _InlineEmpty(
-                    message:
-                        'אין התראות עדיין — יופיעו כשמילות מפתח יחרגו מהסף')
+                _InlineEmpty(message: l10n.bizAiNoAlerts)
               else
                 ...widget.recentAlerts.map((a) => _AlertHistoryRow(alert: a)),
             ],
@@ -1294,9 +1305,10 @@ class _AlertHistoryRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final timeAgo = alert.lastAlertedAt == null
         ? '—'
-        : _formatTimeAgo(alert.lastAlertedAt!);
+        : _formatTimeAgo(l10n, alert.lastAlertedAt!);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -1315,7 +1327,7 @@ class _AlertHistoryRow extends StatelessWidget {
                   style: TextStyle(
                       fontSize: 10, color: Colors.grey.shade400)),
               const SizedBox(height: 2),
-              Text('${alert.totalAlerts}× התראות',
+              Text(l10n.bizAiAlertCount(alert.totalAlerts),
                   style: TextStyle(
                       fontSize: 10,
                       color: _kRed.withValues(alpha: 0.7),
@@ -1329,7 +1341,7 @@ class _AlertHistoryRow extends StatelessWidget {
               color: _kAmber.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(20),
             ),
-            child: Text('${alert.searchCount} חיפושים',
+            child: Text(l10n.bizAiSearchCount(alert.searchCount),
                 style: const TextStyle(
                     fontSize: 10,
                     color: _kAmber,
@@ -1355,11 +1367,11 @@ class _AlertHistoryRow extends StatelessWidget {
     );
   }
 
-  String _formatTimeAgo(DateTime dt) {
+  String _formatTimeAgo(AppLocalizations l10n, DateTime dt) {
     final diff = DateTime.now().difference(dt);
-    if (diff.inMinutes < 60) return 'לפני ${diff.inMinutes} דק\'';
-    if (diff.inHours   < 24) return 'לפני ${diff.inHours} שע\'';
-    return 'לפני ${diff.inDays} ימים';
+    if (diff.inMinutes < 60) return l10n.bizAiMinutesAgo(diff.inMinutes);
+    if (diff.inHours   < 24) return l10n.bizAiHoursAgo(diff.inHours);
+    return l10n.bizAiDaysAgo(diff.inDays);
   }
 }
 
@@ -1381,6 +1393,7 @@ class _HeroStatsGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final fmt = NumberFormat('#,##0', 'he_IL');
     final reviewed = stats.approvedTotal + stats.rejectedTotal;
     final pctLabel = reviewed == 0
@@ -1404,8 +1417,8 @@ class _HeroStatsGrid extends StatelessWidget {
               child: const Icon(Icons.bar_chart_rounded, color: _kPurple, size: 14),
             ),
             const SizedBox(width: 7),
-            const Text('סיכום מנהלים',
-                style: TextStyle(
+            Text(l10n.bizAiExecSummary,
+                style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w900,
                     color: _kSlate)),
@@ -1417,9 +1430,9 @@ class _HeroStatsGrid extends StatelessWidget {
             Expanded(
               child: _GlassStatCard(
                 icon: Icons.verified_rounded,
-                label: 'דיוק AI',
+                label: l10n.bizAiAccuracy,
                 value: pctLabel,
-                subtitle: 'קטגוריות אושרו',
+                subtitle: l10n.bizAiCategoriesApproved,
                 gradientColors: const [Color(0xFF4F46E5), Color(0xFF818CF8)],
               ),
             ),
@@ -1427,9 +1440,9 @@ class _HeroStatsGrid extends StatelessWidget {
             Expanded(
               child: _GlassStatCard(
                 icon: Icons.crisis_alert_rounded,
-                label: 'הזדמנויות שוק',
+                label: l10n.bizAiMarketOppsCard,
                 value: '$zeroResultsCount',
-                subtitle: 'נישות ללא ספקים',
+                subtitle: l10n.bizAiNichesNoProviders,
                 gradientColors: const [Color(0xFFDC2626), Color(0xFFF87171)],
               ),
             ),
@@ -1437,9 +1450,9 @@ class _HeroStatsGrid extends StatelessWidget {
             Expanded(
               child: _GlassStatCard(
                 icon: Icons.rocket_launch_rounded,
-                label: 'הכנסה צפויה',
+                label: l10n.bizAiExpectedRevenue,
                 value: revenueLabel,
-                subtitle: 'תחזית שבועית',
+                subtitle: l10n.bizAiWeeklyProjection,
                 gradientColors: const [Color(0xFF059669), Color(0xFF34D399)],
                 smallValue: projectedWeekly >= 10000,
               ),
@@ -1540,10 +1553,10 @@ class _EarningsLineChart extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasData = daily.any((v) => v > 0);
     if (!hasData) {
-      return _InlineEmpty(
-        message:
-            'עדיין אין נתוני עמלות לגרף\nיופיע אחרי העסקה הראשונה',
-      );
+      return Builder(builder: (ctx) {
+        final l10n = AppLocalizations.of(ctx);
+        return _InlineEmpty(message: l10n.bizAiNoChartData);
+      });
     }
 
     final rawMax = daily.reduce((a, b) => a > b ? a : b);

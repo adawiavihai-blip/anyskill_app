@@ -10,6 +10,7 @@ import 'business_ai_screen.dart';
 import 'xp_manager_screen.dart';
 import 'dispute_resolution_screen.dart';
 import '../services/category_service.dart';
+import '../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
 
 
 class AdminScreen extends StatefulWidget {
@@ -438,6 +439,11 @@ class _AdminScreenState extends State<AdminScreen> {
     bool isBanned    = data['isBanned']    ?? false;
     bool isVerified  = data['isVerified']  ?? false;
     bool isPromoted  = data['isPromoted']  ?? false;
+    bool isVerifiedProvider = data['isVerifiedProvider'] ?? true;
+    final compliance = data['compliance'] as Map<String, dynamic>?;
+    final docUrl = compliance?['docUrl'] as String?;
+    final taxStatus = compliance?['taxStatus'] as String?;
+    final bool isProvider = data['isProvider'] == true;
     String name = data['name'] ?? "משתמש";
     String currentNote = data['adminNote'] ?? "";
 
@@ -478,6 +484,74 @@ class _AdminScreenState extends State<AdminScreen> {
                   Navigator.pop(context);
                 },
               ),
+
+              // ציות ואימות ספק — רק לספקים עם מסמכים
+              if (isProvider && compliance != null) ...[
+                const Divider(),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                  child: Row(
+                    children: [
+                      Icon(Icons.shield_rounded,
+                          color: isVerifiedProvider ? Colors.green : Colors.orange, size: 18),
+                      const SizedBox(width: 6),
+                      Text(
+                        isVerifiedProvider ? "ספק מאושר" : "ממתין לאישור ציות",
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: isVerifiedProvider ? Colors.green : Colors.orange,
+                          fontSize: 13,
+                        ),
+                      ),
+                      if (taxStatus != null) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            taxStatus == 'business' ? "עוסק פטור/מורשה" : "חשבונית לשכיר",
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (docUrl != null)
+                  ListTile(
+                    leading: const Icon(Icons.folder_open_rounded, color: Colors.blue),
+                    title: const Text("צפה במסמך שהועלה"),
+                    subtitle: const Text("פתח קישור לקובץ", style: TextStyle(fontSize: 11)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _openDocumentUrl(docUrl);
+                    },
+                  ),
+                ListTile(
+                  leading: Icon(
+                    isVerifiedProvider ? Icons.shield_outlined : Icons.verified_user_rounded,
+                    color: isVerifiedProvider ? Colors.red : Colors.green,
+                  ),
+                  title: Text(
+                    isVerifiedProvider ? "בטל אישור ספק (נעל חשבון)" : "אשר ספק (פתח גישה)",
+                    style: TextStyle(
+                      color: isVerifiedProvider ? Colors.red : Colors.green,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  onTap: () {
+                    FirebaseFirestore.instance.collection('users').doc(uid).update({
+                      'isVerifiedProvider': !isVerifiedProvider,
+                      if (!isVerifiedProvider) 'compliance.verified': true,
+                    });
+                    Navigator.pop(context);
+                  },
+                ),
+                const Divider(),
+              ],
 
               // עמלה מותאמת — רק לספקים
               if (data['isProvider'] == true)
@@ -1377,16 +1451,121 @@ class _AdminScreenState extends State<AdminScreen> {
       itemBuilder: (context, index) {
         var data = filtered[index].data() as Map<String, dynamic>;
         String uid = filtered[index].id;
-        bool isVerified  = data['isVerified']  ?? false;
-        bool isPromoted  = data['isPromoted']  ?? false;
-        bool isOnline    = data['isOnline']    ?? false;
+        bool isVerified         = data['isVerified']         ?? false;
+        bool isPromoted         = data['isPromoted']         ?? false;
+        bool isOnline           = data['isOnline']           ?? false;
+        bool isProvider         = data['isProvider']         ?? false;
+        bool isVerifiedProvider = data['isVerifiedProvider'] ?? true; // default true = legacy users unaffected
+        final compliance        = data['compliance']         as Map<String, dynamic>?;
+        final docUrl            = compliance?['docUrl']      as String?;
+        final taxStatus         = compliance?['taxStatus']   as String?;
         DateTime joinDate = (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+
+        // Pending compliance badge — shown when provider hasn't been approved yet
+        final hasPendingCompliance = isProvider && !isVerifiedProvider && docUrl != null;
 
         return Card(
           margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 6),
           elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15), side: BorderSide(color: Colors.grey.shade100)),
-          child: ListTile(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
+            side: BorderSide(
+              color: hasPendingCompliance
+                  ? Colors.orange.shade300
+                  : Colors.grey.shade100,
+              width: hasPendingCompliance ? 1.5 : 1,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // ── Compliance alert banner (provider pending) ──────────────
+              if (hasPendingCompliance)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.shield_outlined,
+                          color: Colors.orange, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'ממתין לאימות מסמך מס — ${taxStatus == 'business' ? 'עוסק רשום' : 'חשבונית לשכיר'}',
+                          style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.orange),
+                        ),
+                      ),
+                      GestureDetector(
+                          onTap: () => _openDocumentUrl(docUrl),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.shade100,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.folder_open_rounded,
+                                    size: 13, color: Colors.orange),
+                                const SizedBox(width: 4),
+                                Text('צפה במסמך',
+                                    style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.orange)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      const SizedBox(width: 8),
+                      // One-tap approve button
+                      GestureDetector(
+                        onTap: () {
+                          FirebaseFirestore.instance
+                              .collection('users')
+                              .doc(uid)
+                              .update({'isVerifiedProvider': true});
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text('${data['name'] ?? ''} אומת — גישה לעבודות אופשרה ✓'),
+                            backgroundColor: Colors.green,
+                            duration: const Duration(seconds: 3),
+                          ));
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade100,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.verified_user_rounded,
+                                  size: 13, color: Colors.green),
+                              const SizedBox(width: 4),
+                              const Text('אשר',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.green)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              ListTile(
             onLongPress: () => _showUserActions(uid, data),
             leading: Stack(
               children: [
@@ -1402,6 +1581,23 @@ class _AdminScreenState extends State<AdminScreen> {
               children: [
                 Text(data['name'] ?? "משתמש", style: const TextStyle(fontWeight: FontWeight.bold)),
                 if (isVerified) const Padding(padding: EdgeInsets.only(right: 4), child: Icon(Icons.verified, color: Colors.blue, size: 16)),
+                // Provider compliance status icon
+                if (isProvider && isVerifiedProvider)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 4),
+                    child: Tooltip(
+                      message: 'מס אומת',
+                      child: Icon(Icons.shield_rounded, color: Colors.green, size: 14),
+                    ),
+                  ),
+                if (isProvider && !isVerifiedProvider && docUrl == null)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 4),
+                    child: Tooltip(
+                      message: 'מסמך מס חסר',
+                      child: Icon(Icons.shield_outlined, color: Colors.red, size: 14),
+                    ),
+                  ),
               ],
             ),
             subtitle: Column(
@@ -1496,10 +1692,18 @@ class _AdminScreenState extends State<AdminScreen> {
                 ),
               ],
             ),
-          ),
-        );
+          ),           // closes ListTile
+          ],           // closes Column.children
+        ),             // closes Column
+        );             // closes Card
       },
     );
+  }
+
+  /// Opens a document URL in a new browser tab (web only).
+  void _openDocumentUrl(String? url) {
+    if (url == null) return;
+    openUrl(url);
   }
 
   // ── Banners Management ────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../constants.dart';
+import '../l10n/app_localizations.dart';
 import '../services/category_ai_service.dart';
 import 'terms_of_service_screen.dart';
 
@@ -88,14 +89,27 @@ class _SignUpScreenState extends State<SignUpScreen>
   // ── Sign-up logic ─────────────────────────────────────────────────────────
   Future<void> _signUp() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    final l10n = AppLocalizations.of(context);
+
     if (!_termsOk) {
-      _snack('יש לאשר את תנאי השימוש כדי להמשיך', Colors.orange);
+      _snack(l10n.signupTosMustAgree, Colors.orange);
       return;
     }
 
     setState(() => _isLoading = true);
     final nav  = Navigator.of(context);
     final msg  = ScaffoldMessenger.of(context);
+
+    // Capture l10n strings before any await (context may not be safe after)
+    final strAccountCreated   = l10n.signupAccountCreated;
+    final strEmailInUse       = l10n.signupEmailInUse;
+    final strInvalidEmail     = l10n.errorInvalidEmail;
+    final strWeakPassword     = l10n.signupWeakPassword;
+    final strNetworkError     = l10n.signupNetworkError;
+    final strGenericError     = l10n.signupGenericError;
+    final strNewProviderBio   = l10n.signupNewProviderBio;
+    final strNewCustomerBio   = l10n.signupNewCustomerBio;
 
     try {
       final cred = await FirebaseAuth.instance
@@ -117,9 +131,7 @@ class _SignUpScreenState extends State<SignUpScreen>
         'reviewsCount':     0,
         'pricePerHour':     isProvider ? 100.0 : 0.0,
         'serviceType':      isProvider ? _category : '',
-        'aboutMe':          isProvider
-            ? 'מומחה חדש בקהילת AnySkill 🚀'
-            : 'לקוח חדש ב-AnySkill',
+        'aboutMe':          isProvider ? strNewProviderBio : strNewCustomerBio,
         'profileImage':     '',
         'gallery':          [],
         'quickTags':        [],
@@ -146,7 +158,7 @@ class _SignUpScreenState extends State<SignUpScreen>
         nav.pop();
         msg.showSnackBar(SnackBar(
           backgroundColor: _kGreen,
-          content: const Text('החשבון נוצר! ברוכים הבאים ל-AnySkill 🎉'),
+          content: Text(strAccountCreated),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12)),
@@ -154,12 +166,12 @@ class _SignUpScreenState extends State<SignUpScreen>
       }
     } on FirebaseAuthException catch (e) {
       final errs = {
-        'email-already-in-use': 'כתובת האימייל כבר רשומה במערכת',
-        'invalid-email':        'כתובת האימייל אינה תקינה',
-        'weak-password':        'הסיסמה חלשה מדי — נסו סיסמה חזקה יותר',
-        'network-request-failed': 'שגיאת רשת — בדקו חיבור לאינטרנט',
+        'email-already-in-use':   strEmailInUse,
+        'invalid-email':          strInvalidEmail,
+        'weak-password':          strWeakPassword,
+        'network-request-failed': strNetworkError,
       };
-      _snack(errs[e.code] ?? 'שגיאה ברישום', _kRed);
+      _snack(errs[e.code] ?? strGenericError, _kRed);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -170,6 +182,14 @@ class _SignUpScreenState extends State<SignUpScreen>
     setState(() => _isLoading = true);
     final nav = Navigator.of(context);
     final msg = ScaffoldMessenger.of(context);
+
+    // Capture l10n strings before any await (context may not be safe after)
+    final l10n = AppLocalizations.of(context);
+    final strAccountCreated = l10n.signupAccountCreated;
+    final strNewProviderBio = l10n.signupNewProviderBio;
+    final strNewCustomerBio = l10n.signupNewCustomerBio;
+    final strGoogleError    = l10n.signupGoogleError;
+
     try {
       UserCredential cred;
       if (kIsWeb) {
@@ -202,9 +222,7 @@ class _SignUpScreenState extends State<SignUpScreen>
           'reviewsCount':     0,
           'pricePerHour':     isProvider ? 100.0 : 0.0,
           'serviceType':      isProvider ? _category : '',
-          'aboutMe':          isProvider
-              ? 'מומחה חדש בקהילת AnySkill 🚀'
-              : 'לקוח חדש ב-AnySkill',
+          'aboutMe':          isProvider ? strNewProviderBio : strNewCustomerBio,
           'profileImage':     user.photoURL ?? '',
           'gallery':          [],
           'quickTags':        [],
@@ -232,16 +250,14 @@ class _SignUpScreenState extends State<SignUpScreen>
         nav.pop();
         msg.showSnackBar(SnackBar(
           backgroundColor: _kGreen,
-          content: Text(isNew
-              ? 'החשבון נוצר! ברוכים הבאים ל-AnySkill 🎉'
-              : 'ברוכים השבים! 👋'),
+          content: Text(isNew ? strAccountCreated : 'ברוכים השבים! 👋'),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12)),
         ));
       }
     } catch (_) {
-      if (mounted) _snack('שגיאה בהתחברות עם Google', _kRed);
+      if (mounted) _snack(strGoogleError, _kRed);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

@@ -110,7 +110,12 @@
       "Bash(xargs grep:*)",
       "Bash(dart --version)",
       "Bash(grep -r TextDirection ~/.pub-cache/hosted/pub.dev/cloud_firestore-*/lib/)",
-      "Bash(python3 -c \":*)"
+      "Bash(python3 -c \":*)",
+      "Bash(flutter test:*)",
+      "Bash(grep -rL app_localizations c:/Users/aviha/Desktop/anyskill_app/lib/screens/*.dart)",
+      "Bash(xargs -I{} basename {})",
+      "Bash(find c:UsersavihaDesktopanyskill_appfunctions -name *.js -o -name *.ts)",
+      "Bash(node --check index.js)"
     ]
   }
 }

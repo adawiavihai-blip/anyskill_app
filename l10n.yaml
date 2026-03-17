@@ -1,0 +1,12 @@
+# Flutter i18n configuration
+# Run: flutter gen-l10n  (generates lib/l10n/app_localizations.dart)
+arb-dir: lib/l10n
+template-arb-file: app_he.arb
+output-localization-file: app_localizations.dart
+output-class: AppLocalizations
+# RTL languages must be listed here so Flutter applies correct directionality
+preferred-supported-locales:
+  - he
+  - en
+  - es
+nullable-getter: false

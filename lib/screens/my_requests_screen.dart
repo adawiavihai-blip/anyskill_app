@@ -6,6 +6,7 @@ import 'package:video_player/video_player.dart';
 import 'expert_profile_screen.dart';
 import 'chat_screen.dart';
 import '../services/ai_analysis_service.dart';
+import '../l10n/app_localizations.dart';
 
 class MyRequestsScreen extends StatelessWidget {
   const MyRequestsScreen({super.key});
@@ -20,8 +21,8 @@ class MyRequestsScreen extends StatelessWidget {
         backgroundColor: Colors.white,
         elevation: 0.5,
         centerTitle: true,
-        title: const Text('הבקשות שלי',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        title: Text(AppLocalizations.of(context).requestsTitle,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
@@ -36,7 +37,7 @@ class MyRequestsScreen extends StatelessWidget {
           }
           final docs = snapshot.data?.docs ?? [];
           if (docs.isEmpty) {
-            return _buildEmpty();
+            return _buildEmpty(context);
           }
           return ListView.builder(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
@@ -54,7 +55,8 @@ class MyRequestsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildEmpty() {
+  Widget _buildEmpty(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -81,12 +83,12 @@ class MyRequestsScreen extends StatelessWidget {
                 color: Colors.white, size: 42),
           ),
           const SizedBox(height: 26),
-          const Text('אין בקשות פעילות',
+          Text(l10n.requestsEmpty,
               style:
-                  TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
           Text(
-            'שדר בקשה מהירה ותוך שניות\nספקים מקצועיים יפנו אליך!',
+            l10n.requestsEmptySubtitle,
             textAlign: TextAlign.center,
             style: TextStyle(
                 fontSize: 14, color: Colors.grey[500], height: 1.6),
@@ -106,17 +108,18 @@ class _RequestStatusCard extends StatelessWidget {
   const _RequestStatusCard(
       {super.key, required this.requestId, required this.data});
 
-  String _timeAgo(Timestamp? ts) {
+  String _timeAgo(Timestamp? ts, AppLocalizations l10n) {
     if (ts == null) return '';
     final diff = DateTime.now().difference(ts.toDate());
-    if (diff.inMinutes < 1) return 'הרגע';
-    if (diff.inMinutes < 60) return "לפני ${diff.inMinutes} דק'";
-    if (diff.inHours < 24) return "לפני ${diff.inHours} שע'";
-    return 'לפני ${diff.inDays} ימים';
+    if (diff.inMinutes < 1) return l10n.requestsJustNow;
+    if (diff.inMinutes < 60) return l10n.requestsMinutesAgo(diff.inMinutes);
+    if (diff.inHours < 24) return l10n.requestsHoursAgo(diff.inHours);
+    return l10n.requestsDaysAgo(diff.inDays);
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final description =
         (data['description'] ?? '') as String;
     final category = (data['category'] ?? '') as String;
@@ -188,8 +191,8 @@ class _RequestStatusCard extends StatelessWidget {
                       const SizedBox(width: 4),
                       Text(
                         count > 0
-                            ? '$count מתעניינים'
-                            : 'ממתין למתעניינים...',
+                            ? l10n.requestsInterested(count)
+                            : l10n.requestsWaiting,
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
@@ -202,7 +205,7 @@ class _RequestStatusCard extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  _timeAgo(ts),
+                  _timeAgo(ts, l10n),
                   style: TextStyle(
                     fontSize: 11,
                     color: isClosed ? Colors.grey[400] : Colors.white70,
@@ -255,7 +258,7 @@ class _RequestStatusCard extends StatelessWidget {
                       icon: const Icon(Icons.people_rounded,
                           color: Colors.white, size: 18),
                       label: Text(
-                        'צפה ב-$count מתעניינים',
+                        l10n.requestsViewInterested(count),
                         style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
@@ -279,7 +282,7 @@ class _RequestStatusCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        'ממתין לספקים מתעניינים...',
+                        l10n.requestsWaitingProviders,
                         style: TextStyle(
                             fontSize: 13, color: Colors.grey[400]),
                       ),
@@ -287,7 +290,7 @@ class _RequestStatusCard extends StatelessWidget {
                   ),
                 ],
                 if (isClosed && count == 0)
-                  Text('הבקשה נסגרה',
+                  Text(l10n.requestsClosed,
                       style:
                           TextStyle(fontSize: 13, color: Colors.grey[400])),
               ],
@@ -430,8 +433,8 @@ class _InterestedProvidersSheetState
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text('מתעניינים בבקשתך',
-                      style: TextStyle(
+                  Text(AppLocalizations.of(ctx).requestsInterestedTitle,
+                      style: const TextStyle(
                           fontSize: 19, fontWeight: FontWeight.bold)),
                   if (_providers != null && _providers!.isNotEmpty) ...[
                     const SizedBox(width: 8),
@@ -459,7 +462,7 @@ class _InterestedProvidersSheetState
               child: _providers == null
                   ? const Center(child: CircularProgressIndicator())
                   : _providers!.isEmpty
-                      ? const Center(child: Text('אין מתעניינים עדיין'))
+                      ? Center(child: Text(AppLocalizations.of(context).requestsNoInterested))
                       : ListView.builder(
                           controller: scrollCtrl,
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 40),
@@ -569,13 +572,14 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
           snap.docs.first.data()['createdAt'] as Timestamp?;
       if (ts == null) return;
       final diff = DateTime.now().difference(ts.toDate());
-      String label;
+      // Store raw duration — format with l10n in build()
+      final String label;
       if (diff.inMinutes < 60) {
-        label = "לפני ${diff.inMinutes} דק'";
+        label = 'minutes:${diff.inMinutes}';
       } else if (diff.inHours < 24) {
-        label = "לפני ${diff.inHours} שע'";
+        label = 'hours:${diff.inHours}';
       } else {
-        label = "לפני ${diff.inDays} ימים";
+        label = 'days:${diff.inDays}';
       }
       if (mounted) setState(() => _lastHiredAgo = label);
     } catch (_) {}
@@ -585,6 +589,18 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
   void dispose() {
     _videoCtrl?.dispose();
     super.dispose();
+  }
+
+  // ── Decode raw duration label stored by _loadLastHired ───────────────────────
+  String _hiredAgoLabel(String raw, AppLocalizations l10n) {
+    if (raw.startsWith('minutes:')) {
+      return l10n.requestsMinutesAgo(int.parse(raw.substring(8)));
+    } else if (raw.startsWith('hours:')) {
+      return l10n.requestsHoursAgo(int.parse(raw.substring(6)));
+    } else if (raw.startsWith('days:')) {
+      return l10n.requestsDaysAgo(int.parse(raw.substring(5)));
+    }
+    return raw;
   }
 
   // ── Confidence score label ──────────────────────────────────────────────────
@@ -606,8 +622,9 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final p = widget.provider;
-    final name = (p['name'] ?? 'מומחה') as String;
+    final name = (p['name'] ?? l10n.requestsDefaultExpert) as String;
     final rating = (p['rating'] as num? ?? 5.0).toDouble();
     final reviewsCount = (p['reviewsCount'] as num? ?? 0).toInt();
     final serviceType = (p['serviceType'] ?? '') as String;
@@ -656,14 +673,14 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
                 borderRadius:
                     BorderRadius.vertical(top: Radius.circular(18)),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text('🏆', style: TextStyle(fontSize: 13)),
-                  SizedBox(width: 6),
+                  const Text('🏆', style: TextStyle(fontSize: 13)),
+                  const SizedBox(width: 6),
                   Text(
-                    'התאמה הטובה ביותר',
-                    style: TextStyle(
+                    l10n.requestsTopMatch,
+                    style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
                       fontSize: 13,
@@ -743,7 +760,7 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
                                     color: Colors.grey, fontSize: 12)),
                             if (orderCount > 0) ...[
                               const SizedBox(width: 8),
-                              Text('🔥 $orderCount הזמנות',
+                              Text(l10n.requestsOrderCount(orderCount),
                                   style: const TextStyle(
                                       fontSize: 11,
                                       color: Color(0xFFD4520A),
@@ -805,7 +822,7 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
                         icon: Icons.circle,
                         iconColor: Colors.green,
                         iconSize: 7,
-                        label: 'נשכר $_lastHiredAgo',
+                        label: l10n.requestsHiredAgo(_hiredAgoLabel(_lastHiredAgo!, l10n)),
                         bg: Colors.green[50]!,
                         fg: Colors.green[700]!,
                       ),
@@ -813,7 +830,7 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
                       _chip(
                         icon: Icons.attach_money_rounded,
                         iconColor: const Color(0xFF6366F1),
-                        label: '₪$pricePerHour / שעה',
+                        label: l10n.requestsPricePerHour(pricePerHour.toString()),
                         bg: const Color(0xFFF0F0FF),
                         fg: const Color(0xFF6366F1),
                       ),
@@ -826,8 +843,7 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
                 const SizedBox(height: 10),
                 Tooltip(
                   triggerMode: TooltipTriggerMode.tap,
-                  message:
-                      'הכסף מוחזק בנאמנות על ידי AnySkill ומועבר למומחה רק לאחר אישורך בסיום העבודה.',
+                  message: l10n.requestsEscrowTooltip,
                   preferBelow: false,
                   decoration: BoxDecoration(
                     color: const Color(0xFF1E293B),
@@ -851,8 +867,8 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
                         const Icon(Icons.shield_rounded,
                             size: 14, color: Color(0xFF16A34A)),
                         const SizedBox(width: 6),
-                        const Text(
-                          'AnySkill Verified — תשלום מאובטח בנאמנות',
+                        Text(
+                          l10n.requestsVerifiedBadge,
                           style: TextStyle(
                               fontSize: 11,
                               color: Color(0xFF16A34A),
@@ -871,7 +887,7 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
                 // ── Match score bar ────────────────────────────────────
                 const SizedBox(height: 12),
                 Row(children: [
-                  Text('התאמה',
+                  Text(l10n.requestsMatchLabel,
                       style: TextStyle(
                           fontSize: 11, color: Colors.grey[500])),
                   const SizedBox(width: 8),
@@ -919,8 +935,8 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
                       ),
                       icon: const Icon(Icons.chat_bubble_outline,
                           size: 16, color: Color(0xFF6366F1)),
-                      label: const Text('שוחח עכשיו',
-                          style: TextStyle(
+                      label: Text(l10n.requestsChatNow,
+                          style: const TextStyle(
                               color: Color(0xFF6366F1),
                               fontSize: 13,
                               fontWeight: FontWeight.w600)),
@@ -952,8 +968,8 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
                       ),
                       icon: const Icon(Icons.lock_rounded,
                           size: 16, color: Colors.white),
-                      label: const Text('אשר ושלם',
-                          style: TextStyle(
+                      label: Text(l10n.requestsConfirmPay,
+                          style: const TextStyle(
                               color: Colors.white,
                               fontSize: 13,
                               fontWeight: FontWeight.w600)),
@@ -981,7 +997,7 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
                     Icon(Icons.lock_outline_rounded,
                         size: 11, color: Colors.grey[400]),
                     const SizedBox(width: 4),
-                    Text('הכסף מוגן עד סיום העבודה',
+                    Text(l10n.requestsMoneyProtected,
                         style: TextStyle(
                             fontSize: 10, color: Colors.grey[400])),
                   ],
@@ -1037,7 +1053,7 @@ class _ProviderMatchCardState extends State<_ProviderMatchCard> {
         ),
         const SizedBox(width: 3),
         Text(
-          isBestValue ? 'הכי משתלם' : 'תגובה מהירה',
+          isBestValue ? AppLocalizations.of(context).requestsBestValue : AppLocalizations.of(context).requestsFastResponse,
           style: const TextStyle(
               color: Colors.white,
               fontSize: 10,

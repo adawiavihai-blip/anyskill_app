@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../utils/web_utils.dart';
+import '../l10n/app_localizations.dart';
 
 class SystemWalletScreen extends StatefulWidget {
   const SystemWalletScreen({super.key});
@@ -21,8 +22,9 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
 
   // עדכון עמלה לנתיב המדויק ב-Database
   void _updateFee() {
+    final l10n = AppLocalizations.of(context);
     if (_feeController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("נא להזין מספר")));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.systemWalletEnterNumber)));
       return;
     }
 
@@ -41,13 +43,13 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
       }, SetOptions(merge: true));
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(backgroundColor: Colors.black, content: Text("העמלה עודכנה ל-$feeValue%!", style: const TextStyle(color: Colors.amber)))
+        SnackBar(backgroundColor: Colors.black, content: Text(l10n.systemWalletFeeUpdated(feeValue.toString()), style: const TextStyle(color: Colors.amber)))
       );
-      
+
       _feeController.clear();
       FocusScope.of(context).unfocus();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("נא להזין מספר תקין")));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.systemWalletInvalidNumber)));
     }
   }
 
@@ -80,17 +82,19 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
       triggerCsvDownload(sb.toString(), filename);
 
       if (mounted) {
+        final l10n = AppLocalizations.of(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.green,
-            content: Text("יוצאו ${snapshot.docs.length} רשומות ל-CSV"),
+            content: Text(l10n.systemWalletExported(snapshot.docs.length)),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
+        final l10n = AppLocalizations.of(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(backgroundColor: Colors.red, content: Text("שגיאה בייצוא: $e")),
+          SnackBar(backgroundColor: Colors.red, content: Text(l10n.systemWalletExportError(e.toString()))),
         );
       }
     }
@@ -159,12 +163,12 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text("עמלות בהמתנה",
-                            style: TextStyle(
+                        Text(AppLocalizations.of(context).systemWalletPendingFees,
+                            style: const TextStyle(
                                 fontWeight: FontWeight.bold, fontSize: 15)),
                         const SizedBox(height: 3),
                         Text(
-                          "$count עסקאות פעילות (escrow / ממתין לאישור)",
+                          AppLocalizations.of(context).systemWalletActiveJobs(count),
                           style:
                               TextStyle(fontSize: 11, color: Colors.grey[600]),
                         ),
@@ -198,7 +202,7 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
-        title: const Text("ניהול כספי מערכת", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.1)),
+        title: Text(AppLocalizations.of(context).systemWalletTitle, style: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.1)),
         centerTitle: true,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
@@ -218,15 +222,15 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text("פירוט הכנסות מעמלות (זמן אמת)",
-                      style: TextStyle(
+                  Text(AppLocalizations.of(context).systemWalletEarningsTitle,
+                      style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                           color: Colors.black87)),
                   OutlinedButton.icon(
                     onPressed: _exportToCsv,
                     icon: const Icon(Icons.download_rounded, size: 18),
-                    label: const Text("ייצוא CSV", style: TextStyle(fontSize: 13)),
+                    label: Text(AppLocalizations.of(context).systemWalletExportCsv, style: const TextStyle(fontSize: 13)),
                     style: OutlinedButton.styleFrom(
                       side: const BorderSide(color: Colors.blueAccent),
                       foregroundColor: Colors.blueAccent,
@@ -278,7 +282,7 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
             children: [
               const Icon(Icons.account_balance_wallet_outlined, color: Colors.amber, size: 55),
               const SizedBox(height: 15),
-              const Text("יתרה נזילה בארנק המערכת", style: TextStyle(color: Colors.white70, fontSize: 16)),
+              Text(AppLocalizations.of(context).systemWalletBalance, style: const TextStyle(color: Colors.white70, fontSize: 16)),
               const SizedBox(height: 10),
               FittedBox(
                 child: Text("₪${NumberFormat('#,###.##').format(totalFees)}", 
@@ -303,11 +307,11 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.tune, size: 20, color: Colors.amber),
-              SizedBox(width: 8),
-              Text("קביעת אחוז עמלה גלובלי", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const Icon(Icons.tune, size: 20, color: Colors.amber),
+              const SizedBox(width: 8),
+              Text(AppLocalizations.of(context).systemWalletFeePanel, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             ],
           ),
           const SizedBox(height: 18),
@@ -334,7 +338,7 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
                   elevation: 0,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                 ),
-                child: const Text("עדכן", style: TextStyle(fontWeight: FontWeight.bold)),
+                child: Text(AppLocalizations.of(context).systemWalletUpdateFee, style: const TextStyle(fontWeight: FontWeight.bold)),
               ),
             ],
           ),
@@ -363,7 +367,7 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
                 children: [
                   Icon(Icons.history_toggle_off, size: 60, color: Colors.grey[300]),
                   const SizedBox(height: 15),
-                  const Text("אין עמלות רשומות במערכת", style: TextStyle(color: Colors.grey, fontSize: 16)),
+                  Text(AppLocalizations.of(context).systemWalletNoEarnings, style: const TextStyle(color: Colors.grey, fontSize: 16)),
                 ],
               ),
             ),
@@ -402,7 +406,7 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const SizedBox(height: 4),
-                      Text("סטטוס: התקבל בהצלחה", style: TextStyle(color: Colors.green[700], fontSize: 12)),
+                      Text(AppLocalizations.of(context).systemWalletTxStatus, style: TextStyle(color: Colors.green[700], fontSize: 12)),
                       Text(DateFormat('dd/MM/yyyy | HH:mm').format(date), style: const TextStyle(fontSize: 11, color: Colors.blueGrey)),
                     ],
                   ),

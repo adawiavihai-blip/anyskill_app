@@ -8,6 +8,7 @@ import 'chat_modules/payment_module.dart';
 import '../services/payment_service.dart';
 import '../services/cancellation_policy_service.dart';
 import '../widgets/receipt_sheet.dart';
+import '../l10n/app_localizations.dart';
 import 'expert_profile_screen.dart';
 import 'chat_screen.dart';
 
@@ -115,9 +116,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
           .update({'unavailableDates': isoStrings});
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
               backgroundColor: Colors.green,
-              content: Text('הזמינות עודכנה בהצלחה')),
+              content: Text(AppLocalizations.of(context).availabilityUpdated)),
         );
       }
     } catch (e) {
@@ -138,6 +139,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
       String jobId,
       Map<String, dynamic> jobData,
       double amount) async {
+    final strDone = AppLocalizations.of(context).bookingCompleted;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -158,9 +160,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     if (error == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
               backgroundColor: Colors.green,
-              content: Text('העבודה הושלמה והתשלום שוחרר!')),
+              content: Text(strDone)),
         );
         _showRatingDialog(context, jobData['expertId'], jobId);
       }
@@ -169,11 +171,11 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         showDialog(
           context: context,
           builder: (c) => AlertDialog(
-            title: const Text('שגיאה בשחרור התשלום'),
+            title: Text(AppLocalizations.of(context).releasePaymentError),
             content: SelectableText(error),
             actions: [
               TextButton(
-                  onPressed: () => Navigator.pop(c), child: const Text('סגור')),
+                  onPressed: () => Navigator.pop(c), child: Text(AppLocalizations.of(context).close)),
             ],
           ),
         );
@@ -184,6 +186,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   // ── Business logic: expert mark done ──────────────────────────────────────
   Future<void> _markJobDone(
       BuildContext context, String jobId, String chatRoomId) async {
+    final strMarkedDone = AppLocalizations.of(context).markedDoneSuccess;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -219,10 +222,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
       if (context.mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
               backgroundColor: Colors.green,
-              content:
-                  Text('סומן כהושלם! הלקוח יאשר את שחרור התשלום.')),
+              content: Text(strMarkedDone)),
         );
       }
     } catch (e) {
@@ -410,16 +412,16 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
       context: context,
       builder: (c) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('פתיחת מחלוקת',
+        title: Text(AppLocalizations.of(c).disputeTitle,
             textAlign: TextAlign.center,
-            style: TextStyle(fontWeight: FontWeight.bold)),
+            style: const TextStyle(fontWeight: FontWeight.bold)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'תאר מה הבעיה עם השירות שניתן. הצוות שלנו יבדוק ויחליט תוך 48 שעות.',
+            Text(
+              AppLocalizations.of(c).disputeDescription,
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey, fontSize: 13),
+              style: const TextStyle(color: Colors.grey, fontSize: 13),
             ),
             const SizedBox(height: 16),
             TextField(
@@ -427,7 +429,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
               maxLines: 4,
               textAlign: TextAlign.right,
               decoration: InputDecoration(
-                hintText: 'תאר את הבעיה...',
+                hintText: AppLocalizations.of(c).disputeHint,
                 border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12)),
                 contentPadding: const EdgeInsets.all(12),
@@ -438,15 +440,15 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(c, false),
-              child: const Text('בטל')),
+              child: Text(AppLocalizations.of(c).cancel)),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () {
               if (reasonCtrl.text.trim().isEmpty) return;
               Navigator.pop(c, true);
             },
-            child: const Text('שלח מחלוקת',
-                style: TextStyle(color: Colors.white)),
+            child: Text(AppLocalizations.of(c).submitDispute,
+                style: const TextStyle(color: Colors.white)),
           ),
         ],
       ),

@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../widgets/banner_carousel.dart';
 import 'withdrawal_modal.dart';
+import '../l10n/app_localizations.dart';
 
 class FinanceScreen extends StatelessWidget {
   const FinanceScreen({super.key});
@@ -15,7 +16,7 @@ class FinanceScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text("החשבון שלי", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(AppLocalizations.of(context).financeTitle, style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0.5,
@@ -24,7 +25,8 @@ class FinanceScreen extends StatelessWidget {
         stream: FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-          
+
+          final l10n = AppLocalizations.of(context);
           var userData = snapshot.data?.data() as Map<String, dynamic>? ?? {};
           double balance = (userData['balance'] ?? 0.0).toDouble();
 
@@ -37,11 +39,11 @@ class FinanceScreen extends StatelessWidget {
                 padding: EdgeInsets.symmetric(vertical: 14),
                 child: BannerCarousel(),
               ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(15, 0, 15, 10),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(15, 0, 15, 10),
                 child: Align(
                   alignment: Alignment.centerRight,
-                  child: Text("פעולות אחרונות", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  child: Text(l10n.financeRecentActivity, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 ),
               ),
               Expanded(child: _buildTransactionList(uid)),
@@ -53,6 +55,7 @@ class FinanceScreen extends StatelessWidget {
   }
 
   Widget _buildBalanceCard(BuildContext context, String uid, double balance) {
+    final l10n = AppLocalizations.of(context);
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 15),
       width: double.infinity,
@@ -90,7 +93,7 @@ class FinanceScreen extends StatelessWidget {
                     const Icon(Icons.shield_rounded, size: 13, color: Colors.white70),
                     const SizedBox(width: 5),
                     Text(
-                      'נאמנות AnySkill',
+                      l10n.financeTrustBadge,
                       style: TextStyle(
                         fontSize: 11,
                         color: Colors.white.withValues(alpha: 0.75),
@@ -107,7 +110,7 @@ class FinanceScreen extends StatelessWidget {
 
             // ── Balance ──────────────────────────────────────────────────
             Text(
-              'יתרה ניתנת למשיכה',
+              l10n.financeAvailableBalance,
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.65),
                 fontSize: 14,
@@ -125,7 +128,7 @@ class FinanceScreen extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'מינימום למשיכה: ₪50',
+              l10n.financeMinWithdraw,
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.45),
                 fontSize: 12,
@@ -146,9 +149,9 @@ class FinanceScreen extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
                 icon: const Icon(Icons.savings_rounded, size: 18),
-                label: const Text(
-                  'משוך כספים',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                label: Text(
+                  l10n.financeWithdrawButton,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                 ),
                 onPressed: () => showWithdrawalModal(context, uid, balance),
               ),
@@ -165,13 +168,14 @@ class FinanceScreen extends StatelessWidget {
           .where(Filter.or(Filter('senderId', isEqualTo: uid), Filter('receiverId', isEqualTo: uid)))
           .snapshots(), 
       builder: (context, snapshot) {
-        if (snapshot.hasError) return Center(child: Text("שגיאה: ${snapshot.error}"));
+        final l10n = AppLocalizations.of(context);
+        if (snapshot.hasError) return Center(child: Text(l10n.financeError(snapshot.error.toString())));
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        
+
         var docs = snapshot.data!.docs;
-        
+
         if (docs.isEmpty) {
-          return const Center(child: Text("אין עדיין פעולות בחשבונך", style: TextStyle(color: Colors.grey)));
+          return Center(child: Text(l10n.financeNoTransactions, style: const TextStyle(color: Colors.grey)));
         }
 
         // מיון ידני
@@ -204,10 +208,10 @@ class FinanceScreen extends StatelessWidget {
                   child: Icon(isSender ? Icons.arrow_upward : Icons.arrow_downward, color: isSender ? Colors.red : Colors.green, size: 20),
                 ),
                 title: Text(
-                  isSender ? "שילמת ל-${tx['receiverName']}" : "קיבלת מ-${tx['senderName']}",
+                  isSender ? l10n.financePaidTo(tx['receiverName'] ?? '') : l10n.financeReceivedFrom(tx['senderName'] ?? ''),
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-                subtitle: Text(date != null ? DateFormat('dd/MM/yyyy HH:mm').format(date) : "מעבד..."),
+                subtitle: Text(date != null ? DateFormat('dd/MM/yyyy HH:mm').format(date) : l10n.financeProcessing),
                 trailing: Text(
                   "${isSender ? '-' : '+'} ₪${tx['amount']}",
                   style: TextStyle(

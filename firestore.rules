@@ -19,9 +19,18 @@ service cloud.firestore {
       allow read:   if isAuth();
       allow create: if isOwner(uid) || (isAuth() && uid == 'anyskill_system');
       allow update: if (isOwner(uid)
-                        // בעל החשבון יכול לעדכן הכל, חוץ מ-xp/current_xp/level/isPromoted (מנוהלים ע"י Cloud Functions בלבד)
+                        // 🔒 Server-side only (Cloud Functions / Admin SDK):
+                        //    xp, current_xp, level, isPromoted  — gamification engine
+                        //    isVerifiedProvider, isVerified      — compliance & identity
+                        //    isAdmin                              — privilege escalation prevention
+                        //    compliance                           — tax doc object (written during onboarding, cleared by admin)
+                        //    balance                              — all mutations via FieldValue.increment in Cloud Functions
                         && !request.resource.data.diff(resource.data)
-                            .affectedKeys().hasAny(['xp', 'current_xp', 'level', 'isPromoted']))
+                            .affectedKeys().hasAny([
+                              'xp', 'current_xp', 'level', 'isPromoted',
+                              'isVerifiedProvider', 'isVerified', 'isAdmin',
+                              'balance'
+                            ]))
                     || isAdmin()
                     // כל משתמש מחובר יכול לעדכן רק rating + reviewsCount (לאחר ביקורת)
                     || (isAuth()
@@ -43,25 +52,44 @@ service cloud.firestore {
     }
 
     // ── Transactions (wallet history) ─────────────────────────────
+    // 🔒 Allow both userId (legacy) and senderId (withdrawal flow) patterns.
     match /transactions/{txId} {
       allow create: if isAuth()
-                    && request.resource.data.userId == request.auth.uid;
-      allow read:   if isAuth()
-                    && resource.data.userId == request.auth.uid
-                    || isAdmin();
+                    && (request.resource.data.userId   == request.auth.uid
+                        || request.resource.data.senderId == request.auth.uid);
+      allow read:   if isAdmin()
+                    || (isAuth()
+                        && (resource.data.userId   == request.auth.uid
+                            || resource.data.senderId == request.auth.uid
+                            || resource.data.receiverId == request.auth.uid));
     }
 
     // ── Chats & messages ──────────────────────────────────────────
+    // 🔒 Participant-only: only the two parties in users[] may read/write.
+    // Previously: allow read,write: if isAuth()  ← any logged-in user could
+    //             read any chat room by guessing the chatId.
     match /chats/{chatId} {
-      allow read, write: if isAuth();
+      allow create: if isAuth()
+                    && request.auth.uid in request.resource.data.users;
+      allow read, update, delete:
+                    if isAuth()
+                    && request.auth.uid in resource.data.users;
 
       match /messages/{msgId} {
-        allow read, write: if isAuth();
+        // Inherit parent-room access: check parent doc once per request.
+        // Using get() here is justified — messages without a valid chat room
+        // should never be accessible.
+        allow read, write:
+          if isAuth()
+          && request.auth.uid in
+             get(/databases/$(database)/documents/chats/$(chatId)).data.users;
       }
 
       match /unread_shards/{shardId} {
         // ניתן לקריאה בלבד ע"י משתמשים מחוברים — כתיבה מ-Cloud Function (Admin SDK) בלבד
-        allow read: if isAuth();
+        allow read: if isAuth()
+                    && request.auth.uid in
+                       get(/databases/$(database)/documents/chats/$(chatId)).data.users;
         allow write: if false;
       }
     }
@@ -228,6 +256,14 @@ service cloud.firestore {
                       || resource.data.clientId == request.auth.uid
                     );
       allow delete: if isAuth() && resource.data.clientId == request.auth.uid;
+    }
+
+    // ── Market Opportunities (zero-result search aggregation) ─────────────
+    // Written exclusively by the marketopportunitymonitor Cloud Function (Admin SDK).
+    // Admin reads for Business AI dashboard analysis.
+    match /market_opportunities/{docId} {
+      allow read:  if isAdmin();
+      allow write: if false; // Admin SDK (marketopportunitymonitor) only
     }
   }
 }

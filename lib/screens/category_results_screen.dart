@@ -8,6 +8,7 @@ import '../services/location_service.dart';
 import '../services/search_ranking_service.dart';
 import '../widgets/level_badge.dart';
 import '../constants/quick_tags.dart';
+import '../l10n/app_localizations.dart';
 
 // Brand colours (shared with the rest of the app)
 const _kPurple     = Color(0xFF6366F1);
@@ -76,6 +77,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
   void _showAvailabilitySheet(
       BuildContext context, Map<String, dynamic> data, String expertId) {
+    final l10n = AppLocalizations.of(context);
+
     // Parse the provider's blocked dates (ISO-8601 strings: 'YYYY-MM-DD')
     final blocked = ((data['unavailableDates'] as List?) ?? [])
         .map((d) => d.toString().substring(0, 10))
@@ -99,6 +102,11 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       'ינו׳', 'פבר׳', 'מרץ', 'אפר׳', 'מאי', 'יוני',
       'יולי', 'אוג׳', 'ספט׳', 'אוק׳', 'נוב׳', 'דצמ׳',
     ];
+
+    final expertDefaultName = l10n.catResultsExpertDefault;
+    final availableSlotsTitle = l10n.catResultsAvailableSlots;
+    final noAvailabilityMsg = l10n.catResultsNoAvailability;
+    final fullBookingLabel = l10n.catResultsFullBooking;
 
     showModalBottomSheet(
       context: context,
@@ -129,23 +137,23 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  data['name'] ?? 'מומחה',
+                  data['name'] ?? expertDefaultName,
                   style: const TextStyle(color: Colors.grey, fontSize: 13),
                 ),
-                const Text(
-                  'הסלוטים הפנויים הקרובים',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                Text(
+                  availableSlotsTitle,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                 ),
               ],
             ),
             const SizedBox(height: 16),
 
             if (slots.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 24),
                 child: Center(
-                  child: Text('אין זמינות ב-14 הימים הקרובים',
-                      style: TextStyle(color: Colors.grey, fontSize: 14)),
+                  child: Text(noAvailabilityMsg,
+                      style: const TextStyle(color: Colors.grey, fontSize: 14)),
                 ),
               )
             else
@@ -193,7 +201,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                                   MaterialPageRoute(
                                     builder: (_) => ExpertProfileScreen(
                                       expertId: expertId,
-                                      expertName: data['name'] ?? 'מומחה',
+                                      expertName: data['name'] ?? expertDefaultName,
                                     ),
                                   ),
                                 );
@@ -241,13 +249,13 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                     MaterialPageRoute(
                       builder: (_) => ExpertProfileScreen(
                         expertId: expertId,
-                        expertName: data['name'] ?? 'מומחה',
+                        expertName: data['name'] ?? expertDefaultName,
                       ),
                     ),
                   );
                 },
-                child: const Text('להזמנה מלאה',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                child: Text(fullBookingLabel,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
               ),
             ),
           ],
@@ -261,6 +269,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildActionImage(Map<String, dynamic> data, bool isOnline) {
+    final l10n = AppLocalizations.of(context);
     final gallery = (data['gallery'] as List?)?.cast<String>() ?? [];
     final actionImg =
         gallery.isNotEmpty ? gallery.first : (data['profileImage'] as String? ?? '');
@@ -273,9 +282,9 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     final reviewsCount = (data['reviewsCount'] as num?)?.toInt() ?? 0;
 
     final badges = <String>[];
-    if (orderCount >= 5) badges.add('🔥 $orderCount הזמנות');
-    if (respTime > 0 && respTime <= 10) badges.add('⚡ מגיב תוך $respTime ד׳');
-    if (rating >= 4.8 && reviewsCount >= 3) badges.add('⭐ מוביל');
+    if (orderCount >= 5) badges.add(l10n.catResultsOrderCount(orderCount));
+    if (respTime > 0 && respTime <= 10) badges.add(l10n.catResultsResponseTime(respTime));
+    if (rating >= 4.8 && reviewsCount >= 3) badges.add(l10n.catResultsTopRated);
 
     return ClipRRect(
       borderRadius: const BorderRadius.only(
@@ -326,13 +335,13 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                     color: Colors.black.withValues(alpha: 0.45),
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: const Row(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.circle, color: Color(0xFF22C55E), size: 7),
-                      SizedBox(width: 3),
-                      Text('זמין',
-                          style: TextStyle(
+                      const Icon(Icons.circle, color: Color(0xFF22C55E), size: 7),
+                      const SizedBox(width: 3),
+                      Text(l10n.onlineStatus,
+                          style: const TextStyle(
                               color: Colors.white,
                               fontSize: 10,
                               fontWeight: FontWeight.w600)),
@@ -380,6 +389,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
   /// Branded placeholder shown when the provider hasn't uploaded a portfolio image.
   Widget _imagePlaceholder() {
+    final l10n = AppLocalizations.of(context);
     return Container(
       color: _kPurpleSoft,
       child: Column(
@@ -389,7 +399,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
               size: 32, color: _kPurple.withValues(alpha: 0.5)),
           const SizedBox(height: 6),
           Text(
-            'הוסף\nתמונת\nפרופיל',
+            l10n.catResultsAddPhoto,
             textAlign: TextAlign.center,
             style: TextStyle(
                 fontSize: 10,
@@ -448,7 +458,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     bool isOnline,
     String expertId,
   ) {
-    final name        = data['name'] as String? ?? 'מומחה';
+    final l10n        = AppLocalizations.of(context);
+    final name        = data['name'] as String? ?? l10n.catResultsExpertDefault;
     final price       = data['pricePerHour'] ?? 100;
     final rating      = (data['rating'] as num?)?.toDouble() ?? 5.0;
     final reviewsCount = (data['reviewsCount'] as num?)?.toInt() ?? 0;
@@ -480,9 +491,9 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                           fontWeight: FontWeight.w900,
                           fontSize: 18),
                     ),
-                    const TextSpan(
-                      text: ' / שע',
-                      style: TextStyle(
+                    TextSpan(
+                      text: l10n.catResultsPerHour,
+                      style: const TextStyle(
                           color: Colors.grey,
                           fontSize: 11,
                           fontWeight: FontWeight.normal),
@@ -514,7 +525,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                       Icon(Icons.star_rounded,
                           color: Colors.amber[700], size: 10),
                       const SizedBox(width: 3),
-                      Text('מומלץ',
+                      Text(l10n.catResultsRecommended,
                           style: TextStyle(
                               fontSize: 9,
                               color: Colors.amber[800],
@@ -609,8 +620,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                 foregroundColor: _kPurple,
               ),
               icon: const Icon(Icons.calendar_today_rounded, size: 13),
-              label: const Text('מתי פנוי?',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              label: Text(l10n.catResultsWhenFree,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
               onPressed: () =>
                   _showAvailabilitySheet(context, data, expertId),
             ),
@@ -639,8 +650,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                   ),
                 ),
               ),
-              child: const Text('הזמן עכשיו',
-                  style: TextStyle(
+              child: Text(l10n.bookNow,
+                  style: const TextStyle(
                       fontWeight: FontWeight.bold, fontSize: 13)),
             ),
           ),
@@ -654,6 +665,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildExpertCard(Map<String, dynamic> data) {
+    final l10n       = AppLocalizations.of(context);
     final isVerified = data['isVerified'] as bool? ?? false;
     final isOnline   = data['isOnline']   as bool? ?? false;
     final isPromoted = data['isPromoted'] as bool? ?? false;
@@ -666,7 +678,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
         MaterialPageRoute(
           builder: (_) => ExpertProfileScreen(
             expertId: expertId,
-            expertName: data['name'] ?? 'מומחה',
+            expertName: data['name'] ?? l10n.catResultsExpertDefault,
           ),
         ),
       ),
@@ -720,10 +732,11 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
-        title: Text("מומחי ${widget.categoryName}",
+        title: Text(l10n.catResultsPageTitle(widget.categoryName),
             style: const TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true,
         backgroundColor: Colors.white,
@@ -740,6 +753,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   }
 
   Widget _buildSearchAndFilter() {
+    final l10n = AppLocalizations.of(context);
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
@@ -755,12 +769,12 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
             child: TextField(
               onChanged: (v) => setState(() => _searchQuery = v),
               textAlign: TextAlign.right,
-              decoration: const InputDecoration(
-                hintText: 'חפש לפי שם...',
-                hintStyle: TextStyle(color: Colors.grey, fontSize: 13),
-                prefixIcon: Icon(Icons.search, color: Colors.grey, size: 20),
+              decoration: InputDecoration(
+                hintText: l10n.catResultsSearchHint,
+                hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+                prefixIcon: const Icon(Icons.search, color: Colors.grey, size: 20),
                 border: InputBorder.none,
-                contentPadding: EdgeInsets.symmetric(vertical: 12),
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
               ),
             ),
           ),
@@ -801,7 +815,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                         color: _filterUnder100 ? Colors.white : Colors.grey[600]),
                     const SizedBox(width: 6),
                     Text(
-                      'עד 100 ₪',
+                      l10n.catResultsUnder100,
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
@@ -835,6 +849,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
   Widget _buildContent(
       BuildContext context, AsyncSnapshot<List<Map<String, dynamic>>> snapshot) {
+    final l10n = AppLocalizations.of(context);
     if (snapshot.connectionState == ConnectionState.waiting) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -846,12 +861,12 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           children: [
             const Icon(Icons.wifi_off_rounded, size: 48, color: Colors.grey),
             const SizedBox(height: 16),
-            const Text('שגיאה בטעינת המומחים',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            Text(l10n.catResultsLoadError,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             OutlinedButton.icon(
               icon: const Icon(Icons.refresh),
-              label: const Text('נסה שוב'),
+              label: Text(l10n.retryButton),
               onPressed: () => setState(() {
                 _refreshTrigger++;
                 _expertsFuture = _fetchExperts();
@@ -900,8 +915,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
               const SizedBox(height: 24),
               Text(
                 hasFilters
-                    ? "לא נמצאו תוצאות"
-                    : 'אין מומחים ב${widget.categoryName} עדיין',
+                    ? l10n.catResultsNoResults
+                    : l10n.catResultsNoExperts(widget.categoryName),
                 style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -911,8 +926,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
               const SizedBox(height: 8),
               Text(
                 hasFilters
-                    ? "נסה לשנות את החיפוש או לבטל את הפילטר"
-                    : "היה הראשון להצטרף לקטגוריה זו!",
+                    ? l10n.catResultsNoResultsHint
+                    : l10n.catResultsBeFirst,
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 14, color: Colors.grey[500]),
               ),
@@ -926,7 +941,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                         borderRadius: BorderRadius.circular(14)),
                   ),
                   icon: const Icon(Icons.filter_alt_off),
-                  label: const Text("נקה פילטרים"),
+                  label: Text(l10n.catResultsClearFilters),
                   onPressed: () => setState(() {
                     _searchQuery = '';
                     _filterUnder100 = false;

@@ -569,25 +569,29 @@ exports.sendRebookReminders = onSchedule(
 );
 
 // ── Gamification helpers ───────────────────────────────────────────────────────
-function _computeLevel(xp) {
-    if (xp >= 1500) return 'gold';
-    if (xp >= 500)  return 'silver';
-    return 'bronze';
-}
+// Reads level thresholds from settings_gamification/app_levels (admin-configurable).
+// Falls back to silver=500, gold=2000 when the doc doesn't exist yet.
+async function _awardXpDynamic(uid, points, reason) {
+    const db         = admin.firestore();
+    const levelsSnap = await db.collection('settings_gamification').doc('app_levels').get();
+    const levels     = levelsSnap.data() || {};
+    const silverThr  = typeof levels.silver === 'number' ? levels.silver : 500;
+    const goldThr    = typeof levels.gold   === 'number' ? levels.gold   : 2000;
+    const userRef    = db.collection('users').doc(uid);
 
-async function _awardXp(uid, amount, reason) {
-    const db = admin.firestore();
-    const userRef = db.collection('users').doc(uid);
     await db.runTransaction(async (tx) => {
         const snap = await tx.get(userRef);
         if (!snap.exists) return;
-        const currentXp = (snap.data().xp || 0) + amount;
-        tx.update(userRef, {
-            xp: admin.firestore.FieldValue.increment(amount),
-            level: _computeLevel(currentXp),
-        });
+        const data      = snap.data();
+        const currentXp = typeof data.current_xp === 'number' ? data.current_xp
+                        : typeof data.xp          === 'number' ? data.xp : 0;
+        const finalXp   = Math.max(0, currentXp + points);
+        const level     = finalXp >= goldThr  ? 'gold'
+                        : finalXp >= silverThr ? 'silver'
+                        :                       'bronze';
+        tx.update(userRef, { xp: finalXp, current_xp: finalXp, level });
     });
-    console.log(`XP: +${amount} to ${uid} for ${reason}`);
+    console.log(`XP: ${points >= 0 ? '+' : ''}${points} to ${uid} for ${reason}`);
 }
 
 // ── Job completed → +100 XP to expert ────────────────────────────────────────
@@ -599,7 +603,7 @@ exports.awardXpJobCompleted = onDocumentUpdated("jobs/{jobId}", async (event) =>
     const expertId = after.expertId;
     if (!expertId) return null;
     try {
-        await _awardXp(expertId, 100, 'job_completed');
+        await _awardXpDynamic(expertId, 100, 'job_completed');
     } catch (e) {
         console.error('XP job_completed error:', e);
     }
@@ -613,7 +617,7 @@ exports.awardXpFiveStarReview = onDocumentCreated("reviews/{reviewId}", async (e
     const expertId = review.expertId;
     if (!expertId) return null;
     try {
-        await _awardXp(expertId, 50, 'five_star_review');
+        await _awardXpDynamic(expertId, 50, 'five_star_review');
     } catch (e) {
         console.error('XP five_star_review error:', e);
     }
@@ -1859,6 +1863,20 @@ exports.marketopportunitymonitor = onDocumentCreated(
 
         const db = admin.firestore();
 
+        // ── 0. Always track zero-result searches for Business AI analysis ─────
+        // Upserts a market_opportunities doc so the AI dashboard can surface gaps.
+        try {
+            const oppId  = query.replace(/[/.]/g, "_").substring(0, 100);
+            await db.collection("market_opportunities").doc(oppId).set({
+                query,
+                searchCount:    admin.firestore.FieldValue.increment(1),
+                lastSearchedAt: admin.firestore.FieldValue.serverTimestamp(),
+                analyzed:       false,
+            }, { merge: true });
+        } catch (e) {
+            console.warn(`marketopportunitymonitor: market_opportunities write failed — ${e.message}`);
+        }
+
         // ── 1. Read alert threshold from admin settings ──────────────────────
         const settingsSnap = await db
             .collection("admin").doc("admin")
@@ -2585,5 +2603,231 @@ exports.processCancellation = onCall(
             customerCredit: parseFloat(customerCredit.toFixed(2)),
             expertCredit:   parseFloat(expertCredit.toFixed(2)),
         };
+    }
+);
+
+// =============================================================================
+// AUTOMATION ENGINE — Scheduled Cleanup, Withdrawal System, Security
+// =============================================================================
+
+// ── scheduledCleanup — Unified hourly maintenance task ────────────────────────
+// Consolidates all expiry tasks into one function:
+//   1. Expire Stories:    stories.hasActive=true + expiresAt <= now
+//   2. Expire Boosts:     users.boostedUntil <= now
+//   3. Expire VIP subs:   users.isPromoted=true + promotionExpiryDate <= now
+// (The standalone expireStories + expireVipSubscriptions also remain for their
+//  original schedules; this hourly sweep catches anything they might miss.)
+
+exports.scheduledCleanup = onSchedule(
+    { schedule: 'every 1 hours', timeZone: 'Asia/Jerusalem' },
+    async () => {
+        const db  = admin.firestore();
+        const now = admin.firestore.Timestamp.now();
+        let totalCleaned = 0;
+
+        // ── 1. Expire Stories ─────────────────────────────────────────────────
+        try {
+            const expiredStories = await db
+                .collection('stories')
+                .where('hasActive', '==', true)
+                .where('expiresAt', '<=', now)
+                .limit(200)
+                .get();
+
+            if (!expiredStories.empty) {
+                const batch = db.batch();
+                for (const doc of expiredStories.docs) {
+                    batch.update(doc.ref, { hasActive: false });
+                    batch.update(db.collection('users').doc(doc.id), { hasActiveStory: false });
+                }
+                await batch.commit();
+                console.log(`[scheduledCleanup] Expired ${expiredStories.size} story/stories`);
+                totalCleaned += expiredStories.size;
+            }
+        } catch (e) {
+            console.error('[scheduledCleanup] stories error:', e.message);
+        }
+
+        // ── 2. Expire Boosts (boostedUntil <= now) ────────────────────────────
+        try {
+            const expiredBoosts = await db
+                .collection('users')
+                .where('boostedUntil', '<=', now)
+                .limit(200)
+                .get();
+
+            if (!expiredBoosts.empty) {
+                const batch = db.batch();
+                for (const doc of expiredBoosts.docs) {
+                    if (doc.data().boostedUntil) { // guard: field must exist
+                        batch.update(doc.ref, {
+                            boostedUntil:        admin.firestore.FieldValue.delete(),
+                            urgentJobsCompleted: 0,
+                        });
+                    }
+                }
+                await batch.commit();
+                console.log(`[scheduledCleanup] Expired ${expiredBoosts.size} boost(s)`);
+                totalCleaned += expiredBoosts.size;
+            }
+        } catch (e) {
+            console.error('[scheduledCleanup] boosts error:', e.message);
+        }
+
+        // ── 3. Expire VIP Subscriptions ───────────────────────────────────────
+        try {
+            const expiredVips = await db
+                .collection('users')
+                .where('isPromoted',          '==', true)
+                .where('promotionExpiryDate', '<=', now)
+                .limit(200)
+                .get();
+
+            if (!expiredVips.empty) {
+                const batch = db.batch();
+                for (const doc of expiredVips.docs) {
+                    batch.update(doc.ref, { isPromoted: false });
+                }
+                await batch.commit();
+                console.log(`[scheduledCleanup] Expired ${expiredVips.size} VIP subscription(s)`);
+                totalCleaned += expiredVips.size;
+            }
+        } catch (e) {
+            console.error('[scheduledCleanup] VIP error:', e.message);
+        }
+
+        console.log(`[scheduledCleanup] Run complete. Total records cleaned: ${totalCleaned}`);
+    }
+);
+
+// ── requestWithdrawal — Provider requests a payout ────────────────────────────
+// Enforces:
+//   • isVerifiedProvider must be true (compliance requirement)
+//   • balance must be >= amount
+//   • minimum withdrawal: ₪100
+// On success:
+//   • Debits provider balance atomically (FieldValue.increment)
+//   • Creates withdrawals/{id} doc (status: 'pending')
+//   • Creates transactions/{id} record
+//   • Sends FCM + inbox notification to all admin users
+
+exports.requestWithdrawal = onCall(
+    { maxInstances: 20 },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError('unauthenticated', 'Authentication required.');
+        }
+
+        const uid    = request.auth.uid;
+        const amount = request.data?.amount;
+
+        if (typeof amount !== 'number' || isNaN(amount) || amount < 100) {
+            throw new HttpsError('invalid-argument', 'סכום המשיכה המינימלי הוא ₪100.');
+        }
+
+        const db      = admin.firestore();
+        const userRef = db.collection('users').doc(uid);
+
+        // Load user data (outside transaction — for pre-checks)
+        const userSnap = await userRef.get();
+        if (!userSnap.exists) throw new HttpsError('not-found', 'User not found.');
+
+        const userData           = userSnap.data();
+        const isProvider         = userData.isProvider === true;
+        const isVerifiedProvider = userData.isVerifiedProvider !== false; // legacy users default to true
+
+        if (isProvider && !isVerifiedProvider) {
+            throw new HttpsError(
+                'failed-precondition',
+                'חשבון הספק שלך טרם אושר. יש להמתין לאישור מנהל לפני משיכת כספים.'
+            );
+        }
+
+        const withdrawalRef = db.collection('withdrawals').doc();
+        const txRef         = db.collection('transactions').doc();
+
+        // Atomic transaction: re-read balance, debit, create records
+        await db.runTransaction(async (t) => {
+            const freshSnap    = await t.get(userRef);
+            const freshBalance = typeof freshSnap.data()?.balance === 'number'
+                ? freshSnap.data().balance : 0;
+
+            if (freshBalance < amount) {
+                throw new HttpsError(
+                    'failed-precondition',
+                    `יתרה לא מספיקה. יתרה זמינה: ₪${freshBalance.toFixed(2)}`
+                );
+            }
+
+            t.update(userRef, {
+                balance: admin.firestore.FieldValue.increment(-amount),
+            });
+
+            t.set(withdrawalRef, {
+                userId:    uid,
+                userName:  userData.name  || '',
+                userEmail: userData.email || '',
+                amount,
+                status:    'pending',
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            t.set(txRef, {
+                userId:    uid,
+                amount:    -amount,
+                title:     `בקשת משיכה — ₪${amount.toFixed(0)}`,
+                type:      'withdrawal_pending',
+                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        });
+
+        // ── Notify all admins (best-effort, outside transaction) ──────────────
+        try {
+            const adminSnap = await db.collection('users')
+                .where('isAdmin', '==', true)
+                .limit(5)
+                .get();
+
+            const adminTokens = adminSnap.docs
+                .map(d => d.data().fcmToken)
+                .filter(t => typeof t === 'string' && t.length > 10);
+
+            const notifTitle = '💸 בקשת משיכה חדשה';
+            const notifBody  = `${userData.name || 'ספק'} ביקש/ה למשוך ₪${amount.toFixed(0)}`;
+
+            if (adminTokens.length > 0) {
+                await admin.messaging().sendEachForMulticast({
+                    notification: { title: notifTitle, body: notifBody },
+                    data: {
+                        type:         'withdrawal_request',
+                        withdrawalId: withdrawalRef.id,
+                        userId:       uid,
+                    },
+                    tokens:  adminTokens,
+                    android: { priority: 'high', notification: { channelId: 'anyskill_default' } },
+                    apns:    { payload: { aps: { sound: 'default' } } },
+                });
+            }
+
+            // Write a notification doc for each admin user
+            const batch = db.batch();
+            for (const adminDoc of adminSnap.docs) {
+                batch.set(db.collection('notifications').doc(), {
+                    userId:    adminDoc.id,
+                    title:     notifTitle,
+                    body:      notifBody,
+                    type:      'withdrawal_request',
+                    data:      { withdrawalId: withdrawalRef.id, userId: uid, amount },
+                    isRead:    false,
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+            await batch.commit();
+        } catch (notifErr) {
+            console.warn('[requestWithdrawal] admin notification failed:', notifErr.message);
+        }
+
+        console.log(`[requestWithdrawal] uid=${uid} amount=₪${amount} withdrawalId=${withdrawalRef.id}`);
+        return { success: true, withdrawalId: withdrawalRef.id };
     }
 );
