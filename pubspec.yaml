@@ -1,7 +1,7 @@
 name: anyskill_app
 description: "A new Flutter project for AnySkill."
 publish_to: 'none'
-version: 2.1.6+1
+version: 2.1.7+1
 
 environment:
   sdk: ^3.7.0
@@ -36,6 +36,7 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   shimmer: ^3.0.0
   shared_preferences: ^2.5.3
+  package_info_plus: ^9.0.0
 
 dependency_overrides:
   # fl_chart 1.x calls translateByDouble/scaleByDouble which were added

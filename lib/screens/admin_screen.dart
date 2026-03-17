@@ -4,6 +4,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../utils/web_utils.dart';
 import 'pending_categories_screen.dart';
 import 'business_ai_screen.dart';
@@ -68,8 +69,28 @@ class _AdminScreenState extends State<AdminScreen> {
   @override
   void initState() {
     super.initState();
+    _syncAppVersion();
     _loadAdminSettings();
     _setupInsightsStreams();
+  }
+
+  // ── Auto-sync app version to Firestore ───────────────────────────────────────
+  // Reads the real version from pubspec.yaml via PackageInfo and writes it to
+  // admin/settings.latestVersion. This triggers the update banner for all other
+  // users who are running an older build — no more manual version updates.
+  Future<void> _syncAppVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final version = info.version;
+      if (version.isEmpty) return;
+      await FirebaseFirestore.instance
+          .collection('admin')
+          .doc('settings')
+          .set({'latestVersion': version}, SetOptions(merge: true));
+      debugPrint('Admin: synced latestVersion → $version');
+    } catch (e) {
+      debugPrint('Admin: version sync failed — $e');
+    }
   }
 
   @override

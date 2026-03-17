@@ -8,6 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'utils/web_utils.dart';
 import 'services/permission_service.dart';
 import 'services/locale_provider.dart';
@@ -17,8 +18,10 @@ import 'screens/login_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'l10n/app_localizations.dart';
 
-// גרסה 1.0.4 - שחרור תקיעה וייצוב סופי
-const String currentAppVersion = "1.0.4";
+// The running app version — populated from pubspec.yaml via PackageInfo in main().
+// Admins auto-push this value to admin/settings.latestVersion on login,
+// triggering the update banner for all other users.
+String currentAppVersion = '2.1.6'; // fallback; overwritten before runApp()
 
 // ── Global navigator key ──────────────────────────────────────────────────────
 // Used by notification handlers to navigate without a BuildContext.
@@ -60,6 +63,12 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 // ── Entry point ───────────────────────────────────────────────────────────────
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Read real version from pubspec.yaml — no more manual constant updates.
+  try {
+    final info = await PackageInfo.fromPlatform();
+    if (info.version.isNotEmpty) currentAppVersion = info.version;
+  } catch (_) {}
 
   // Load saved locale BEFORE first frame so there's no flash of wrong language.
   await LocaleProvider.init();
