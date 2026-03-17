@@ -23,6 +23,10 @@ class SearchRankingService {
   /// push a non-promoted provider above a promoted one.
   static const double _promotedBonus = 200.0;
 
+  /// Online providers appear above offline ones (but below promoted).
+  /// This is the "Uber" logic: active providers earn more leads.
+  static const double _onlineBonus = 100.0;
+
   // ── Formula ─────────────────────────────────────────────────────────────
 
   /// Returns a rank score for a single provider.
@@ -32,11 +36,13 @@ class SearchRankingService {
   ///   [distanceMeters] Euclidean distance to the searching user, or null
   ///                    if location is unknown (treated as neutral = 50 pts).
   ///   [hasActiveStory] True if provider posted a Skills Story in the last 24 h.
+  ///   [isOnline]       Online providers float above offline ones (Uber logic).
   ///   [isPromoted]     Admin-promoted providers float above all others.
   static double score({
     required int    xp,
     required double? distanceMeters,
     required bool   hasActiveStory,
+    bool isOnline   = false,
     bool isPromoted = false,
   }) {
     // ── 1. XP Score (0–100) ──────────────────────────────────────────────
@@ -67,7 +73,9 @@ class SearchRankingService {
         (distScore * 0.2) +
         (storyBonus * 0.2);
 
-    return weighted + (isPromoted ? _promotedBonus : 0.0);
+    return weighted
+        + (isPromoted ? _promotedBonus : 0.0)
+        + (isOnline   ? _onlineBonus   : 0.0);
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -103,7 +111,8 @@ class SearchRankingService {
   ) {
     final int    xp         = (e['xp'] as num? ?? 0).toInt();
     final bool   hasStory   = e['hasActiveStory'] as bool? ?? false;
-    final bool   isPromoted = e['isPromoted']     as bool? ?? false;
+    final bool   isOnline   = e['isOnline']        as bool? ?? false;
+    final bool   isPromoted = e['isPromoted']      as bool? ?? false;
 
     double? distM;
     if (myLat != null && myLng != null) {
@@ -118,6 +127,7 @@ class SearchRankingService {
       xp:             xp,
       distanceMeters: distM,
       hasActiveStory: hasStory,
+      isOnline:       isOnline,
       isPromoted:     isPromoted,
     );
   }

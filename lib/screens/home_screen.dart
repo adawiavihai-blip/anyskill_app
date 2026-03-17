@@ -130,12 +130,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  void _setOnlineStatus(bool isOnline) async {
+  void _setOnlineStatus(bool isOnline, {bool showFeedback = false}) async {
     if (currentUser != null) {
       await FirebaseFirestore.instance.collection('users').doc(currentUser!.uid).update({
         'isOnline': isOnline,
         'lastSeen': FieldValue.serverTimestamp(),
       }).catchError((e) => debugPrint("Status error: $e"));
+
+      if (showFeedback && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: isOnline ? const Color(0xFF22C55E) : Colors.grey[700],
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          duration: const Duration(seconds: 3),
+          content: Text(
+            isOnline
+                ? 'עברת למצב זמין — לקוחות יכולים לראות אותך ✅'
+                : 'עברת למצב לא זמין 🔕',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ));
+      }
     }
   }
 
@@ -223,7 +238,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             userData: data,
             currentUserId: currentUser?.uid ?? '',
             isOnline: isOnline,
-            onToggleOnline: () => _setOnlineStatus(!isOnline),
+            onToggleOnline: () => _setOnlineStatus(!isOnline, showFeedback: true),
             onGoToBookings: () => setState(() => _selectedIndex = 1),
             onGoToChat: () => setState(() => _selectedIndex = 2),
             onOpenQuickRequest: () => _showQuickRequestSheet(context, data),

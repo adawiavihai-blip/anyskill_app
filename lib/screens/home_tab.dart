@@ -190,6 +190,12 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   child: StreamBuilder<QuerySnapshot>(
                     stream: _urgentStream,
                     builder: (context, urgSnap) {
+                      // Offline providers don't receive the urgent pulse
+                      // (aligns with FCM topic logic — no notifications while offline)
+                      if (isProvider && !widget.isOnline) {
+                        if (_pulseCtrl.isAnimating) _pulseCtrl.stop();
+                        return const SizedBox.shrink();
+                      }
                       final docs = urgSnap.data?.docs ?? [];
                       if (docs.isEmpty) {
                         if (_pulseCtrl.isAnimating) _pulseCtrl.stop();

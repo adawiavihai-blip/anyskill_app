@@ -10,6 +10,7 @@ import 'business_ai_screen.dart';
 import 'xp_manager_screen.dart';
 import 'dispute_resolution_screen.dart';
 import '../services/category_service.dart';
+import '../services/visual_fetcher_service.dart';
 import '../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
 
 
@@ -25,6 +26,7 @@ class _AdminScreenState extends State<AdminScreen> {
   double _feePct        = 10.0;
   double _urgencyFeePct = 5.0;
   bool   _settingsLoaded = false;
+  bool   _refreshingImages = false;
 
   // ── Insights tab — real-time aggregated state ──────────────────────────────
   double _insGmv       = 0;
@@ -899,7 +901,7 @@ class _AdminScreenState extends State<AdminScreen> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 46),
@@ -911,6 +913,54 @@ class _AdminScreenState extends State<AdminScreen> {
                     style: TextStyle(color: Color(0xFF6366F1), fontWeight: FontWeight.bold)),
                 onPressed: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const PendingCategoriesScreen())),
+              ),
+            ),
+            // ── Refresh Category Images ──────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0EA5E9),
+                  minimumSize: const Size(double.infinity, 46),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  elevation: 0,
+                ),
+                icon: _refreshingImages
+                    ? const SizedBox(
+                        width: 18, height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.image_search_rounded, color: Colors.white),
+                label: Text(
+                  _refreshingImages ? 'מרענן תמונות...' : 'רענן תמונות קטגוריה',
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+                onPressed: _refreshingImages
+                    ? null
+                    : () async {
+                        final messenger = ScaffoldMessenger.of(context);
+                        setState(() => _refreshingImages = true);
+                        try {
+                          await VisualFetcherService.forceRefreshAll();
+                          messenger.showSnackBar(const SnackBar(
+                            backgroundColor: Color(0xFF22C55E),
+                            behavior: SnackBarBehavior.floating,
+                            content: Text(
+                              'תמונות הקטגוריות עודכנו בהצלחה ✅',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ));
+                        } catch (e) {
+                          messenger.showSnackBar(SnackBar(
+                            backgroundColor: Colors.red,
+                            content: Text('שגיאה: $e'),
+                          ));
+                        } finally {
+                          if (mounted) setState(() => _refreshingImages = false);
+                        }
+                      },
               ),
             ),
             if (!snapshot.hasData)
