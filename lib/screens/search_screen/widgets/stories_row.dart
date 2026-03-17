@@ -44,12 +44,25 @@ class _StoriesRowState extends State<StoriesRow> {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('stories')
+          // NOTE: No orderBy here — combining where()+orderBy() on different
+          // fields requires a composite Firestore index that silently fails on
+          // web and returns 0 results. We sort client-side instead.
           .where('hasActive', isEqualTo: true)
-          .orderBy('timestamp', descending: true)
-          .limit(20)
+          .limit(30)
           .snapshots(),
       builder: (context, snap) {
-        debugPrint('QA: StoriesRow snap — state=${snap.connectionState} docs=${snap.data?.docs.length}');
+        if (snap.connectionState != ConnectionState.waiting) {
+          final docs = snap.data?.docs ?? [];
+          debugPrint('QA: StoriesRow — fetched ${docs.length} docs from Firestore');
+          for (final d in docs) {
+            final data = d.data() as Map<String, dynamic>? ?? {};
+            debugPrint('  • doc=${d.id} hasActive=${data['hasActive']} '
+                'providerName=${data['providerName']} '
+                'timestamp=${data['timestamp']} '
+                'videoUrl=${(data['videoUrl'] as String? ?? '').isNotEmpty ? 'SET' : 'EMPTY'}');
+          }
+          if (snap.hasError) debugPrint('QA: StoriesRow ERROR — ${snap.error}');
+        }
 
         // ── Loading skeleton — shown until first Firestore frame ──────────
         if (snap.connectionState == ConnectionState.waiting) {
@@ -68,7 +81,15 @@ class _StoriesRowState extends State<StoriesRow> {
           );
         }
 
-        final allDocs   = snap.data?.docs ?? [];
+        // Sort client-side: newest first (avoids composite index requirement)
+        final rawDocs = List<QueryDocumentSnapshot>.from(snap.data?.docs ?? []);
+        rawDocs.sort((a, b) {
+          final ta = ((a.data() as Map)['timestamp'] as Timestamp?)?.seconds ?? 0;
+          final tb = ((b.data() as Map)['timestamp'] as Timestamp?)?.seconds ?? 0;
+          return tb.compareTo(ta); // descending
+        });
+
+        final allDocs   = rawDocs;
         final ownDoc    = allDocs.where((d) => d.id == _uid).firstOrNull;
         final otherDocs = allDocs.where((d) => d.id != _uid).toList();
 
