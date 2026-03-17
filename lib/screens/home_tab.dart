@@ -45,9 +45,34 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   late final Stream<QuerySnapshot> _categoriesStream;
   late final Stream<QuerySnapshot> _urgentStream;
 
+  // ── Live online status ─────────────────────────────────────────────────────
+  // HomeTab lives inside a Navigator route created by _nestedTab(). When
+  // home_screen.dart's StreamBuilder rebuilds with a new isOnline value, the
+  // route's builder is NOT re-invoked — _isOnline stays frozen at the
+  // value from first render. We fix this by owning a Firestore subscription
+  // here, making the toggle button always reactive regardless of the prop.
+  late bool _isOnline;
+  late final StreamSubscription<DocumentSnapshot> _onlineSub;
+
   @override
   void initState() {
     super.initState();
+
+    // Initialise from the prop so the button shows the correct state
+    // immediately on first paint (before Firestore fires).
+    _isOnline = _isOnline;
+
+    // Subscribe to the live isOnline field from Firestore.
+    _onlineSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.currentUserId)
+        .snapshots()
+        .listen((snap) {
+      final live = snap.data()?['isOnline'] == true;
+      if (mounted && live != _isOnline) {
+        setState(() => _isOnline = live);
+      }
+    });
 
     _pulseCtrl = AnimationController(
       vsync: this,
@@ -89,6 +114,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
   @override
   void dispose() {
+    _onlineSub.cancel();
     _pulseCtrl.dispose();
     super.dispose();
   }
@@ -99,7 +125,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     Navigator.of(context).push(
       PageRouteBuilder(
         pageBuilder: (_, a1, a2) => SearchPage(
-          isOnline:        widget.isOnline,
+          isOnline:        _isOnline,
           onToggleOnline:  widget.onToggleOnline,
           initialCategory: preselectedCategory,
         ),
@@ -192,7 +218,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     builder: (context, urgSnap) {
                       // Offline providers don't receive the urgent pulse
                       // (aligns with FCM topic logic — no notifications while offline)
-                      if (isProvider && !widget.isOnline) {
+                      if (isProvider && !_isOnline) {
                         if (_pulseCtrl.isAnimating) _pulseCtrl.stop();
                         return const SizedBox.shrink();
                       }
@@ -339,17 +365,23 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
               // Online / Offline toggle for providers
               if (isProvider)
                 GestureDetector(
-                  onTap: widget.onToggleOnline,
+                  onTap: () {
+                    // Flip locally first (instant feedback), then push to
+                    // Firestore via the parent callback. The _onlineSub
+                    // listener will confirm the final Firestore value.
+                    setState(() => _isOnline = !_isOnline);
+                    widget.onToggleOnline();
+                  },
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
-                      color: widget.isOnline
+                      color: _isOnline
                           ? const Color(0xFFDCFCE7)
                           : Colors.grey.shade100,
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(
-                        color: widget.isOnline
+                        color: _isOnline
                             ? const Color(0xFF22C55E)
                             : Colors.grey.shade300,
                       ),
@@ -361,7 +393,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                           width: 7,
                           height: 7,
                           decoration: BoxDecoration(
-                            color: widget.isOnline
+                            color: _isOnline
                                 ? const Color(0xFF22C55E)
                                 : Colors.grey,
                             shape: BoxShape.circle,
@@ -369,11 +401,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                         ),
                         const SizedBox(width: 5),
                         Text(
-                          widget.isOnline ? l10n.onlineStatus : l10n.offlineStatus,
+                          _isOnline ? l10n.onlineStatus : l10n.offlineStatus,
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: widget.isOnline
+                            color: _isOnline
                                 ? const Color(0xFF16A34A)
                                 : Colors.grey,
                           ),

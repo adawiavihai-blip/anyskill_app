@@ -141,6 +141,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           backgroundColor: isOnline ? const Color(0xFF22C55E) : Colors.grey[700],
           behavior: SnackBarBehavior.floating,
+          // Push above the bottom nav bar (≈80dp) so it doesn't overlap it
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 90),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           duration: const Duration(seconds: 3),
           content: Text(
