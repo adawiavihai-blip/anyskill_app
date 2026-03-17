@@ -523,6 +523,21 @@ class _ChatScreenState extends State<ChatScreen> {
                           0.0)
                       .toDouble(),
                 );
+
+                // Safety: verify Firestore actually shows 'completed' before
+                // showing success. Guards against stream-update race conditions.
+                if (error == null) {
+                  final snap = await FirebaseFirestore.instance
+                      .collection('jobs')
+                      .doc(jobDoc.id)
+                      .get();
+                  final confirmedStatus =
+                      (snap.data() ?? {})['status'] as String? ?? '';
+                  debugPrint('QA: Firestore job status after release = $confirmedStatus');
+                  if (confirmedStatus != 'completed') {
+                    error = 'הסטטוס לא עודכן — נסה שוב (status: $confirmedStatus)';
+                  }
+                }
               } catch (e) {
                 debugPrint('QA: Unexpected error in releaseEscrow: $e');
                 error = e.toString();

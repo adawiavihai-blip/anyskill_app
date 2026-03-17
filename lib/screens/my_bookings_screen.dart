@@ -187,6 +187,22 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         customerName: jobData['customerName'] ?? 'לקוח',
         totalAmount: amount,
       );
+
+      // Safety: verify Firestore actually reflects 'completed' before
+      // dismissing the overlay and showing success. This prevents the race
+      // condition where the CF resolves before the client stream catches up.
+      if (error == null) {
+        final snap = await FirebaseFirestore.instance
+            .collection('jobs')
+            .doc(jobId)
+            .get();
+        final confirmedStatus =
+            (snap.data() ?? {})['status'] as String? ?? '';
+        debugPrint('QA: Firestore job status after release = $confirmedStatus');
+        if (confirmedStatus != 'completed') {
+          error = 'הסטטוס לא עודכן — נסה שוב (status: $confirmedStatus)';
+        }
+      }
     } catch (e) {
       debugPrint('QA: Unexpected error in _handleCompleteJob: $e');
       error = e.toString();

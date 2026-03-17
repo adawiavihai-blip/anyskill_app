@@ -237,7 +237,7 @@ final Map<String, Map<String, String>> _translations = {
     'noCategoriesYet':        'אין קטגוריות עדיין',
     'urgentBannerRequests':   'בקשות',
     'urgentBannerPending':    'ממתינות',
-    'urgentBannerCustomerWaiting': 'הלקוח מחכה לאישורך',
+    'urgentBannerCustomerWaiting': 'המומחה סיים — אשר לשחרור התשלום 💚',
     'urgentBannerServiceNeeded':   'שירות נדרש',
     'timeOneHour':            'שעה',
 
@@ -1065,7 +1065,7 @@ final Map<String, Map<String, String>> _translations = {
     'noCategoriesYet':        'No categories yet',
     'urgentBannerRequests':   'requests',
     'urgentBannerPending':    'pending',
-    'urgentBannerCustomerWaiting': 'Customer is waiting for your approval',
+    'urgentBannerCustomerWaiting': 'Expert finished — confirm payment release 💚',
     'urgentBannerServiceNeeded':   'Service needed',
     'timeOneHour':            '1 hour',
 
@@ -1893,7 +1893,7 @@ final Map<String, Map<String, String>> _translations = {
     'noCategoriesYet':        'Sin categorías aún',
     'urgentBannerRequests':   'solicitudes',
     'urgentBannerPending':    'pendientes',
-    'urgentBannerCustomerWaiting': 'El cliente espera tu aprobación',
+    'urgentBannerCustomerWaiting': 'El experto terminó — confirma la liberación del pago 💚',
     'urgentBannerServiceNeeded':   'Servicio requerido',
     'timeOneHour':            '1 hora',
 

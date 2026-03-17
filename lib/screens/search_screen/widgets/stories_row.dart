@@ -336,7 +336,7 @@ class _MyStorySlotState extends State<_MyStorySlot>
               ),
               const SizedBox(height: 5),
               Text(
-                _hasStory ? 'הסיפור שלי' : 'הוסף סיפור',
+                _hasStory ? 'הסיפור שלי' : 'הוסף סטורי',
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
@@ -945,9 +945,10 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
           ? origName.split('.').last.toLowerCase()
           : 'mp4';
 
+      final ts = DateTime.now().millisecondsSinceEpoch;
       final storageRef = FirebaseStorage.instance
           .ref()
-          .child('stories/${widget.uid}/story.$ext');
+          .child('stories/${widget.uid}_$ts.$ext');
 
       final uploadTask = storageRef.putData(
         bytes,
@@ -974,16 +975,20 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
           .collection('stories')
           .doc(widget.uid)
           .set({
-            'uid':           widget.uid,
-            'videoUrl':      videoUrl,
-            'thumbnailUrl':  avatar,   // provider's profile image as thumbnail
-            'providerName':  name,
+            'uid':            widget.uid,
+            'expertId':       widget.uid,        // spec field
+            'expertName':     name,              // spec field
+            'videoUrl':       videoUrl,
+            'thumbnailUrl':   avatar,            // provider's profile image as thumbnail
+            'providerName':   name,              // kept for viewer compatibility
             'providerAvatar': avatar,
-            'serviceType':   serviceType,
-            'timestamp':     now,
-            'expiresAt':     expiresAt,
-            'hasActive':     true,
-            'viewCount':     0,
+            'serviceType':    serviceType,
+            'timestamp':      now,
+            'createdAt':      FieldValue.serverTimestamp(), // spec field
+            'expiresAt':      expiresAt,
+            'hasActive':      true,
+            'views':          0,                // spec field
+            'viewCount':      0,                // kept for viewer/Firestore rule compatibility
           });
 
       // 4. Update users/{uid} for ranking signal
