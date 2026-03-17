@@ -775,11 +775,20 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
           ),
         ),
         body: TabBarView(
+          // _KeepAlivePage prevents Flutter from disposing the tab's widget
+          // subtree (including its StreamBuilder state) when the user switches
+          // tabs. Without this, every tab switch triggers a full rebuild +
+          // Firestore round-trip, causing the freeze Avi reported on iPhone.
           children: _isProvider
-              ? [_buildCalendarView(), _buildProviderTasksTab()]
+              ? [
+                  _KeepAlivePage(child: _buildCalendarView()),
+                  _KeepAlivePage(child: _buildProviderTasksTab()),
+                ]
               : [
-                  _buildFilteredCustomerList(_activeStatuses),
-                  _buildFilteredCustomerList(_historyStatuses),
+                  _KeepAlivePage(
+                      child: _buildFilteredCustomerList(_activeStatuses)),
+                  _KeepAlivePage(
+                      child: _buildFilteredCustomerList(_historyStatuses)),
                 ],
         ),
       ),
@@ -791,9 +800,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     return StreamBuilder<QuerySnapshot>(
       stream: _customerStream,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-              child: CircularProgressIndicator(color: Color(0xFF6366F1)));
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
+          return const _BookingsShimmer();
         }
         if (snapshot.hasError) {
           return Center(child: Text('שגיאה: ${snapshot.error}'));
@@ -822,9 +831,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     return StreamBuilder<QuerySnapshot>(
       stream: _expertStream,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-              child: CircularProgressIndicator(color: Color(0xFF6366F1)));
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
+          return const _BookingsShimmer();
         }
         if (snapshot.hasError) {
           return Center(child: Text('שגיאה: ${snapshot.error}'));
@@ -1143,6 +1152,125 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Keep-alive tab wrapper ─────────────────────────────────────────────────
+//
+// Wraps any tab child in a StatefulWidget with AutomaticKeepAliveClientMixin.
+// Flutter's TabBarView normally disposes non-visible tabs, which destroys
+// the StreamBuilder state and forces a full Firestore re-fetch on every
+// switch. This wrapper keeps the entire subtree (including StreamBuilder
+// state) alive in memory, making tab switches instant.
+
+class _KeepAlivePage extends StatefulWidget {
+  final Widget child;
+  const _KeepAlivePage({required this.child});
+
+  @override
+  State<_KeepAlivePage> createState() => _KeepAlivePageState();
+}
+
+class _KeepAlivePageState extends State<_KeepAlivePage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context); // required by the mixin
+    return widget.child;
+  }
+}
+
+// ── Bookings shimmer skeleton ──────────────────────────────────────────────
+//
+// Shown only on the very first load (waiting && !hasData).
+// Lighter than a centered spinner — avoids layout jank on iPhone by keeping
+// the list region occupied while Firestore delivers the first snapshot.
+
+class _BookingsShimmer extends StatefulWidget {
+  const _BookingsShimmer();
+
+  @override
+  State<_BookingsShimmer> createState() => _BookingsShimmerState();
+}
+
+class _BookingsShimmerState extends State<_BookingsShimmer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    _anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (_, __) {
+        final opacity = 0.4 + _anim.value * 0.4;
+        return ListView.separated(
+          padding: const EdgeInsets.fromLTRB(16, 24, 16, 40),
+          itemCount: 4,
+          separatorBuilder: (_, __) => const SizedBox(height: 14),
+          itemBuilder: (_, __) => Opacity(
+            opacity: opacity,
+            child: Container(
+              height: 110,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  // Avatar placeholder
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                  // Text lines placeholder
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          Container(height: 14, width: 120, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(6))),
+                          Container(height: 10, width: 80,  decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(6))),
+                          Container(height: 10, width: 100, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(6))),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
