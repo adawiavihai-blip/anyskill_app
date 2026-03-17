@@ -28,6 +28,9 @@ class _AdminScreenState extends State<AdminScreen> {
   double _urgencyFeePct = 5.0;
   bool   _settingsLoaded = false;
   bool   _refreshingImages = false;
+  bool   _fixingImages     = false;
+  int    _fixImagesDone    = 0;
+  int    _fixImagesTotal   = 0;
 
   // ── Insights tab — real-time aggregated state ──────────────────────────────
   double _insGmv       = 0;
@@ -980,6 +983,69 @@ class _AdminScreenState extends State<AdminScreen> {
                           ));
                         } finally {
                           if (mounted) setState(() => _refreshingImages = false);
+                        }
+                      },
+              ),
+            ),
+            // ── Fix All Images (unique, no duplicates) ───────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFDC2626),
+                  minimumSize: const Size(double.infinity, 50),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  elevation: 0,
+                ),
+                icon: _fixingImages
+                    ? const SizedBox(
+                        width: 18, height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.auto_fix_high_rounded, color: Colors.white),
+                label: Text(
+                  _fixingImages
+                      ? 'מתקן תמונות... $_fixImagesDone/$_fixImagesTotal'
+                      : '🔧 תקן כל התמונות (ייחודי)',
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+                onPressed: (_fixingImages || _refreshingImages)
+                    ? null
+                    : () async {
+                        final messenger = ScaffoldMessenger.of(context);
+                        setState(() {
+                          _fixingImages   = true;
+                          _fixImagesDone  = 0;
+                          _fixImagesTotal = 0;
+                        });
+                        try {
+                          await VisualFetcherService.fixAllImages(
+                            onProgress: (done, total) {
+                              if (mounted) {
+                                setState(() {
+                                  _fixImagesDone  = done;
+                                  _fixImagesTotal = total;
+                                });
+                              }
+                            },
+                          );
+                          messenger.showSnackBar(const SnackBar(
+                            backgroundColor: Color(0xFF22C55E),
+                            behavior: SnackBarBehavior.floating,
+                            content: Text(
+                              '✅ כל תמונות הקטגוריות עודכנו בהצלחה!',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ));
+                        } catch (e) {
+                          messenger.showSnackBar(SnackBar(
+                            backgroundColor: Colors.red,
+                            content: Text('שגיאה: $e'),
+                          ));
+                        } finally {
+                          if (mounted) setState(() => _fixingImages = false);
                         }
                       },
               ),

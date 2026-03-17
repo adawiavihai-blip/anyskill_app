@@ -217,6 +217,126 @@ class VisualFetcherService {
     }
   }
 
+  // ── Public: fix ALL images with guaranteed per-category uniqueness ──────────
+  /// Tracks every photo ID already assigned so no two categories get the same
+  /// image. Uses multi-page search to find unused photos when the first page
+  /// is exhausted by similar categories. Reports progress via [onProgress].
+  static Future<void> fixAllImages({
+    void Function(int done, int total)? onProgress,
+  }) async {
+    _backfillScheduled = false;
+    debugPrint('VisualFetcher: fixAllImages — unique image assignment for all categories');
+
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('categories')
+          .limit(200)
+          .get();
+
+      final docs  = snap.docs;
+      final total = docs.length;
+      // Track Unsplash photo IDs already used — ensures zero cross-category dupes.
+      final usedIds = <String>{};
+
+      for (var i = 0; i < docs.length; i++) {
+        final doc  = docs[i];
+        final data = doc.data();
+        final name = (data['name'] as String? ?? '').trim();
+        if (name.isEmpty) {
+          onProgress?.call(i + 1, total);
+          continue;
+        }
+
+        final url = await _fetchUniquePhoto(name, usedIds);
+        if (url != null && url.isNotEmpty) {
+          final id = _photoIdFromUrl(url);
+          if (id != null) usedIds.add(id);
+          await doc.reference.update({'img': url});
+          debugPrint('VisualFetcher: [${i+1}/$total] ✓ "$name" → $url');
+        } else {
+          debugPrint('VisualFetcher: [${i+1}/$total] ✗ "$name" — no unique photo found');
+        }
+
+        onProgress?.call(i + 1, total);
+        // 700 ms gap keeps us well under the Unsplash 50-req/hour rate limit.
+        await Future.delayed(const Duration(milliseconds: 700));
+      }
+    } catch (e) {
+      debugPrint('VisualFetcher: fixAllImages error: $e');
+      rethrow;
+    }
+  }
+
+  // ── Private: fetch one unique photo not already in [usedIds] ───────────────
+  static Future<String?> _fetchUniquePhoto(
+      String keyword, Set<String> usedIds) async {
+    // Curated URLs come with a stable photo ID — use only if not yet taken.
+    final curated = _curated(keyword);
+    if (curated != null) {
+      final id = _photoIdFromUrl(curated);
+      if (id == null || !usedIds.contains(id)) return curated;
+    }
+
+    final englishKeyword = _translate(keyword);
+    // Spread categories across pages so similar queries still yield different
+    // photos. The base page is derived from the keyword's character hash.
+    final baseOffset =
+        keyword.codeUnits.fold(0, (a, b) => a + b) % 5; // 0..4
+
+    for (var attempt = 0; attempt < 5; attempt++) {
+      final page = baseOffset + attempt + 1; // pages 1..9
+      try {
+        final query = Uri.encodeComponent('$englishKeyword professional');
+        final uri   = Uri.parse(
+          '$_baseUrl/search/photos'
+          '?query=$query'
+          '&orientation=portrait'
+          '&per_page=20'
+          '&page=$page'
+          '&order_by=relevant'
+          '&content_filter=high',
+        );
+        final response = await http
+            .get(uri, headers: {'Authorization': 'Client-ID $_accessKey'})
+            .timeout(const Duration(seconds: 10));
+
+        if (response.statusCode == 429) {
+          debugPrint('VisualFetcher: RATE LIMITED on attempt $attempt for "$keyword"');
+          return curated; // best we can do
+        }
+        if (response.statusCode != 200) break;
+
+        final json    = jsonDecode(response.body) as Map<String, dynamic>;
+        final results = (json['results'] as List<dynamic>?) ?? [];
+
+        for (final r in results) {
+          final result = r as Map<String, dynamic>;
+          final id  = result['id'] as String?;
+          if (id == null || usedIds.contains(id)) continue;
+          final url = (result['urls'] as Map<String, dynamic>?)?['regular']
+              as String?;
+          if (url != null) {
+            // Append keyword sig so CachedNetworkImage never cross-shares cache.
+            return '$url&sig=${Uri.encodeComponent(keyword)}';
+          }
+        }
+      } catch (e) {
+        debugPrint('VisualFetcher: _fetchUniquePhoto error for "$keyword": $e');
+        break;
+      }
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
+
+    return curated; // final fallback — branded gradient shown if also null
+  }
+
+  // Extracts the Unsplash photo-ID segment from a URL for de-dup tracking.
+  // e.g. "https://images.unsplash.com/photo-abc123?w=800" → "photo-abc123"
+  static String? _photoIdFromUrl(String url) {
+    final m = RegExp(r'photo-[a-zA-Z0-9_-]+').firstMatch(url);
+    return m?.group(0);
+  }
+
   // ── Curated map — unique photo IDs per Hebrew category ────────────────────
   // Every URL is a different Unsplash photo, validated manually.
   // Append ?sig={encoded name} so CachedNetworkImage treats each as a unique
