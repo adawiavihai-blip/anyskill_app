@@ -13,9 +13,10 @@ import '../../../l10n/app_localizations.dart'; // ignore: unused_import — part
 // ─────────────────────────────────────────────────────────────────────────────
 // Colour palette used throughout this file
 // ─────────────────────────────────────────────────────────────────────────────
-const _kGradStart = Color(0xFF6366F1);
-const _kGradMid   = Color(0xFFEC4899);
-const _kGradEnd   = Color(0xFFF59E0B);
+const _kGradStart  = Color(0xFF6366F1);
+const _kGradMid    = Color(0xFFEC4899);
+const _kGradEnd    = Color(0xFFF59E0B);
+const _kAdminEmail = 'adawiavihai@gmail.com';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1.  StoriesRow — public entry point
@@ -35,7 +36,8 @@ class StoriesRow extends StatefulWidget {
 }
 
 class _StoriesRowState extends State<StoriesRow> {
-  final _uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+  final _uid     = FirebaseAuth.instance.currentUser?.uid ?? '';
+  final _isAdmin = FirebaseAuth.instance.currentUser?.email == _kAdminEmail;
 
   @override
   Widget build(BuildContext context) {
@@ -123,14 +125,19 @@ class _StoriesRowState extends State<StoriesRow> {
               itemBuilder: (ctx, i) {
                 if (widget.isProvider && i == 0) {
                   return _MyStorySlot(
-                    uid:       _uid,
-                    ownDoc:    ownDoc,
+                    uid:        _uid,
+                    ownDoc:     ownDoc,
                     onUploaded: () => setState(() {}),
                   );
                 }
                 final doc  = otherDocs[widget.isProvider ? i - 1 : i];
                 final data = doc.data() as Map<String, dynamic>;
-                return _StoryCircle(uid: doc.id, data: data);
+                return _StoryCircle(
+                  uid:        doc.id,
+                  data:       data,
+                  currentUid: _uid,
+                  isAdmin:    _isAdmin,
+                );
               },
             ),
           ),
@@ -295,6 +302,14 @@ class _MyStorySlotState extends State<_MyStorySlot>
 
         return GestureDetector(
           onTap: () => _onTap(context),
+          onLongPress: _hasStory
+              ? () {
+                  final videoUrl = (widget.ownDoc!.data()
+                          as Map<String, dynamic>)['videoUrl'] as String? ??
+                      '';
+                  _confirmAndDeleteStory(context, widget.uid, videoUrl);
+                }
+              : null,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -379,10 +394,17 @@ class _MyStorySlotState extends State<_MyStorySlot>
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _StoryCircle extends StatelessWidget {
-  final String              uid;
+  final String               uid;
   final Map<String, dynamic> data;
+  final String               currentUid;
+  final bool                 isAdmin;
 
-  const _StoryCircle({required this.uid, required this.data});
+  const _StoryCircle({
+    required this.uid,
+    required this.data,
+    required this.currentUid,
+    required this.isAdmin,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -391,8 +413,14 @@ class _StoryCircle extends StatelessWidget {
     final ts         = data['timestamp']      as Timestamp?;
     final timeLabel  = _timeLabel(ts);
 
+    final canDelete = (uid == currentUid) || isAdmin;
+    final videoUrl  = data['videoUrl'] as String? ?? '';
+
     return GestureDetector(
       onTap: () => _openViewer(context, uid, data),
+      onLongPress: canDelete
+          ? () => _confirmAndDeleteStory(context, uid, videoUrl)
+          : null,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -520,6 +548,90 @@ class _RingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_RingPainter old) => old.progress != progress;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4b. Delete Story — shared logic used by both _MyStorySlot & _StoryCircle
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Shows a confirmation dialog, then:
+///   1. Deletes the Storage file (best-effort — failure is non-fatal)
+///   2. Deletes the Firestore `stories/{expertUid}` document
+///   3. Sets `users/{expertUid}.hasActiveStory = false`
+///   4. Shows a success SnackBar
+Future<void> _confirmAndDeleteStory(
+    BuildContext context, String expertUid, String videoUrl) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text(
+        'למחוק את הסטורי?',
+        textAlign: TextAlign.right,
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      content: const Text(
+        'הסטורי יימחק לצמיתות ולא ניתן יהיה לשחזרו.',
+        textAlign: TextAlign.right,
+        style: TextStyle(color: Colors.grey),
+      ),
+      actionsAlignment: MainAxisAlignment.start,
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('ביטול',
+              style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w600)),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.red,
+            foregroundColor: Colors.white,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            elevation: 0,
+          ),
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text('מחק',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+        ),
+      ],
+    ),
+  );
+
+  if (confirmed != true) return;
+
+  // 1. Delete from Storage (best-effort — network errors are non-fatal)
+  if (videoUrl.isNotEmpty) {
+    try {
+      await FirebaseStorage.instance.refFromURL(videoUrl).delete();
+    } catch (e) {
+      debugPrint('Story Storage delete failed (non-fatal): $e');
+    }
+  }
+
+  // 2. Delete Firestore document
+  await FirebaseFirestore.instance
+      .collection('stories')
+      .doc(expertUid)
+      .delete();
+
+  // 3. Clear ranking signal on user doc
+  await FirebaseFirestore.instance
+      .collection('users')
+      .doc(expertUid)
+      .update({'hasActiveStory': false, 'storyTimestamp': null});
+
+  // 4. Success feedback
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      backgroundColor: Color(0xFF22C55E),
+      behavior: SnackBarBehavior.floating,
+      content: Text(
+        'הסטורי נמחק בהצלחה 🗑️',
+        style: TextStyle(fontWeight: FontWeight.w600),
+      ),
+    ));
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
