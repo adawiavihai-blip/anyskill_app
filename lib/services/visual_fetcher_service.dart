@@ -3,134 +3,153 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 
-/// AI Visual Fetcher — automatically assigns Unsplash background images to
-/// categories and sub-categories that have no [img] field in Firestore.
+/// AI Visual Fetcher — assigns unique Unsplash images to every category.
 ///
-/// ── Setup ──────────────────────────────────────────────────────────────────
-/// 1. Register a free app at https://unsplash.com/developers
-/// 2. Copy your Access Key and paste it into [_accessKey] below.
-///    (Demo apps get 50 requests/hour — enough for all your categories.)
-/// ── Copyright ──────────────────────────────────────────────────────────────
-/// All Unsplash photos are released under the Unsplash License, which permits
-/// free commercial use. The content_filter=high param keeps results SFW.
+/// ── Key design decisions ──────────────────────────────────────────────────
+/// • Hebrew category names are translated to English before Unsplash queries.
+/// • Photo index is derived from a hash of the category name so that even
+///   identical search terms return visually varied results across categories.
+/// • Curated map provides unique, pre-validated photo IDs for every common
+///   Hebrew category — no API call needed for these.
+/// • `backfillAll()` also re-fetches categories stuck on the generic fallback.
+/// • `forceRefreshAll()` nukes all stored images and re-fetches from scratch.
 class VisualFetcherService {
   VisualFetcherService._();
 
-  // ── Configuration ─────────────────────────────────────────────────────────
-  // Replace with your Unsplash Access Key (free at https://unsplash.com/developers)
+  // ── Configuration ──────────────────────────────────────────────────────────
   static const String _accessKey = 'fHAfevTPQYtTy4Awuh408-6HcQY713RdBxPoEfRq4yg';
+  static const String _baseUrl   = 'https://api.unsplash.com';
 
-  static const String _baseUrl = 'https://api.unsplash.com';
+  // The URL that means "stuck on generic fallback" — treat as empty and retry.
+  static const String _genericFallback =
+      'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=800&q=80';
 
-  // Prevents duplicate backfill runs within the same app session.
   static bool _backfillScheduled = false;
 
-  // ── Public API ─────────────────────────────────────────────────────────────
-
-  /// Fetches a high-quality, commercial-use Unsplash image URL for [keyword].
-  ///
-  /// The query appends "professional workplace" to ensure a polished look.
-  /// Returns `null` if the API key is unset or the request fails.
-  // ── Hebrew → English keyword translation ───────────────────────────────────
-  // Unsplash's search engine is English-only. Hebrew text returns empty results.
-  // This map translates the most common Hebrew category names before querying.
+  // ── Hebrew → English translation map ──────────────────────────────────────
   static const Map<String, String> _hebrewToEnglish = {
-    'שיפוצים':         'renovation construction',
-    'ניקיון':           'cleaning home service',
-    'צילום':            'photography camera portrait',
-    'אימון כושר':      'fitness gym personal trainer',
-    'שיעורים פרטיים':  'private tutoring education classroom',
-    'עיצוב גרפי':     'graphic design creative studio',
-    'מוזיקה':          'music musician instrument',
-    'תכנות':            'software developer programming code',
-    'עריכת וידאו':     'video editing film production',
-    'בישול':            'cooking chef kitchen',
-    'שפה':              'language learning books education',
-    'גינון':            'gardening garden landscape',
-    'רכב':              'car mechanic automotive',
-    'בית':              'interior design home decor',
-    'ילדים':            'childcare babysitter kids',
-    'בריאות':           'healthcare medical wellness',
-    'עסקים':            'business consulting office professional',
-    'אמנות':            'art painting creative studio',
-    'ספורט':            'sports fitness athlete',
-    'יוגה':             'yoga meditation wellness',
-    'תזונה':            'nutrition healthy food diet',
-    'משפטים':           'law legal office',
-    'חשבונאות':         'accounting finance office',
-    'שיווק':            'marketing digital advertising',
-    'אוכל':             'food gourmet restaurant',
-    'חשמל':             'electrical electrician wiring',
-    'אינסטלציה':        'plumbing pipes home repair',
-    'גינות':            'garden landscape outdoor',
-    'כושר':             'fitness gym workout',
-    'ספא':              'spa wellness massage relaxation',
-    'עיסוי':            'massage therapy relaxation',
-    'הסעות':            'transportation driving car',
-    'אירועים':          'events catering celebration',
-    'עיצוב':            'design studio creative',
-    'בניה':             'construction building architect',
-    'מחשבים':           'computers technology IT support',
-    'ייעוץ':            'consulting business professional meeting',
-    'כתיבה':            'writing copywriting content',
-    'תרגום':            'translation language global',
+    'שיפוצים':          'home renovation construction interior',
+    'ניקיון':            'professional house cleaning service',
+    'צילום':             'photography camera portrait studio',
+    'אימון כושר':       'gym personal trainer fitness workout',
+    'שיעורים פרטיים':   'tutoring student education classroom',
+    'עיצוב גרפי':       'graphic design laptop creative studio',
+    'מוזיקה':            'musician instrument music concert',
+    'תכנות':             'software developer coding laptop',
+    'עריכת וידאו':       'video editing film production',
+    'בישול':             'chef cooking kitchen gourmet',
+    'שפה':               'language learning books study',
+    'גינון':             'gardening garden landscape outdoor',
+    'רכב':               'car mechanic automotive workshop',
+    'בית':               'interior design home decor living room',
+    'ילדים':             'childcare nanny kids playing',
+    'בריאות':            'healthcare doctor medical wellness',
+    'עסקים':             'business entrepreneur office meeting',
+    'אמנות':             'art painting canvas creative',
+    'ספורט':             'sports athlete outdoor active',
+    'יוגה':              'yoga meditation zen pose',
+    'תזונה':             'healthy food nutrition diet vegetables',
+    'משפטים':            'lawyer legal courthouse justice',
+    'חשבונאות':          'accounting finance calculator spreadsheet',
+    'שיווק':             'digital marketing advertising social media',
+    'אוכל':              'gourmet food restaurant plating',
+    'חשמל':              'electrician wiring electrical tools',
+    'אינסטלציה':         'plumber pipes bathroom home repair',
+    'גינות':             'landscape garden flowers outdoor',
+    'כושר':              'fitness exercise workout gym',
+    'ספא':               'spa luxury massage relaxation candles',
+    'עיסוי':             'massage therapy wellness relaxation',
+    'הסעות':             'taxi driver transportation car city',
+    'אירועים':           'event catering wedding celebration hall',
+    'עיצוב':             'design creative studio workspace',
+    'בניה':              'construction building crane architecture',
+    'מחשבים':            'computer technology IT support laptop',
+    'ייעוץ':             'business consulting professional advisor',
+    'כתיבה':             'writing copywriting pen notebook',
+    'תרגום':             'translation language global communication',
+    'שמירה':             'security guard protection professional',
+    'חינוך':             'education school learning classroom',
+    'טיפוח':             'beauty salon hairdresser cosmetics',
+    'נדלן':              'real estate house property architecture',
+    'ביטוח':             'insurance financial planning office',
+    'אופנה':             'fashion clothing style design',
+    'פיזיותרפיה':        'physiotherapy rehabilitation physical therapy',
+    'פסיכולוגיה':        'psychology counseling therapy mindfulness',
+    'ווטרינר':           'veterinarian animal care pet clinic',
+    'ריצות':             'running marathon athlete outdoor',
+    'טבע':               'nature outdoor landscape hiking',
   };
 
-  /// Translates a Hebrew keyword to an English equivalent for Unsplash search.
-  /// Falls back to the original if no translation is found.
   static String _translate(String keyword) {
-    // Direct lookup
     if (_hebrewToEnglish.containsKey(keyword)) return _hebrewToEnglish[keyword]!;
-    // Partial-match lookup
     for (final entry in _hebrewToEnglish.entries) {
       if (keyword.contains(entry.key)) return entry.value;
     }
-    // Return the original — might be English already (AI-generated sub-category)
-    return keyword;
+    return keyword; // English sub-category names pass through unchanged
   }
 
+  // ── Public: fetch one image URL for a keyword ──────────────────────────────
   static Future<String?> fetchCategoryImage(String keyword) async {
-    if (_accessKey == 'YOUR_UNSPLASH_ACCESS_KEY' || _accessKey.isEmpty) {
-      return _curated(keyword);
-    }
-
-    // Translate Hebrew → English before querying the English-only Unsplash API
     final englishKeyword = _translate(keyword);
 
+    // Fast path: curated map — guaranteed unique, no API call needed
+    final curated = _curated(keyword);
+    if (curated != null && curated != _genericFallback) {
+      debugPrint('VisualFetcher: curated hit for "$keyword"');
+      return curated;
+    }
+
+    // API path
     try {
       final query = Uri.encodeComponent('$englishKeyword professional');
       final uri = Uri.parse(
         '$_baseUrl/search/photos'
         '?query=$query'
-        '&orientation=landscape'
-        '&per_page=5'
+        '&orientation=portrait'
+        '&per_page=10'
         '&order_by=relevant'
         '&content_filter=high',
       );
 
       final response = await http
           .get(uri, headers: {'Authorization': 'Client-ID $_accessKey'})
-          .timeout(const Duration(seconds: 8));
+          .timeout(const Duration(seconds: 10));
 
-      if (response.statusCode != 200) return _curated(keyword);
+      debugPrint('VisualFetcher: API status=${response.statusCode} for "$keyword" → "$englishKeyword"');
 
-      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 429) {
+        debugPrint('VisualFetcher: RATE LIMITED — pausing backfill');
+        return null; // return null so backfill skips without writing generic fallback
+      }
+      if (response.statusCode != 200) {
+        debugPrint('VisualFetcher: non-200 response ${response.statusCode}');
+        return curated; // use curated (may be null)
+      }
+
+      final json    = jsonDecode(response.body) as Map<String, dynamic>;
       final results = json['results'] as List<dynamic>? ?? [];
-      if (results.isEmpty) return _curated(keyword);
+      if (results.isEmpty) {
+        debugPrint('VisualFetcher: 0 results for "$englishKeyword"');
+        return curated;
+      }
 
-      // Pick the first result and take the "regular" resolution (≈1080px wide)
-      final urls = (results[0] as Map<String, dynamic>)['urls']
+      // Vary the photo chosen using a hash of the keyword so that categories
+      // with similar queries (e.g. 'fitness' variants) still get different images.
+      final idx   = keyword.codeUnits.fold(0, (a, b) => a + b) % results.length;
+      final urls  = (results[idx] as Map<String, dynamic>)['urls']
           as Map<String, dynamic>?;
-      final url = urls?['regular'] as String?;
-      return url ?? _curated(keyword);
+      final url   = urls?['regular'] as String?;
+      if (url != null) {
+        debugPrint('VisualFetcher: ✓ "$keyword" → result[$idx] → $url');
+        return url;
+      }
     } catch (e) {
-      debugPrint('VisualFetcher: fetch failed for "$keyword" (→$englishKeyword): $e');
-      return _curated(keyword);
+      debugPrint('VisualFetcher: exception for "$keyword": $e');
     }
+    return curated;
   }
 
-  /// Scans every document in `categories` that has an empty or missing `img`
-  /// field and back-fills it with a fetched URL. Runs once per app session.
+  // ── Public: back-fill categories with no image (or stuck on generic) ───────
   static Future<void> backfillAll() async {
     if (_backfillScheduled) return;
     _backfillScheduled = true;
@@ -142,71 +161,126 @@ class VisualFetcherService {
           .get();
 
       for (final doc in snap.docs) {
-        final data = doc.data();
+        final data     = doc.data();
         final existing = (data['img'] as String? ?? '').trim();
-        if (existing.isNotEmpty) continue; // already has an image — skip
-
-        final name = (data['name'] as String? ?? '').trim();
+        final name     = (data['name'] as String? ?? '').trim();
         if (name.isEmpty) continue;
 
-        final url = await fetchCategoryImage(name);
-        if (url != null && url.isNotEmpty) {
-          await doc.reference.update({'img': url});
-          debugPrint('VisualFetcher: updated "$name" → $url');
+        // Skip only if the category has a real, non-generic image already.
+        if (existing.isNotEmpty && existing != _genericFallback) continue;
+
+        if (existing == _genericFallback) {
+          debugPrint('VisualFetcher: "$name" stuck on generic fallback — re-fetching');
         }
 
-        // Respect Unsplash rate limit (50 req/hr on demo keys)
-        await Future.delayed(const Duration(milliseconds: 400));
+        final url = await fetchCategoryImage(name);
+        if (url != null && url.isNotEmpty && url != _genericFallback) {
+          await doc.reference.update({'img': url});
+          debugPrint('VisualFetcher: ✓ saved "$name" → $url');
+        } else if (url == null) {
+          // Rate limited — stop to avoid hammering the API
+          debugPrint('VisualFetcher: rate-limited, stopping backfill');
+          break;
+        }
+
+        await Future.delayed(const Duration(milliseconds: 500));
       }
     } catch (e) {
       debugPrint('VisualFetcher: backfillAll error: $e');
     }
   }
 
-  // ── Curated fallback map ────────────────────────────────────────────────────
-  // High-quality Unsplash photos (free commercial license) for common keywords.
-  // Used when no API key is configured or as an instant result before the API
-  // responds.
-  static const Map<String, String> _curatedMap = {
-    'שיפוצים':        'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=800&q=80',
-    'ניקיון':          'https://images.unsplash.com/photo-1581578731548-c64695cc6958?w=800&q=80',
-    'צילום':           'https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=800&q=80',
-    'אימון כושר':     'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=800&q=80',
-    'שיעורים פרטיים': 'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?w=800&q=80',
-    'עיצוב גרפי':    'https://images.unsplash.com/photo-1558655146-d09347e92766?w=800&q=80',
-    'מוזיקה':         'https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=800&q=80',
-    'תכנות':           'https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=800&q=80',
-    'עריכת וידאו':    'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?w=800&q=80',
-    'בישול':           'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=800&q=80',
-    'שפה':             'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?w=800&q=80',
-    'גינון':           'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?w=800&q=80',
-    'רכב':             'https://images.unsplash.com/photo-1503736334956-4c8f8e92946d?w=800&q=80',
-    'בית':             'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=800&q=80',
-    'ילדים':           'https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?w=800&q=80',
-    'בריאות':          'https://images.unsplash.com/photo-1559757148-5c350d0d3c56?w=800&q=80',
-    'עסקים':           'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&q=80',
-    'אמנות':           'https://images.unsplash.com/photo-1460661419201-fd4cecdf8a8b?w=800&q=80',
-    'ספורט':           'https://images.unsplash.com/photo-1461896836934-ffe607ba8211?w=800&q=80',
-    'יוגה':            'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?w=800&q=80',
-    'תזונה':           'https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=800&q=80',
-    'משפטים':          'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=800&q=80',
-    'חשבונאות':        'https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=800&q=80',
-    'שיווק':           'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=800&q=80',
-    'אוכל':            'https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?w=800&q=80',
-  };
+  // ── Public: force re-fetch ALL categories regardless of existing image ──────
+  /// Call this once from the admin panel or debug build to reset all images.
+  static Future<void> forceRefreshAll() async {
+    _backfillScheduled = false; // allow a fresh run
+    debugPrint('VisualFetcher: forceRefreshAll — clearing all category images');
 
-  static String? _curated(String keyword) {
-    // Direct lookup
-    if (_curatedMap.containsKey(keyword)) return _curatedMap[keyword];
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('categories')
+          .limit(200)
+          .get();
 
-    // Partial-match lookup — returns first entry whose key is contained in keyword
-    for (final entry in _curatedMap.entries) {
-      if (keyword.contains(entry.key) || entry.key.contains(keyword)) {
-        return entry.value;
+      // Clear all images first so backfillAll will re-fetch every one
+      final batch = FirebaseFirestore.instance.batch();
+      for (final doc in snap.docs) {
+        batch.update(doc.reference, {'img': ''});
       }
-    }
+      await batch.commit();
+      debugPrint('VisualFetcher: cleared ${snap.docs.length} category images');
 
-    // Generic high-quality professional abstract — always works
-    return 'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=800&q=80';
+      // Now re-fetch everything
+      await backfillAll();
+    } catch (e) {
+      debugPrint('VisualFetcher: forceRefreshAll error: $e');
+    }
   }
+
+  // ── Curated map — unique photo IDs per Hebrew category ────────────────────
+  // Every URL is a different Unsplash photo, validated manually.
+  // Append ?sig={encoded name} so CachedNetworkImage treats each as a unique
+  // cache entry even if two categories ever end up sharing the same base URL.
+  static String? _curated(String keyword) {
+    final match = _curatedMap[keyword] ??
+        _curatedMap.entries
+            .where((e) =>
+                keyword.contains(e.key) || e.key.contains(keyword))
+            .map((e) => e.value)
+            .firstOrNull;
+    if (match == null) return null;
+    // Append a stable, keyword-derived cache-buster so the browser / CDN
+    // never serves the same cached image for two different category names.
+    final sig = Uri.encodeComponent(keyword);
+    return '$match&sig=$sig';
+  }
+
+  static const Map<String, String> _curatedMap = {
+    'שיפוצים':          'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=800&q=80',
+    'ניקיון':            'https://images.unsplash.com/photo-1581578731548-c64695cc6958?w=800&q=80',
+    'צילום':             'https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=800&q=80',
+    'אימון כושר':       'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=800&q=80',
+    'שיעורים פרטיים':   'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?w=800&q=80',
+    'עיצוב גרפי':       'https://images.unsplash.com/photo-1558655146-d09347e92766?w=800&q=80',
+    'מוזיקה':            'https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=800&q=80',
+    'תכנות':             'https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=800&q=80',
+    'עריכת וידאו':       'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?w=800&q=80',
+    'בישול':             'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=800&q=80',
+    'שפה':               'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?w=800&q=80',
+    'גינון':             'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?w=800&q=80',
+    'רכב':               'https://images.unsplash.com/photo-1503736334956-4c8f8e92946d?w=800&q=80',
+    'בית':               'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=800&q=80',
+    'ילדים':             'https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?w=800&q=80',
+    'בריאות':            'https://images.unsplash.com/photo-1559757148-5c350d0d3c56?w=800&q=80',
+    'עסקים':             'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&q=80',
+    'אמנות':             'https://images.unsplash.com/photo-1460661419201-fd4cecdf8a8b?w=800&q=80',
+    'ספורט':             'https://images.unsplash.com/photo-1461896836934-ffe607ba8211?w=800&q=80',
+    'יוגה':              'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?w=800&q=80',
+    'תזונה':             'https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=800&q=80',
+    'משפטים':            'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=800&q=80',
+    'חשבונאות':          'https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=800&q=80',
+    'שיווק':             'https://images.unsplash.com/photo-1533750516457-a7f992034fec?w=800&q=80',
+    'אוכל':              'https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?w=800&q=80',
+    'חשמל':              'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=800&q=80',
+    'אינסטלציה':         'https://images.unsplash.com/photo-1585771724684-38269d6639fd?w=800&q=80',
+    'גינות':             'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=800&q=80',
+    'כושר':              'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=800&q=80',
+    'ספא':               'https://images.unsplash.com/photo-1544161515-4ab6ce6db874?w=800&q=80',
+    'עיסוי':             'https://images.unsplash.com/photo-1519823551278-64ac92734fb1?w=800&q=80',
+    'הסעות':             'https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?w=800&q=80',
+    'אירועים':           'https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=800&q=80',
+    'עיצוב':             'https://images.unsplash.com/photo-1542744094-3a31f272c490?w=800&q=80',
+    'בניה':              'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=800&q=80',
+    'מחשבים':            'https://images.unsplash.com/photo-1517430816045-df4b7de11d1d?w=800&q=80',
+    'ייעוץ':             'https://images.unsplash.com/photo-1521737711867-e3b97375f902?w=800&q=80',
+    'כתיבה':             'https://images.unsplash.com/photo-1455390582262-044cdead277a?w=800&q=80',
+    'תרגום':             'https://images.unsplash.com/photo-1493612276216-ee3925520721?w=800&q=80',
+    'טיפוח':             'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=800&q=80',
+    'נדלן':              'https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=800&q=80',
+    'אופנה':             'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&q=80',
+    'פיזיותרפיה':        'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=800&q=80',
+    'פסיכולוגיה':        'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=800&q=80',
+    'חינוך':             'https://images.unsplash.com/photo-1503676260728-1c00da094a0b?w=800&q=80',
+    'שמירה':             'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=800&q=80',
+  };
 }
