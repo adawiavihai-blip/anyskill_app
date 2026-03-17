@@ -60,7 +60,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
     // Initialise from the prop so the button shows the correct state
     // immediately on first paint (before Firestore fires).
-    _isOnline = _isOnline;
+    _isOnline = widget.isOnline;
 
     // Subscribe to the live isOnline field from Firestore.
     _onlineSub = FirebaseFirestore.instance
