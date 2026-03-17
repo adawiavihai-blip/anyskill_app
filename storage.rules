@@ -1,23 +1,45 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    
-    // חוק לצילומי פרופיל - כולם יכולים לראות (כדי שיופיעו בחיפוש), רק בעל הפרופיל מעלה
+
+    // ── Profile images ─────────────────────────────────────────────────────
+    // Public read (appears in search); only the owner may upload.
     match /profile_images/{userId}/{allPaths=**} {
-      allow read: if request.auth != null;
+      allow read:  if request.auth != null;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // חוק לקבצי צ'אט (תמונות והקלטות קוליות)
+    // ── Chat files (images & voice notes) ──────────────────────────────────
+    // Only participants whose UID appears in the chatId segment may read/write.
     match /chats/{chatId}/{allPaths=**} {
-      // רק משתמש שחלק מהצ'אט (ה-UID שלו מופיע בתוך שם התיקייה) יכול לקרוא ולהעלות
-      allow read, write: if request.auth != null && 
-        request.auth.uid in chatId.split('_');
+      allow read, write: if request.auth != null
+                         && request.auth.uid in chatId.split('_');
     }
 
-    // הגנה כללית על שאר הקבצים
+    // ── Story videos ───────────────────────────────────────────────────────
+    // Path: stories/{userId}_{timestamp}.{ext}
+    // Any authenticated user may read (video player in StoriesRow).
+    // A provider may write only a file whose name starts with their own UID,
+    // preventing one user from overwriting another's story.
+    // NOTE: no email_verified requirement — Apple Sign-In on iPhone does not
+    //       set email_verified=true, which caused the permission error.
+    match /stories/{storyFile} {
+      allow read:  if request.auth != null;
+      allow write: if request.auth != null
+                   && storyFile.matches(request.auth.uid + '_.*');
+    }
+
+    // ── Gallery / portfolio images ─────────────────────────────────────────
+    match /gallery/{userId}/{allPaths=**} {
+      allow read:  if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ── Fallback: other authenticated uploads (email_verified not required) ─
+    // Covers any future paths not listed above.
     match /{allPaths=**} {
-      allow read, write: if request.auth != null && request.auth.token.email_verified == true;
+      allow read:  if request.auth != null;
+      allow write: if request.auth != null;
     }
   }
 }
