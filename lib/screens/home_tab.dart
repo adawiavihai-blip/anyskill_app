@@ -61,6 +61,10 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   // ── Avatar press feedback ─────────────────────────────────────────────────
   bool _avatarTapped = false;
 
+  // ── Inline category search ────────────────────────────────────────────────
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+
   // ── Live online status ─────────────────────────────────────────────────────
   // HomeTab lives inside a Navigator route created by _nestedTab(). When
   // home_screen.dart's StreamBuilder rebuilds with a new isOnline value, the
@@ -95,13 +99,12 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       duration: const Duration(milliseconds: 1100),
     );
 
-    // Category grid — NO orderBy on the query (see CategoryService.stream()
-    // comment for why).  Docs are sorted client-side in build() so that
-    // categories added via Firebase Console without an 'order' field are
-    // always visible instead of silently excluded.
+    // Category grid — NO orderBy and NO limit on the query.
+    // Docs are sorted client-side (clickCount DESC → order ASC → name ASC)
+    // so new categories added via the admin panel or demo-expert creation
+    // appear instantly on the home screen without any code deploy.
     _categoriesStream = FirebaseFirestore.instance
         .collection('categories')
-        .limit(50)
         .snapshots();
 
     // Urgent banner — providers see open job requests, customers see pending approvals
@@ -147,6 +150,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   void dispose() {
     _onlineSub.cancel();
     _pulseCtrl.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -207,12 +211,12 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             // ── Pre-process category data ─────────────────────────────────
             final allDocs = catSnap.data?.docs ?? [];
 
+            // All top-level categories, sorted by popularity:
+            //   1. clickCount DESC  2. order ASC  3. name ASC
             final mainDocs = allDocs
                 .where((d) =>
                     ((d.data() as Map)['parentId'] as String? ?? '').isEmpty)
                 .toList()
-              // Client-side sort — mirrors CategoryService.stream() exactly:
-              //   1. clickCount DESC  2. order ASC  3. name ASC
               ..sort((a, b) {
                 final cA =
                     ((a.data() as Map)['clickCount'] as num? ?? 0).toInt();
@@ -227,6 +231,17 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                 return (((a.data() as Map)['name'] as String?) ?? '')
                     .compareTo(((b.data() as Map)['name'] as String?) ?? '');
               });
+
+            // Inline search filter — empty query shows everything
+            final q = _searchQuery.toLowerCase();
+            final filteredDocs = q.isEmpty
+                ? mainDocs
+                : mainDocs.where((d) {
+                    final name =
+                        ((d.data() as Map)['name'] as String? ?? '')
+                            .toLowerCase();
+                    return name.contains(q);
+                  }).toList();
 
             final catIdsWithSubs = allDocs
                 .where((d) =>
@@ -311,6 +326,30 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     ),
                   )
 
+                // ── No search results ──────────────────────────────────────
+                else if (filteredDocs.isEmpty)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 48),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.search_off_rounded,
+                                size: 48, color: Color(0xFFCBD5E1)),
+                            const SizedBox(height: 12),
+                            Text(
+                              'לא נמצאה קטגוריה עבור "$_searchQuery"',
+                              style: TextStyle(
+                                  color: Colors.grey[500], fontSize: 14),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  )
+
                 // ── Full visual category grid ──────────────────────────────
                 else ...[
                   // ── AnySkill Community banner ──────────────────────────
@@ -385,6 +424,21 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     ),
                   ),
 
+                  // ── Search results count (only when filtering) ─────────
+                  if (_searchQuery.isNotEmpty)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                        child: Text(
+                          '${filteredDocs.length} קטגוריות',
+                          style: TextStyle(
+                              color: Colors.grey[500],
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ),
+
                   // ── Responsive category grid — driven by global card scale ──
                   StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
                     stream: _settingsStream,
@@ -404,7 +458,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                         sliver: SliverGrid(
                           delegate: SliverChildBuilderDelegate(
                             (context, index) {
-                              final doc      = mainDocs[index];
+                              final doc      = filteredDocs[index];
                               final data     = doc.data() as Map<String, dynamic>;
                               final name     = data['name']      as String? ?? '';
                               final imageUrl = data['img']       as String? ?? '';
@@ -449,7 +503,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                                 },
                               );
                             },
-                            childCount: mainDocs.length,
+                            childCount: filteredDocs.length,
                           ),
                           gridDelegate:
                               SliverGridDelegateWithFixedCrossAxisCount(
@@ -779,31 +833,73 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   }
 
   // ── Search bar ─────────────────────────────────────────────────────────────
+  // Real TextField: filters the home category grid in real-time.
+  // The 🔍 icon on the right opens the full expert SearchPage.
 
   Widget _buildSearchBar() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
-      child: GestureDetector(
-        onTap: _openSearch,
-        child: Container(
-          height: 48,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF5F5F7),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
-          child: Row(
-            children: [
-              const AnySkillBrandIcon(size: 20),
-              const SizedBox(width: 10),
-              Text(
-                AppLocalizations.of(context).searchPlaceholder,
-                style: TextStyle(color: Colors.grey[400], fontSize: 14),
+      child: Row(
+        children: [
+          // ── Inline category filter ─────────────────────────────────────
+          Expanded(
+            child: Container(
+              height: 48,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F5F7),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
               ),
-            ],
+              child: TextField(
+                controller: _searchCtrl,
+                textAlign: TextAlign.right,
+                textAlignVertical: TextAlignVertical.center,
+                style: const TextStyle(fontSize: 14),
+                onChanged: (v) => setState(() => _searchQuery = v.trim()),
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 0),
+                  hintText: AppLocalizations.of(context).searchPlaceholder,
+                  hintStyle:
+                      TextStyle(color: Colors.grey[400], fontSize: 14),
+                  prefixIcon: _searchQuery.isEmpty
+                      ? const Padding(
+                          padding: EdgeInsets.all(14),
+                          child: AnySkillBrandIcon(size: 20),
+                        )
+                      : IconButton(
+                          icon: const Icon(Icons.close_rounded,
+                              size: 18, color: Color(0xFF94A3B8)),
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            setState(() => _searchQuery = '');
+                          },
+                        ),
+                  prefixIconConstraints:
+                      const BoxConstraints(minWidth: 48, minHeight: 48),
+                ),
+              ),
+            ),
           ),
-        ),
+
+          const SizedBox(width: 8),
+
+          // ── Expert search button ───────────────────────────────────────
+          GestureDetector(
+            onTap: _openSearch,
+            child: Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: const Color(0xFF6366F1),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(Icons.search_rounded,
+                  color: Colors.white, size: 22),
+            ),
+          ),
+        ],
       ),
     );
   }
