@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -69,6 +70,14 @@ class _SignUpScreenState extends State<SignUpScreen>
   // Type-toggle animation
   late final AnimationController _toggleCtrl;
 
+  // ── Abandoned-lead tracking ───────────────────────────────────────────────
+  // A random session ID identifies this attempt in incomplete_registrations.
+  // Partial data is saved 2 s after the user stops typing (debounced).
+  final String _sessionId =
+      '${DateTime.now().millisecondsSinceEpoch}_${math.Random().nextInt(99999)}';
+  bool  _partialDocCreated = false;
+  Timer? _partialSaveTimer;
+
   @override
   void initState() {
     super.initState();
@@ -76,10 +85,18 @@ class _SignUpScreenState extends State<SignUpScreen>
       vsync: this,
       duration: const Duration(milliseconds: 280),
     );
+    // Attach debounced listeners for funnel tracking
+    _nameCtrl.addListener(_onPartialChange);
+    _emailCtrl.addListener(_onPartialChange);
+    _phoneCtrl.addListener(_onPartialChange);
   }
 
   @override
   void dispose() {
+    _nameCtrl.removeListener(_onPartialChange);
+    _emailCtrl.removeListener(_onPartialChange);
+    _phoneCtrl.removeListener(_onPartialChange);
+    _partialSaveTimer?.cancel();
     _nameCtrl.dispose();
     _emailCtrl.dispose();
     _passCtrl.dispose();
@@ -87,6 +104,48 @@ class _SignUpScreenState extends State<SignUpScreen>
     _descCtrl.dispose();
     _toggleCtrl.dispose();
     super.dispose();
+  }
+
+  // ── Partial-registration persistence ─────────────────────────────────────
+
+  void _onPartialChange() {
+    _partialSaveTimer?.cancel();
+    _partialSaveTimer =
+        Timer(const Duration(seconds: 2), _savePartialRegistration);
+  }
+
+  Future<void> _savePartialRegistration() async {
+    final name  = _nameCtrl.text.trim();
+    final email = _emailCtrl.text.trim();
+    final phone = _phoneCtrl.text.trim();
+    if (name.isEmpty && email.isEmpty && phone.isEmpty) return;
+
+    // Determine which funnel step the user has reached
+    String lastField = 'name';
+    if (phone.isNotEmpty) {
+      lastField = 'phone';
+    } else if (email.isNotEmpty) {
+      lastField = 'email';
+    }
+
+    final data = <String, dynamic>{
+      if (name.isNotEmpty)  'name':  name,
+      if (email.isNotEmpty) 'email': email,
+      if (phone.isNotEmpty) 'phone': phone,
+      'role':                 _currentRole == UserRole.expert ? 'expert' : 'customer',
+      'lastField':            lastField,
+      'isRegistrationComplete': false,
+      'lastUpdatedAt':        FieldValue.serverTimestamp(),
+      // startedAt only written on first create to preserve the original timestamp
+      if (!_partialDocCreated) 'startedAt': FieldValue.serverTimestamp(),
+    };
+
+    await FirebaseFirestore.instance
+        .collection('incomplete_registrations')
+        .doc(_sessionId)
+        .set(data, SetOptions(merge: true))
+        .catchError((_) {}); // non-fatal — analytics must never block UX
+    _partialDocCreated = true;
   }
 
   // ── Validation helpers ───────────────────────────────────────────────────────
@@ -286,6 +345,19 @@ class _SignUpScreenState extends State<SignUpScreen>
           // Non-fatal: account is created. Category can be fixed later in profile.
           debugPrint('finalizeSetup warning (non-fatal): $e');
         }
+      }
+
+      // Mark the partial-registration doc as completed so it no longer
+      // appears in the abandoned-leads list.
+      if (_partialDocCreated) {
+        FirebaseFirestore.instance
+            .collection('incomplete_registrations')
+            .doc(_sessionId)
+            .set({
+              'isRegistrationComplete': true,
+              'completedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true))
+            .catchError((_) {});
       }
 
       if (mounted) {

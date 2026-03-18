@@ -11,6 +11,7 @@ import 'business_ai_screen.dart';
 import 'xp_manager_screen.dart';
 import 'dispute_resolution_screen.dart';
 import 'system_performance_tab.dart';
+import 'registration_funnel_tab.dart';
 import '../services/category_service.dart';
 import '../services/visual_fetcher_service.dart';
 import '../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
@@ -812,7 +813,7 @@ class _AdminScreenState extends State<AdminScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 14,
+      length: 15,
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F7FA),
         appBar: AppBar(
@@ -829,7 +830,7 @@ class _AdminScreenState extends State<AdminScreen> {
             isScrollable: true,
             labelColor: Colors.blueAccent,
             indicatorColor: Colors.blueAccent,
-            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸"), Tab(text: "קטגוריות 🏷️"), Tab(text: "באנרים 🎨"), Tab(text: "מוניטיזציה 💰"), Tab(text: "תובנות 📊"), Tab(text: "בינה עסקית 🧠"), Tab(text: "XP & רמות 🎮"), Tab(text: "ביצועים 🖥️"), Tab(text: "אימות זהות 🪪")],
+            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸"), Tab(text: "קטגוריות 🏷️"), Tab(text: "באנרים 🎨"), Tab(text: "מוניטיזציה 💰"), Tab(text: "תובנות 📊"), Tab(text: "בינה עסקית 🧠"), Tab(text: "XP & רמות 🎮"), Tab(text: "ביצועים 🖥️"), Tab(text: "אימות זהות 🪪"), Tab(text: "משפך הרשמה 📈")],
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
@@ -884,6 +885,7 @@ class _AdminScreenState extends State<AdminScreen> {
                       const XpManagerScreen(),
                       const SystemPerformanceTab(),
                       _buildIdVerificationTab(),
+                      const RegistrationFunnelTab(),
                     ],
                   ),
                 ),

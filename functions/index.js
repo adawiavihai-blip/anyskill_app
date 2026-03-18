@@ -3045,3 +3045,119 @@ exports.approveUserVerification = onCall(
         return { success: true };
     }
 );
+
+
+// ── Re-engagement: abandoned registration leads ───────────────────────────────
+// Runs every 60 minutes. Finds sessions in `incomplete_registrations` that:
+//   • are incomplete (isRegistrationComplete !== true)
+//   • have been idle for at least 1 hour (lastUpdatedAt <= 1h ago)
+//   • have an email or phone (so we can contact the user)
+//   • have NOT been re-engaged already (reengaged !== true)
+//
+// For each matched lead it:
+//   1. Marks the doc as reengaged (prevents double-trigger)
+//   2. Writes to `reengagement_log` for admin visibility
+//   3. If the user provided an email, sends a branded HTML email via the
+//      `mail` collection (requires the Firebase Trigger Email Extension).
+//      Replace this with your SendGrid / Twilio integration as needed.
+exports.reengageAbandonedLeads = onSchedule(
+  {
+    schedule:  'every 60 minutes',
+    timeZone:  'Asia/Jerusalem',
+    region:    'us-central1',
+    memory:    '256MiB',
+  },
+  async () => {
+    const db  = admin.firestore();
+    const now = admin.firestore.Timestamp.now();
+    const oneHourAgo = new Date(now.toMillis() - 60 * 60 * 1000);
+
+    const snap = await db
+      .collection('incomplete_registrations')
+      .where('isRegistrationComplete', '==', false)
+      .where('lastUpdatedAt', '<=', admin.firestore.Timestamp.fromDate(oneHourAgo))
+      .limit(100)   // process max 100 per run to stay within function timeout
+      .get();
+
+    if (snap.empty) {
+      console.log('[reengageAbandonedLeads] No abandoned leads found.');
+      return;
+    }
+
+    const batch = db.batch();
+    let processed = 0;
+
+    for (const doc of snap.docs) {
+      const data  = doc.data();
+      const email = data.email || '';
+      const phone = data.phone || '';
+
+      // Skip: already re-engaged or no contact details
+      if (data.reengaged || (!email && !phone)) continue;
+
+      // 1. Mark as re-engaged so this run (and subsequent runs) skip it
+      batch.update(doc.ref, {
+        reengaged:   true,
+        reengagedAt: admin.firestore.FieldValue.serverTimestamp(),
+        reengagedBy: 'scheduled_function',
+      });
+
+      // 2. Audit log
+      batch.set(db.collection('reengagement_log').doc(), {
+        sessionId:   doc.id,
+        email:       email || null,
+        phone:       phone || null,
+        lastField:   data.lastField || 'unknown',
+        role:        data.role    || 'customer',
+        triggeredAt: admin.firestore.FieldValue.serverTimestamp(),
+        channel:     email ? 'email' : 'sms',
+      });
+
+      // 3. Send re-engagement email (requires Firebase Trigger Email Extension)
+      //    Install at: https://firebase.google.com/products/extensions/firebase-firestore-send-email
+      if (email) {
+        const name = data.name || '';
+        const fieldLabels = { name: 'שם', email: 'אימייל', phone: 'טלפון' };
+        const stoppedAt = fieldLabels[data.lastField] || data.lastField || 'טופס ההרשמה';
+
+        db.collection('mail').add({
+          to: email,
+          message: {
+            subject: '💡 AnySkill — לא סיימת את ההרשמה!',
+            html: `
+              <div dir="rtl" style="font-family:Arial,sans-serif;max-width:560px;margin:auto;">
+                <h2 style="color:#6366F1;">שלום${name ? ' ' + name : ''}!</h2>
+                <p>שמנו לב שהתחלת להירשם ל-AnySkill אך לא סיימת (עצרת בשלב: <strong>${stoppedAt}</strong>).</p>
+                <p>ההרשמה לוקחת פחות מ-2 דקות — ואנחנו ממש רוצים שתצטרף 🙏</p>
+                <a href="https://anyskill-6fdf3.web.app/signup"
+                   style="display:inline-block;margin-top:16px;padding:12px 28px;
+                          background:#6366F1;color:#fff;border-radius:8px;
+                          text-decoration:none;font-weight:bold;">
+                  השלם את ההרשמה →
+                </a>
+                <p style="margin-top:24px;color:#888;font-size:12px;">צוות AnySkill</p>
+              </div>
+            `,
+          },
+        }).catch(err => console.error('[reengageAbandonedLeads] mail error:', err));
+      }
+
+      // 3b. SMS placeholder (integrate Twilio / Vonage here)
+      if (!email && phone) {
+        console.log(`[reengageAbandonedLeads] SMS needed for ${phone} — integrate Twilio here.`);
+        // Example Twilio call (requires twilio npm package + secrets):
+        // const twilio = require('twilio')(TWILIO_SID.value(), TWILIO_TOKEN.value());
+        // await twilio.messages.create({
+        //   body: `היי! שכחת להשלים את ההרשמה ל-AnySkill. לחץ כאן: https://anyskill-6fdf3.web.app/signup`,
+        //   from: '+1xxxxxxxxxx',
+        //   to:   phone,
+        // });
+      }
+
+      processed++;
+    }
+
+    await batch.commit();
+    console.log(`[reengageAbandonedLeads] Processed ${processed} leads.`);
+  }
+);
