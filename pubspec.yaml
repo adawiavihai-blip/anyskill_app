@@ -39,6 +39,7 @@ dependencies:
   package_info_plus: ^9.0.0
   firebase_performance: ^0.11.1+5
   firebase_analytics: ^12.1.3
+  youtube_player_iframe: ^5.2.2
 
 dependency_overrides:
   # fl_chart 1.x calls translateByDouble/scaleByDouble which were added
