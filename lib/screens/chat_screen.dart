@@ -16,6 +16,7 @@ import 'chat_modules/safety_module.dart';
 import 'chat_modules/chat_stream_module.dart';
 import 'expert_profile_screen.dart';
 import '../l10n/app_localizations.dart';
+import '../services/chat_guard_service.dart';
 
 class ChatScreen extends StatefulWidget {
   final String receiverId;
@@ -45,6 +46,13 @@ class _ChatScreenState extends State<ChatScreen> {
   bool   _isUploading        = false;
   bool   _isReceiverTyping   = false;
 
+  // ── Chat Guard state ──────────────────────────────────────────────────────
+  bool      _guardFlagged      = false;   // true while current input is flagged
+  bool      _showGuardBanner   = true;    // dismissible anti-bypass info banner
+  int       _bypassAttempts    = 0;       // counts flagged sends this session
+  DateTime? _lastGuardWarnTime;           // prevents SnackBar spam
+  Timer?    _guardDebounce;               // delays detection until typing pauses
+
   Timer? _markReadDebounce;
   Timer? _typingClearTimer;
   StreamSubscription<DocumentSnapshot>? _chatDocSub;
@@ -70,6 +78,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _markReadDebounce?.cancel();
     _typingClearTimer?.cancel();
+    _guardDebounce?.cancel();
     _chatDocSub?.cancel();
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
@@ -117,6 +126,61 @@ class _ChatScreenState extends State<ChatScreen> {
             .catchError((_) {});
       });
     }
+  }
+
+  // ── Chat Guard — real-time detection ─────────────────────────────────────
+
+  /// Called on every keystroke.  Debounced 500 ms to avoid mid-word false
+  /// positives (e.g. partial phone numbers while still typing).
+  void _checkChatGuard(String text) {
+    _guardDebounce?.cancel();
+    if (text.isEmpty) {
+      if (_guardFlagged) setState(() => _guardFlagged = false);
+      return;
+    }
+    _guardDebounce = Timer(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      final result = ChatGuardService.check(text);
+      // Update border highlight
+      if (result.isFlagged != _guardFlagged) {
+        setState(() => _guardFlagged = result.isFlagged);
+      }
+      // Show SnackBar at most once every 6 seconds (prevents spam)
+      if (result.isFlagged) {
+        final now = DateTime.now();
+        final lastWarn = _lastGuardWarnTime;
+        if (lastWarn == null ||
+            now.difference(lastWarn).inSeconds >= 6) {
+          _lastGuardWarnTime = now;
+          ScaffoldMessenger.of(context)
+            ..clearSnackBars()
+            ..showSnackBar(
+              SnackBar(
+                content: const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.security_rounded,
+                        color: Colors.white, size: 16),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'שימו לב: למען ביטחונכם, אין להחליף מספרי טלפון '
+                        'או לסגור עסקאות מחוץ לאפליקציה.',
+                        style: TextStyle(fontSize: 12, height: 1.4),
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: const Color(0xFFDC2626),
+                behavior:        SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                duration: const Duration(seconds: 5),
+              ),
+            );
+        }
+      }
+    });
   }
 
   // ── Messaging ─────────────────────────────────────────────────────────────
@@ -278,6 +342,7 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           _buildSafetyBanner(),
+          _buildGuardBanner(),
           _buildJobStatusBanner(),
           Expanded(child: _buildMessagesList()),
           if (_isReceiverTyping) _buildTypingBubble(),
@@ -420,6 +485,48 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
       ]),
+    );
+  }
+
+  // ── Anti-bypass info banner — dismissible amber strip ────────────────────
+
+  Widget _buildGuardBanner() {
+    if (!_showGuardBanner) return const SizedBox.shrink();
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      padding: const EdgeInsets.fromLTRB(14, 8, 10, 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        border: Border(
+          bottom: BorderSide(
+              color: const Color(0xFFF59E0B).withValues(alpha: 0.30)),
+          right: const BorderSide(color: Color(0xFFF59E0B), width: 3),
+        ),
+      ),
+      child: Row(
+        children: [
+          // Dismiss
+          GestureDetector(
+            onTap: () => setState(() => _showGuardBanner = false),
+            child: Icon(Icons.close_rounded,
+                size: 14, color: Colors.amber[700]),
+          ),
+          const SizedBox(width: 8),
+          const Icon(Icons.lock_rounded,
+              size: 13, color: Color(0xFFD97706)),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'שמירה על התשלום בתוך AnySkill מבטיחה לכם ביטוח והגנה על העבודה',
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                  fontSize: 11,
+                  color:    Colors.amber[800],
+                  fontWeight: FontWeight.w500),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -842,7 +949,12 @@ class _ChatScreenState extends State<ChatScreen> {
                   decoration: BoxDecoration(
                     color: const Color(0xFFF5F6FA),
                     borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: Colors.grey.shade200),
+                    border: Border.all(
+                      color: _guardFlagged
+                          ? const Color(0xFFDC2626)
+                          : Colors.grey.shade200,
+                      width: _guardFlagged ? 1.5 : 1.0,
+                    ),
                   ),
                   child: TextField(
                     controller: _msgCtrl,
@@ -852,6 +964,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     textDirection: TextDirection.rtl,
                     onChanged: (v) {
                       _onTypingChanged(v);
+                      _checkChatGuard(v);
                       setState(() {});
                     },
                     decoration: InputDecoration(
@@ -886,13 +999,33 @@ class _ChatScreenState extends State<ChatScreen> {
                     size: 18,
                     color: hasText ? Colors.white : Colors.grey[400],
                   ),
-                  onPressed: () {
+                  onPressed: () async {
                     final text = _msgCtrl.text.trim();
                     if (text.isEmpty) return;
-                    _send(text, 'text');
+
+                    // ── Chat Guard: mask sensitive data before sending ──────
+                    final guard = ChatGuardService.check(text);
+                    if (guard.isFlagged) {
+                      _bypassAttempts++;
+                      // Log admin alert after threshold is reached
+                      if (_bypassAttempts >= ChatGuardService.attemptThreshold) {
+                        final senderName = await _currentUserName();
+                        ChatGuardService.logBypassAttempt(
+                          userId:       currentUserId,
+                          userName:     senderName,
+                          chatRoomId:   chatRoomId,
+                          flagType:     guard.flagType,
+                          attemptCount: _bypassAttempts,
+                        ).catchError((_) {});
+                      }
+                      _send(guard.maskedText, 'text');
+                    } else {
+                      _send(text, 'text');
+                    }
+
                     _msgCtrl.clear();
                     _onTypingChanged('');
-                    setState(() {});
+                    if (mounted) setState(() => _guardFlagged = false);
                   },
                 ),
               ),
