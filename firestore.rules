@@ -182,9 +182,11 @@ service cloud.firestore {
     }
 
     // ── Mail (Firebase Trigger Email extension) ───────────────────────
-    // Written only by Cloud Functions (Admin SDK). Clients have no access.
+    // Any authenticated user may CREATE (onboarding notification, test button).
+    // The Trigger Email extension (Admin SDK) reads/processes; clients cannot.
     match /mail/{docId} {
-      allow read, write: if false;
+      allow create: if isAuth();
+      allow read, update, delete: if false;
     }
 
     // ── Categories Pending (AI moderation queue) ──────────────────────
@@ -264,6 +266,27 @@ service cloud.firestore {
     match /market_opportunities/{docId} {
       allow read:  if isAdmin();
       allow write: if false; // Admin SDK (marketopportunitymonitor) only
+    }
+
+    // ── Error logs (SystemPerformanceTab) ─────────────────────────────────
+    // Any authenticated user can write their own error entries (client-side
+    // FlutterError.onError handler).  Only admins can read the feed.
+    match /error_logs/{logId} {
+      allow create: if isAuth()
+                    && request.resource.data.userId == request.auth.uid;
+      allow read:   if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ── Admin Logs (AI auto-category audit trail) ──────────────────────────
+    // Written exclusively by Cloud Functions (Admin SDK — bypasses rules).
+    // Only admins may read; "סמן כנבדק" update flips isReviewed only.
+    match /admin_logs/{logId} {
+      allow read:   if isAdmin();
+      allow update: if isAdmin()
+                    && request.resource.data.diff(resource.data)
+                        .affectedKeys().hasOnly(['isReviewed']);
+      allow create, delete: if false; // Admin SDK only
     }
   }
 }

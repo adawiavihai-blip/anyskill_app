@@ -16,6 +16,7 @@ import 'firebase_options.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/onboarding_screen.dart';
+import 'screens/pending_verification_screen.dart';
 import 'l10n/app_localizations.dart';
 
 // The running app version — populated from pubspec.yaml via PackageInfo in main().
@@ -79,15 +80,33 @@ void main() async {
     try {
       await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
       FirebaseFirestore.instance.settings = const Settings(
-        persistenceEnabled: false,
+        persistenceEnabled: true,   // IndexedDB cache — serves cold reads from cache (<20ms)
+        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
       );
-      debugPrint("AnySkill Web: Auth LOCAL persistence set, Firestore cache disabled");
+      debugPrint("AnySkill Web: Auth LOCAL persistence set, Firestore cache ENABLED");
     } catch (e) {
       debugPrint("Firestore/Auth Web Config Error: $e");
     }
   }
 
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // ── Global Flutter error logger ───────────────────────────────────────────
+  // Writes every unhandled Flutter rendering/framework error to Firestore
+  // `error_logs` so the admin SystemPerformanceTab can surface it in real-time.
+  final originalOnError = FlutterError.onError;
+  FlutterError.onError = (FlutterErrorDetails details) {
+    originalOnError?.call(details);        // keep default behaviour (prints to console)
+    try {
+      FirebaseFirestore.instance.collection('error_logs').add({
+        'type':      'flutter',
+        'message':   details.exceptionAsString(),
+        'screen':    details.library ?? '',
+        'userId':    FirebaseAuth.instance.currentUser?.uid ?? '',
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {}                         // never let logging crash the app
+  };
 
   runApp(const AnySkillApp());
 }
@@ -555,6 +574,14 @@ class _OnboardingGateState extends State<_OnboardingGate> {
           return const HomeScreen();
         }
         final data = snapshot.data?.data() as Map<String, dynamic>? ?? {};
+
+        // Providers who haven't been verified yet land on the waiting screen
+        final isProvider  = data['isProvider']  == true;
+        final isVerified  = data['isVerified']   == true;
+        if (isProvider && !isVerified) {
+          return const PendingVerificationScreen();
+        }
+
         final complete = data['onboardingComplete'] ?? true; // existing users skip
         return complete ? const HomeScreen() : const OnboardingScreen();
       },

@@ -10,6 +10,7 @@ import 'pending_categories_screen.dart';
 import 'business_ai_screen.dart';
 import 'xp_manager_screen.dart';
 import 'dispute_resolution_screen.dart';
+import 'system_performance_tab.dart';
 import '../services/category_service.dart';
 import '../services/visual_fetcher_service.dart';
 import '../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
@@ -29,6 +30,9 @@ class _AdminScreenState extends State<AdminScreen> {
   bool   _settingsLoaded = false;
   bool   _refreshingImages = false;
   bool   _fixingImages     = false;
+
+  // ── ID verification — tracks which UIDs are mid-request (prevents double-tap)
+  final Set<String> _verifyingUids = {};
   int    _fixImagesDone    = 0;
   int    _fixImagesTotal   = 0;
 
@@ -808,7 +812,7 @@ class _AdminScreenState extends State<AdminScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 12,
+      length: 14,
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F7FA),
         appBar: AppBar(
@@ -825,7 +829,7 @@ class _AdminScreenState extends State<AdminScreen> {
             isScrollable: true,
             labelColor: Colors.blueAccent,
             indicatorColor: Colors.blueAccent,
-            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸"), Tab(text: "קטגוריות 🏷️"), Tab(text: "באנרים 🎨"), Tab(text: "מוניטיזציה 💰"), Tab(text: "תובנות 📊"), Tab(text: "בינה עסקית 🧠"), Tab(text: "XP & רמות 🎮")],
+            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸"), Tab(text: "קטגוריות 🏷️"), Tab(text: "באנרים 🎨"), Tab(text: "מוניטיזציה 💰"), Tab(text: "תובנות 📊"), Tab(text: "בינה עסקית 🧠"), Tab(text: "XP & רמות 🎮"), Tab(text: "ביצועים 🖥️"), Tab(text: "אימות זהות 🪪")],
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
@@ -878,6 +882,8 @@ class _AdminScreenState extends State<AdminScreen> {
                       _buildInsightsTab(allUsers),
                       const BusinessAiScreen(),
                       const XpManagerScreen(),
+                      const SystemPerformanceTab(),
+                      _buildIdVerificationTab(),
                     ],
                   ),
                 ),
@@ -938,6 +944,79 @@ class _AdminScreenState extends State<AdminScreen> {
                 onPressed: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const PendingCategoriesScreen())),
               ),
+            ),
+            // ── AI Auto-Created Categories Log ──────────────────────────────
+            StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('admin_logs')
+                  .where('type', isEqualTo: 'new_category')
+                  .where('isReviewed', isEqualTo: false)
+                  .orderBy('createdAt', descending: true)
+                  .limit(20)
+                  .snapshots(),
+              builder: (context, snap) {
+                final docs = snap.data?.docs ?? [];
+                if (docs.isEmpty) return const SizedBox.shrink();
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+                      child: Row(children: [
+                        const Icon(Icons.auto_awesome_rounded, color: Color(0xFF8B5CF6), size: 18),
+                        const SizedBox(width: 6),
+                        Text('קטגוריות חדשות שנוצרו ע"י AI (${docs.length})',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF8B5CF6))),
+                      ]),
+                    ),
+                    ...docs.map((doc) {
+                      final d = doc.data()! as Map<String, dynamic>;
+                      return Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF5F3FF),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFDDD6FE)),
+                          ),
+                          padding: const EdgeInsets.all(12),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.new_label_rounded, color: Color(0xFF8B5CF6), size: 20),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(d['categoryName'] ?? '—',
+                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                    if (d['subCategoryName'] != null)
+                                      Text('תת-קטגוריה: ${d['subCategoryName']}',
+                                          style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+                                    const SizedBox(height: 4),
+                                    Text('על בסיס: "${d['triggerDescription'] ?? ''}"',
+                                        style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF))),
+                                    Text('ביטחון: ${((d['confidence'] as num? ?? 0) * 100).round()}%',
+                                        style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF))),
+                                  ],
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: () => FirebaseFirestore.instance
+                                    .collection('admin_logs')
+                                    .doc(doc.id)
+                                    .update({'isReviewed': true}),
+                                child: const Text('סמן כנבדק', style: TextStyle(fontSize: 11)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                );
+              },
             ),
             // ── Refresh Category Images ──────────────────────────────────────
             Padding(
@@ -3592,5 +3671,268 @@ class _AdminScreenState extends State<AdminScreen> {
         ],
       ),
     );
+  }
+
+  // ── ID Verification Tab ────────────────────────────────────────────────────
+  Widget _buildIdVerificationTab() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .where('idVerificationStatus', isEqualTo: 'pending')
+          .limit(100)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final docs = snapshot.data!.docs;
+        if (docs.isEmpty) {
+          return const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check_circle_outline_rounded,
+                    size: 64, color: Colors.green),
+                SizedBox(height: 12),
+                Text('אין ספקים הממתינים לאימות',
+                    style: TextStyle(fontSize: 16, color: Colors.grey)),
+              ],
+            ),
+          );
+        }
+        return ListView.separated(
+          padding: const EdgeInsets.all(16),
+          itemCount: docs.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 12),
+          itemBuilder: (context, i) {
+            final data = docs[i].data() as Map<String, dynamic>;
+            final uid  = docs[i].id;
+            final name  = data['name']  as String? ?? 'ללא שם';
+            final email = data['email'] as String? ?? '';
+            final idUrl = data['idVerificationUrl'] as String?;
+
+            return Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    // User info row
+                    Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 22,
+                          backgroundColor: Colors.indigo.shade50,
+                          child: Text(
+                            name.isNotEmpty ? name[0] : '?',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.indigo),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(name,
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15)),
+                              Text(email,
+                                  textAlign: TextAlign.right,
+                                  style: TextStyle(
+                                      fontSize: 12, color: Colors.grey[600])),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.shade50,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                                color: Colors.amber.shade300),
+                          ),
+                          child: const Text('ממתין',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.amber,
+                                  fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+
+                    // ID photo
+                    if (idUrl != null) ...[
+                      const SizedBox(height: 12),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.network(
+                          idUrl,
+                          height: 160,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            height: 80,
+                            color: Colors.grey.shade100,
+                            child: const Center(
+                                child: Icon(Icons.broken_image_outlined,
+                                    color: Colors.grey)),
+                          ),
+                        ),
+                      ),
+                    ] else ...[
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text('לא הועלתה תמונת מסמך',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                                color: Colors.red, fontSize: 12)),
+                      ),
+                    ],
+
+                    const SizedBox(height: 12),
+
+                    // Action buttons
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        // Reject button
+                        OutlinedButton.icon(
+                          onPressed: _verifyingUids.contains(uid)
+                              ? null
+                              : () => _rejectVerification(context, uid, name, email),
+                          icon: const Icon(Icons.close_rounded,
+                              size: 16, color: Colors.red),
+                          label: const Text('דחה',
+                              style: TextStyle(color: Colors.red)),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Colors.red),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        // Approve button
+                        ElevatedButton.icon(
+                          onPressed: _verifyingUids.contains(uid)
+                              ? null
+                              : () => _approveVerification(context, uid, name, email),
+                          icon: _verifyingUids.contains(uid)
+                              ? const SizedBox(
+                                  width: 14, height: 14,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white))
+                              : const Icon(Icons.check_rounded,
+                                  size: 16, color: Colors.white),
+                          label: const Text('אמת',
+                              style: TextStyle(color: Colors.white)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _approveVerification(
+      BuildContext context, String uid, String name, String email) async {
+    if (_verifyingUids.contains(uid)) return;
+    setState(() => _verifyingUids.add(uid));
+    try {
+      await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('approveUserVerification',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
+          .call({'uid': uid, 'action': 'approve', 'email': email, 'name': name});
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('✅ $name אומת/ה בהצלחה — אימייל נשלח'),
+          backgroundColor: Colors.green.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('שגיאה באישור: $e'),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _verifyingUids.remove(uid));
+    }
+  }
+
+  Future<void> _rejectVerification(
+      BuildContext context, String uid, String name, String email) async {
+    if (_verifyingUids.contains(uid)) return;
+    // Confirm before rejecting
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('אישור דחייה'),
+        content: Text('לדחות את הבקשה של $name?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('ביטול')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('דחה', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+    setState(() => _verifyingUids.add(uid));
+    try {
+      await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('approveUserVerification',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
+          .call({'uid': uid, 'action': 'reject', 'email': email, 'name': name});
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('$name נדחה/ה — אימייל נשלח'),
+          backgroundColor: Colors.orange.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('שגיאה בדחייה: $e'),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _verifyingUids.remove(uid));
+    }
   }
 }

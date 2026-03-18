@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -98,17 +99,15 @@ class ChatUIHelper {
       case 'image':
         return ClipRRect(
           borderRadius: BorderRadius.circular(14),
-          child: Image.network(
-            msg,
+          child: CachedNetworkImage(
+            imageUrl: msg,
             width: 220,
             fit: BoxFit.cover,
-            loadingBuilder: (_, child, prog) => prog == null
-                ? child
-                : const SizedBox(
-                    width: 220,
-                    height: 140,
-                    child: Center(child: CircularProgressIndicator(strokeWidth: 2))),
-            errorBuilder: (_, __, ___) =>
+            placeholder: (_, __) => const SizedBox(
+                width: 220,
+                height: 140,
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2))),
+            errorWidget: (_, __, ___) =>
                 const Icon(Icons.broken_image, color: Colors.grey),
           ),
         );
@@ -159,24 +158,62 @@ class ChatUIHelper {
     }
   }
 
-  // ── System alert pill ─────────────────────────────────────────────────────
+  // ── System event card ─────────────────────────────────────────────────────
+  // Tinted card that adapts its color and icon to the message intent.
+  // Success (✅) → green  |  Error (❌) → red  |  Default → indigo
   static Widget buildSystemAlert(String msg) {
-    return Center(
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 40),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF1F5F9),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.grey.shade200),
-        ),
-        child: Text(
-          msg,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-              fontSize: 11,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w500),
+    final bool isSuccess = msg.contains('✅') || msg.contains('שוחרר') ||
+        msg.contains('הושלם') || msg.contains('סיים');
+    final bool isError   = msg.contains('❌') || msg.contains('שגיאה');
+
+    final Color tint = isSuccess
+        ? const Color(0xFF16A34A)
+        : isError
+            ? const Color(0xFFDC2626)
+            : const Color(0xFF6366F1);
+
+    final IconData iconData = isSuccess
+        ? Icons.check_circle_rounded
+        : isError
+            ? Icons.error_rounded
+            : Icons.info_rounded;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 24),
+      child: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 340),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          decoration: BoxDecoration(
+            color: tint.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: tint.withValues(alpha: 0.22)),
+            boxShadow: [
+              BoxShadow(
+                color: tint.withValues(alpha: 0.08),
+                blurRadius: 12,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(iconData, size: 15, color: tint),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  msg,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: tint,
+                      fontWeight: FontWeight.w600,
+                      height: 1.5),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

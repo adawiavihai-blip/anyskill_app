@@ -524,10 +524,25 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   }
 
   // ── Rating dialog ──────────────────────────────────────────────────────────
+
+  // Trait tags displayed as emoji chips inside the rating dialog.
+  // Keys are stored in reviews/{id}.traitTags — labels are Hebrew strings.
+  static const _kDialogTraits = [
+    {'key': 'punctual',      'emoji': '⏰', 'label': 'דייקן'},
+    {'key': 'professional',  'emoji': '💼', 'label': 'מקצועי'},
+    {'key': 'communicative', 'emoji': '💬', 'label': 'תקשורתי'},
+    {'key': 'patient',       'emoji': '🤗', 'label': 'סבלני'},
+    {'key': 'knowledgeable', 'emoji': '🎓', 'label': 'מקצוען'},
+    {'key': 'friendly',      'emoji': '😊', 'label': 'ידידותי'},
+    {'key': 'creative',      'emoji': '🎨', 'label': 'יצירתי'},
+    {'key': 'flexible',      'emoji': '🔄', 'label': 'גמיש'},
+  ];
+
   void _showRatingDialog(
       BuildContext context, String expertId, String jobId) {
     double selectedRating = 5;
     final commentController = TextEditingController();
+    final selectedTraits = <String>{};
 
     showDialog(
       context: context,
@@ -535,51 +550,125 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         builder: (context, setDialogState) => AlertDialog(
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+          contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+          actionsPadding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
           title: const Text('איך היה השירות?',
               textAlign: TextAlign.center,
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(5, (index) {
-                  return IconButton(
-                    icon: Icon(
-                      index < selectedRating
-                          ? Icons.star
-                          : Icons.star_border,
-                      color: Colors.amber,
-                      size: 35,
-                    ),
-                    onPressed: () =>
-                        setDialogState(() => selectedRating = index + 1.0),
-                  );
-                }),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: commentController,
-                maxLines: 3,
-                textAlign: TextAlign.right,
-                decoration: InputDecoration(
-                  hintText: 'ספר על החוויה שלך... (אופציונלי)',
-                  hintStyle:
-                      const TextStyle(color: Colors.grey, fontSize: 13),
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  contentPadding: const EdgeInsets.all(12),
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ── Star row ─────────────────────────────────────────────
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(5, (index) {
+                    return GestureDetector(
+                      onTap: () =>
+                          setDialogState(() => selectedRating = index + 1.0),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Icon(
+                          index < selectedRating
+                              ? Icons.star_rounded
+                              : Icons.star_outline_rounded,
+                          color: const Color(0xFFFBBF24),
+                          size: 40,
+                        ),
+                      ),
+                    );
+                  }),
                 ),
-              ),
-            ],
+                // ── Rating label ─────────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 12),
+                  child: Text(
+                    _ratingLabel(selectedRating),
+                    style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF6366F1),
+                        fontWeight: FontWeight.w600),
+                  ),
+                ),
+                // ── Trait chips ──────────────────────────────────────────
+                const Align(
+                  alignment: Alignment.centerRight,
+                  child: Text('מה בלט במיוחד?',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF1A1A2E))),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _kDialogTraits.map((t) {
+                    final key     = t['key']!;
+                    final selected = selectedTraits.contains(key);
+                    return GestureDetector(
+                      onTap: () => setDialogState(() {
+                        if (selected) {
+                          selectedTraits.remove(key);
+                        } else {
+                          selectedTraits.add(key);
+                        }
+                      }),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? const Color(0xFF6366F1)
+                              : const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: selected
+                                ? const Color(0xFF6366F1)
+                                : const Color(0xFFE2E8F0),
+                          ),
+                        ),
+                        child: Text(
+                          '${t['emoji']} ${t['label']}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: selected ? Colors.white : const Color(0xFF475569),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 14),
+                // ── Comment field ────────────────────────────────────────
+                TextField(
+                  controller: commentController,
+                  maxLines: 3,
+                  textAlign: TextAlign.right,
+                  decoration: InputDecoration(
+                    hintText: 'ספר על החוויה שלך... (אופציונלי)',
+                    hintStyle:
+                        const TextStyle(color: Colors.grey, fontSize: 13),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    contentPadding: const EdgeInsets.all(12),
+                  ),
+                ),
+              ],
+            ),
           ),
           actions: [
-            Center(
+            SizedBox(
+              width: double.infinity,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.black,
+                    backgroundColor: const Color(0xFF6366F1),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10))),
+                        borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 14)),
                 onPressed: () async {
                   final uid =
                       FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -596,6 +685,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                       rating: selectedRating,
                       comment: commentController.text.trim(),
                       reviewerName: reviewerName,
+                      traitTags: selectedTraits.toList(),
                     );
                     await FirebaseFirestore.instance
                         .collection('jobs')
@@ -614,13 +704,22 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                   }
                 },
                 child: const Text('שלח ביקורת',
-                    style: TextStyle(color: Colors.white)),
+                    style: TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.bold)),
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  String _ratingLabel(double r) {
+    if (r >= 5) return '⭐ מצוין!';
+    if (r >= 4) return '😊 טוב מאוד';
+    if (r >= 3) return '😐 בסדר';
+    if (r >= 2) return '😕 מאכזב';
+    return '😞 גרוע';
   }
 
   // ── Job details bottom sheet ───────────────────────────────────────────────

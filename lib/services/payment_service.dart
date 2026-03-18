@@ -47,33 +47,36 @@ class PaymentService {
     required double rating,
     required String comment,
     required String reviewerName,
+    List<String> traitTags = const [],
   }) async {
     final db = FirebaseFirestore.instance;
 
-    // 1. שמירת הביקורת באוסף חדש
+    // 1. שמירת הביקורת עם תגיות תכונה
     await db.collection('reviews').add({
-      'expertId': expertId,
-      'reviewerId': reviewerId,
-      'rating': rating,
-      'comment': comment,
+      'expertId':    expertId,
+      'reviewerId':  reviewerId,
+      'rating':      rating,
+      'comment':     comment,
       'reviewerName': reviewerName,
-      'timestamp': FieldValue.serverTimestamp(),
+      'traitTags':   traitTags,
+      'timestamp':   FieldValue.serverTimestamp(),
     });
 
-    // 2. עדכון ממוצע הכוכבים של המומחה
+    // 2. עדכון ממוצע הכוכבים ומספר הביקורות של המומחה
     await db.runTransaction((transaction) async {
-      DocumentReference expertRef = db.collection('users').doc(expertId);
-      DocumentSnapshot expertDoc = await transaction.get(expertRef);
+      final expertRef = db.collection('users').doc(expertId);
+      final expertDoc = await transaction.get(expertRef);
 
-      final data = expertDoc.data() as Map<String, dynamic>? ?? {};
-      double currentRating = (data['rating'] ?? 0.0).toDouble();
-      int currentReviewCount = (data['reviewsCount'] ?? 0) as int;
+      final data = expertDoc.data() ?? {};
+      final currentRating      = (data['rating'] ?? 0.0).toDouble();
+      final currentReviewCount = (data['reviewsCount'] ?? 0) as int;
 
-      int newReviewCount = currentReviewCount + 1;
-      double newRating = ((currentRating * currentReviewCount) + rating) / newReviewCount;
+      final newReviewCount = currentReviewCount + 1;
+      final newRating =
+          ((currentRating * currentReviewCount) + rating) / newReviewCount;
 
       transaction.update(expertRef, {
-        'rating': double.parse(newRating.toStringAsFixed(1)),
+        'rating':       double.parse(newRating.toStringAsFixed(1)),
         'reviewsCount': newReviewCount,
       });
     });

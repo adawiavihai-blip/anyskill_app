@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
 import 'chat_screen.dart';
 import '../l10n/app_localizations.dart';
+import '../widgets/skeleton_loader.dart';
 
 class ChatListScreen extends StatefulWidget {
   final VoidCallback? onGoToSearch;
@@ -16,6 +18,47 @@ class ChatListScreen extends StatefulWidget {
 class _ChatListScreenState extends State<ChatListScreen> {
   final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? "";
   String _searchQuery = "";
+
+  // ── User profile cache — avoids per-item Firestore reads on every rebuild ──
+  final Map<String, Map<String, dynamic>> _userCache = {};
+
+  /// Fetches user profiles for any IDs not already cached.
+  /// Uses a single batched `whereIn` query (≤30 IDs per call) instead of N+1
+  /// individual reads. Results land in `_userCache` and trigger one rebuild.
+  void _primeUserCache(List<QueryDocumentSnapshot> chats) {
+    final missing = <String>[];
+    for (final doc in chats) {
+      final users = ((doc.data() as Map)['users'] as List? ?? []);
+      final other = users.firstWhere(
+          (id) => id != currentUserId, orElse: () => '') as String;
+      if (other.isNotEmpty && !_userCache.containsKey(other)) {
+        missing.add(other);
+      }
+    }
+    if (missing.isEmpty) return;
+    _batchFetchUsers(missing);
+  }
+
+  Future<void> _batchFetchUsers(List<String> uids) async {
+    final unique = uids.toSet().where((id) => !_userCache.containsKey(id)).toList();
+    if (unique.isEmpty) return;
+    // Process in chunks of 30 (Firestore whereIn limit)
+    for (int i = 0; i < unique.length; i += 30) {
+      final chunk = unique.sublist(i, (i + 30).clamp(0, unique.length));
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('users')
+            .where(FieldPath.documentId, whereIn: chunk)
+            .get();
+        for (final doc in snap.docs) {
+          _userCache[doc.id] = doc.data();
+        }
+        if (mounted) setState(() {});
+      } catch (e) {
+        debugPrint('[ChatList] _batchFetchUsers error: $e');
+      }
+    }
+  }
 
   Future<void> _markAllAsRead() async {
     try {
@@ -125,31 +168,44 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   return (bTime ?? Timestamp.now()).compareTo(aTime ?? Timestamp.now());
                 });
 
-                return ListView.builder(
+                // Prime the cache for all chat partners before building.
+                // Runs once per stream update; subsequent builds hit the cache.
+                _primeUserCache(chats);
+
+                return ListView.separated(
                   itemCount: chats.length,
                   padding: const EdgeInsets.only(bottom: 20),
+                  separatorBuilder: (_, __) => Divider(
+                    height: 1,
+                    thickness: 0.5,
+                    indent: 90,    // starts after the avatar
+                    endIndent: 16,
+                    color: Colors.grey.shade100,
+                  ),
                   itemBuilder: (context, index) {
-                    var chatDoc = chats[index];
-                    var chatData = chatDoc.data() as Map<String, dynamic>? ?? {};
-                    List users = chatData['users'] ?? [];
-                    String otherUserId = users.firstWhere((id) => id != currentUserId, orElse: () => "");
+                    final chatDoc  = chats[index];
+                    final chatData = chatDoc.data() as Map<String, dynamic>? ?? {};
+                    final users    = chatData['users'] as List? ?? [];
+                    final otherUserId = users.firstWhere(
+                        (id) => id != currentUserId, orElse: () => '') as String;
 
                     if (otherUserId.isEmpty) return const SizedBox.shrink();
 
-                    return FutureBuilder<DocumentSnapshot>(
-                      future: FirebaseFirestore.instance.collection('users').doc(otherUserId).get(),
-                      builder: (context, userSnap) {
-                        if (userSnap.connectionState == ConnectionState.waiting) return const SizedBox();
-                        var userData = userSnap.data?.data() as Map<String, dynamic>? ?? {};
-                        String otherName = userData['name'] ?? AppLocalizations.of(context).chatUserDefault;
+                    // ── Synchronous cache hit — no Future, no spinner ──────
+                    final userData = _userCache[otherUserId];
+                    if (userData == null) {
+                      // Cache miss: show placeholder while first fetch completes
+                      return const _ChatTileSkeleton();
+                    }
 
-                        if (_searchQuery.isNotEmpty && !otherName.toLowerCase().contains(_searchQuery)) {
-                          return const SizedBox.shrink();
-                        }
+                    // ── Search filter (only applied once data is in cache) ──
+                    final otherName = (userData['name'] ?? '') as String;
+                    if (_searchQuery.isNotEmpty &&
+                        !otherName.toLowerCase().contains(_searchQuery)) {
+                      return const SizedBox.shrink();
+                    }
 
-                        return _buildChatTile(userData, chatData, chatDoc.id, otherUserId);
-                      },
-                    );
+                    return _buildChatTile(userData, chatData, chatDoc.id, otherUserId);
                   },
                 );
               },
@@ -223,7 +279,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 CircleAvatar(
                   radius: 30,
                   backgroundColor: Colors.grey[200],
-                  backgroundImage: (imgUrl.isNotEmpty && imgUrl.startsWith('http')) ? NetworkImage(imgUrl) : null,
+                  backgroundImage: (imgUrl.isNotEmpty && imgUrl.startsWith('http'))
+                      ? CachedNetworkImageProvider(imgUrl)
+                      : null,
                   child: (imgUrl.isEmpty || !imgUrl.startsWith('http')) ? const Icon(Icons.person, color: Colors.grey) : null,
                 ),
                 if (userData['isOnline'] == true)
@@ -268,14 +326,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
               ),
             ),
             if (unreadCount > 0)
-              Padding(
-                padding: const EdgeInsets.only(left: 8.0),
-                child: CircleAvatar(
-                  radius: 10, 
-                  backgroundColor: Colors.blue, 
-                  child: Text(unreadCount.toString(), style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold))
-                ),
-              ),
+              _PulsingUnreadBadge(count: unreadCount),
             PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert, color: Colors.grey, size: 20),
               onSelected: (v) => _deleteEntireChat(chatId),
@@ -327,6 +378,108 @@ class _ChatListScreenState extends State<ChatListScreen> {
               onPressed: widget.onGoToSearch ?? () {},
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Skeleton placeholder for a single chat tile ────────────────────────────
+// Shown while the user cache is being primed (first load only).
+// Same height as a real tile so the list doesn't jump on first data arrival.
+class _ChatTileSkeleton extends StatelessWidget {
+  const _ChatTileSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4))
+        ],
+      ),
+      child: Row(
+        children: [
+          const SizedBox(width: 60, height: 60, child: SkeletonBox(borderRadius: 30)),
+          const SizedBox(width: 15),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: const [
+                SizedBox(height: 14, child: SkeletonBox(borderRadius: 4)),
+                SizedBox(height: 6),
+                SizedBox(height: 12, child: SkeletonBox(borderRadius: 4)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Pulsing unread badge ───────────────────────────────────────────────────
+// Replaces the static CircleAvatar — gently pulses to draw attention to
+// unread messages without being intrusive.
+class _PulsingUnreadBadge extends StatefulWidget {
+  final int count;
+  const _PulsingUnreadBadge({required this.count});
+
+  @override
+  State<_PulsingUnreadBadge> createState() => _PulsingUnreadBadgeState();
+}
+
+class _PulsingUnreadBadgeState extends State<_PulsingUnreadBadge>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 1100))
+    ..repeat(reverse: true);
+  late final Animation<double> _scale =
+      Tween<double>(begin: 0.88, end: 1.10)
+          .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: _scale,
+      child: Container(
+        margin: const EdgeInsets.only(left: 8),
+        constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF6366F1).withValues(alpha: 0.40),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Text(
+          widget.count > 99 ? '99+' : '${widget.count}',
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+              color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
         ),
       ),
     );

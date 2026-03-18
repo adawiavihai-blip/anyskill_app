@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../../../utils/price_formatter.dart';
 import '../../expert_profile_screen.dart';
@@ -54,27 +55,23 @@ class ExpertCard extends StatelessWidget {
                 ),
               ClipRRect(
                 borderRadius: BorderRadius.circular(16),
-                child: Image.network(
-                  imageUrl,
-                  height: 240,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => Container(
-                    height: 240,
-                    width: double.infinity,
-                    color: Colors.grey[100],
-                    child: Icon(Icons.person, size: 50, color: Colors.grey[400]),
-                  ),
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) return child;
-                    return Container(
-                      height: 240,
-                      width: double.infinity,
-                      color: Colors.grey[50],
-                      child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-                    );
-                  },
-                ),
+                child: imageUrl.isEmpty
+                    ? _ProfilePlaceholder(height: 240)
+                    : CachedNetworkImage(
+                        imageUrl: imageUrl,
+                        height: 240,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                        placeholder: (_, __) => Container(
+                          height: 240,
+                          width: double.infinity,
+                          color: Colors.grey[50],
+                          child: const Center(
+                              child: CircularProgressIndicator(strokeWidth: 2)),
+                        ),
+                        errorWidget: (_, __, ___) =>
+                            _ProfilePlaceholder(height: 240),
+                      ),
               ),
               // Story badge chip
               if (hasActiveStory)
@@ -168,6 +165,20 @@ class ExpertCard extends StatelessWidget {
     ),
     );
   }
+}
+
+// ── Profile image placeholder ─────────────────────────────────────────────────
+class _ProfilePlaceholder extends StatelessWidget {
+  const _ProfilePlaceholder({required this.height});
+  final double height;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        height: height,
+        width: double.infinity,
+        color: Colors.grey[100],
+        child: Icon(Icons.person, size: 50, color: Colors.grey[400]),
+      );
 }
 
 // ── Story ring painter — gradient border on top of the card image ─────────────

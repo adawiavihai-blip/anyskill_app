@@ -3,6 +3,12 @@ const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
+// @anthropic-ai/sdk v0.54 is a CJS package ("type":"commonjs").
+// Using top-level require() instead of dynamic await import() avoids the
+// "Anthropic is not a constructor" error that occurs because dynamic import()
+// of a CJS module wraps module.exports as the `default` property (an object,
+// not the class itself).
+const { default: Anthropic } = require("@anthropic-ai/sdk");
 
 // ── Secrets (set via: firebase functions:secrets:set ANTHROPIC_API_KEY) ────────
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
@@ -1311,7 +1317,7 @@ function userTypePill(isProvider) {
 
 /** Builds the full HTML body for the admin notification email. */
 function buildEmailHtml({ uid, name, email, isProvider, userType,
-                          createdAt, city, serviceType, phone }) {
+                          createdAt, city, serviceType, businessType, phone }) {
     const accentColor = "#6366F1";
     const bgLight     = "#F5F5FF";
 
@@ -1381,6 +1387,7 @@ function buildEmailHtml({ uid, name, email, isProvider, userType,
                 ${_row("✉️", "אימייל",          email)}
                 ${_row("🏷️", "סוג משתמש",      userType)}
                 ${_row("🛠️", "תחום / קטגוריה", serviceType || "לא צוין")}
+                ${isProvider ? _row("🏢", "סוג עסק", businessType || "לא צוין") : ""}
                 ${_row("📱", "טלפון",           phone || "לא צוין")}
                 ${_row("📍", "מיקום",           city)}
                 ${_row("🆔", "UID",             uid)}
@@ -1441,27 +1448,32 @@ function _row(emoji, label, value) {
 
 // ── The Cloud Function ────────────────────────────────────────────────────────
 
-exports.notifyadminonregister = onDocumentCreated(
+exports.notifyadminonregister = onDocumentUpdated(
     {
         document:    "users/{uid}",
         maxInstances: 10,
         region:      "us-central1",
     },
     async (event) => {
-        const snap = event.data;
-        if (!snap) return null;
+        if (!event.data) return null;
 
-        const data       = snap.data();
-        const uid        = event.params.uid;
+        const before = event.data.before.data();
+        const after  = event.data.after.data();
+        const uid    = event.params.uid;
+
+        // Only fire when onboardingComplete transitions false → true
+        if (before.onboardingComplete === true || after.onboardingComplete !== true) return null;
 
         // Skip system-created users (e.g. service accounts)
         if (uid === "anyskill_system") return null;
 
+        const data        = after;
         const isProvider  = data.isProvider === true;
         const name        = data.name        || "לא צוין";
         const email       = data.email       || "לא צוין";
         const phone       = data.phone       || "";
         const serviceType = isProvider ? (data.serviceType || "לא צוין") : "—";
+        const businessType = isProvider ? (data.businessType || "לא צוין") : null;
         const userType    = isProvider ? "נותן שירות (ספק)" : "לקוח";
 
         // Location: try multiple field names your app might populate
@@ -1475,7 +1487,7 @@ exports.notifyadminonregister = onDocumentCreated(
 
         const html = buildEmailHtml({
             uid, name, email, isProvider, userType,
-            createdAt, city, serviceType, phone,
+            createdAt, city, serviceType, businessType, phone,
         });
 
         const subject = `🆕 [AnySkill] נרשם ${userType}: ${name}`;
@@ -1544,32 +1556,48 @@ exports.notifyadminonregister = onDocumentCreated(
 const _CATEGORY_SYSTEM_PROMPT = `\
 You are AnySkill's category routing AI for an Israeli service marketplace.
 Your task: given a service provider's free-text description, map it to the best
-existing category OR flag it as a new one.
+existing category OR create a normalized new category + subcategory.
 
 RESPOND WITH ONLY VALID JSON — no markdown fences, no explanation text.
 
 Required JSON schema:
 {
-  "action":                   "match" | "new",
-  "confidence":               0.0–1.0,
-  "matched_category_id":      "<Firestore doc ID> | null",
-  "matched_category_name":    "<Hebrew name> | null",
-  "suggested_category_name":  "<Hebrew name> | null",
+  "action":                     "match" | "new",
+  "confidence":                 0.0–1.0,
+  "matched_category_id":        "<Firestore doc ID> | null",
+  "matched_category_name":      "<Hebrew name> | null",
+  "suggested_category_name":    "<Hebrew name> | null",
   "suggested_subcategory_name": "<Hebrew name> | null",
-  "image_prompt":             "<English Midjourney/DALL-E prompt> | null",
-  "keywords":                 ["<Hebrew keyword>", ...],
-  "reasoning":                "<brief Hebrew explanation>"
+  "image_prompt":               "<English Midjourney/DALL-E prompt> | null",
+  "keywords":                   ["<Hebrew keyword>", ...],
+  "reasoning":                  "<brief Hebrew explanation>"
 }
 
 Rules:
 • action="match"  when confidence >= 0.90 — fill matched_category_id/name
-• action="new"    when confidence <  0.90 — fill suggested_*name fields
-• image_prompt (new categories only): describe a professional Israeli service
-  photo — real person in action, clean bright background, photorealistic 8K.
-  Example: "Professional Israeli personal trainer coaching client in modern gym,
-  bright natural light, clean minimal background, photorealistic, 8K"
-• keywords: 3–6 Hebrew synonyms/related terms to enable semantic search later
-• reasoning: one sentence in Hebrew explaining your decision
+• action="new"    when confidence <  0.90 — fill suggested_category_name
+• suggested_subcategory_name is ALWAYS required for BOTH actions — never null or empty.
+  For match: derive the subcategory from the provider's specific service within that category.
+  For new:   generate a specific subcategory for the new category.
+
+NORMALIZATION (critical):
+• Always use the broadest, most standard industry category name.
+  Examples: "Cat Sitter" → category="טיפול בחיות מחמד", sub="שמירה על חתולים"
+            "Kitty Care" → category="טיפול בחיות מחמד", sub="טיפול בחתולים"
+            "Wedding DJ" → category="מוזיקה ואירועים", sub="DJ לאירועים"
+            "Excel Tutor" → category="שיעורים פרטיים", sub="הדרכת Excel"
+            "House cleaner" → category="ניקיון", sub="ניקיון דירות"
+            "Window washer" → category="ניקיון", sub="ניקיון חלונות"
+• Different descriptions of the same profession MUST produce the SAME category name.
+• Avoid overly specific or literal translations of the user's words.
+• Prefer existing categories when semantically close (confidence threshold 0.85 is enough for a very close match).
+• suggested_category_name must be 2–4 Hebrew words, general, reusable across many providers.
+• suggested_subcategory_name must be 2–5 Hebrew words, specific to this provider's exact service.
+
+• image_prompt (new categories only): professional Israeli service photo —
+  real person in action, clean bright background, photorealistic 8K.
+• keywords: 4–7 Hebrew synonyms/related terms for semantic search.
+• reasoning: one sentence in Hebrew explaining your decision.
 • Output JSON only. Any non-JSON output will cause an error.`;
 
 // ── Helper: email HTML for pending-category admin alert ───────────────────────
@@ -1619,18 +1647,17 @@ function buildPendingCategoryEmail({ uid, serviceDescription, suggestedCategoryN
 
 // ── categorizeprovider — callable from Flutter ────────────────────────────────
 exports.categorizeprovider = onCall(
-    { secrets: [ANTHROPIC_API_KEY], maxInstances: 10, region: "us-central1" },
+    { secrets: [ANTHROPIC_API_KEY], maxInstances: 10, region: "us-central1", memory: "512MiB" },
     async (request) => {
-        if (!request.auth) {
-            throw new HttpsError("unauthenticated", "Authentication required");
-        }
+        // Auth is optional — callers during sign-up are not yet authenticated.
+        // uid is null for anonymous callers; user-doc writes are skipped below.
+        const uid = request.auth?.uid || null;
 
         const { serviceDescription } = request.data;
         if (!serviceDescription || typeof serviceDescription !== "string" || serviceDescription.trim().length < 2) {
             throw new HttpsError("invalid-argument", "serviceDescription is required");
         }
 
-        const uid = request.auth.uid;
         const db  = admin.firestore();
 
         // 1. Fetch all top-level live categories from Firestore
@@ -1658,10 +1685,27 @@ exports.categorizeprovider = onCall(
             `Map this provider. Return JSON only.`;
 
         // 3. Call Claude (haiku — fast + cheap for classification)
+        // ── Secret resolution ────────────────────────────────────────────────
+        // For Gen2 functions, defineSecret() binds the secret as both
+        // ANTHROPIC_API_KEY.value() AND process.env.ANTHROPIC_API_KEY.
+        // We try both paths so the diagnostic is unambiguous.
+        const apiKey = ANTHROPIC_API_KEY.value() || process.env.ANTHROPIC_API_KEY || "";
+        console.log(`categorizeprovider: secret via .value()=${!!ANTHROPIC_API_KEY.value()} via env=${!!process.env.ANTHROPIC_API_KEY} finalLength=${apiKey.length}`);
+
+        if (!apiKey) {
+            // Return a clear sentinel instead of a generic internal error.
+            throw new HttpsError(
+                "internal",
+                "SECRET_MISSING: ANTHROPIC_API_KEY is not bound to this function. " +
+                "Run: firebase functions:secrets:set ANTHROPIC_API_KEY " +
+                "then redeploy: firebase deploy --only functions:categorizeprovider",
+            );
+        }
+
         let parsed;
         try {
-            const { default: Anthropic } = await import("@anthropic-ai/sdk");
-            const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
+            // Anthropic is required at top level (CJS) — do NOT use dynamic import here
+            const anthropic = new Anthropic({ apiKey });
 
             const msg = await anthropic.messages.create({
                 model:      "claude-haiku-4-5-20251001",
@@ -1670,10 +1714,15 @@ exports.categorizeprovider = onCall(
                 messages:   [{ role: "user", content: userMessage }],
             });
 
-            parsed = JSON.parse(msg.content[0]?.text ?? "{}");
+            const raw = (msg.content[0]?.text ?? "{}").replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
+            parsed = JSON.parse(raw);
         } catch (err) {
+            // Surface the REAL error — class name + message — so it shows in
+            // the Flutter snackbar instead of a generic "internal" string.
+            const realMessage = err?.message || err?.toString() || "unknown";
+            const errType     = err?.constructor?.name || "Error";
             console.error("categorizeprovider: AI call failed:", err);
-            throw new HttpsError("internal", "AI categorization failed");
+            throw new HttpsError("internal", `[${errType}] ${realMessage}`);
         }
 
         const {
@@ -1683,71 +1732,160 @@ exports.categorizeprovider = onCall(
             image_prompt, keywords = [], reasoning,
         } = parsed;
 
-        // ── 3a. High-confidence match — auto-assign ──────────────────────────
+        // subCategoryName is always populated by the prompt (for both match and new)
+        const subName = suggested_subcategory_name || null;
+
+        // ── 3a. High-confidence match ────────────────────────────────────────
+        // Pure classification — no DB writes. Client calls finalizecategorysetup on submit.
         if (action === "match" && matched_category_id && (confidence ?? 0) >= 0.90) {
-            await db.collection("users").doc(uid).update({
-                serviceType:     matched_category_name || "",
-                categoryId:      matched_category_id,
-                categoryStatus:  "approved",
-            });
-            console.log(`categorizeprovider: auto-matched uid=${uid} → ${matched_category_name} (${Math.round(confidence * 100)}%)`);
+            console.log(`categorizeprovider: match uid=${uid ?? "anon"} → "${matched_category_name}" / "${subName}" (${Math.round((confidence ?? 0) * 100)}%)`);
             return {
-                action:       "match",
-                categoryId:   matched_category_id,
-                categoryName: matched_category_name,
+                action:          "match",
+                categoryId:      matched_category_id,
+                categoryName:    matched_category_name,
+                subCategoryName: subName,
                 confidence,
                 reasoning,
             };
         }
 
-        // ── 3b. Low-confidence or new — flag for admin review ────────────────
-        const pendingRef = await db.collection("categories_pending").add({
-            uid,
-            serviceDescription:        serviceDescription.trim(),
-            suggestedCategoryName:     suggested_category_name    || serviceDescription.trim(),
-            suggestedSubCategoryName:  suggested_subcategory_name || null,
-            imagePrompt:               image_prompt               || null,
-            keywords,
-            confidence:                confidence                 ?? 0,
-            reasoning:                 reasoning                  || "",
-            status:    "pending",   // pending | approved | rejected
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+        // ── 3b. New / low-confidence — return AI-generated names only ────────
+        const normalizedName = suggested_category_name || serviceDescription.trim();
 
-        await db.collection("users").doc(uid).update({
-            serviceType:       suggested_category_name || serviceDescription.trim(),
-            categoryStatus:    "pending_review",
-            pendingCategoryId: pendingRef.id,
-        });
-
-        // Notify admin
-        try {
-            await db.collection("mail").add({
-                to: ADMIN_EMAIL,
-                message: {
-                    subject: `🤖 [AnySkill] קטגוריה חדשה ממתינה: ${suggested_category_name || serviceDescription}`,
-                    html: buildPendingCategoryEmail({
-                        uid, serviceDescription,
-                        suggestedCategoryName:    suggested_category_name,
-                        suggestedSubCategoryName: suggested_subcategory_name,
-                        imagePrompt:              image_prompt,
-                        confidence, reasoning,
-                        pendingId: pendingRef.id,
-                    }),
-                },
-            });
-        } catch (mailErr) {
-            console.warn("categorizeprovider: failed to queue admin mail:", mailErr);
-        }
-
-        console.log(`categorizeprovider: flagged for review uid=${uid} → "${suggested_category_name}" pendingId=${pendingRef.id}`);
+        console.log(`categorizeprovider: new uid=${uid ?? "anon"} → "${normalizedName}" / "${subName}" (${Math.round((confidence ?? 0) * 100)}%)`);
         return {
-            action:               "new",
-            pendingId:            pendingRef.id,
-            suggestedCategoryName: suggested_category_name,
+            action:          "new",
+            categoryName:    normalizedName,
+            subCategoryName: subName,
             confidence,
             reasoning,
         };
+    }
+);
+
+// ── finalizecategorysetup — called from Flutter on 'Create Profile' ───────────
+// Creates / finds the category + subcategory in Firestore, updates the user doc,
+// writes admin_log, and sends email. Separated from classify so that DB writes
+// only happen when the user actually submits — not on every AI preview.
+exports.finalizecategorysetup = onCall(
+    { maxInstances: 10, region: "us-central1" },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError("unauthenticated", "Authentication required");
+        }
+
+        const uid = request.auth.uid;
+        const {
+            categoryName, subCategoryName,
+            matchedCategoryId,           // present when AI found an existing category
+            serviceDescription = "",
+            confidence = 0, reasoning = "",
+        } = request.data;
+
+        if (!categoryName) {
+            throw new HttpsError("invalid-argument", "categoryName is required");
+        }
+
+        const db  = admin.firestore();
+        const now = admin.firestore.FieldValue.serverTimestamp();
+
+        // ── 1. Resolve or create the parent category ─────────────────────────
+        let catId = matchedCategoryId || null;
+        if (!catId) {
+            const q = await db.collection("categories")
+                .where("name",     "==", categoryName)
+                .where("parentId", "==", "")
+                .limit(1).get();
+            if (!q.empty) {
+                catId = q.docs[0].id;
+            } else {
+                const ref = db.collection("categories").doc();
+                await ref.set({
+                    name:        categoryName,
+                    parentId:    "",
+                    isActive:    true,
+                    autoCreated: true,
+                    createdAt:   now,
+                });
+                catId = ref.id;
+            }
+        }
+
+        // ── 2. Resolve or create the subcategory ─────────────────────────────
+        let subCatId = null;
+        if (subCategoryName) {
+            const q2 = await db.collection("categories")
+                .where("name",     "==", subCategoryName)
+                .where("parentId", "==", catId)
+                .limit(1).get();
+            if (!q2.empty) {
+                subCatId = q2.docs[0].id;
+            } else {
+                const subRef = db.collection("categories").doc();
+                await subRef.set({
+                    name:        subCategoryName,
+                    parentId:    catId,
+                    isActive:    true,
+                    autoCreated: true,
+                    createdAt:   now,
+                });
+                subCatId = subRef.id;
+            }
+        }
+
+        // ── 3. Update user doc with resolved IDs ─────────────────────────────
+        const userUpdate = { categoryId: catId, categoryStatus: "approved" };
+        if (subCatId)        userUpdate.subCategoryId   = subCatId;
+        if (subCategoryName) userUpdate.subCategoryName = subCategoryName;
+        try {
+            // update() requires the doc to exist. Use set+merge as fallback in case
+            // Firestore propagation hasn't completed by the time we reach this step.
+            await db.collection("users").doc(uid).update(userUpdate);
+        } catch (_) {
+            await db.collection("users").doc(uid).set(userUpdate, { merge: true });
+        }
+
+        // ── 4. Admin log + email — run in parallel to cut latency ────────────
+        const isNew = !matchedCategoryId;
+        const logEntry = {
+            type:               isNew ? "new_category" : "matched_category",
+            categoryId:         catId,
+            categoryName,
+            subCategoryName:    subCategoryName || null,
+            subCategoryId:      subCatId,
+            triggerDescription: serviceDescription,
+            triggerUid:         uid,
+            confidence,
+            reasoning,
+            isNew,
+            isReviewed:         false,
+            createdAt:          now,
+        };
+        const subject = isNew
+            ? `🤖 [AnySkill] קטגוריה חדשה נוצרה: ${categoryName}`
+            : `✅ [AnySkill] ספק חדש בקטגוריה: ${categoryName} / ${subCategoryName || "—"}`;
+        const mailEntry = {
+            to: ADMIN_EMAIL,
+            message: {
+                subject,
+                html: buildPendingCategoryEmail({
+                    uid, serviceDescription,
+                    suggestedCategoryName:    categoryName,
+                    suggestedSubCategoryName: subCategoryName,
+                    imagePrompt:              null,
+                    confidence, reasoning,
+                    pendingId: catId,
+                }),
+            },
+        };
+        await Promise.all([
+            db.collection("admin_logs").add(logEntry),
+            db.collection("mail").add(mailEntry).catch(e =>
+                console.warn("finalizecategorysetup: mail failed:", e)),
+        ]);
+
+        console.log(`finalizecategorysetup: uid=${uid} cat="${categoryName}"(${catId}) sub="${subCategoryName}"(${subCatId}) isNew=${isNew}`);
+        return { categoryId: catId, subCategoryId: subCatId };
     }
 );
 
@@ -2829,5 +2967,81 @@ exports.requestWithdrawal = onCall(
 
         console.log(`[requestWithdrawal] uid=${uid} amount=₪${amount} withdrawalId=${withdrawalRef.id}`);
         return { success: true, withdrawalId: withdrawalRef.id };
+    }
+);
+
+// ── approveUserVerification ───────────────────────────────────────────────────
+// Admin-only callable. Updates the user's isVerified / idVerificationStatus
+// and sends an approval or rejection email via the Trigger Email extension.
+// Payload: { uid, action: 'approve'|'reject', email, name }
+exports.approveUserVerification = onCall(
+    { region: "us-central1", maxInstances: 10 },
+    async (request) => {
+        // Only allow admin callers
+        const callerEmail = request.auth?.token?.email ?? "";
+        const callerUid   = request.auth?.uid ?? "";
+        if (!callerEmail && !callerUid) {
+            throw new HttpsError("unauthenticated", "Authentication required.");
+        }
+        // Check isAdmin flag on calling user's Firestore doc
+        const callerDoc = await admin.firestore().collection("users").doc(callerUid).get();
+        const isAdmin   = callerDoc.exists && (callerDoc.data().isAdmin === true || callerEmail === "adawiavihai@gmail.com");
+        if (!isAdmin) {
+            throw new HttpsError("permission-denied", "Admin only.");
+        }
+
+        const { uid, action, email, name } = request.data || {};
+        if (!uid || !action) {
+            throw new HttpsError("invalid-argument", "uid and action are required.");
+        }
+        if (action !== "approve" && action !== "reject") {
+            throw new HttpsError("invalid-argument", "action must be 'approve' or 'reject'.");
+        }
+
+        const isApproved = action === "approve";
+        const db         = admin.firestore();
+
+        // 1. Update user document
+        await db.collection("users").doc(uid).update({
+            isVerified:            isApproved,
+            idVerificationStatus:  isApproved ? "verified" : "rejected",
+            idVerifiedAt:          isApproved ? admin.firestore.FieldValue.serverTimestamp() : null,
+        });
+
+        // 2. Send email via Trigger Email extension (mail collection)
+        if (email) {
+            const subject = isApproved
+                ? "AnySkill — הפרופיל שלך אושר! 🎉"
+                : "AnySkill — עדכון בנוגע לאימות הפרופיל שלך";
+
+            const htmlApproved = `
+                <div dir="rtl" style="font-family: Arial, sans-serif; max-width: 560px; margin: auto;">
+                  <h2 style="color: #4F46E5;">שלום ${name || ""}!</h2>
+                  <p>אנחנו שמחים לבשר לך שהפרופיל שלך <strong>אושר</strong> ב-AnySkill 🎉</p>
+                  <p>כעת תוכל/י להתחבר לאפליקציה ולהתחיל לקבל הזמנות.</p>
+                  <a href="https://anyskill-6fdf3.web.app" style="display:inline-block;margin-top:16px;padding:12px 24px;background:#4F46E5;color:#fff;border-radius:8px;text-decoration:none;font-weight:bold;">כניסה ל-AnySkill</a>
+                  <p style="margin-top:24px;color:#888;font-size:12px;">צוות AnySkill</p>
+                </div>`;
+
+            const htmlRejected = `
+                <div dir="rtl" style="font-family: Arial, sans-serif; max-width: 560px; margin: auto;">
+                  <h2 style="color: #4F46E5;">שלום ${name || ""}!</h2>
+                  <p>לצערנו, לא הצלחנו לאמת את תעודת הזהות שסיפקת.</p>
+                  <p>ייתכן שהתמונה לא ברורה מספיק. אנא נסה/י להעלות תמונה חדשה ונבדוק מחדש.</p>
+                  <p>לעזרה, צור/י קשר עם התמיכה שלנו.</p>
+                  <p style="margin-top:24px;color:#888;font-size:12px;">צוות AnySkill</p>
+                </div>`;
+
+            await db.collection("mail").add({
+                to:      email,
+                message: {
+                    subject,
+                    html: isApproved ? htmlApproved : htmlRejected,
+                },
+            });
+        }
+
+        console.log(`[approveUserVerification] uid=${uid} action=${action} by ${callerUid}`);
+        return { success: true };
     }
 );

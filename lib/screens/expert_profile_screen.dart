@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
@@ -126,8 +127,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   /// Render a gallery image that may be an HTTP URL or a raw base64 string.
   Widget _buildGalleryImage(String src, {BoxFit fit = BoxFit.cover}) {
     if (src.startsWith('http')) {
-      return Image.network(src, fit: fit,
-          errorBuilder: (_, __, ___) => _imagePH());
+      return CachedNetworkImage(
+          imageUrl: src, fit: fit, errorWidget: (_, __, ___) => _imagePH());
     }
     try {
       final bytes = base64Decode(src.contains(',') ? src.split(',').last : src);

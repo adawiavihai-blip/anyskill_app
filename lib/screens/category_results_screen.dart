@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:geolocator/geolocator.dart';
 import 'expert_profile_screen.dart';
 import '../utils/expert_filter.dart';
@@ -298,10 +299,10 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           children: [
             // ── Image or placeholder ──────────────────────────────────────
             hasImg
-                ? Image.network(
-                    actionImg,
+                ? CachedNetworkImage(
+                    imageUrl: actionImg,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _imagePlaceholder(),
+                    errorWidget: (_, __, ___) => _imagePlaceholder(),
                   )
                 : _imagePlaceholder(),
 

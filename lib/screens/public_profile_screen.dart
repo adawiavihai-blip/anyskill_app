@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -301,7 +302,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     return SliverAppBar(
       expandedHeight: 350, pinned: true, backgroundColor: Colors.white, elevation: 0,
       leading: Padding(padding: const EdgeInsets.all(10), child: CircleAvatar(backgroundColor: Colors.white.withValues(alpha: 0.8), child: IconButton(icon: const Icon(Icons.arrow_back, color: Colors.black), onPressed: () => Navigator.pop(context)))),
-      flexibleSpace: FlexibleSpaceBar(background: Hero(tag: widget.userId, child: Image.network(data['profileImage'] ?? "", fit: BoxFit.cover, errorBuilder: (c, e, s) => Container(color: Colors.blueGrey)))),
+      flexibleSpace: FlexibleSpaceBar(background: Hero(tag: widget.userId, child: CachedNetworkImage(imageUrl: data['profileImage'] ?? "", fit: BoxFit.cover, errorWidget: (c, e, s) => Container(color: Colors.blueGrey)))),
     );
   }
 
@@ -315,7 +316,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
 
   Widget _buildGallerySection(List<dynamic>? gallery) {
     if (gallery == null || gallery.isEmpty) return const SizedBox();
-    return SizedBox(height: 200, child: ListView.builder(scrollDirection: Axis.horizontal, reverse: true, padding: const EdgeInsets.symmetric(horizontal: 20), itemCount: gallery.length, itemBuilder: (context, index) => Container(width: 280, margin: const EdgeInsets.only(left: 15), decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), image: DecorationImage(image: NetworkImage(gallery[index].toString()), fit: BoxFit.cover)))));
+    return SizedBox(height: 200, child: ListView.builder(scrollDirection: Axis.horizontal, reverse: true, padding: const EdgeInsets.symmetric(horizontal: 20), itemCount: gallery.length, itemBuilder: (context, index) => Container(width: 280, margin: const EdgeInsets.only(left: 15), decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), image: DecorationImage(image: CachedNetworkImageProvider(gallery[index].toString()), fit: BoxFit.cover)))));
   }
 
   Widget _summaryRow(String label, String value, {bool isBold = false, bool isGreen = false}) {

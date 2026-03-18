@@ -2,16 +2,18 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../services/category_service.dart';
 import '../l10n/app_localizations.dart';
 import '../services/visual_fetcher_service.dart';
 import '../widgets/category_image_card.dart';
 import 'category_results_screen.dart';
 import 'notifications_screen.dart';
-import 'business_ai_screen.dart';
+import 'help_center_screen.dart';
 import 'sub_category_screen.dart';
 import 'search_screen/search_page.dart';
 import 'search_screen/widgets/stories_row.dart';
+import '../widgets/skeleton_loader.dart';
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
@@ -19,7 +21,7 @@ class HomeTab extends StatefulWidget {
   final Map<String, dynamic> userData;
   final String currentUserId;
   final bool isOnline;
-  final VoidCallback onToggleOnline;
+  final void Function(bool) onToggleOnline;
   final VoidCallback onGoToBookings;
   final VoidCallback onGoToChat;
   final VoidCallback onOpenQuickRequest;
@@ -46,6 +48,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   // ── Firestore streams ─────────────────────────────────────────────────────
   late final Stream<QuerySnapshot> _categoriesStream;
   late final Stream<QuerySnapshot> _urgentStream;
+  late final Stream<QuerySnapshot> _notificationsStream;
 
   // ── Live online status ─────────────────────────────────────────────────────
   // HomeTab lives inside a Navigator route created by _nestedTab(). When
@@ -110,6 +113,16 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
           .snapshots();
     }
 
+    // Notifications bell stream — cached here so build() never creates a new subscription
+    _notificationsStream = uid.isEmpty
+        ? const Stream.empty()
+        : FirebaseFirestore.instance
+            .collection('notifications')
+            .where('userId', isEqualTo: uid)
+            .where('isRead', isEqualTo: false)
+            .limit(20)
+            .snapshots();
+
     // Back-fill missing category images once per app session
     VisualFetcherService.backfillAll();
   }
@@ -128,7 +141,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       PageRouteBuilder(
         pageBuilder: (_, a1, a2) => SearchPage(
           isOnline:        _isOnline,
-          onToggleOnline:  widget.onToggleOnline,
+          onToggleOnline:  () => widget.onToggleOnline(!_isOnline),
           initialCategory: preselectedCategory,
         ),
         transitionsBuilder: (_, anim, __, child) => FadeTransition(
@@ -260,12 +273,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
                 // ── Loading shimmer ────────────────────────────────────────
                 if (catSnap.connectionState == ConnectionState.waiting)
-                  const SliverToBoxAdapter(
-                    child: Padding(
-                      padding: EdgeInsets.only(top: 48),
-                      child: Center(child: CircularProgressIndicator()),
-                    ),
-                  )
+                  const CategoryGridSkeleton()
 
                 // ── Empty state ────────────────────────────────────────────
                 else if (mainDocs.isEmpty)
@@ -368,8 +376,9 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
               if (isProvider)
                 GestureDetector(
                   onTap: () {
-                    setState(() => _isOnline = !_isOnline);
-                    widget.onToggleOnline();
+                    final newStatus = !_isOnline;
+                    setState(() => _isOnline = newStatus);
+                    widget.onToggleOnline(newStatus);
                   },
                   child: Container(
                     padding: const EdgeInsets.symmetric(
@@ -425,7 +434,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
               GestureDetector(
                 onTap: () => Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => const BusinessAiScreen()),
+                  MaterialPageRoute(builder: (_) => const HelpCenterScreen()),
                 ),
                 child: Container(
                   width: 36,
@@ -440,6 +449,27 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                       size: 18, color: Color(0xFF6366F1)),
                 ),
               ),
+
+              // ── Admin: test email button ───────────────────────────────
+              if (FirebaseAuth.instance.currentUser?.email ==
+                  'adawiavihai@gmail.com') ...[
+                const SizedBox(width: 6),
+                GestureDetector(
+                  onTap: _sendTestEmail,
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF7ED),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: const Color(0xFFF97316).withValues(alpha: 0.4)),
+                    ),
+                    child: const Icon(Icons.mail_outline_rounded,
+                        size: 18, color: Color(0xFFF97316)),
+                  ),
+                ),
+              ],
             ],
           ),
 
@@ -494,20 +524,48 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     );
   }
 
+  // ── Admin: send a test email via Trigger Email extension ──────────────────
+
+  Future<void> _sendTestEmail() async {
+    final uid  = widget.currentUserId;
+    final name = (widget.userData['name'] as String? ?? 'Admin');
+    try {
+      await FirebaseFirestore.instance.collection('mail').add({
+        'to': 'adawiavihai@gmail.com',
+        'message': {
+          'subject': '🧪 [AnySkill] Test Email — Trigger Email Works!',
+          'html': '''<div dir="rtl" style="font-family:Arial;padding:16px">
+            <h2>✅ מערכת המיילים עובדת!</h2>
+            <p>המייל הזה נשלח ידנית מתוך האפליקציה.</p>
+            <p><b>UID:</b> $uid</p>
+            <p><b>שם:</b> $name</p>
+            <p><b>זמן:</b> ${DateTime.now().toIso8601String()}</p>
+          </div>''',
+        },
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('מייל בדיקה נשלח! בדוק את תיבת הדואר.'),
+            backgroundColor: Color(0xFF10B981),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   // ── Notification bell with live unread badge ───────────────────────────────
 
   Widget _buildNotificationBell() {
-    final uid = widget.currentUserId;
-    if (uid.isEmpty) {
-      return const SizedBox.shrink();
-    }
+    if (widget.currentUserId.isEmpty) return const SizedBox.shrink();
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('notifications')
-          .where('userId', isEqualTo: uid)
-          .where('isRead', isEqualTo: false)
-          .limit(20)
-          .snapshots(),
+      stream: _notificationsStream,
       builder: (context, snap) {
         final unread = snap.data?.docs.length ?? 0;
         return GestureDetector(
@@ -725,33 +783,35 @@ class _HomeCategoryCard extends StatefulWidget {
 
 class _HomeCategoryCardState extends State<_HomeCategoryCard> {
   bool _pressed = false;
+  bool _hovered = false;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    final double scale = _pressed ? 0.97 : (_hovered ? 1.04 : 1.0);
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit:  (_) => setState(() => _hovered = false),
+      child: GestureDetector(
       onTap: widget.onTap,
       onTapDown:  (_) => setState(() => _pressed = true),
       onTapUp:    (_) => setState(() => _pressed = false),
       onTapCancel: () => setState(() => _pressed = false),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
+        duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
         transform: Matrix4.identity()
-          ..scaleByDouble(
-              _pressed ? 0.97 : 1.0,
-              _pressed ? 0.97 : 1.0,
-              1.0,
-              1.0),
+          ..scaleByDouble(scale, scale, 1.0, 1.0),
         transformAlignment: Alignment.center,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(
-              color: Colors.black
-                  .withValues(alpha: _pressed ? 0.20 : 0.10),
-              blurRadius:  _pressed ? 16 : 8,
-              spreadRadius: _pressed ? 0 : -2,
-              offset: Offset(0, _pressed ? 6 : 4),
+              color: Colors.black.withValues(
+                  alpha: _pressed ? 0.22 : (_hovered ? 0.20 : 0.10)),
+              blurRadius:  _pressed ? 16 : (_hovered ? 22 : 8),
+              spreadRadius: _pressed ? 0  : (_hovered ? 2  : -2),
+              offset: Offset(0, _pressed ? 6 : (_hovered ? 8 : 4)),
             ),
           ],
         ),
@@ -824,7 +884,8 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
             ],
           ),
         ),
-      ),
-    );
+      ),    // close AnimatedContainer
+      ),    // close GestureDetector (child: of MouseRegion)
+    );      // close MouseRegion + return
   }
 }

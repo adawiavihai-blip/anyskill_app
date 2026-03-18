@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -245,7 +246,7 @@ class LocationService {
         action: SnackBarAction(
           label: 'הגדרות',
           textColor: Colors.white,
-          onPressed: () => Geolocator.openAppSettings(),
+          onPressed: () { if (!kIsWeb) Geolocator.openAppSettings(); },
         ),
         backgroundColor: Colors.grey[850],
         behavior: SnackBarBehavior.floating,

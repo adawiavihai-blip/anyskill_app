@@ -2,8 +2,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../widgets/skeleton_loader.dart';
 
 import 'chat_modules/location_module.dart';
 import 'chat_modules/image_module.dart';
@@ -314,8 +316,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 CircleAvatar(
                   radius: 19,
                   backgroundColor: const Color(0xFFEDE9FE),
-                  backgroundImage:
-                      photo.isNotEmpty ? NetworkImage(photo) : null,
+                  backgroundImage: photo.isNotEmpty
+                      ? CachedNetworkImageProvider(photo)
+                      : null,
                   child: photo.isEmpty
                       ? Text(
                           widget.receiverName.isNotEmpty
@@ -625,7 +628,7 @@ class _ChatScreenState extends State<ChatScreen> {
       stream: ChatStreamModule.getMessagesStream(chatRoomId),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
+          return _buildMessagesSkeleton();
         }
         final docs = snapshot.data!.docs;
         if (docs.isNotEmpty) _handleMarkAsRead();
@@ -664,6 +667,42 @@ class _ChatScreenState extends State<ChatScreen> {
           },
         );
       },
+    );
+  }
+
+  // ── Messages skeleton ─────────────────────────────────────────────────────
+  // Shown while the first Firestore page loads. Bubbles alternate me/other
+  // with realistic widths so the layout doesn't jump when real data arrives.
+
+  Widget _buildMessagesSkeleton() {
+    final double w = MediaQuery.sizeOf(context).width;
+    final bubbles = <(double, bool)>[
+      (w * 0.55, true),
+      (w * 0.40, false),
+      (w * 0.68, true),
+      (w * 0.32, false),
+      (w * 0.50, true),
+      (w * 0.62, false),
+    ];
+    return ListView(
+      reverse: true,
+      padding: const EdgeInsets.fromLTRB(0, 12, 0, 8),
+      children: bubbles.map((item) {
+        final (double width, bool isMe) = item;
+        return Padding(
+          padding: EdgeInsets.only(
+              top: 4, bottom: 4,
+              left:  isMe ? 60 : 10,
+              right: isMe ? 10 : 60),
+          child: Align(
+            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+            child: SizedBox(
+              width: width, height: 40,
+              child: const SkeletonBox(borderRadius: 18),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 
@@ -721,43 +760,46 @@ class _ChatScreenState extends State<ChatScreen> {
           _chip(Icons.location_on_rounded, 'שלח מיקום', () async {
             final url = await LocationModule.getMapUrl();
             if (url != null) _send(url, 'location');
-          }),
+          }, chipColor: Colors.redAccent),
           _chip(Icons.payments_rounded, 'בקש תשלום',
-              _showRequestPaymentDialog),
+              _showRequestPaymentDialog,
+              chipColor: const Color(0xFFD97706)),
           _chip(Icons.directions_car_rounded, 'אני בדרך 🚗',
-              () => _send('אני בדרך! 🚗 אגיע בקרוב.', 'text')),
+              () => _send('אני בדרך! 🚗 אגיע בקרוב.', 'text'),
+              chipColor: const Color(0xFF16A34A)),
           _chip(Icons.check_circle_outline_rounded, 'סיימתי ✅',
-              () => _send('סיימתי את העבודה! ✅', 'text')),
+              () => _send('סיימתי את העבודה! ✅', 'text'),
+              chipColor: const Color(0xFF0EA5E9)),
           _chip(Icons.image_outlined, 'שלח תמונה', () async {
             setState(() => _isUploading = true);
             final url = await ImageModule.uploadImage(chatRoomId);
             if (url != null) _send(url, 'image');
             if (mounted) setState(() => _isUploading = false);
-          }),
+          }, chipColor: const Color(0xFF6366F1)),
         ],
       ),
     );
   }
 
-  Widget _chip(IconData icon, String label, VoidCallback onTap) {
+  Widget _chip(IconData icon, String label, VoidCallback onTap,
+      {Color chipColor = const Color(0xFF6366F1)}) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.only(right: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         decoration: BoxDecoration(
-          color: const Color(0xFFF0F0FF),
+          color: chipColor.withValues(alpha: 0.09),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-              color: const Color(0xFF6366F1).withValues(alpha: 0.25)),
+          border: Border.all(color: chipColor.withValues(alpha: 0.28)),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 13, color: const Color(0xFF6366F1)),
+          Icon(icon, size: 14, color: chipColor),
           const SizedBox(width: 5),
           Text(label,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 11,
-                  color: Color(0xFF6366F1),
+                  color: chipColor,
                   fontWeight: FontWeight.w600)),
         ]),
       ),

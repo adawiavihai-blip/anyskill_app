@@ -7,6 +7,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'sign_up_screen.dart';
 import '../services/credentials_service.dart';
 import '../l10n/app_localizations.dart';
+import '../constants.dart' show appVersion;
 
 // ── Brand tokens ──────────────────────────────────────────────────────────────
 const _kPurple      = Color(0xFF6366F1);
@@ -468,7 +469,22 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ),
-          const SliverPadding(padding: EdgeInsets.only(bottom: 40)),
+          // ── Version badge ─────────────────────────────────────────────────
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 36, top: 4),
+              child: Center(
+                child: Text(
+                  'v$appVersion',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFFBDBDBD),
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
