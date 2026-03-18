@@ -64,8 +64,14 @@ class _SignUpScreenState extends State<SignUpScreen>
   // Live validation (null = untouched, true = valid, false = invalid)
   bool? _nameOk;
   bool? _emailOk;
+  bool? _phoneOk;
   bool? _passOk;
   int   _passStrength = 0; // 0–4
+
+  // ── Validation-error tracking ─────────────────────────────────────────────
+  // Set by each validator on failure so _signUp can log which field stopped
+  // the user to the abandoned-registrations funnel in Firestore.
+  String? _lastFailedField;
 
   // Type-toggle animation
   late final AnimationController _toggleCtrl;
@@ -148,10 +154,43 @@ class _SignUpScreenState extends State<SignUpScreen>
     _partialDocCreated = true;
   }
 
+  /// Called after form.validate() returns false.
+  /// Records which field blocked the user so the admin funnel can show it.
+  Future<void> _trackValidationFail(String field) async {
+    FirebaseFirestore.instance
+        .collection('incomplete_registrations')
+        .doc(_sessionId)
+        .set({
+          'lastField':            field,
+          'lastValidationError':  field,
+          'isRegistrationComplete': false,
+          'lastUpdatedAt':        FieldValue.serverTimestamp(),
+          if (!_partialDocCreated) 'startedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true))
+        .catchError((_) {});
+    _partialDocCreated = true;
+  }
+
   // ── Validation helpers ───────────────────────────────────────────────────────
   static bool _emailValid(String v) =>
       RegExp(r'^[\w\.\+\-]+@[\w\-]+\.[a-z]{2,}$', caseSensitive: false)
           .hasMatch(v.trim());
+
+  /// Israeli phone: 10 digits starting with 0 (e.g. 0501234567),
+  /// or 12 digits starting with 972 (international format).
+  static bool _phoneValid(String v) {
+    final digits = v.replaceAll(RegExp(r'\D'), '');
+    if (digits.length == 10 && digits.startsWith('0')) return true;
+    if (digits.length == 12 && digits.startsWith('972')) return true;
+    return false;
+  }
+
+  /// Returns true when [v] contains at least two whitespace-separated words
+  /// each with at least one character — enforces first + last name.
+  static bool _fullNameValid(String v) {
+    final parts = v.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+    return parts.length >= 2;
+  }
 
   int _calcStrength(String p) {
     int s = 0;
@@ -242,7 +281,13 @@ class _SignUpScreenState extends State<SignUpScreen>
 
   // ── Sign-up logic ─────────────────────────────────────────────────────────
   Future<void> _signUp() async {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+    // Reset per-run tracker so validators can record the first blocking field
+    _lastFailedField = null;
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      // Log which field caused validation failure to the funnel analytics
+      _trackValidationFail(_lastFailedField ?? 'unknown');
+      return;
+    }
 
     final l10n = AppLocalizations.of(context);
 
@@ -595,34 +640,54 @@ class _SignUpScreenState extends State<SignUpScreen>
                       _buildTypeToggle(),
                       const SizedBox(height: 28),
 
-                      // Name
+                      // ── Full Name (mandatory — first + last) ─────────────
                       _buildField(
                         ctrl: _nameCtrl,
-                        label: 'שם מלא',
+                        label: 'שם פרטי ומשפחה',
                         icon: Icons.person_outline_rounded,
                         isValid: _nameOk,
                         onChanged: (v) => setState(() =>
-                            _nameOk = v.trim().length >= 2),
+                            _nameOk = _fullNameValid(v)),
                         validator: (v) {
-                          if ((v ?? '').trim().isEmpty) { return 'נא להזין שם'; }
-                          if (v!.trim().length < 2) {
-                            return 'השם חייב להכיל לפחות 2 תווים';
+                          final val = (v ?? '').trim();
+                          if (val.isEmpty) {
+                            _lastFailedField ??= 'name';
+                            return 'שדה זה הוא חובה';
+                          }
+                          if (!_fullNameValid(val)) {
+                            _lastFailedField ??= 'name';
+                            return 'נא להזין שם פרטי ושם משפחה';
                           }
                           return null;
                         },
                       ),
                       const SizedBox(height: 16),
 
-                      // Phone (optional)
+                      // ── Phone (mandatory — Israeli format) ───────────────
                       _buildField(
                         ctrl: _phoneCtrl,
-                        label: 'טלפון (אופציונלי)',
+                        label: 'טלפון',
                         icon: Icons.phone_outlined,
                         keyboardType: TextInputType.phone,
+                        isValid: _phoneOk,
+                        onChanged: (v) => setState(() =>
+                            _phoneOk = _phoneValid(v)),
+                        validator: (v) {
+                          final val = (v ?? '').trim();
+                          if (val.isEmpty) {
+                            _lastFailedField ??= 'phone';
+                            return 'שדה זה הוא חובה';
+                          }
+                          if (!_phoneValid(val)) {
+                            _lastFailedField ??= 'phone';
+                            return 'מספר טלפון ישראלי לא תקין (10 ספרות)';
+                          }
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 16),
 
-                      // Email
+                      // ── Email (mandatory) ─────────────────────────────────
                       _buildField(
                         ctrl: _emailCtrl,
                         label: 'כתובת אימייל',
@@ -632,10 +697,13 @@ class _SignUpScreenState extends State<SignUpScreen>
                         onChanged: (v) => setState(() =>
                             _emailOk = _emailValid(v)),
                         validator: (v) {
-                          if ((v ?? '').trim().isEmpty) {
-                            return 'נא להזין אימייל';
+                          final val = (v ?? '').trim();
+                          if (val.isEmpty) {
+                            _lastFailedField ??= 'email';
+                            return 'שדה זה הוא חובה';
                           }
-                          if (!_emailValid(v!)) {
+                          if (!_emailValid(val)) {
+                            _lastFailedField ??= 'email';
                             return 'כתובת אימייל אינה תקינה';
                           }
                           return null;
@@ -643,7 +711,7 @@ class _SignUpScreenState extends State<SignUpScreen>
                       ),
                       const SizedBox(height: 16),
 
-                      // Password + strength bar
+                      // ── Password (mandatory — min 6 chars) ───────────────
                       _buildField(
                         ctrl: _passCtrl,
                         label: 'סיסמה (מינימום 6 תווים)',
@@ -666,8 +734,12 @@ class _SignUpScreenState extends State<SignUpScreen>
                           _passOk = v.length >= 6;
                         }),
                         validator: (v) {
-                          if ((v ?? '').isEmpty) { return 'נא להזין סיסמה'; }
+                          if ((v ?? '').isEmpty) {
+                            _lastFailedField ??= 'password';
+                            return 'שדה זה הוא חובה';
+                          }
                           if (v!.length < 6) {
+                            _lastFailedField ??= 'password';
                             return 'הסיסמה חייבת להכיל לפחות 6 תווים';
                           }
                           return null;
