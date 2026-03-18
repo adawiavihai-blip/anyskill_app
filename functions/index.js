@@ -3192,3 +3192,171 @@ exports.reengageAbandonedLeads = onSchedule(
     console.log(`[reengageAbandonedLeads] Processed ${processed} leads.`);
   }
 );
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── Activity Log Triggers — write to `activity_log` for Live Admin Feed ───────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Helper: write a single activity_log entry */
+async function _logActivity(type, title, detail) {
+  await admin.firestore().collection('activity_log').add({
+    type,
+    title,
+    detail,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
+/** New job_request created → log "בקשת עבודה חדשה" */
+exports.logJobRequestCreated = onDocumentCreated(
+  { document: 'job_requests/{id}', maxInstances: 10 },
+  async (event) => {
+    const d = event.data?.data() ?? {};
+    const category = d.category ?? 'לא ידוע';
+    const clientId = d.clientId ?? '';
+    let clientName = clientId;
+    try {
+      const u = await admin.firestore().collection('users').doc(clientId).get();
+      if (u.exists) clientName = u.data().name || u.data().displayName || clientId;
+    } catch (_) {}
+    await _logActivity(
+      'job_request',
+      `בקשת עבודה חדשה — ${category}`,
+      `לקוח: ${clientName}`,
+    );
+  }
+);
+
+/** Job status moves to paid_escrow → log "עבודה אושרה (אסקרו)" */
+exports.logJobAccepted = onDocumentUpdated(
+  { document: 'jobs/{id}', maxInstances: 10 },
+  async (event) => {
+    const before = event.data?.before?.data() ?? {};
+    const after  = event.data?.after?.data()  ?? {};
+    if (before.status === after.status) return null;
+    if (after.status !== 'paid_escrow') return null;
+
+    const expertName   = after.expertName   || after.expertId   || '?';
+    const customerName = after.customerName || after.customerId || '?';
+    const amount       = after.totalAmount ?? 0;
+    await _logActivity(
+      'job_accepted',
+      `עבודה אושרה — ₪${amount}`,
+      `${expertName} ↔ ${customerName}`,
+    );
+    return null;
+  }
+);
+
+/** New volunteer_request created → log "בקשת התנדבות חדשה" */
+exports.logVolunteerRequest = onDocumentCreated(
+  { document: 'volunteer_requests/{id}', maxInstances: 10 },
+  async (event) => {
+    const d        = event.data?.data() ?? {};
+    const category = d.category    ?? 'לא ידוע';
+    const name     = d.requesterName || d.forName || 'אנונימי';
+    await _logActivity(
+      'volunteer_request',
+      `בקשת התנדבות — ${category}`,
+      `עבור: ${name}`,
+    );
+  }
+);
+
+/** New user registered → log "משתמש חדש נרשם" */
+exports.logNewRegistration = onDocumentCreated(
+  { document: 'users/{uid}', maxInstances: 10 },
+  async (event) => {
+    const d    = event.data?.data() ?? {};
+    const name = d.name || d.displayName || 'משתמש חדש';
+    const role = d.isProvider ? 'ספק' : 'לקוח';
+    await _logActivity(
+      'registration',
+      `הצטרף משתמש חדש — ${role}`,
+      name,
+    );
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── sendGlobalBroadcast — Callable: pushes FCM to every user with a token ─────
+// ═══════════════════════════════════════════════════════════════════════════════
+exports.sendGlobalBroadcast = onCall(
+  { maxInstances: 1 },
+  async (request) => {
+    // Only callable by admin (verified client-side; server check here for safety)
+    const message = (request.data?.message ?? '').trim();
+    if (!message) throw new HttpsError('invalid-argument', 'message is required');
+
+    // Collect all FCM tokens (query in pages of 500)
+    const tokens = [];
+    let lastDoc   = null;
+    let done      = false;
+
+    while (!done) {
+      let q = admin.firestore().collection('users')
+        .where('fcmToken', '!=', null)
+        .select('fcmToken')
+        .limit(500);
+      if (lastDoc) q = q.startAfter(lastDoc);
+
+      const snap = await q.get();
+      if (snap.empty) { done = true; break; }
+
+      for (const doc of snap.docs) {
+        const token = doc.data().fcmToken;
+        if (token) tokens.push(token);
+      }
+      lastDoc = snap.docs[snap.docs.length - 1];
+      if (snap.size < 500) done = true;
+    }
+
+    if (tokens.length === 0) {
+      console.log('[sendGlobalBroadcast] No tokens found.');
+      return { sent: 0 };
+    }
+
+    // Send in batches of 500 (FCM multicast limit)
+    const BATCH = 500;
+    let sent = 0;
+    for (let i = 0; i < tokens.length; i += BATCH) {
+      const chunk = tokens.slice(i, i + BATCH);
+      const multicast = {
+        tokens: chunk,
+        notification: {
+          title: '📢 AnySkill',
+          body:  message,
+        },
+        data: {
+          type:    'broadcast',
+          message: message,
+        },
+        webpush: {
+          notification: {
+            icon: '/icons/Icon-192.png',
+          },
+        },
+      };
+      try {
+        const resp = await admin.messaging().sendEachForMulticast(multicast);
+        sent += resp.successCount;
+        console.log(`[sendGlobalBroadcast] Batch ${i / BATCH + 1}: ${resp.successCount}/${chunk.length} sent`);
+      } catch (err) {
+        console.error('[sendGlobalBroadcast] Batch error:', err);
+      }
+    }
+
+    // Log to broadcast_history (the Flutter client also writes here — this is the server copy)
+    await admin.firestore().collection('broadcast_history').add({
+      message,
+      sentAt:     admin.firestore.FieldValue.serverTimestamp(),
+      sentBy:     request.auth?.uid ?? 'admin',
+      platform:   'fcm-push',
+      totalTokens: tokens.length,
+      sent,
+    });
+
+    console.log(`[sendGlobalBroadcast] Done. Sent ${sent}/${tokens.length}.`);
+    return { sent, total: tokens.length };
+  }
+);

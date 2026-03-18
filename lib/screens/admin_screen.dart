@@ -15,6 +15,8 @@ import 'registration_funnel_tab.dart';
 import '../services/category_service.dart';
 import '../services/visual_fetcher_service.dart';
 import '../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
+import 'live_activity_tab.dart';
+import 'admin_chat_view_screen.dart';
 
 
 class AdminScreen extends StatefulWidget {
@@ -795,18 +797,102 @@ class _AdminScreenState extends State<AdminScreen> {
 
   void _showBroadcastDialog() {
     final TextEditingController broadcastController = TextEditingController();
+    bool isSending = false;
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("שלח הודעת מערכת (באנר כחול)"),
-        content: TextField(controller: broadcastController, maxLines: 3, decoration: const InputDecoration(hintText: "ההודעה תופיע לכולם בדף הבית...", border: OutlineInputBorder())),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("ביטול")),
-          ElevatedButton(onPressed: () {
-            FirebaseFirestore.instance.collection('admin').doc('settings').set({'broadcastMessage': broadcastController.text}, SetOptions(merge: true));
-            Navigator.pop(context);
-          }, child: const Text("פרסם עכשיו")),
-        ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.campaign_rounded, color: Colors.blueAccent),
+              SizedBox(width: 8),
+              Text("שידור גלובלי"),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "ההודעה תופיע כבאנר כחול לכל המשתמשים בדף הבית.",
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: broadcastController,
+                maxLines: 3,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: "כתוב את ההודעה כאן...",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSending ? null : () => Navigator.pop(ctx),
+              child: const Text("ביטול"),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueAccent),
+              onPressed: isSending
+                  ? null
+                  : () async {
+                      final msg = broadcastController.text.trim();
+                      if (msg.isEmpty) return;
+                      setDlgState(() => isSending = true);
+
+                      // 1. Write banner (shown immediately to all online users)
+                      await FirebaseFirestore.instance
+                          .collection('admin')
+                          .doc('settings')
+                          .set({'broadcastMessage': msg},
+                              SetOptions(merge: true));
+
+                      // 2. Log to broadcast_history
+                      await FirebaseFirestore.instance
+                          .collection('broadcast_history')
+                          .add({
+                        'message':   msg,
+                        'sentAt':    FieldValue.serverTimestamp(),
+                        'sentBy':    'admin',
+                        'platform':  'in-app-banner',
+                      });
+
+                      // 3. Call Cloud Function to push FCM to all users
+                      try {
+                        await FirebaseFunctions.instance
+                            .httpsCallable('sendGlobalBroadcast')
+                            .call({'message': msg});
+                      } catch (e) {
+                        debugPrint('Broadcast FCM error (non-fatal): $e');
+                      }
+
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('שידור נשלח בהצלחה!'),
+                            backgroundColor: Colors.blueAccent,
+                          ),
+                        );
+                      }
+                    },
+              icon: isSending
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.send_rounded, color: Colors.white),
+              label: const Text("שדר עכשיו",
+                  style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -814,7 +900,7 @@ class _AdminScreenState extends State<AdminScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 15,
+      length: 17,
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F7FA),
         appBar: AppBar(
@@ -831,7 +917,7 @@ class _AdminScreenState extends State<AdminScreen> {
             isScrollable: true,
             labelColor: Colors.blueAccent,
             indicatorColor: Colors.blueAccent,
-            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸"), Tab(text: "קטגוריות 🏷️"), Tab(text: "באנרים 🎨"), Tab(text: "מוניטיזציה 💰"), Tab(text: "תובנות 📊"), Tab(text: "בינה עסקית 🧠"), Tab(text: "XP & רמות 🎮"), Tab(text: "ביצועים 🖥️"), Tab(text: "אימות זהות 🪪"), Tab(text: "משפך הרשמה 📈")],
+            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸"), Tab(text: "קטגוריות 🏷️"), Tab(text: "באנרים 🎨"), Tab(text: "מוניטיזציה 💰"), Tab(text: "תובנות 📊"), Tab(text: "בינה עסקית 🧠"), Tab(text: "XP & רמות 🎮"), Tab(text: "ביצועים 🖥️"), Tab(text: "אימות זהות 🪪"), Tab(text: "משפך הרשמה 📈"), Tab(text: "לייב פיד 📡"), Tab(text: "צ'אטים 💬")],
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
@@ -887,6 +973,8 @@ class _AdminScreenState extends State<AdminScreen> {
                       const SystemPerformanceTab(),
                       _buildIdVerificationTab(),
                       const RegistrationFunnelTab(),
+                      const LiveActivityTab(),
+                      _buildSupportTab(),
                     ],
                   ),
                 ),
@@ -4196,5 +4284,158 @@ class _AdminScreenState extends State<AdminScreen> {
     } finally {
       if (mounted) setState(() => _verifyingUids.remove(uid));
     }
+  }
+
+  // ── Support Intervention Tab — admin views active/disputed jobs + chat ───────
+  Widget _buildSupportTab() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('jobs')
+          .where('status', whereIn: ['paid_escrow', 'disputed', 'expert_completed'])
+          .orderBy('createdAt', descending: true)
+          .limit(50)
+          .snapshots(),
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final docs = snap.data?.docs ?? [];
+        if (docs.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.chat_bubble_outline_rounded,
+                    size: 56, color: Colors.grey[300]),
+                const SizedBox(height: 12),
+                const Text('אין עבודות פעילות כרגע',
+                    style: TextStyle(color: Colors.grey, fontSize: 16)),
+              ],
+            ),
+          );
+        }
+
+        return ListView.separated(
+          padding: const EdgeInsets.all(14),
+          itemCount: docs.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 10),
+          itemBuilder: (context, i) {
+            final d          = docs[i].data()! as Map<String, dynamic>;
+            final status     = d['status'] as String? ?? '';
+            final amount     = (d['totalAmount'] as num? ?? 0).toDouble();
+            final expertId   = d['expertId']   as String? ?? '';
+            final customerId = d['customerId'] as String? ?? '';
+            final expertName   = d['expertName']   as String? ?? expertId;
+            final customerName = d['customerName'] as String? ?? customerId;
+
+            // Derive chatRoomId: sorted UIDs joined by '_' (same as app logic)
+            final ids = [expertId, customerId]..sort();
+            final chatRoomId = ids.join('_');
+
+            final isDisputed  = status == 'disputed';
+            final statusColor = isDisputed
+                ? Colors.red
+                : status == 'paid_escrow'
+                    ? const Color(0xFF10B981)
+                    : Colors.orange;
+
+            return Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                    color: isDisputed
+                        ? Colors.red.shade100
+                        : Colors.grey.shade100),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: statusColor.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          status,
+                          style: TextStyle(
+                              color: statusColor,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '₪${amount.toStringAsFixed(0)}',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 15),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      const Icon(Icons.build_rounded,
+                          size: 14, color: Colors.grey),
+                      const SizedBox(width: 4),
+                      Text(expertName,
+                          style: const TextStyle(fontSize: 13)),
+                      const SizedBox(width: 16),
+                      const Icon(Icons.person_rounded,
+                          size: 14, color: Colors.grey),
+                      const SizedBox(width: 4),
+                      Text(customerName,
+                          style: const TextStyle(fontSize: 13)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isDisputed
+                            ? Colors.red
+                            : const Color(0xFF6366F1),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                      icon: const Icon(Icons.chat_rounded,
+                          color: Colors.white, size: 16),
+                      label: const Text("צפה בצ'אט",
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold)),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AdminChatViewScreen(
+                            chatRoomId:   chatRoomId,
+                            providerName: expertName,
+                            customerName: customerName,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 }

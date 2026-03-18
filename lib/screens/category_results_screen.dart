@@ -82,7 +82,12 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       final map = d.data();
       map['uid'] = d.id;
       return map;
-    }).toList();
+    })
+    // Exclude providers explicitly flagged as not-yet-verified.
+    // Docs without 'isVerified' field (legacy accounts) pass through
+    // so existing users are never hidden during migration.
+    .where((m) => m['isVerified'] != false)
+    .toList();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
