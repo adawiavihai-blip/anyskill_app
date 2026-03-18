@@ -10,6 +10,7 @@ class AcademyCourse {
   final String category;
   final String duration;
   final int order;
+  final int xpReward;
   final List<Map<String, dynamic>> quizQuestions;
   final String? thumbnailUrl;
 
@@ -21,6 +22,7 @@ class AcademyCourse {
     required this.category,
     required this.duration,
     required this.order,
+    this.xpReward = 200,
     required this.quizQuestions,
     this.thumbnailUrl,
   });
@@ -35,6 +37,7 @@ class AcademyCourse {
       category:       d['category']    as String? ?? '',
       duration:       d['duration']    as String? ?? '',
       order:          (d['order']      as num?    ?? 0).toInt(),
+      xpReward:       (d['xpReward']   as num?    ?? 200).toInt(),
       quizQuestions:  List<Map<String, dynamic>>.from(
                         (d['quizQuestions'] as List?)?.map(
                           (e) => Map<String, dynamic>.from(e as Map)) ?? []),
@@ -104,6 +107,7 @@ class AcademyService {
     required String courseId,
     required String courseTitle,
     required String category,
+    int xpReward = 200,
   }) async {
     if (uid.isEmpty) return;
 
@@ -125,7 +129,7 @@ class AcademyService {
     // Award XP + add certified category to user profile
     final userRef = _db.collection('users').doc(uid);
     batch.update(userRef, {
-      'xp':                  FieldValue.increment(200),
+      'xp':                  FieldValue.increment(xpReward),
       'certifiedCategories': FieldValue.arrayUnion([category]),
     });
 
@@ -134,7 +138,7 @@ class AcademyService {
     batch.set(notifRef, {
       'userId':    uid,
       'title':     '🎓 השלמת קורס!',
-      'body':      'סיימת את "$courseTitle" וקיבלת 200 XP ותעודת הסמכה!',
+      'body':      'סיימת את "$courseTitle" וקיבלת $xpReward XP ותעודת הסמכה!',
       'isRead':    false,
       'type':      'certification',
       'createdAt': FieldValue.serverTimestamp(),

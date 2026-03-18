@@ -36,6 +36,9 @@ class _CoursePlayerScreenState extends State<CoursePlayerScreen> {
   bool      _passed         = false;
   bool      _completing     = false;
 
+  // ── Celebration overlay ─────────────────────────────────────────────────────
+  bool _showCelebration = false;
+
   @override
   void initState() {
     super.initState();
@@ -125,16 +128,25 @@ class _CoursePlayerScreenState extends State<CoursePlayerScreen> {
 
   Future<void> _awardCertification() async {
     if (widget.uid.isEmpty || _completing) return;
-    setState(() => _completing = true);
+    setState(() {
+      _completing      = true;
+      _showCelebration = true;
+    });
 
     await AcademyService.completeCourse(
       uid:         widget.uid,
       courseId:    widget.course.id,
       courseTitle: widget.course.title,
       category:    widget.course.category,
+      xpReward:    widget.course.xpReward,
     );
 
-    if (mounted) _showCertificationDialog();
+    // Brief celebration before the dialog
+    await Future.delayed(const Duration(milliseconds: 1800));
+    if (mounted) {
+      setState(() => _showCelebration = false);
+      _showCertificationDialog();
+    }
   }
 
   void _showCertificationDialog() {
@@ -182,9 +194,9 @@ class _CoursePlayerScreenState extends State<CoursePlayerScreen> {
               ),
               child: Column(
                 children: [
-                  const Text(
-                    '+200 XP',
-                    style: TextStyle(
+                  Text(
+                    '+${widget.course.xpReward} XP',
+                    style: const TextStyle(
                       color: Color(0xFF6366F1),
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
@@ -241,7 +253,9 @@ class _CoursePlayerScreenState extends State<CoursePlayerScreen> {
   Widget build(BuildContext context) {
     return YoutubePlayerScaffold(
       controller: _ytController,
-      builder: (context, player) => Scaffold(
+      builder: (context, player) => Stack(
+        children: [
+          Scaffold(
         backgroundColor: const Color(0xFF0F0F1A),
         appBar: AppBar(
           backgroundColor: const Color(0xFF0F0F1A),
@@ -400,7 +414,7 @@ class _CoursePlayerScreenState extends State<CoursePlayerScreen> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                'הסמכת ${widget.course.category} + 200 XP',
+                                'הסמכת ${widget.course.category} + ${widget.course.xpReward} XP',
                                 style: TextStyle(
                                   color: Colors.white.withValues(alpha: 0.65),
                                   fontSize: 13,
@@ -420,6 +434,93 @@ class _CoursePlayerScreenState extends State<CoursePlayerScreen> {
 
               const SizedBox(height: 40),
             ],
+          ),
+        ),
+      ),      // ← closes Scaffold
+
+      // ── Celebration overlay ───────────────────────────────────────────────
+      if (_showCelebration) _buildCelebrationOverlay(),
+    ],         // ← closes Stack children
+  ),           // ← closes Stack
+);             // ← closes YoutubePlayerScaffold builder
+  }
+
+  Widget _buildCelebrationOverlay() {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Container(
+          color: Colors.black.withValues(alpha: 0.55),
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0.4, end: 1.0),
+            duration: const Duration(milliseconds: 600),
+            curve: Curves.elasticOut,
+            builder: (context, scale, _) => Transform.scale(
+              scale: scale,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // Giant trophy emoji
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0.0, end: 1.0),
+                    duration: const Duration(milliseconds: 800),
+                    curve: Curves.easeOutBack,
+                    builder: (_, v, __) => Opacity(
+                      opacity: v.clamp(0.0, 1.0),
+                      child: const Text('🎓',
+                          style: TextStyle(fontSize: 88)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'קורס הושלם!',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  // Animated XP badge
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0.0, end: 1.0),
+                    duration: const Duration(milliseconds: 900),
+                    curve: Curves.easeOutCubic,
+                    builder: (_, v, __) => Opacity(
+                      opacity: v.clamp(0.0, 1.0),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24, vertical: 12),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [
+                              Color(0xFF6366F1),
+                              Color(0xFFA855F7),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF6366F1)
+                                  .withValues(alpha: 0.5),
+                              blurRadius: 20,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          '+${widget.course.xpReward} XP',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),

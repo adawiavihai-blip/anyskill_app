@@ -9,6 +9,7 @@ import 'edit_profile_screen.dart';
 import '../widgets/vip_confetti.dart';
 import '../l10n/app_localizations.dart';
 import '../services/locale_provider.dart';
+import '../widgets/xp_progress_bar.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -230,7 +231,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     borderRadius: BorderRadius.circular(25),
                     boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 15)],
                   ),
-                  child: _buildProfileStats(data, l10n),
+                  child: Column(
+                    children: [
+                      _buildProfileStats(data, l10n),
+                      const SizedBox(height: 16),
+                      // ── XP Progress Bar ──────────────────────────────────
+                      XpProgressBar(
+                        xp: (data['xp'] as num? ?? 0).toInt(),
+                      ),
+                    ],
+                  ),
                 ),
 
                 const SizedBox(height: 25),

@@ -53,6 +53,8 @@ class _ChatScreenState extends State<ChatScreen> {
   DateTime? _lastGuardWarnTime;           // prevents SnackBar spam
   Timer?    _guardDebounce;               // delays detection until typing pauses
 
+  // ── Demo Expert alert (fired once per session) ─────────────────────────────
+
   Timer? _markReadDebounce;
   Timer? _typingClearTimer;
   StreamSubscription<DocumentSnapshot>? _chatDocSub;
@@ -72,6 +74,48 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _handleMarkAsRead();
     _listenToTyping();
+    _checkDemoExpert();
+  }
+
+  /// One-time check: if the receiver is a demo expert, log a high-priority
+  /// alert to the admin Activity Log so demand in this category is surfaced.
+  Future<void> _checkDemoExpert() async {
+    if (currentUserId.isEmpty || widget.receiverId.isEmpty) return;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.receiverId)
+          .get();
+      final d = snap.data() ?? {};
+      if (d['isDemo'] != true) return;
+
+      // Deduplicate: don't log if already logged today for this pair
+      final dedupId = 'demo_${currentUserId}_${widget.receiverId}';
+      final existing = await FirebaseFirestore.instance
+          .collection('activity_log')
+          .doc(dedupId)
+          .get();
+      if (existing.exists) return;
+
+      final category = d['serviceType'] as String? ?? d['name'] as String? ?? 'לא ידוע';
+      await FirebaseFirestore.instance
+          .collection('activity_log')
+          .doc(dedupId)
+          .set({
+        'type':       'demo_contact',
+        'priority':   'high',
+        'title':      '🔥 ביקוש אמיתי! משתמש פנה למומחה דמו',
+        'detail':
+            'משתמש (${widget.currentUserName ?? currentUserId}) ניסה לפנות '
+            'למומחה דמו בקטגוריה "$category" — שקול לגייס ספק אמיתי בתחום זה!',
+        'userId':     currentUserId,
+        'receiverId': widget.receiverId,
+        'category':   category,
+        'createdAt':  FieldValue.serverTimestamp(),
+      });
+    } catch (_) {
+      // Non-fatal — don't interrupt the chat UX
+    }
   }
 
   @override

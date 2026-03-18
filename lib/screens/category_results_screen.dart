@@ -87,6 +87,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     // Docs without 'isVerified' field (legacy accounts) pass through
     // so existing users are never hidden during migration.
     .where((m) => m['isVerified'] != false)
+    // Exclude demo experts that the admin has toggled to hidden.
+    .where((m) => m['isHidden'] != true)
     .toList();
   }
 

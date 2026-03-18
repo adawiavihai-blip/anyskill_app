@@ -384,93 +384,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     ),
                   ),
 
-                  // ── AnySkill Academy banner ───────────────────────────
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
-                      child: GestureDetector(
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const AcademyScreen(),
-                          ),
-                        ),
-                        child: Container(
-                          height: 60,
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [Color(0xFF4F46E5), Color(0xFF7C3AED)],
-                              begin: Alignment.centerRight,
-                              end: Alignment.centerLeft,
-                            ),
-                            borderRadius: BorderRadius.circular(14),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF6366F1)
-                                    .withValues(alpha: 0.3),
-                                blurRadius: 8,
-                                offset: const Offset(0, 3),
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            children: [
-                              const SizedBox(width: 14),
-                              const Text('🎓',
-                                  style: TextStyle(fontSize: 26)),
-                              const SizedBox(width: 10),
-                              const Expanded(
-                                child: Column(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.center,
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'AnySkill Academy',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    Text(
-                                      'למד, עבור חידון וקבל הסמכה + 200 XP',
-                                      style: TextStyle(
-                                        color: Color(0xFFE0E7FF),
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Container(
-                                margin: const EdgeInsets.only(left: 12),
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: Colors.white
-                                      .withValues(alpha: 0.2),
-                                  borderRadius:
-                                      BorderRadius.circular(20),
-                                ),
-                                child: const Text(
-                                  'חדש',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-
                   // ── Responsive category grid — driven by global card scale ──
                   StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
                     stream: _settingsStream,
@@ -583,6 +496,30 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             mainAxisSize: MainAxisSize.min,
             children: [
               _buildNotificationBell(),
+
+              const SizedBox(width: 8),
+
+              // Academy shortcut
+              GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const AcademyScreen()),
+                ),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEEF2FF),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                        color:
+                            const Color(0xFF6366F1).withValues(alpha: 0.3)),
+                  ),
+                  child: const Icon(Icons.school_rounded,
+                      size: 18, color: Color(0xFF6366F1)),
+                ),
+              ),
 
               const SizedBox(width: 8),
 

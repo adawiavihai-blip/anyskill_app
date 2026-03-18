@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/academy_service.dart';
+import '../widgets/xp_progress_bar.dart';
 import 'course_player_screen.dart';
 
 class AcademyScreen extends StatefulWidget {
@@ -15,6 +16,19 @@ class AcademyScreen extends StatefulWidget {
 class _AcademyScreenState extends State<AcademyScreen> {
   String _selectedCategory = 'הכל';
   final String _uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+
+  late final Stream<DocumentSnapshot<Map<String, dynamic>>> _userStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _userStream = _uid.isEmpty
+        ? const Stream.empty()
+        : FirebaseFirestore.instance
+            .collection('users')
+            .doc(_uid)
+            .snapshots();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -137,48 +151,43 @@ class _AcademyScreenState extends State<AcademyScreen> {
   }
 
   Widget _buildHeader() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 12, 16, 8),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-          const Text(
-            '🎓 AnySkill Academy',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: const Color(0xFF6366F1).withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                  color: const Color(0xFF6366F1).withValues(alpha: 0.4)),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.star, color: Color(0xFFFBBF24), size: 14),
-                SizedBox(width: 4),
-                Text(
-                  '+200 XP',
-                  style: TextStyle(
-                    color: Color(0xFF6366F1),
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: _userStream,
+      builder: (context, snap) {
+        final xp = ((snap.data?.data() ?? {})['xp'] as num? ?? 0).toInt();
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(4, 12, 16, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back_ios,
+                        color: Colors.white),
+                    onPressed: () => Navigator.of(context).pop(),
                   ),
+                  const Text(
+                    '🎓 AnySkill Academy',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              // XP progress bar
+              if (_uid.isNotEmpty)
+                Padding(
+                  padding:
+                      const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                  child: XpProgressBar(xp: xp, darkMode: true),
                 ),
-              ],
-            ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
