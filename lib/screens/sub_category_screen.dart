@@ -164,6 +164,9 @@ class _SubCategoryCard extends StatefulWidget {
 }
 
 class _SubCategoryCardState extends State<_SubCategoryCard> {
+  bool _hovered = false;
+  bool _pressed = false;
+
   void _openEditSheet() {
     showModalBottomSheet(
       context: context,
@@ -182,15 +185,50 @@ class _SubCategoryCardState extends State<_SubCategoryCard> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: widget.onTap,
-      child: ClipRRect(
+    final double cardScale  = _pressed ? 0.97 : 1.0;
+    final double imageScale = _hovered ? 1.06 : (_pressed ? 1.02 : 1.0);
+
+    return MouseRegion(
+      cursor:  SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit:  (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+      onTap:       widget.onTap,
+      onTapDown:   (_) => setState(() => _pressed = true),
+      onTapUp:     (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve:    Curves.easeOut,
+        transform: Matrix4.identity()
+          ..scaleByDouble(cardScale, cardScale, 1.0, 1.0),
+        transformAlignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(
+                  alpha: _hovered ? 0.24 : (_pressed ? 0.18 : 0.10)),
+              blurRadius:   _hovered ? 28 : (_pressed ? 14 : 10),
+              spreadRadius: _hovered ? 0  : -1,
+              offset: Offset(0, _hovered ? 12 : (_pressed ? 5 : 4)),
+            ),
+            if (_hovered)
+              BoxShadow(
+                color: const Color(0xFF6366F1).withValues(alpha: 0.14),
+                blurRadius: 22,
+                offset: const Offset(0, 8),
+              ),
+          ],
+        ),
+        child: ClipRRect(
         borderRadius: BorderRadius.circular(22),
         child: Stack(
           fit: StackFit.expand,
           children: [
             // Background image with shimmer + branded gradient fallback
-            CategoryImageBackground(imageUrl: widget.imageUrl),
+            CategoryImageBackground(
+                imageUrl: widget.imageUrl, imageScale: imageScale),
 
             // Name + icon at bottom
             Positioned(
@@ -237,8 +275,10 @@ class _SubCategoryCardState extends State<_SubCategoryCard> {
                 ),
               ),
           ],
-        ),
-      ),
-    );
+        ),       // closes Stack
+        ),       // closes inner ClipRRect
+      ),         // closes AnimatedContainer
+      ),         // closes GestureDetector
+    );           // closes MouseRegion
   }
 }

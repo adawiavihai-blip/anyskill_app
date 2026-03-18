@@ -5,18 +5,27 @@ import 'package:shimmer/shimmer.dart';
 /// Full-bleed background for a category / sub-category card.
 ///
 /// Layers (bottom → top):
-///   1. CachedNetworkImage (with shimmer while loading, branded gradient on error)
-///   2. LinearGradient overlay — transparent at top → dark indigo at bottom
-///      so the Hebrew label is always legible.
+///   1. CachedNetworkImage — scaled by [imageScale] for the hover-zoom effect.
+///      Wrapped in AnimatedScale so the zoom is smooth (300 ms, easeOut).
+///      The surrounding ClipRRect in the parent card clips the overflow so
+///      the animation never leaks outside the card boundary.
+///   2. LinearGradient overlay — 3-stop fade: transparent → hint of dark → rich
+///      dark indigo at the bottom.  The overlay is NOT scaled, so it stays
+///      pinned to the card edges regardless of the image scale.
 ///
 /// Drop this as the first child inside a [Stack] with [StackFit.expand].
 class CategoryImageBackground extends StatelessWidget {
   const CategoryImageBackground({
     super.key,
     required this.imageUrl,
+    this.imageScale = 1.0,
   });
 
   final String imageUrl;
+
+  /// Drives the smooth zoom-in effect. Caller (card widget) updates this
+  /// on hover / press via AnimatedScale inside this widget.
+  final double imageScale;
 
   // ── AnySkill branded gradient ──────────────────────────────────────────────
   // Used as the card background when imageUrl is empty or the network fails.
@@ -46,32 +55,37 @@ class CategoryImageBackground extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         // ── 1. Background image (or branded gradient fallback) ──────────────
-        if (imageUrl.isEmpty)
-          _GradientFill(gradient: _fallbackGradient())
-        else
-          CachedNetworkImage(
-            imageUrl: imageUrl,
-            fit: BoxFit.cover,
-            // Shimmer skeleton while the image loads
-            placeholder: (_, __) => const _ShimmerPlaceholder(),
-            // Branded gradient if the URL is broken / offline
-            errorWidget: (_, __, ___) =>
-                _GradientFill(gradient: _fallbackGradient()),
-          ),
+        // AnimatedScale drives the hover/press zoom from the parent card.
+        // Overflow is clipped by the ClipRRect that wraps the card Stack.
+        AnimatedScale(
+          scale:    imageScale,
+          duration: const Duration(milliseconds: 320),
+          curve:    Curves.easeOutCubic,
+          child: imageUrl.isEmpty
+              ? _GradientFill(gradient: _fallbackGradient())
+              : CachedNetworkImage(
+                  imageUrl:    imageUrl,
+                  fit:         BoxFit.cover,
+                  placeholder: (_, __) => const _ShimmerPlaceholder(),
+                  errorWidget: (_, __, ___) =>
+                      _GradientFill(gradient: _fallbackGradient()),
+                ),
+        ),
 
         // ── 2. Readability gradient overlay ────────────────────────────────
-        // Transparent at the top, darkens toward the bottom so the label
-        // is always readable regardless of the photo's brightness.
+        // 3-stop fade keeps text legible even on bright/washed-out photos.
+        // NOT included in the AnimatedScale so it stays pinned to card edges.
         Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
+              begin:  Alignment.topCenter,
+              end:    Alignment.bottomCenter,
               colors: [
                 Colors.transparent,
-                const Color(0xFF1E1B4B).withValues(alpha: 0.78),
+                const Color(0xFF0F172A).withValues(alpha: 0.28),
+                const Color(0xFF0F172A).withValues(alpha: 0.88),
               ],
-              stops: const [0.35, 1.0],
+              stops: const [0.0, 0.45, 1.0],
             ),
           ),
         ),

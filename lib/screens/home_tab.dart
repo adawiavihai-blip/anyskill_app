@@ -817,41 +817,55 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
 
   @override
   Widget build(BuildContext context) {
-    final double scale = _pressed ? 0.97 : (_hovered ? 1.04 : 1.0);
+    // Card-level transform: subtle press-down only (no hover card-scale).
+    // The premium "zoom" lives inside the image layer via AnimatedScale.
+    final double cardScale  = _pressed ? 0.97 : 1.0;
+    // Image zoom: hover → 1.06 (desktop preview),  press → slight warm-up.
+    final double imageScale = _hovered ? 1.06 : (_pressed ? 1.02 : 1.0);
+
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit:  (_) => setState(() => _hovered = false),
       child: GestureDetector(
       onTap: widget.onTap,
-      onTapDown:  (_) => setState(() => _pressed = true),
-      onTapUp:    (_) => setState(() => _pressed = false),
+      onTapDown:   (_) => setState(() => _pressed = true),
+      onTapUp:     (_) => setState(() => _pressed = false),
       onTapCancel: () => setState(() => _pressed = false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
         transform: Matrix4.identity()
-          ..scaleByDouble(scale, scale, 1.0, 1.0),
+          ..scaleByDouble(cardScale, cardScale, 1.0, 1.0),
         transformAlignment: Alignment.center,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(16),   // softer than before (14→16)
           boxShadow: [
+            // Primary shadow — lifts more on hover
             BoxShadow(
               color: Colors.black.withValues(
-                  alpha: _pressed ? 0.22 : (_hovered ? 0.20 : 0.10)),
-              blurRadius:  _pressed ? 16 : (_hovered ? 22 : 8),
-              spreadRadius: _pressed ? 0  : (_hovered ? 2  : -2),
-              offset: Offset(0, _pressed ? 6 : (_hovered ? 8 : 4)),
+                  alpha: _hovered ? 0.24 : (_pressed ? 0.18 : 0.10)),
+              blurRadius:   _hovered ? 24 : (_pressed ? 14 : 8),
+              spreadRadius: _hovered ? 0  : -1,
+              offset: Offset(0, _hovered ? 10 : (_pressed ? 5 : 4)),
             ),
+            // Subtle indigo tint shadow for the premium glow feel
+            if (_hovered)
+              BoxShadow(
+                color: const Color(0xFF6366F1).withValues(alpha: 0.14),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
           ],
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(16),
           child: Stack(
             fit: StackFit.expand,
             children: [
               // ── Rich background image with indigo overlay ──────────────
-              CategoryImageBackground(imageUrl: widget.imageUrl),
+              CategoryImageBackground(
+                  imageUrl: widget.imageUrl, imageScale: imageScale),
 
               // ── Label block — bottom of card ───────────────────────────
               Positioned(
