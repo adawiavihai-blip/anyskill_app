@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
 class CategoryService {
@@ -59,5 +60,51 @@ class CategoryService {
         .collection('categories')
         .doc(docId)
         .update(updates);
+  }
+
+  /// Returns the number of active providers whose serviceType matches
+  /// [categoryName].  Used to warn admins before deleting a category.
+  static Future<int> activeProviderCount(String categoryName) async {
+    final snap = await FirebaseFirestore.instance
+        .collection('users')
+        .where('isProvider', isEqualTo: true)
+        .where('serviceType', isEqualTo: categoryName)
+        .limit(50)
+        .get();
+    return snap.docs.length;
+  }
+
+  /// Admin-only: permanently delete a category and all its sub-categories.
+  /// Also removes the Storage image (best-effort — won't throw if absent).
+  /// Call [activeProviderCount] first and warn the user if count > 0.
+  static Future<void> deleteCategory(String docId, String imageUrl) async {
+    final db = FirebaseFirestore.instance;
+
+    // 1. Delete child sub-categories
+    final subs = await db
+        .collection('categories')
+        .where('parentId', isEqualTo: docId)
+        .get();
+    for (final sub in subs.docs) {
+      await sub.reference.delete();
+    }
+
+    // 2. Delete the category document itself
+    await db.collection('categories').doc(docId).delete();
+
+    // 3. Delete the Storage image (best-effort)
+    if (imageUrl.isNotEmpty) {
+      try {
+        // Try resolving directly from the download URL first
+        await FirebaseStorage.instance.refFromURL(imageUrl).delete();
+      } catch (_) {
+        // Fall back to the known storage path used by CategoryEditSheet
+        try {
+          await FirebaseStorage.instance
+              .ref('category_images/$docId.jpg')
+              .delete();
+        } catch (_) {}
+      }
+    }
   }
 }

@@ -38,6 +38,7 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
   String?      _newImageUrl;      // set after successful upload
   bool         _isUploading = false;
   bool         _isSaving    = false;
+  bool         _isDeleting  = false;
 
   @override
   void initState() {
@@ -130,6 +131,135 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
     }
   }
 
+  // ── Delete ───────────────────────────────────────────────────────────────
+
+  Future<void> _confirmDelete() async {
+    // Capture before any async gap
+    final nav       = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    final name      = _nameCtrl.text.trim().isNotEmpty
+        ? _nameCtrl.text.trim()
+        : widget.initialName;
+
+    // Check how many providers are in this category
+    int providerCount = 0;
+    try {
+      providerCount = await CategoryService.activeProviderCount(name);
+    } catch (_) {}
+
+    if (!mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded,
+                color: Colors.red, size: 24),
+            SizedBox(width: 8),
+            Text('מחיקת קטגוריה',
+                style: TextStyle(
+                    fontSize: 17, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            const Text(
+              'האם אתה בטוח שברצונך למחוק קטגוריה זו?\nפעולה זו אינה ניתנת לביטול.',
+              textAlign: TextAlign.right,
+              style: TextStyle(fontSize: 14, height: 1.5),
+            ),
+            if (providerCount > 0) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(10),
+                  border:
+                      Border.all(color: Colors.orange.shade300),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.people_outline,
+                        color: Colors.orange[700], size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'ישנם $providerCount ספקים פעילים בקטגוריה זו. '
+                        'הם לא יימחקו, אך הקטגוריה שלהם לא תהיה תקינה.',
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.orange[800]),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ביטול',
+                style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            icon: const Icon(Icons.delete_forever,
+                color: Colors.white, size: 16),
+            label: const Text('מחק',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isDeleting = true);
+    try {
+      final imageUrl = _newImageUrl ?? widget.initialImageUrl;
+      await CategoryService.deleteCategory(widget.docId, imageUrl);
+      nav.pop(); // close the sheet
+      messenger.showSnackBar(SnackBar(
+        content: Row(children: [
+          const Icon(Icons.check_circle_rounded,
+              color: Colors.white, size: 16),
+          const SizedBox(width: 8),
+          Text('הקטגוריה "$name" נמחקה בהצלחה'),
+        ]),
+        backgroundColor: Colors.red.shade600,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10)),
+      ));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('שגיאה במחיקה: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _isDeleting = false);
+    }
+  }
+
   // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
@@ -166,12 +296,30 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Cancel (right side in RTL = leading edge)
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('ביטול',
-                      style: TextStyle(color: Colors.grey, fontSize: 14)),
-                ),
+                // Delete button (left / trailing-edge in RTL)
+                _isDeleting
+                    ? const SizedBox(
+                        width: 36, height: 36,
+                        child: Center(
+                          child: SizedBox(
+                            width: 16, height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.red),
+                          ),
+                        ),
+                      )
+                    : IconButton(
+                        tooltip: 'מחק קטגוריה',
+                        onPressed:
+                            (_isSaving || _isUploading) ? null : _confirmDelete,
+                        icon: const Icon(Icons.delete_outline_rounded),
+                        color: Colors.red,
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.red.withValues(alpha: 0.08),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
                 const Text('ערוך קטגוריה',
                     style: TextStyle(
                         fontWeight: FontWeight.bold, fontSize: 16)),
@@ -179,7 +327,9 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
                 SizedBox(
                   height: 36,
                   child: ElevatedButton(
-                    onPressed: (_isSaving || _isUploading) ? null : _save,
+                    onPressed: (_isSaving || _isUploading || _isDeleting)
+                        ? null
+                        : _save,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF6366F1),
                       disabledBackgroundColor:
