@@ -29,8 +29,9 @@ class _AdminScreenState extends State<AdminScreen> {
   double _feePct        = 10.0;
   double _urgencyFeePct = 5.0;
   bool   _settingsLoaded = false;
-  bool   _refreshingImages = false;
-  bool   _fixingImages     = false;
+  bool   _refreshingImages   = false;
+  bool   _fixingImages       = false;
+  bool   _resettingCounters  = false;
 
   // ── ID verification — tracks which UIDs are mid-request (prevents double-tap)
   final Set<String> _verifyingUids = {};
@@ -899,6 +900,185 @@ class _AdminScreenState extends State<AdminScreen> {
 
   // ── Category Management ───────────────────────────────────────────────────
 
+  /// Formats raw click counts for compact display: 1 234 → "1.2k", < 1 000 → "$n".
+  static String _fmtClicks(int n) {
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(n >= 10000 ? 0 : 1)}k';
+    return '$n';
+  }
+
+  /// Resets clickCount to 0 on every category document in a single batch.
+  Future<void> _resetPopularityCounters(
+      List<Map<String, dynamic>> allCats) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(children: [
+          Icon(Icons.restart_alt_rounded, color: Colors.orange),
+          SizedBox(width: 8),
+          Text('איפוס מונים', style: TextStyle(fontSize: 17)),
+        ]),
+        content: const Text(
+          'פעולה זו תאפס את מונה הלחיצות של כל הקטגוריות ל-0.\n'
+          'הדירוג הדינמי יתחיל מחדש.\n\n'
+          'האם אתה בטוח?',
+          textAlign: TextAlign.right,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ביטול', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('אפס', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _resettingCounters = true);
+    try {
+      final db    = FirebaseFirestore.instance;
+      final batch = db.batch();
+      for (final cat in allCats) {
+        batch.update(
+          db.collection('categories').doc(cat['id'] as String),
+          {'clickCount': 0},
+        );
+      }
+      await batch.commit();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          backgroundColor: Color(0xFF22C55E),
+          behavior: SnackBarBehavior.floating,
+          content: Text('✅ מוני הפופולריות אופסו בהצלחה'),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(backgroundColor: Colors.red, content: Text('שגיאה: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _resettingCounters = false);
+    }
+  }
+
+  /// Top-5 leaderboard card shown at the top of the categories tab.
+  Widget _buildPopularityLeaderboard(List<Map<String, dynamic>> mainCats) {
+    final top = (List.of(mainCats)
+          ..sort((a, b) {
+            final cA = (a['clickCount'] as num? ?? 0).toInt();
+            final cB = (b['clickCount'] as num? ?? 0).toInt();
+            return cB.compareTo(cA);
+          }))
+        .take(5)
+        .toList();
+
+    // Don't show the leaderboard if no category has any clicks yet.
+    final totalClicks =
+        top.fold<int>(0, (s, c) => s + (c['clickCount'] as num? ?? 0).toInt());
+    if (totalClicks == 0) return const SizedBox.shrink();
+
+    const medals = ['🥇', '🥈', '🥉', '4.', '5.'];
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF1E1B4B), Color(0xFF312E81)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF6366F1).withValues(alpha: 0.25),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(children: [
+              Icon(Icons.local_fire_department_rounded,
+                  color: Color(0xFFFBBF24), size: 20),
+              SizedBox(width: 6),
+              Text('Top 5 — קטגוריות הכי פופולריות',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14)),
+            ]),
+            const SizedBox(height: 12),
+            ...top.asMap().entries.map((e) {
+              final rank   = e.key;
+              final cat    = e.value;
+              final clicks = (cat['clickCount'] as num? ?? 0).toInt();
+              final pct    = totalClicks > 0 ? clicks / totalClicks : 0.0;
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(children: [
+                  // Medal / rank
+                  SizedBox(
+                    width: 28,
+                    child: Text(medals[rank],
+                        style: const TextStyle(fontSize: 14)),
+                  ),
+                  // Name
+                  Expanded(
+                    child: Text(
+                      cat['name'] as String? ?? '',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Progress bar
+                  SizedBox(
+                    width: 60,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: pct.toDouble(),
+                        minHeight: 6,
+                        backgroundColor:
+                            Colors.white.withValues(alpha: 0.15),
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                            Color(0xFFFBBF24)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Count
+                  Text(
+                    '${_fmtClicks(clicks)} 👁',
+                    style: const TextStyle(
+                        color: Color(0xFFFBBF24),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold),
+                  ),
+                ]),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCategoriesTab() {
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: CategoryService.stream(),
@@ -1131,6 +1311,38 @@ class _AdminScreenState extends State<AdminScreen> {
                       },
               ),
             ),
+            // ── Popularity Leaderboard ──────────────────────────────────────
+            _buildPopularityLeaderboard(mainCats),
+
+            // ── Reset Counters button ───────────────────────────────────────
+            if (cats.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 44),
+                    foregroundColor: Colors.orange,
+                    side: const BorderSide(color: Colors.orange),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: _resettingCounters
+                      ? const SizedBox(
+                          width: 16, height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.orange))
+                      : const Icon(Icons.restart_alt_rounded),
+                  label: Text(
+                    _resettingCounters
+                        ? 'מאפס...'
+                        : '🔄 אפס מוני פופולריות',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  onPressed:
+                      _resettingCounters ? null : () => _resetPopularityCounters(cats),
+                ),
+              ),
+
             if (!snapshot.hasData)
               const Expanded(child: Center(child: CircularProgressIndicator()))
             else if (cats.isEmpty)
@@ -1203,6 +1415,54 @@ class _AdminScreenState extends State<AdminScreen> {
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              // ── Click-count badge ──────────────────────
+                              Builder(builder: (_) {
+                                final clicks =
+                                    (cat['clickCount'] as num? ?? 0).toInt();
+                                final isHot  = clicks >= 100;
+                                final isWarm = clicks >= 10;
+                                return Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 7, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: isHot
+                                        ? Colors.orange[50]
+                                        : isWarm
+                                            ? Colors.amber[50]
+                                            : Colors.grey[100],
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: isHot
+                                          ? Colors.orange.shade300
+                                          : isWarm
+                                              ? Colors.amber.shade300
+                                              : Colors.grey.shade300,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        isHot ? '🔥' : '👁',
+                                        style: const TextStyle(fontSize: 11),
+                                      ),
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        _fmtClicks(clicks),
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                          color: isHot
+                                              ? Colors.orange[800]
+                                              : isWarm
+                                                  ? Colors.amber[800]
+                                                  : Colors.grey[600],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
                               IconButton(
                                 icon: const Icon(Icons.edit_outlined, color: Colors.blueAccent, size: 20),
                                 onPressed: () => _showCategoryDialog(existing: cat, existingCount: cats.length),
