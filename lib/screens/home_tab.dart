@@ -160,27 +160,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     );
   }
 
-  String _greeting(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
-    final h = DateTime.now().hour;
-    if (h < 12) return '${l10n.greetingMorning} ☀️';
-    if (h < 17) return '${l10n.greetingAfternoon} 🌤️';
-    if (h < 21) return '${l10n.greetingEvening} 🌙';
-    return '${l10n.greetingNight} ✨';
-  }
-
-  String get _firstName {
-    final name = (widget.userData['name'] ?? '') as String;
-    return name.contains(' ') ? name.split(' ').first : name;
-  }
-
   // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final isProvider = widget.userData['isProvider'] == true;
-    // Admin check — only the owner email sees edit overlays.
-    // Regular users and providers never see this flag as true.
     final isAdmin =
         FirebaseAuth.instance.currentUser?.email == 'adawiavihai@gmail.com';
 
@@ -364,24 +348,79 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     );
   }
 
-  // ── Greeting header ────────────────────────────────────────────────────────
+  // ── Header ────────────────────────────────────────────────────────────────
+  // Layout (RTL):  Avatar [· Online toggle] ←——→ [Bell · AI · Admin]
+  // The greeting and subtitle have been removed — the clean icon-only header
+  // gives more vertical room to the category grid on small phones.
 
   Widget _buildHeader(bool isProvider) {
-    final l10n = AppLocalizations.of(context);
+    final l10n         = AppLocalizations.of(context);
     final profileImage = (widget.userData['profileImage'] ?? '') as String;
+    final isAdmin      =
+        FirebaseAuth.instance.currentUser?.email == 'adawiavihai@gmail.com';
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 2),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 2),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // ── Left actions ───────────────────────────────────────────────
+          // ── Left: Bell · AI · Admin ────────────────────────────────────
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Online / Offline toggle for providers
-              if (isProvider)
+              _buildNotificationBell(),
+
+              const SizedBox(width: 8),
+
+              // AI Support Assistant
+              GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const HelpCenterScreen()),
+                ),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEEF2FF),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                        color: const Color(0xFF6366F1).withValues(alpha: 0.3)),
+                  ),
+                  child: const Icon(Icons.smart_toy_rounded,
+                      size: 18, color: Color(0xFF6366F1)),
+                ),
+              ),
+
+              // Admin: test-email shortcut
+              if (isAdmin) ...[
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: _sendTestEmail,
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF7ED),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: const Color(0xFFF97316).withValues(alpha: 0.4)),
+                    ),
+                    child: const Icon(Icons.mail_outline_rounded,
+                        size: 18, color: Color(0xFFF97316)),
+                  ),
+                ),
+              ],
+            ],
+          ),
+
+          // ── Right: Online toggle (providers) + Avatar ──────────────────
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Online / Offline toggle — only visible for providers
+              if (isProvider) ...[
                 GestureDetector(
                   onTap: () {
                     final newStatus = !_isOnline;
@@ -430,82 +469,10 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     ),
                   ),
                 ),
-
-              if (isProvider) const SizedBox(width: 8),
-
-              // ── Notifications bell with unread badge ──────────────────
-              _buildNotificationBell(),
-
-              const SizedBox(width: 6),
-
-              // ── AI Support Assistant ──────────────────────────────────
-              GestureDetector(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const HelpCenterScreen()),
-                ),
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEEF2FF),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                        color: const Color(0xFF6366F1).withValues(alpha: 0.3)),
-                  ),
-                  child: const Icon(Icons.smart_toy_rounded,
-                      size: 18, color: Color(0xFF6366F1)),
-                ),
-              ),
-
-              // ── Admin: test email button ───────────────────────────────
-              if (FirebaseAuth.instance.currentUser?.email ==
-                  'adawiavihai@gmail.com') ...[
-                const SizedBox(width: 6),
-                GestureDetector(
-                  onTap: _sendTestEmail,
-                  child: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFF7ED),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                          color: const Color(0xFFF97316).withValues(alpha: 0.4)),
-                    ),
-                    child: const Icon(Icons.mail_outline_rounded,
-                        size: 18, color: Color(0xFFF97316)),
-                  ),
-                ),
+                const SizedBox(width: 10),
               ],
-            ],
-          ),
 
-          // ── Right: greeting + avatar ───────────────────────────────────
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '${_greeting(context)}, $_firstName',
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1A1A2E),
-                    ),
-                  ),
-                  Text(
-                    isProvider ? l10n.homeProviderGreetingSub : l10n.homeCustomerGreetingSub,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF64748B),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 12),
+              // Profile avatar
               CircleAvatar(
                 radius: 22,
                 backgroundColor: const Color(0xFFEEF2FF),
@@ -514,9 +481,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     : null,
                 child: profileImage.isEmpty
                     ? Text(
-                        _firstName.isNotEmpty
-                            ? _firstName[0].toUpperCase()
-                            : '?',
+                        (widget.userData['name'] as String? ?? '?')
+                            .characters
+                            .firstOrNull
+                            ?.toUpperCase() ??
+                            '?',
                         style: const TextStyle(
                           color: Color(0xFF6366F1),
                           fontWeight: FontWeight.bold,

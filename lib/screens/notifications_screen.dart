@@ -14,6 +14,8 @@ class NotificationsScreen extends StatefulWidget {
 class _NotificationsScreenState extends State<NotificationsScreen> {
   final String _uid = FirebaseAuth.instance.currentUser?.uid ?? '';
 
+  bool _isClearing = false;   // prevents double-tap on "Clear All"
+
   late final Stream<QuerySnapshot> _stream;
 
   @override
@@ -52,6 +54,39 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         .update({'isRead': true});
   }
 
+  /// Permanently deletes every notification document for the current user.
+  /// The Firestore stream emits an empty list immediately, so the UI
+  /// transitions to the empty state without any manual setState call.
+  Future<void> _clearAll() async {
+    if (_uid.isEmpty || _isClearing) return;
+    setState(() => _isClearing = true);
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('notifications')
+          .where('userId', isEqualTo: _uid)
+          .limit(500)
+          .get();
+      if (snap.docs.isEmpty) return;
+      // Firestore batches are capped at 500 operations — the limit(500) above
+      // keeps us inside that ceiling for any realistic notification count.
+      final batch = FirebaseFirestore.instance.batch();
+      for (final doc in snap.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('שגיאה: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _isClearing = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -62,10 +97,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         foregroundColor: Colors.black,
         elevation: 0,
         actions: [
-          TextButton(
-            onPressed: _markAllRead,
-            child: Text(AppLocalizations.of(context).notifClearAll, style: const TextStyle(color: Colors.grey)),
-          ),
+          _isClearing
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  child: SizedBox(
+                      width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                )
+              : TextButton(
+                  onPressed: _clearAll,
+                  child: Text(AppLocalizations.of(context).notifClearAll,
+                      style: const TextStyle(
+                          color: Colors.red, fontWeight: FontWeight.w600)),
+                ),
         ],
       ),
       body: StreamBuilder<QuerySnapshot>(
