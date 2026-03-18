@@ -1104,7 +1104,7 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
           ..scaleByDouble(cardScale, cardScale, 1.0, 1.0),
         transformAlignment: Alignment.center,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),   // softer than before (14→16)
+          borderRadius: BorderRadius.circular(12),
           boxShadow: [
             // Primary shadow — lifts more on hover
             BoxShadow(
@@ -1124,7 +1124,7 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
           ],
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -1132,16 +1132,16 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
               CategoryImageBackground(
                   imageUrl: widget.imageUrl, imageScale: imageScale),
 
-              // ── Label block — identical to SubCategoryCard sizing ──────
+              // ── Label block ────────────────────────────────────────────
               Positioned(
-                bottom: 16,
-                left:   14,
-                right:  14,
+                bottom: 8,
+                left:   8,
+                right:  8,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Icon(widget.icon, color: Colors.white, size: 22),
-                    const SizedBox(height: 6),
+                    Icon(widget.icon, color: Colors.white, size: 15),
+                    const SizedBox(height: 3),
                     Text(
                       widget.name,
                       textAlign: TextAlign.right,
@@ -1149,21 +1149,21 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color:      Colors.white,
-                        fontSize:   16,
+                        fontSize:   12,
                         fontWeight: FontWeight.bold,
                         height:     1.2,
                       ),
                     ),
                     if (widget.hasSubs) ...[
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 2),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
                           const Icon(Icons.keyboard_arrow_left,
-                              color: Colors.white70, size: 13),
+                              color: Colors.white70, size: 11),
                           Text(AppLocalizations.of(context).subCategoryPrompt,
                               style: const TextStyle(
-                                  color: Colors.white70, fontSize: 11)),
+                                  color: Colors.white70, fontSize: 9)),
                         ],
                       ),
                     ],
