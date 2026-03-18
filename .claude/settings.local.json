@@ -123,7 +123,8 @@
       "Bash(find c:/Users/aviha/Desktop/anyskill_app -name index.js -o -name *function* -type f)",
       "Bash(find /c/Users/aviha/AppData/Local/Pub/Cache/hosted/ -name *.dart -path *youtube_player_iframe*)",
       "Bash(sed -n '220,230p' \"c:/Users/aviha/Desktop/anyskill_app/lib/screens/category_results_screen.dart\")",
-      "Bash(sed -n '268,278p' \"c:/Users/aviha/Desktop/anyskill_app/lib/screens/category_results_screen.dart\")"
+      "Bash(sed -n '268,278p' \"c:/Users/aviha/Desktop/anyskill_app/lib/screens/category_results_screen.dart\")",
+      "Bash(grep -v \"//.*Image\\\\.network\")"
     ]
   }
 }

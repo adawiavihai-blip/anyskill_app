@@ -15,19 +15,25 @@ class LiveActivityTab extends StatelessWidget {
 
   // ── Type → icon / color ───────────────────────────────────────────────────
   static const Map<String, IconData> _icons = {
-    'job_request':       Icons.bolt_rounded,
-    'job_accepted':      Icons.handshake_rounded,
-    'volunteer_request': Icons.volunteer_activism_rounded,
-    'registration':      Icons.person_add_alt_1_rounded,
-    'broadcast':         Icons.campaign_rounded,
+    'job_request':          Icons.bolt_rounded,
+    'job_accepted':         Icons.handshake_rounded,
+    'volunteer_request':    Icons.volunteer_activism_rounded,
+    'registration':         Icons.person_add_alt_1_rounded,
+    'broadcast':            Icons.campaign_rounded,
+    'demo_booking_attempt': Icons.local_fire_department_rounded,
+    'demo_contact':         Icons.smart_toy_rounded,
+    'bypass_attempt':       Icons.shield_rounded,
   };
 
   static const Map<String, Color> _colors = {
-    'job_request':       Color(0xFF6366F1),
-    'job_accepted':      Color(0xFF10B981),
-    'volunteer_request': Color(0xFFF59E0B),
-    'registration':      Color(0xFF3B82F6),
-    'broadcast':         Color(0xFFEC4899),
+    'job_request':          Color(0xFF6366F1),
+    'job_accepted':         Color(0xFF10B981),
+    'volunteer_request':    Color(0xFFF59E0B),
+    'registration':         Color(0xFF3B82F6),
+    'broadcast':            Color(0xFFEC4899),
+    'demo_booking_attempt': Color(0xFFEF4444),
+    'demo_contact':         Color(0xFF8B5CF6),
+    'bypass_attempt':       Color(0xFFF97316),
   };
 
   // ── Time-ago helper ───────────────────────────────────────────────────────
@@ -122,23 +128,39 @@ class LiveActivityTab extends StatelessWidget {
                 itemCount: docs.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemBuilder: (context, i) {
-                  final d = docs[i].data()! as Map<String, dynamic>;
-                  final type   = d['type'] as String? ?? '';
-                  final title  = d['title'] as String? ?? type;
-                  final detail = d['detail'] as String? ?? '';
-                  final ts     = d['createdAt'] as Timestamp?;
-                  final icon   = _icons[type] ?? Icons.circle_outlined;
-                  final color  = _colors[type] ?? Colors.grey;
+                  final d        = docs[i].data()! as Map<String, dynamic>;
+                  final type     = d['type']     as String? ?? '';
+                  final title    = d['title']    as String? ?? type;
+                  final detail   = d['detail']   as String? ?? '';
+                  final ts       = d['createdAt'] as Timestamp?;
+                  final priority = d['priority'] as String? ?? '';
+                  final icon     = _icons[type]  ?? Icons.circle_outlined;
+                  final color    = _colors[type] ?? Colors.grey;
+
+                  final isDemo     = type == 'demo_booking_attempt';
+                  final isBypass   = type == 'bypass_attempt';
+                  final isHighPrio = priority == 'high' || isDemo || isBypass;
 
                   return Container(
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: isDemo
+                          ? const Color(0xFFFFF1F2) // red tint for demo
+                          : isBypass
+                              ? const Color(0xFFFFF7ED) // orange tint for bypass
+                              : Colors.white,
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey.shade100),
+                      border: Border.all(
+                        color: isHighPrio
+                            ? color.withValues(alpha: 0.35)
+                            : Colors.grey.shade100,
+                        width: isHighPrio ? 1.5 : 1.0,
+                      ),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.03),
-                          blurRadius: 4,
+                          color: isHighPrio
+                              ? color.withValues(alpha: 0.08)
+                              : Colors.black.withValues(alpha: 0.03),
+                          blurRadius: isHighPrio ? 8 : 4,
                           offset: const Offset(0, 2),
                         ),
                       ],
@@ -165,23 +187,55 @@ class LiveActivityTab extends StatelessWidget {
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: color.withValues(alpha: 0.12),
+                            color: color.withValues(alpha: 0.15),
                             shape: BoxShape.circle,
                           ),
                           child: Icon(icon, color: color, size: 18),
                         ),
                         const SizedBox(width: 12),
-                        // Text
+                        // Text + badge
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text(
-                                title,
-                                textAlign: TextAlign.right,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 13),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  if (isDemo) ...[
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFEF4444),
+                                        borderRadius:
+                                            BorderRadius.circular(6),
+                                      ),
+                                      child: const Text(
+                                        'DEMO',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.bold,
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                  ],
+                                  Flexible(
+                                    child: Text(
+                                      title,
+                                      textAlign: TextAlign.right,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 13,
+                                        color: isHighPrio
+                                            ? color
+                                            : const Color(0xFF1E293B),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                               if (detail.isNotEmpty) ...[
                                 const SizedBox(height: 3),

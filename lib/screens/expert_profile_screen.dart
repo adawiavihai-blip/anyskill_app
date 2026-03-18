@@ -296,9 +296,13 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         'expertId':   widget.expertId,
         'expertName': widget.expertName,
         'userId':     uid,
-        'timestamp':  FieldValue.serverTimestamp(),
+        // 'createdAt' is the field the LiveActivityTab stream orders by.
+        // Using 'timestamp' here would silently exclude this doc from results.
+        'createdAt':  FieldValue.serverTimestamp(),
         'priority':   'high',
-        'message':    'משתמש ניסה להזמין מומחה דמו: ${widget.expertName}',
+        // 'title' and 'detail' are the fields the live feed card reads.
+        'title':      '🔥 ביקשה הזמנה ממומחה דמו',
+        'detail':     '${widget.expertName} — לחץ להמרה למומחה אמיתי',
       });
     } catch (_) {
       // Non-blocking — if logging fails the UX is unaffected
