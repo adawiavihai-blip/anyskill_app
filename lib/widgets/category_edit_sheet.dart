@@ -1,9 +1,11 @@
 // ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import '../services/category_service.dart';
+import '../services/settings_service.dart';
 
 /// Admin-only bottom sheet for editing a category document.
 ///
@@ -15,10 +17,12 @@ import '../services/category_service.dart';
 /// Invisible to regular users — callers are responsible for only mounting
 /// this when the authenticated user's email is the admin email.
 class CategoryEditSheet extends StatefulWidget {
-  final String docId;
-  final String initialName;
-  final String initialIconName;
-  final String initialImageUrl;
+  final String  docId;
+  final String  initialName;
+  final String  initialIconName;
+  final String  initialImageUrl;
+  /// Per-category card scale override. null = use global setting (shows 1.0 as default).
+  final double? initialCardScale;
 
   const CategoryEditSheet({
     super.key,
@@ -26,6 +30,7 @@ class CategoryEditSheet extends StatefulWidget {
     required this.initialName,
     required this.initialIconName,
     required this.initialImageUrl,
+    this.initialCardScale,
   });
 
   @override
@@ -39,6 +44,7 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
   bool         _isUploading = false;
   bool         _isSaving    = false;
   bool         _isDeleting  = false;
+  late double  _cardScale;        // per-category size override
 
   @override
   void initState() {
@@ -47,6 +53,7 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
     _selectedIconName = widget.initialIconName.isNotEmpty
         ? widget.initialIconName
         : 'work_outline';
+    _cardScale = widget.initialCardScale ?? 1.0;
   }
 
   @override
@@ -103,8 +110,9 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
     setState(() => _isSaving = true);
     try {
       await CategoryService.updateCategory(widget.docId, {
-        'name':     name,
-        'iconName': _selectedIconName,
+        'name':      name,
+        'iconName':  _selectedIconName,
+        'cardScale': _cardScale,
         if (_newImageUrl != null) 'img': _newImageUrl,
       });
       nav.pop();
@@ -455,6 +463,57 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
                   );
                 }).toList(),
               ),
+            ),
+            const SizedBox(height: 20),
+
+            // ── Per-category card scale override ──────────────────────────
+            _label('גודל כרטיס (עקיפת גלובל)'),
+            const SizedBox(height: 4),
+            StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              stream: SettingsService.stream,
+              builder: (context, settingsSnap) {
+                final globalScale = SettingsService.cardScaleFrom(settingsSnap.data);
+                final isDefault   = (_cardScale - 1.0).abs() < 0.01;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          isDefault ? 'גלובל (${globalScale.toStringAsFixed(2)}x)' : '${_cardScale.toStringAsFixed(2)}x',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: isDefault ? Colors.grey : const Color(0xFF6366F1),
+                          ),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            value: _cardScale,
+                            min: 0.6,
+                            max: 1.5,
+                            divisions: 18,
+                            activeColor: const Color(0xFF6366F1),
+                            inactiveColor: const Color(0xFF6366F1).withValues(alpha: 0.15),
+                            onChanged: (v) => setState(() => _cardScale = v),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (!isDefault)
+                      GestureDetector(
+                        onTap: () => setState(() => _cardScale = 1.0),
+                        child: Text(
+                          'אפס לגלובל',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey[500],
+                              decoration: TextDecoration.underline),
+                        ),
+                      ),
+                  ],
+                );
+              },
             ),
           ],
         ),

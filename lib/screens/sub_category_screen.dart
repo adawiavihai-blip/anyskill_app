@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shimmer/shimmer.dart';
 import '../services/category_service.dart';
+import '../services/settings_service.dart';
 import '../widgets/category_image_card.dart';
 import '../widgets/category_edit_sheet.dart';
 import 'category_results_screen.dart';
@@ -82,58 +84,73 @@ class SubCategoryScreen extends StatelessWidget {
             );
           }
 
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  "בחר התמחות ספציפית",
-                  style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                ),
-                const SizedBox(height: 16),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final w = constraints.maxWidth;
-                      final cols = w >= 900 ? 4 : w >= 600 ? 3 : 2;
-                      final ratio = w >= 900 ? 1.0 : w >= 600 ? 0.90 : 0.85;
-                      return GridView.builder(
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: cols,
-                          crossAxisSpacing: 14,
-                          mainAxisSpacing: 14,
-                          childAspectRatio: ratio,
-                        ),
-                        itemCount: subs.length,
-                        itemBuilder: (context, index) {
-                          final sub = subs[index];
-                          final name     = sub['name']     as String? ?? '';
-                          final imageUrl = sub['img']      as String? ?? '';
-                          final iconName = sub['iconName'] as String? ?? '';
-                          final icon     = CategoryService.getIcon(iconName);
+          return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream: SettingsService.stream,
+            builder: (context, settingsSnap) {
+              final globalScale = SettingsService.cardScaleFrom(settingsSnap.data);
 
-                          return _SubCategoryCard(
-                            docId:    sub['id'] as String? ?? '',
-                            name:     name,
-                            iconName: iconName,
-                            imageUrl: imageUrl,
-                            icon:     icon,
-                            isAdmin:  isAdmin,
-                            onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => CategoryResultsScreen(categoryName: name),
-                              ),
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      "בחר התמחות ספציפית",
+                      style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                    ),
+                    const SizedBox(height: 16),
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final w         = constraints.maxWidth;
+                          final cols      = w >= 900 ? 4 : w >= 600 ? 3 : 2;
+                          final baseRatio = w >= 900 ? 1.0 : w >= 600 ? 0.90 : 0.85;
+                          final adjustedRatio =
+                              (baseRatio / globalScale).clamp(0.35, 2.0);
+
+                          return GridView.builder(
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount:   cols,
+                              crossAxisSpacing: 14,
+                              mainAxisSpacing:  14,
+                              childAspectRatio: adjustedRatio,
                             ),
+                            itemCount: subs.length,
+                            itemBuilder: (context, index) {
+                              final sub          = subs[index];
+                              final name         = sub['name']      as String? ?? '';
+                              final imageUrl     = sub['img']       as String? ?? '';
+                              final iconName     = sub['iconName']  as String? ?? '';
+                              final icon         = CategoryService.getIcon(iconName);
+                              final perCardScale =
+                                  (sub['cardScale'] as num? ?? 1.0).toDouble();
+
+                              return _SubCategoryCard(
+                                docId:        sub['id'] as String? ?? '',
+                                name:         name,
+                                iconName:     iconName,
+                                imageUrl:     imageUrl,
+                                icon:         icon,
+                                isAdmin:      isAdmin,
+                                perCardScale: perCardScale,
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        CategoryResultsScreen(categoryName: name),
+                                  ),
+                                ),
+                              );
+                            },
                           );
                         },
-                      );
-                    },
-                  ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              );
+            },
           );
         },
       ),
@@ -148,6 +165,7 @@ class _SubCategoryCard extends StatefulWidget {
   final String      imageUrl;
   final IconData    icon;
   final bool        isAdmin;
+  final double      perCardScale; // visual zoom within fixed grid cell
   final VoidCallback onTap;
 
   const _SubCategoryCard({
@@ -157,7 +175,8 @@ class _SubCategoryCard extends StatefulWidget {
     required this.imageUrl,
     required this.icon,
     required this.onTap,
-    this.isAdmin = false,
+    this.isAdmin      = false,
+    this.perCardScale = 1.0,
   });
 
   @override
@@ -176,10 +195,11 @@ class _SubCategoryCardState extends State<_SubCategoryCard> {
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (_) => CategoryEditSheet(
-        docId:           widget.docId,
-        initialName:     widget.name,
-        initialIconName: widget.iconName,
-        initialImageUrl: widget.imageUrl,
+        docId:            widget.docId,
+        initialName:      widget.name,
+        initialIconName:  widget.iconName,
+        initialImageUrl:  widget.imageUrl,
+        initialCardScale: widget.perCardScale,
       ),
     );
   }
@@ -189,7 +209,9 @@ class _SubCategoryCardState extends State<_SubCategoryCard> {
     final double cardScale  = _pressed ? 0.97 : 1.0;
     final double imageScale = _hovered ? 1.06 : (_pressed ? 1.02 : 1.0);
 
-    return MouseRegion(
+    return Transform.scale(
+      scale: widget.perCardScale,
+      child: MouseRegion(
       cursor:  SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit:  (_) => setState(() => _hovered = false),
@@ -283,7 +305,8 @@ class _SubCategoryCardState extends State<_SubCategoryCard> {
         ),       // closes inner ClipRRect
       ),         // closes AnimatedContainer
       ),         // closes GestureDetector
-    );           // closes MouseRegion
+      ),         // closes MouseRegion (child of Transform.scale)
+    );           // closes Transform.scale
   }
 }
 

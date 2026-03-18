@@ -15,6 +15,7 @@ import 'search_screen/search_page.dart';
 import 'search_screen/widgets/stories_row.dart';
 import '../widgets/skeleton_loader.dart';
 import '../widgets/category_edit_sheet.dart';
+import '../services/settings_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 // ─── Public entry point ───────────────────────────────────────────────────────
@@ -50,9 +51,10 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   late final AnimationController _pulseCtrl;
 
   // ── Firestore streams ─────────────────────────────────────────────────────
-  late final Stream<QuerySnapshot> _categoriesStream;
-  late final Stream<QuerySnapshot> _urgentStream;
-  late final Stream<QuerySnapshot> _notificationsStream;
+  late final Stream<QuerySnapshot>                          _categoriesStream;
+  late final Stream<QuerySnapshot>                          _urgentStream;
+  late final Stream<QuerySnapshot>                          _notificationsStream;
+  late final Stream<DocumentSnapshot<Map<String, dynamic>>> _settingsStream;
 
   // ── Avatar press feedback ─────────────────────────────────────────────────
   bool _avatarTapped = false;
@@ -131,6 +133,9 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             .where('isRead', isEqualTo: false)
             .limit(20)
             .snapshots();
+
+    // Global card-size settings stream
+    _settingsStream = SettingsService.stream;
 
     // Back-fill missing category images once per app session
     VisualFetcherService.backfillAll();
@@ -378,62 +383,82 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     ),
                   ),
 
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
-                    sliver: SliverGrid(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) {
-                          final doc      = mainDocs[index];
-                          final data     = doc.data() as Map<String, dynamic>;
-                          final name     = data['name']     as String? ?? '';
-                          final imageUrl = data['img']      as String? ?? '';
-                          final iconName = data['iconName'] as String? ?? '';
-                          final icon     = CategoryService.getIcon(iconName);
-                          final hasSubs  = catIdsWithSubs.contains(doc.id);
-                          final isTrend  = trendingIds.contains(doc.id);
+                  // ── Responsive category grid — driven by global card scale ──
+                  StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                    stream: _settingsStream,
+                    builder: (context, settingsSnap) {
+                      final globalScale =
+                          SettingsService.cardScaleFrom(settingsSnap.data);
+                      final w    = MediaQuery.sizeOf(context).width;
+                      final cols = w >= 900 ? 4 : w >= 600 ? 3 : 2;
+                      // Base aspect ratio matches SubCategoryScreen exactly
+                      final baseRatio  = w >= 900 ? 1.0 : w >= 600 ? 0.90 : 0.85;
+                      // Scale UP → cards taller → ratio LOWER (width/height)
+                      final adjustedRatio =
+                          (baseRatio / globalScale).clamp(0.35, 2.0);
 
-                          return _HomeCategoryCard(
-                            docId:      doc.id,
-                            name:       name,
-                            iconName:   iconName,
-                            imageUrl:   imageUrl,
-                            icon:       icon,
-                            hasSubs:    hasSubs,
-                            isTrending: isTrend,
-                            isAdmin:    isAdmin,
-                            onTap: () {
-                              if (hasSubs) {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => SubCategoryScreen(
-                                      parentId:   doc.id,
-                                      parentName: name,
-                                    ),
-                                  ),
-                                );
-                              } else {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        CategoryResultsScreen(categoryName: name),
-                                  ),
-                                );
-                              }
+                      return SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+                        sliver: SliverGrid(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, index) {
+                              final doc      = mainDocs[index];
+                              final data     = doc.data() as Map<String, dynamic>;
+                              final name     = data['name']      as String? ?? '';
+                              final imageUrl = data['img']       as String? ?? '';
+                              final iconName = data['iconName']  as String? ?? '';
+                              final icon     = CategoryService.getIcon(iconName);
+                              final hasSubs  = catIdsWithSubs.contains(doc.id);
+                              final isTrend  = trendingIds.contains(doc.id);
+                              // Per-card scale — visual zoom within fixed grid cell
+                              final perCardScale =
+                                  (data['cardScale'] as num? ?? 1.0).toDouble();
+
+                              return _HomeCategoryCard(
+                                docId:        doc.id,
+                                name:         name,
+                                iconName:     iconName,
+                                imageUrl:     imageUrl,
+                                icon:         icon,
+                                hasSubs:      hasSubs,
+                                isTrending:   isTrend,
+                                isAdmin:      isAdmin,
+                                perCardScale: perCardScale,
+                                onTap: () {
+                                  if (hasSubs) {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => SubCategoryScreen(
+                                          parentId:   doc.id,
+                                          parentName: name,
+                                        ),
+                                      ),
+                                    );
+                                  } else {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => CategoryResultsScreen(
+                                            categoryName: name),
+                                      ),
+                                    );
+                                  }
+                                },
+                              );
                             },
-                          );
-                        },
-                        childCount: mainDocs.length,
-                      ),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount:   4,
-                        crossAxisSpacing: 6,
-                        mainAxisSpacing:  6,
-                        childAspectRatio: 0.82,
-                      ),
-                    ),
+                            childCount: mainDocs.length,
+                          ),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount:   cols,
+                            crossAxisSpacing: 10,
+                            mainAxisSpacing:  10,
+                            childAspectRatio: adjustedRatio,
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ], // end else [...] community + grid
 
@@ -857,14 +882,15 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 // Admin edit is intentionally omitted; editing lives in the Search tab.
 
 class _HomeCategoryCard extends StatefulWidget {
-  final String      docId;      // Firestore document ID — needed by edit sheet
+  final String      docId;        // Firestore document ID — needed by edit sheet
   final String      name;
-  final String      iconName;   // Raw icon key — needed by edit sheet
+  final String      iconName;     // Raw icon key — needed by edit sheet
   final String      imageUrl;
   final IconData    icon;
   final bool        hasSubs;
   final bool        isTrending;
-  final bool        isAdmin;    // When true the edit pencil overlay is shown
+  final bool        isAdmin;      // When true the edit pencil overlay is shown
+  final double      perCardScale; // Visual zoom within fixed grid cell (default 1.0)
   final VoidCallback onTap;
 
   const _HomeCategoryCard({
@@ -874,9 +900,10 @@ class _HomeCategoryCard extends StatefulWidget {
     required this.imageUrl,
     required this.icon,
     required this.onTap,
-    this.hasSubs    = false,
-    this.isTrending = false,
-    this.isAdmin    = false,
+    this.hasSubs      = false,
+    this.isTrending   = false,
+    this.isAdmin      = false,
+    this.perCardScale = 1.0,
   });
 
   @override
@@ -895,10 +922,11 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (_) => CategoryEditSheet(
-        docId:            widget.docId,
-        initialName:      widget.name,
-        initialIconName:  widget.iconName,
-        initialImageUrl:  widget.imageUrl,
+        docId:             widget.docId,
+        initialName:       widget.name,
+        initialIconName:   widget.iconName,
+        initialImageUrl:   widget.imageUrl,
+        initialCardScale:  widget.perCardScale,
       ),
     );
   }
@@ -911,7 +939,9 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
     // Image zoom: hover → 1.06 (desktop preview),  press → slight warm-up.
     final double imageScale = _hovered ? 1.06 : (_pressed ? 1.02 : 1.0);
 
-    return MouseRegion(
+    return Transform.scale(
+      scale: widget.perCardScale,
+      child: MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit:  (_) => setState(() => _hovered = false),
@@ -960,16 +990,16 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
               CategoryImageBackground(
                   imageUrl: widget.imageUrl, imageScale: imageScale),
 
-              // ── Label block — bottom of card ───────────────────────────
+              // ── Label block — identical to SubCategoryCard sizing ──────
               Positioned(
-                bottom: 5,
-                left:   5,
-                right:  5,
+                bottom: 16,
+                left:   14,
+                right:  14,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Icon(widget.icon, color: Colors.white, size: 11),
-                    const SizedBox(height: 2),
+                    Icon(widget.icon, color: Colors.white, size: 22),
+                    const SizedBox(height: 6),
                     Text(
                       widget.name,
                       textAlign: TextAlign.right,
@@ -977,21 +1007,21 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color:      Colors.white,
-                        fontSize:   10,
+                        fontSize:   16,
                         fontWeight: FontWeight.bold,
                         height:     1.2,
                       ),
                     ),
                     if (widget.hasSubs) ...[
-                      const SizedBox(height: 1),
+                      const SizedBox(height: 4),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
                           const Icon(Icons.keyboard_arrow_left,
-                              color: Colors.white70, size: 9),
+                              color: Colors.white70, size: 13),
                           Text(AppLocalizations.of(context).subCategoryPrompt,
                               style: const TextStyle(
-                                  color: Colors.white70, fontSize: 8)),
+                                  color: Colors.white70, fontSize: 11)),
                         ],
                       ),
                     ],
@@ -1002,11 +1032,11 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
               // ── 🔥 Trending badge — top-left ───────────────────────────
               if (widget.isTrending)
                 Positioned(
-                  top:  4,
-                  left: 4,
+                  top:  10,
+                  left: 10,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 4, vertical: 2),
+                        horizontal: 6, vertical: 3),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
                         colors: [Color(0xFFFF6B35), Color(0xFFE8134E)],
@@ -1015,7 +1045,7 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
                       ),
                       borderRadius: BorderRadius.circular(20),
                     ),
-                    child: const Text('🔥', style: TextStyle(fontSize: 9)),
+                    child: const Text('🔥', style: TextStyle(fontSize: 11)),
                   ),
                 ),
 
@@ -1025,13 +1055,13 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
               // outer card GestureDetector, so the card does NOT navigate.
               if (widget.isAdmin)
                 Positioned(
-                  top:   4,
-                  right: 4,
+                  top:   10,
+                  right: 10,
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: _openEditSheet,
                     child: Container(
-                      padding: const EdgeInsets.all(5),
+                      padding: const EdgeInsets.all(7),
                       decoration: BoxDecoration(
                         color:  Colors.black.withValues(alpha: 0.55),
                         shape:  BoxShape.circle,
@@ -1039,7 +1069,7 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
                             color: Colors.white.withValues(alpha: 0.30)),
                       ),
                       child: const Icon(Icons.edit_rounded,
-                          size: 11, color: Colors.white),
+                          size: 14, color: Colors.white),
                     ),
                   ),
                 ),
@@ -1048,6 +1078,7 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
         ),
       ),    // close AnimatedContainer
       ),    // close GestureDetector (child: of MouseRegion)
-    );      // close MouseRegion + return
+      ),    // close MouseRegion (child: of Transform.scale)
+    );      // close Transform.scale + return
   }
 }

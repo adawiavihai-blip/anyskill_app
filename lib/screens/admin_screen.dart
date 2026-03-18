@@ -1187,6 +1187,119 @@ class _AdminScreenState extends State<AdminScreen> {
 
         return Column(
           children: [
+            // ── Global card scale slider ────────────────────────────────────
+            StreamBuilder<DocumentSnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('system_settings')
+                  .doc('global')
+                  .snapshots(),
+              builder: (context, settingsSnap) {
+                final settingsData =
+                    (settingsSnap.data?.data() as Map<String, dynamic>?) ?? {};
+                final currentScale =
+                    (settingsData['categoryCardScale'] as num? ?? 1.0).toDouble();
+
+                return Container(
+                  margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                  decoration: BoxDecoration(
+                    color:        Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                        color: const Color(0xFF6366F1).withValues(alpha: 0.2)),
+                    boxShadow: [
+                      BoxShadow(
+                        color:      Colors.black.withValues(alpha: 0.04),
+                        blurRadius: 8,
+                        offset:     const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.aspect_ratio_rounded,
+                              color: Color(0xFF6366F1), size: 18),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              'גודל כרטיסי קטגוריה — גלובלי',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 14),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF6366F1)
+                                  .withValues(alpha: 0.10),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '${currentScale.toStringAsFixed(2)}×',
+                              style: const TextStyle(
+                                  color: Color(0xFF6366F1),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Slider(
+                        value:       currentScale,
+                        min:         0.6,
+                        max:         1.5,
+                        divisions:   18,
+                        activeColor: const Color(0xFF6366F1),
+                        inactiveColor:
+                            const Color(0xFF6366F1).withValues(alpha: 0.15),
+                        // onChanged is required by Flutter; visual feedback only —
+                        // the StreamBuilder will re-render when Firestore updates.
+                        onChanged:   (_) {},
+                        onChangeEnd: (v) {
+                          FirebaseFirestore.instance
+                              .collection('system_settings')
+                              .doc('global')
+                              .set({'categoryCardScale': v},
+                                  SetOptions(merge: true));
+                        },
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('0.6×',
+                              style: TextStyle(
+                                  color: Colors.grey[500], fontSize: 11)),
+                          TextButton(
+                            style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: Size.zero),
+                            onPressed: (currentScale - 1.0).abs() < 0.01
+                                ? null
+                                : () {
+                                    FirebaseFirestore.instance
+                                        .collection('system_settings')
+                                        .doc('global')
+                                        .set({'categoryCardScale': 1.0},
+                                            SetOptions(merge: true));
+                                  },
+                            child: const Text('איפוס לברירת מחדל (1.0×)',
+                                style: TextStyle(fontSize: 11)),
+                          ),
+                          Text('1.5×',
+                              style: TextStyle(
+                                  color: Colors.grey[500], fontSize: 11)),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: ElevatedButton.icon(
