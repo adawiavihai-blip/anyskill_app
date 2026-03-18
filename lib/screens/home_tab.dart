@@ -285,21 +285,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   child: StoriesRow(isProvider: isProvider),
                 ),
 
-                // ── "Discover categories" section title ────────────────────
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 6),
-                    child: Text(
-                      AppLocalizations.of(context).discoverCategories,
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF1A1A2E),
-                      ),
-                    ),
-                  ),
-                ),
 
                 // ── Loading shimmer ────────────────────────────────────────
                 if (catSnap.connectionState == ConnectionState.waiting)
@@ -324,7 +309,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   // ── AnySkill Community banner ──────────────────────────
                   SliverToBoxAdapter(
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+                      padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
                       child: GestureDetector(
                         onTap: () => Navigator.push(
                           context,
@@ -336,29 +321,29 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                           ),
                         ),
                         child: Container(
-                          height: 80,
+                          height: 60, // was 80 — 25% reduction
                           decoration: BoxDecoration(
                             gradient: const LinearGradient(
                               colors: [Color(0xFF10B981), Color(0xFFF59E0B)],
                               begin: Alignment.centerRight,
                               end: Alignment.centerLeft,
                             ),
-                            borderRadius: BorderRadius.circular(16),
+                            borderRadius: BorderRadius.circular(14),
                             boxShadow: [
                               BoxShadow(
                                 color: const Color(0xFF10B981)
-                                    .withValues(alpha: 0.3),
-                                blurRadius: 12,
-                                offset: const Offset(0, 4),
+                                    .withValues(alpha: 0.25),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
                               ),
                             ],
                           ),
                           child: Row(
                             children: [
-                              const SizedBox(width: 16),
-                              const Icon(Icons.volunteer_activism,
-                                  color: Colors.white, size: 32),
                               const SizedBox(width: 12),
+                              const Icon(Icons.volunteer_activism,
+                                  color: Colors.white, size: 24), // was 32
+                              const SizedBox(width: 10),
                               Expanded(
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
@@ -368,24 +353,23 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                                       'AnySkill למען הקהילה',
                                       style: TextStyle(
                                         color: Colors.white,
-                                        fontSize: 16,
+                                        fontSize: 14, // was 16
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
-                                    const SizedBox(height: 2),
                                     Text(
                                       'מומחים שמתנדבים מרצונם – ללא עלות',
                                       style: TextStyle(
                                         color: Colors.white
                                             .withValues(alpha: 0.88),
-                                        fontSize: 12,
+                                        fontSize: 11, // was 12
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
                               const Icon(Icons.chevron_left,
-                                  color: Colors.white),
+                                  color: Colors.white, size: 18),
                               const SizedBox(width: 8),
                             ],
                           ),
@@ -476,7 +460,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
         FirebaseAuth.instance.currentUser?.email == 'adawiavihai@gmail.com';
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 2),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -732,7 +716,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
   Widget _buildSearchBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
       child: GestureDetector(
         onTap: _openSearch,
         child: Container(
