@@ -756,7 +756,10 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
-        title: Text(l10n.catResultsPageTitle(widget.categoryName),
+        title: Text(
+            widget.volunteerOnly
+                ? 'AnySkill למען הקהילה ❤️'
+                : l10n.catResultsPageTitle(widget.categoryName),
             style: const TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true,
         backgroundColor: Colors.white,
@@ -766,7 +769,19 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       body: Column(
         children: [
           _buildSearchAndFilter(),
-          Expanded(child: _buildList()),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: () async {
+                setState(() {
+                  _refreshTrigger++;
+                  _expertsFuture = _fetchExperts();
+                });
+              },
+              color: _kPurple,
+              strokeWidth: 2.5,
+              child: _buildList(),
+            ),
+          ),
         ],
       ),
     );

@@ -30,13 +30,42 @@ class CategoryService {
       iconMap[iconName] ?? Icons.work_outline;
 
   static Stream<List<Map<String, dynamic>>> stream() =>
+      // NO orderBy on the Firestore query — Firestore silently excludes docs
+      // that don't have the sorted field, causing Console-added categories to
+      // disappear.  We fetch all docs and sort client-side.
       FirebaseFirestore.instance
           .collection('categories')
-          .orderBy('order')
           .snapshots()
-          .map((snap) => snap.docs
-              .map((d) => {'id': d.id, ...d.data()})
-              .toList());
+          .map((snap) {
+            final cats = snap.docs
+                .map((d) => {'id': d.id, ...d.data()})
+                .toList();
+            // Sort order (all client-side, all fields optional):
+            //   1. clickCount DESC — most popular first
+            //   2. order    ASC  — admin-defined order as tiebreaker
+            //   3. name     ASC  — alphabetical as final tiebreaker
+            cats.sort((a, b) {
+              final cA = (a['clickCount'] as num? ?? 0).toInt();
+              final cB = (b['clickCount'] as num? ?? 0).toInt();
+              if (cA != cB) return cB.compareTo(cA); // DESC
+              final oA = (a['order'] as num? ?? 999).toInt();
+              final oB = (b['order'] as num? ?? 999).toInt();
+              if (oA != oB) return oA.compareTo(oB);
+              return (a['name'] as String? ?? '')
+                  .compareTo(b['name'] as String? ?? '');
+            });
+            return cats;
+          });
+
+  /// Atomically increments the click counter for a category document.
+  /// Uses FieldValue.increment so concurrent taps from multiple users
+  /// never overwrite each other.
+  static Future<void> incrementClickCount(String docId) =>
+      FirebaseFirestore.instance
+          .collection('categories')
+          .doc(docId)
+          .update({'clickCount': FieldValue.increment(1)})
+          .catchError((_) {}); // best-effort — never crash the UI on tap
 
   /// Only top-level categories (parentId absent or empty string)
   static Stream<List<Map<String, dynamic>>> streamMainCategories() =>

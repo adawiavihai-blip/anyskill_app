@@ -91,10 +91,12 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       duration: const Duration(milliseconds: 1100),
     );
 
-    // Category grid — top-level categories ordered by admin-defined order
+    // Category grid — NO orderBy on the query (see CategoryService.stream()
+    // comment for why).  Docs are sorted client-side in build() so that
+    // categories added via Firebase Console without an 'order' field are
+    // always visible instead of silently excluded.
     _categoriesStream = FirebaseFirestore.instance
         .collection('categories')
-        .orderBy('order')
         .limit(50)
         .snapshots();
 
@@ -166,6 +168,19 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     );
   }
 
+  // ── Pull-to-refresh ────────────────────────────────────────────────────────
+
+  Future<void> _handleRefresh() async {
+    // The category stream is already real-time — no re-subscription needed.
+    // What refresh does:
+    //   1. Evict Flutter's in-memory image cache so updated images at the
+    //      same URL are re-fetched from CachedNetworkImage's disk cache.
+    //   2. Force a rebuild so the UI reflects the latest stream data.
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+    if (mounted) setState(() {});
+  }
+
   // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
@@ -188,7 +203,16 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             final mainDocs = allDocs
                 .where((d) =>
                     ((d.data() as Map)['parentId'] as String? ?? '').isEmpty)
-                .toList();
+                .toList()
+              // Client-side sort: same logic as CategoryService.stream() so
+              // both code paths always agree on display order.
+              ..sort((a, b) {
+                final oA = ((a.data() as Map)['order'] as num? ?? 999).toInt();
+                final oB = ((b.data() as Map)['order'] as num? ?? 999).toInt();
+                if (oA != oB) return oA.compareTo(oB);
+                return (((a.data() as Map)['name'] as String?) ?? '')
+                    .compareTo(((b.data() as Map)['name'] as String?) ?? '');
+              });
 
             final catIdsWithSubs = allDocs
                 .where((d) =>
@@ -209,7 +233,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                 .map((d) => d.id)
                 .toSet();
 
-            return CustomScrollView(
+            return RefreshIndicator(
+              onRefresh:   _handleRefresh,
+              color:       const Color(0xFF6366F1),
+              strokeWidth: 2.5,
+              child: CustomScrollView(
               slivers: [
                 // ── Greeting header ────────────────────────────────────────
                 SliverToBoxAdapter(
@@ -421,7 +449,8 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                 // ── Bottom padding (clear the FAB) ─────────────────────────
                 const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
               ],
-            );
+            ), // CustomScrollView
+            ); // RefreshIndicator
           },
         ),
       ),
