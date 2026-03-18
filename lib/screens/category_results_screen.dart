@@ -4,10 +4,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'expert_profile_screen.dart';
 import '../utils/expert_filter.dart';
 import '../services/location_service.dart';
 import '../services/search_ranking_service.dart';
+import '../services/category_service.dart';
 import '../widgets/level_badge.dart';
 import '../constants/quick_tags.dart';
 import '../l10n/app_localizations.dart';
@@ -766,8 +769,12 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
         foregroundColor: Colors.black,
         elevation: 0.5,
       ),
+      floatingActionButton: widget.volunteerOnly
+          ? _WhatsAppSosButton()
+          : null,
       body: Column(
         children: [
+          if (widget.volunteerOnly) _buildVolunteerHeader(),
           _buildSearchAndFilter(),
           Expanded(
             child: RefreshIndicator(
@@ -784,6 +791,96 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // ── Volunteer Hub Header ──────────────────────────────────────────────────
+
+  static const String _kCoordinatorPhone = '972501234567'; // ← replace with real number
+
+  Widget _buildVolunteerHeader() {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF064E3B), Color(0xFF065F46)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ── Tag line ──────────────────────────────────────────────────────
+          const Text(
+            'שירות קהילתי ללא עלות — 100% חינם ❤️',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                color: Color(0xFF6EE7B7),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3),
+          ),
+          const SizedBox(height: 14),
+
+          // ── Two CTA buttons ───────────────────────────────────────────────
+          Row(
+            children: [
+              // Button A — I need help
+              Expanded(
+                child: _CommunityActionButton(
+                  label: 'אני צריך עזרה',
+                  icon: Icons.volunteer_activism_rounded,
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF10B981), Color(0xFF059669)],
+                  ),
+                  onTap: () => _showHelpRequestSheet(forOther: false),
+                ),
+              ),
+              const SizedBox(width: 10),
+              // Button B — Help someone else
+              Expanded(
+                child: _CommunityActionButton(
+                  label: 'עזרה עבור מישהו אחר',
+                  icon: Icons.people_alt_rounded,
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
+                  ),
+                  onTap: () => _showHelpRequestSheet(forOther: true),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // ── Community rules ───────────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Text(
+              'AnySkill מחבר אתכם עם מומחים בעלי לב טוב. '
+              'אנא כבדו את זמנם והשתמשו בשירות לצרכים אמיתיים בלבד.',
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                  color: Color(0xFFD1FAE5), fontSize: 11, height: 1.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Help request bottom sheet ─────────────────────────────────────────────
+
+  void _showHelpRequestSheet({required bool forOther}) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _HelpRequestSheet(forOther: forOther),
     );
   }
 
@@ -1005,6 +1102,473 @@ class _ImageShimmer extends StatelessWidget {
       baseColor:      const Color(0xFFE2E8F0),
       highlightColor: const Color(0xFFF8FAFC),
       child: Container(color: const Color(0xFFE2E8F0)),
+    );
+  }
+}
+
+// ── Community action button ───────────────────────────────────────────────────
+class _CommunityActionButton extends StatelessWidget {
+  const _CommunityActionButton({
+    required this.label,
+    required this.icon,
+    required this.gradient,
+    required this.onTap,
+  });
+  final String       label;
+  final IconData     icon;
+  final LinearGradient gradient;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          gradient: gradient,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: gradient.colors.first.withValues(alpha: 0.35),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white, size: 26),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── WhatsApp SOS FAB ──────────────────────────────────────────────────────────
+class _WhatsAppSosButton extends StatelessWidget {
+  static const _phone = _CategoryResultsScreenState._kCoordinatorPhone;
+
+  @override
+  Widget build(BuildContext context) {
+    return FloatingActionButton.extended(
+      backgroundColor: const Color(0xFF25D366),
+      elevation: 6,
+      icon: const Icon(Icons.chat_rounded, color: Colors.white),
+      label: const Text(
+        'דברו עם רכז קהילה',
+        style: TextStyle(
+            color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+      ),
+      onPressed: () async {
+        const msg = 'שלום, אני צריך עזרה בפרסום בקשת התנדבות ב-AnySkill';
+        final uri = Uri.parse('https://wa.me/$_phone?text=${Uri.encodeComponent(msg)}');
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
+      },
+    );
+  }
+}
+
+// ── Help request form sheet ───────────────────────────────────────────────────
+class _HelpRequestSheet extends StatefulWidget {
+  const _HelpRequestSheet({required this.forOther});
+  final bool forOther;
+
+  @override
+  State<_HelpRequestSheet> createState() => _HelpRequestSheetState();
+}
+
+class _HelpRequestSheetState extends State<_HelpRequestSheet> {
+  final _descCtrl        = TextEditingController();
+  final _locationCtrl    = TextEditingController();
+  final _phoneCtrl       = TextEditingController();
+  final _beneficiaryCtrl = TextEditingController();
+
+  String? _selectedCategory;
+  bool    _iAmContact  = true;
+  bool    _submitting  = false;
+
+  List<Map<String, dynamic>> _mainCategories = [];
+
+  @override
+  void initState() {
+    super.initState();
+    // Load category list once for the picker
+    CategoryService.streamMainCategories().first.then((cats) {
+      if (mounted) setState(() => _mainCategories = cats);
+    });
+  }
+
+  @override
+  void dispose() {
+    _descCtrl.dispose();
+    _locationCtrl.dispose();
+    _phoneCtrl.dispose();
+    _beneficiaryCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_selectedCategory == null ||
+        _descCtrl.text.trim().isEmpty ||
+        _phoneCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('נא למלא קטגוריה, תיאור ומספר טלפון'),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _submitting = true);
+    final nav       = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
+    try {
+      final uid      = FirebaseAuth.instance.currentUser?.uid ?? '';
+      final category = _selectedCategory!;
+      final db       = FirebaseFirestore.instance;
+
+      // 1. Save the volunteer request
+      await db.collection('volunteer_requests').add({
+        'requesterId':     uid,
+        'forOther':        widget.forOther,
+        'beneficiaryName': widget.forOther ? _beneficiaryCtrl.text.trim() : null,
+        'contactIsRequester': widget.forOther ? _iAmContact : true,
+        'category':        category,
+        'description':     _descCtrl.text.trim(),
+        'location':        _locationCtrl.text.trim(),
+        'contactPhone':    _phoneCtrl.text.trim(),
+        'status':          'open',
+        'createdAt':       FieldValue.serverTimestamp(),
+      });
+
+      // 2. Notify matching volunteers (fire-and-forget batch)
+      _notifyVolunteers(category, _descCtrl.text.trim());
+
+      nav.pop();
+      messenger.showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF10B981),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          content: const Row(children: [
+            Icon(Icons.check_circle_rounded, color: Colors.white),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'הבקשה נשלחה! מתנדבים מתאימים יקבלו התראה.',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ]),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  /// Queries all volunteer providers in [category] and writes an in-app
+  /// notification for each (capped at 30 to stay within free Firestore quota).
+  Future<void> _notifyVolunteers(String category, String description) async {
+    try {
+      final db   = FirebaseFirestore.instance;
+      final snap = await db
+          .collection('users')
+          .where('isProvider',  isEqualTo: true)
+          .where('isVolunteer', isEqualTo: true)
+          .where('serviceType', isEqualTo: category)
+          .limit(30)
+          .get();
+
+      final batch = db.batch();
+      for (final doc in snap.docs) {
+        final ref = db.collection('notifications').doc();
+        batch.set(ref, {
+          'userId':    doc.id,
+          'title':    '❤️ בקשת התנדבות חדשה',
+          'body':     'יש בקשת עזרה בתחום $category: "${description.length > 60 ? '${description.substring(0, 60)}…' : description}"',
+          'type':     'volunteer_request',
+          'isRead':   false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+    } catch (_) {
+      // Best-effort — a notification failure must never affect the request post
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Drag handle
+              Center(
+                child: Container(
+                  width: 36, height: 4,
+                  decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Title + free badge
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF10B981),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Text('100% חינם ❤️',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold)),
+                  ),
+                  Text(
+                    widget.forOther ? 'עזרה עבור מישהו אחר' : 'אני צריך עזרה',
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+
+              // ── Category picker ──────────────────────────────────────────
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text('קטגוריה',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, color: Colors.grey[700])),
+              ),
+              const SizedBox(height: 6),
+              DropdownButtonFormField<String>(
+                isExpanded: true,
+                value: _selectedCategory,
+                hint: const Text('בחר תחום עזרה', textAlign: TextAlign.right),
+                items: _mainCategories
+                    .map((c) => DropdownMenuItem(
+                          value: c['name'] as String,
+                          child: Text(c['name'] as String? ?? '',
+                              textAlign: TextAlign.right),
+                        ))
+                    .toList(),
+                onChanged: (v) => setState(() => _selectedCategory = v),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: const Color(0xFFF5F6FA),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide:
+                          const BorderSide(color: Color(0xFF10B981))),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // ── Description ──────────────────────────────────────────────
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text('תיאור הבקשה',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, color: Colors.grey[700])),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _descCtrl,
+                maxLines: 3,
+                textAlign: TextAlign.right,
+                decoration: InputDecoration(
+                  hintText: 'תאר/י מה צריך לעשות...',
+                  filled: true,
+                  fillColor: const Color(0xFFF5F6FA),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide:
+                          const BorderSide(color: Color(0xFF10B981))),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // ── Location ─────────────────────────────────────────────────
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text('מיקום',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, color: Colors.grey[700])),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _locationCtrl,
+                textAlign: TextAlign.right,
+                decoration: InputDecoration(
+                  hintText: 'עיר / שכונה',
+                  prefixIcon: const Icon(Icons.location_on_outlined,
+                      color: Color(0xFF10B981)),
+                  filled: true,
+                  fillColor: const Color(0xFFF5F6FA),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide:
+                          const BorderSide(color: Color(0xFF10B981))),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // ── Contact phone ─────────────────────────────────────────────
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text('טלפון ליצירת קשר',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, color: Colors.grey[700])),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _phoneCtrl,
+                keyboardType: TextInputType.phone,
+                textAlign: TextAlign.right,
+                decoration: InputDecoration(
+                  hintText: '05X-XXXXXXX',
+                  prefixIcon: const Icon(Icons.phone_outlined,
+                      color: Color(0xFF10B981)),
+                  filled: true,
+                  fillColor: const Color(0xFFF5F6FA),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide:
+                          const BorderSide(color: Color(0xFF10B981))),
+                ),
+              ),
+
+              // ── For-other extras ──────────────────────────────────────────
+              if (widget.forOther) ...[
+                const SizedBox(height: 16),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text('שם המוטב',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey[700])),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _beneficiaryCtrl,
+                  textAlign: TextAlign.right,
+                  decoration: InputDecoration(
+                    hintText: 'שם האדם שצריך עזרה',
+                    filled: true,
+                    fillColor: const Color(0xFFF5F6FA),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none),
+                    focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide:
+                            const BorderSide(color: Color(0xFF10B981))),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile.adaptive(
+                  value: _iAmContact,
+                  onChanged: (v) => setState(() => _iAmContact = v),
+                  activeColor: const Color(0xFF10B981),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('אני איש הקשר',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text(
+                      'אני זה שיתואם מול המתנדב',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(fontSize: 12)),
+                ),
+              ],
+
+              const SizedBox(height: 24),
+
+              // ── Submit button ─────────────────────────────────────────────
+              ElevatedButton(
+                onPressed: _submitting ? null : _submit,
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 54),
+                  backgroundColor: const Color(0xFF10B981),
+                  disabledBackgroundColor:
+                      const Color(0xFF10B981).withValues(alpha: 0.5),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  elevation: 0,
+                ),
+                child: _submitting
+                    ? const SizedBox(
+                        width: 20, height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2.5, color: Colors.white))
+                    : const Text(
+                        'שלח בקשת עזרה',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
