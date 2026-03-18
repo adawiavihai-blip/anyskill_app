@@ -18,6 +18,7 @@ import '../l10n/app_localizations.dart'; // ignore: unused_import — partial i1
 import 'live_activity_tab.dart';
 import 'admin_chat_view_screen.dart';
 import 'admin_demo_experts_tab.dart';
+import 'admin_brand_assets_tab.dart';
 
 
 class AdminScreen extends StatefulWidget {
@@ -901,7 +902,7 @@ class _AdminScreenState extends State<AdminScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 18,
+      length: 19,
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F7FA),
         appBar: AppBar(
@@ -918,7 +919,7 @@ class _AdminScreenState extends State<AdminScreen> {
             isScrollable: true,
             labelColor: Colors.blueAccent,
             indicatorColor: Colors.blueAccent,
-            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸"), Tab(text: "קטגוריות 🏷️"), Tab(text: "באנרים 🎨"), Tab(text: "מוניטיזציה 💰"), Tab(text: "תובנות 📊"), Tab(text: "בינה עסקית 🧠"), Tab(text: "XP & רמות 🎮"), Tab(text: "ביצועים 🖥️"), Tab(text: "אימות זהות 🪪"), Tab(text: "משפך הרשמה 📈"), Tab(text: "לייב פיד 📡"), Tab(text: "צ'אטים 💬"), Tab(text: "דמו ★")],
+            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸"), Tab(text: "קטגוריות 🏷️"), Tab(text: "באנרים 🎨"), Tab(text: "מוניטיזציה 💰"), Tab(text: "תובנות 📊"), Tab(text: "בינה עסקית 🧠"), Tab(text: "XP & רמות 🎮"), Tab(text: "ביצועים 🖥️"), Tab(text: "אימות זהות 🪪"), Tab(text: "משפך הרשמה 📈"), Tab(text: "לייב פיד 📡"), Tab(text: "צ'אטים 💬"), Tab(text: "דמו ★"), Tab(text: "מיתוג 🎨")],
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
@@ -977,6 +978,7 @@ class _AdminScreenState extends State<AdminScreen> {
                       const LiveActivityTab(),
                       _buildSupportTab(),
                       const AdminDemoExpertsTab(),
+                      const AdminBrandAssetsTab(),
                     ],
                   ),
                 ),

@@ -18,6 +18,7 @@ import 'screens/login_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/pending_verification_screen.dart';
 import 'l10n/app_localizations.dart';
+import 'widgets/anyskill_logo.dart';
 
 // The running app version — populated from pubspec.yaml via PackageInfo in main().
 // Admins auto-push this value to admin/settings.latestVersion on login,
@@ -507,12 +508,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Scaffold(
                 backgroundColor: Colors.white,
-                body: Center(
-                  child: Image(
-                    image: AssetImage('assets/images/LOGO.gif'),
-                    width: 200,
-                  ),
-                ),
+                body: Center(child: AnySkillLoadingIndicator(size: 160)),
               );
             }
             if (snapshot.hasData && snapshot.data != null) {
@@ -565,7 +561,7 @@ class _OnboardingGateState extends State<_OnboardingGate> {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             backgroundColor: Colors.white,
-            body: Center(child: CircularProgressIndicator()),
+            body: Center(child: AnySkillLoadingIndicator(size: 120)),
           );
         }
         // On error (Firestore crash, timeout, no network) default to HomeScreen.

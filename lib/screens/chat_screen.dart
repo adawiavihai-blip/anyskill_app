@@ -17,6 +17,7 @@ import 'chat_modules/chat_stream_module.dart';
 import 'expert_profile_screen.dart';
 import '../l10n/app_localizations.dart';
 import '../services/chat_guard_service.dart';
+import '../widgets/anyskill_logo.dart';
 
 class ChatScreen extends StatefulWidget {
   final String receiverId;
@@ -712,13 +713,22 @@ class _ChatScreenState extends State<ChatScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Container(
-                          width: 64, height: 64,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFDCFCE7),
+                          width: 72, height: 72,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEEF2FF),
                             shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF6366F1).withValues(alpha: 0.15),
+                                blurRadius: 16,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
                           ),
-                          child: const Icon(Icons.check_circle_rounded,
-                              color: Color(0xFF16A34A), size: 36),
+                          child: const Padding(
+                            padding: EdgeInsets.all(14),
+                            child: AnySkillBrandIcon(size: 44),
+                          ),
                         ),
                         const SizedBox(height: 16),
                         const Text('התשלום שוחרר בהצלחה! 🎉',

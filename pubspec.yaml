@@ -93,6 +93,8 @@ flutter:
   assets:
     - assets/images/LOGO.gif
     - assets/images/LOGO.png
+    - assets/images/NEW LOGO GIF.gif
+    - assets/images/NEW LOGO1.png
     - assets/fonts/
 
   fonts:

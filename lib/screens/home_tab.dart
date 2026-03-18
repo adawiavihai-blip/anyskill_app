@@ -18,6 +18,7 @@ import '../widgets/category_edit_sheet.dart';
 import '../services/settings_service.dart';
 import 'academy_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../widgets/anyskill_logo.dart';
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
@@ -565,6 +566,19 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             ],
           ),
 
+          // ── Center: Brand logo anchor ────────────────────────────────
+          Expanded(
+            child: Center(
+              child: GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AcademyScreen()),
+                ),
+                child: const AnySkillBrandIcon(size: 32),
+              ),
+            ),
+          ),
+
           // ── Right: Online toggle (providers) + Avatar ──────────────────
           Row(
             mainAxisSize: MainAxisSize.min,
@@ -779,8 +793,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
           ),
           child: Row(
             children: [
-              const Icon(Icons.search_rounded,
-                  color: Color(0xFF6366F1), size: 20),
+              const AnySkillBrandIcon(size: 20),
               const SizedBox(width: 10),
               Text(
                 AppLocalizations.of(context).searchPlaceholder,

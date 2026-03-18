@@ -11,6 +11,7 @@ import 'chat_screen.dart';
 import '../constants/quick_tags.dart';
 import '../services/cancellation_policy_service.dart';
 import '../l10n/app_localizations.dart';
+import '../widgets/anyskill_logo.dart';
 
 // Brand tokens
 const _kPurple     = Color(0xFF6366F1);
@@ -1883,6 +1884,12 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                       stretch: true,
                       backgroundColor: _kPurple,
                       foregroundColor: Colors.white,
+                      actions: const [
+                        Padding(
+                          padding: EdgeInsets.only(right: 12),
+                          child: Center(child: AnySkillBrandIcon(size: 26)),
+                        ),
+                      ],
                       title: Text(widget.expertName,
                           style: const TextStyle(
                               fontWeight: FontWeight.bold, shadows: [
