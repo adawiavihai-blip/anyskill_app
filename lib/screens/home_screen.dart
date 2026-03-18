@@ -9,7 +9,6 @@ import 'profile_screen.dart';
 import 'admin_screen.dart';
 import 'chat_list_screen.dart';
 import 'system_wallet_screen.dart';
-import 'finance_screen.dart';
 import 'my_bookings_screen.dart';
 import 'opportunities_screen.dart';
 import 'my_requests_screen.dart';
@@ -241,11 +240,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           )),
           _nestedTab(1, MyBookingsScreen(onGoToSearch: goToSearch)),
           _nestedTab(2, ChatListScreen(onGoToSearch: goToSearch)),
-          _nestedTab(3, const FinanceScreen()),  // idx 3 — premium wallet
+          // idx 3 — Profile (key 4 keeps old navigator state stable; key 3 was Wallet)
           _nestedTab(4, const ProfileScreen()),
         ];
 
-        // Index 5 — Opportunities (providers only)
+        // Index 4 — Opportunities (providers only)
         if (isProvider) {
           tabs.add(_nestedTab(5, OpportunitiesScreen(
             key: ValueKey(serviceType),
@@ -255,7 +254,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           )));
         }
 
-        // Indices 6 & 7 — admin-only screens.
+        // Admin-only tabs.
         // Strict isAdmin guard: these tabs are NEVER added to the list for
         // non-admin users, so there is no possible list index that maps to
         // AdminScreen or SystemWalletScreen for a regular user.
@@ -288,30 +287,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             }
           },
           child: Scaffold(
-          body: Stack(
-            children: [
-              AnimatedOpacity(
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeOut,
-                opacity: _tabFadeOpacity,
-                child: IndexedStack(index: safeIndex, children: tabs),
-              ),
-              // כפתור בקשה מהירה — מופיע רק בדף החיפוש
-              if (safeIndex == 0)
-                Positioned(
-                  bottom: 25,
-                  right: 20,
-                  child: FloatingActionButton.extended(
-                    elevation: 8,
-                    backgroundColor: const Color(0xFF6366F1),
-                    onPressed: () => _showQuickRequestSheet(context, data),
-                    label: const Text('בקשה מהירה', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                    icon: const Icon(Icons.campaign_rounded, color: Colors.white),
-                  ),
-                ),
-            ],
+          body: AnimatedOpacity(
+            duration: const Duration(milliseconds: 240),
+            curve: Curves.easeOut,
+            opacity: _tabFadeOpacity,
+            child: IndexedStack(index: safeIndex, children: tabs),
           ),
-          bottomNavigationBar: _buildEliteBottomNav(isAdmin, isProvider, serviceType, safeIndex),
+          bottomNavigationBar: _buildEliteBottomNav(isAdmin, isProvider, serviceType, safeIndex, data),
           ),         // close Scaffold
         );           // close PopScope
       },
@@ -326,12 +308,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   );
 
   /// Maps a list position (safeIndex) to the correct _tabNavKeys index.
-  /// When isProvider=false, there is no Opportunities tab at pos 5, so
-  /// Admin(pos5)→key[6] and System(pos6)→key[7].
+  ///
+  /// Tab list layout (Wallet removed from nav — key 3 is unused/reserved):
+  ///   pos 0 → key 0 (Home)
+  ///   pos 1 → key 1 (Bookings)
+  ///   pos 2 → key 2 (Chat)
+  ///   pos 3 → key 4 (Profile — key 3 was Wallet, kept unused for stability)
+  ///   pos 4 → key 5 (Opportunities, provider only)
+  ///   pos 5 → key 6 (Admin) / key 5 if no Opp (non-provider admin)
+  ///   pos 6 → key 7 (System)
   int _tabKeyForPos(int pos, bool isProvider) {
-    if (pos <= 4) return pos;
-    if (isProvider) return pos;   // pos5=key5(Opp), pos6=key6(Admin), pos7=key7(System)
-    return pos + 1;               // no Opp: pos5→key6(Admin), pos6→key7(System)
+    if (pos <= 2) return pos;
+    if (pos == 3) return 4;   // Profile
+    if (isProvider) {
+      if (pos == 4) return 5; // Opportunities
+      if (pos == 5) return 6; // Admin
+      if (pos == 6) return 7; // System
+    } else {
+      if (pos == 4) return 6; // Admin (no Opp tab)
+      if (pos == 5) return 7; // System
+    }
+    return pos;
   }
 
   /// (Re)builds the opportunities badge stream when serviceType or lastViewed changes.
@@ -374,7 +371,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _setupOpportunitiesBadge(_oppServiceType, now);
   }
 
-  Widget _buildEliteBottomNav(bool isAdmin, bool isProvider, String serviceType, int safeIndex) {
+  Widget _buildEliteBottomNav(
+    bool isAdmin,
+    bool isProvider,
+    String serviceType,
+    int safeIndex,
+    Map<String, dynamic> userData,
+  ) {
     // שאילתת chat docs (קטנות) במקום collectionGroup על כל ההודעות
     return StreamBuilder<QuerySnapshot>(
       stream: _chatStream,
@@ -388,139 +391,257 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           }
         }
 
-        // Indices with provider tabs: opp=5; admin tabs follow.
-        final int oppTabIndex = isProvider ? 5 : -1;
+        // Tab list positions:
+        //   0=Home, 1=Bookings, 2=Chat, 3=Profile
+        //   4=Opp (provider), 5=Admin, 6=System (or 4=Admin,5=System without Opp)
+        final int oppTabPos  = isProvider ? 4 : -1;
+        final int adminTabPos = isProvider ? 5 : 4;
+        final int sysTabPos  = isProvider ? 6 : 5;
+
+        void onNavTap(int pos) {
+          setState(() {
+            _selectedIndex = pos;
+            if (pos == 1) _bookingsLastCleared = _bookingsBadge;
+            _tabFadeOpacity = 0.0;
+          });
+          Future.delayed(const Duration(milliseconds: 40), () {
+            if (mounted) setState(() => _tabFadeOpacity = 1.0);
+          });
+          if (isProvider && pos == oppTabPos) _markOpportunitiesSeen();
+        }
+
+        final double bottomPad = MediaQuery.of(context).padding.bottom;
 
         return ClipRect(
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.85),
-            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 20, offset: const Offset(0, -4))],
-          ),
-          child: BottomNavigationBar(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            currentIndex: safeIndex,
-            onTap: (i) {
-              setState(() {
-                _selectedIndex = i;
-                // ── Clear bookings badge immediately when entering that tab ──
-                if (i == 1) _bookingsLastCleared = _bookingsBadge;
-                // ── Begin fade-in for newly active tab ─────────────────────
-                _tabFadeOpacity = 0.0;
-              });
-              // After a brief pause, fade the new tab in
-              Future.delayed(const Duration(milliseconds: 40), () {
-                if (mounted) setState(() => _tabFadeOpacity = 1.0);
-              });
-              // Mark opportunities as seen when provider enters that tab
-              if (isProvider && i == oppTabIndex) _markOpportunitiesSeen();
-            },
-            type: BottomNavigationBarType.fixed,
-            selectedItemColor: Colors.black,
-            unselectedItemColor: Colors.grey[400],
-            selectedFontSize: 11,
-            unselectedFontSize: 11,
-            items: [
-              BottomNavigationBarItem(
-                icon: const Icon(Icons.home_outlined),
-                activeIcon: const Icon(Icons.home),
-                label: l10n.tabHome,
-              ),
-              // Bookings badge — shows NEW jobs since last tab visit
-              BottomNavigationBarItem(
-                icon: Badge(
-                  label: Text(_bookingsVisibleBadge.toString()),
-                  isLabelVisible: _bookingsVisibleBadge > 0,
-                  child: const Icon(Icons.receipt_long_outlined),
-                ),
-                activeIcon: Badge(
-                  label: Text(_bookingsVisibleBadge.toString()),
-                  isLabelVisible: _bookingsVisibleBadge > 0,
-                  child: const Icon(Icons.receipt_long),
-                ),
-                label: l10n.tabBookings,
-              ),
-              // Chat badge — existing unread count logic
-              BottomNavigationBarItem(
-                icon: Badge(
-                  label: Text(unreadCount.toString()),
-                  isLabelVisible: unreadCount > 0,
-                  child: const Icon(Icons.chat_bubble_outline),
-                ),
-                activeIcon: Badge(
-                  label: Text(unreadCount.toString()),
-                  isLabelVisible: unreadCount > 0,
-                  child: const Icon(Icons.chat_bubble),
-                ),
-                label: l10n.tabChat,
-              ),
-              // Wallet — provider tour target
-              BottomNavigationBarItem(
-                icon: AnyShowcase(
-                  tourKey: tourProviderWalletKey,
-                  title: 'ארנק שלי 💰',
-                  description: 'כאן תראה את יתרתך, תוכל למשוך לחשבון בנק ולעקוב אחר כל תשלום',
-                  tooltipPosition: TooltipPosition.top,
-                  child: const Icon(Icons.account_balance_wallet_outlined),
-                ),
-                activeIcon: const Icon(Icons.account_balance_wallet),
-                label: l10n.tabWallet,
-              ),
-              // Profile — provider tour target
-              BottomNavigationBarItem(
-                icon: AnyShowcase(
-                  tourKey: tourProviderProfileKey,
-                  title: 'הפרופיל שלי 🌟',
-                  description: 'ערוך תמונות, מחיר, תגיות ולוח זמינות כדי למשוך יותר לקוחות',
-                  tooltipPosition: TooltipPosition.top,
-                  child: const Icon(Icons.person_outline),
-                ),
-                activeIcon: const Icon(Icons.person),
-                label: l10n.tabProfile,
-              ),
-              // Opportunities badge — new requests in provider's category (index 5)
-              if (isProvider) ...[
-                BottomNavigationBarItem(
-                  icon: AnyShowcase(
-                    tourKey: tourProviderOppKey,
-                    title: 'הזדמנויות 🚀',
-                    description: 'לקוחות מחפשים ספקים בתחומך — ראו בקשות חדשות ומצאו הזמנות',
-                    tooltipPosition: TooltipPosition.top,
-                    child: Badge(
-                      label: Text(_opportunitiesBadge.toString()),
-                      isLabelVisible: _opportunitiesBadge > 0,
-                      child: const Icon(Icons.work_outline_rounded),
+            child: SizedBox(
+              height: 66 + 20 + bottomPad, // 66 nav bar + 20 for button lift + safe area
+              child: Stack(
+                children: [
+                  // ── Nav bar background ──────────────────────────────────
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      height: 66 + bottomPad,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.88),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.06),
+                            blurRadius: 20,
+                            offset: const Offset(0, -4),
+                          ),
+                        ],
+                      ),
+                      padding: EdgeInsets.only(
+                        bottom: bottomPad,
+                        left: 4,
+                        right: 4,
+                      ),
+                      child: Row(
+                        children: [
+                          // Left: Home, Bookings
+                          _navItem(
+                            icon: Icons.home_outlined,
+                            activeIcon: Icons.home,
+                            label: l10n.tabHome,
+                            index: 0,
+                            currentIndex: safeIndex,
+                            onTap: () => onNavTap(0),
+                          ),
+                          _navItem(
+                            icon: Icons.receipt_long_outlined,
+                            activeIcon: Icons.receipt_long,
+                            label: l10n.tabBookings,
+                            index: 1,
+                            currentIndex: safeIndex,
+                            onTap: () => onNavTap(1),
+                            badge: _bookingsVisibleBadge,
+                          ),
+                          // Center gap for the Quick Request anchor button
+                          const SizedBox(width: 72),
+                          // Right: Chat, Profile
+                          _navItem(
+                            icon: Icons.chat_bubble_outline,
+                            activeIcon: Icons.chat_bubble,
+                            label: l10n.tabChat,
+                            index: 2,
+                            currentIndex: safeIndex,
+                            onTap: () => onNavTap(2),
+                            badge: unreadCount,
+                          ),
+                          _navItem(
+                            icon: Icons.person_outline,
+                            activeIcon: Icons.person,
+                            label: l10n.tabProfile,
+                            index: 3,
+                            currentIndex: safeIndex,
+                            onTap: () => onNavTap(3),
+                            tourKey: tourProviderProfileKey,
+                            tourTitle: 'הפרופיל שלי 🌟',
+                            tourDesc: 'ערוך תמונות, מחיר, תגיות ולוח זמינות כדי למשוך יותר לקוחות',
+                          ),
+                          // Opportunities (providers)
+                          if (isProvider)
+                            _navItem(
+                              icon: Icons.work_outline_rounded,
+                              activeIcon: Icons.work_rounded,
+                              label: 'הזדמנויות',
+                              index: oppTabPos,
+                              currentIndex: safeIndex,
+                              onTap: () => onNavTap(oppTabPos),
+                              badge: _opportunitiesBadge,
+                              tourKey: tourProviderOppKey,
+                              tourTitle: 'הזדמנויות 🚀',
+                              tourDesc: 'לקוחות מחפשים ספקים בתחומך — ראו בקשות חדשות ומצאו הזמנות',
+                            ),
+                          // Admin & System tabs
+                          if (isAdmin) ...[
+                            _navItem(
+                              icon: Icons.admin_panel_settings_outlined,
+                              activeIcon: Icons.admin_panel_settings,
+                              label: 'ניהול',
+                              index: adminTabPos,
+                              currentIndex: safeIndex,
+                              onTap: () => onNavTap(adminTabPos),
+                            ),
+                            _navItem(
+                              icon: Icons.analytics_outlined,
+                              activeIcon: Icons.analytics,
+                              label: 'מערכת',
+                              index: sysTabPos,
+                              currentIndex: safeIndex,
+                              onTap: () => onNavTap(sysTabPos),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ),
-                  activeIcon: Badge(
-                    label: Text(_opportunitiesBadge.toString()),
-                    isLabelVisible: _opportunitiesBadge > 0,
-                    child: const Icon(Icons.work_rounded),
+
+                  // ── Center anchor: Quick Request button ─────────────────
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: GestureDetector(
+                        onTap: () => _showQuickRequestSheet(context, userData),
+                        child: Container(
+                          width: 62,
+                          height: 62,
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF6366F1).withValues(alpha: 0.45),
+                                blurRadius: 18,
+                                spreadRadius: 1,
+                                offset: const Offset(0, 4),
+                              ),
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.12),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.campaign_rounded, color: Colors.white, size: 24),
+                              SizedBox(height: 1),
+                              Text(
+                                'בקשה',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                  label: 'הזדמנויות',
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Single nav item for the custom bottom bar.
+  Widget _navItem({
+    required IconData icon,
+    required IconData activeIcon,
+    required String label,
+    required int index,
+    required int currentIndex,
+    required VoidCallback onTap,
+    int badge = 0,
+    GlobalKey? tourKey,
+    String? tourTitle,
+    String? tourDesc,
+  }) {
+    final bool active = currentIndex == index;
+    final color = active ? Colors.black : Colors.grey[400]!;
+
+    Widget iconWidget = Icon(active ? activeIcon : icon, color: color, size: 24);
+    if (badge > 0) {
+      iconWidget = Badge(
+        label: Text(badge.toString()),
+        isLabelVisible: true,
+        child: iconWidget,
+      );
+    }
+    if (tourKey != null && tourTitle != null && tourDesc != null) {
+      iconWidget = AnyShowcase(
+        tourKey: tourKey,
+        title: tourTitle,
+        description: tourDesc,
+        tooltipPosition: TooltipPosition.top,
+        child: iconWidget,
+      );
+    }
+
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              iconWidget,
+              const SizedBox(height: 2),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: color,
+                  fontWeight: active ? FontWeight.w600 : FontWeight.normal,
                 ),
-              ],
-              if (isAdmin) ...[
-                const BottomNavigationBarItem(
-                  icon: Icon(Icons.admin_panel_settings_outlined),
-                  activeIcon: Icon(Icons.admin_panel_settings),
-                  label: 'ניהול',
-                  tooltip: 'ניהול',
-                ),
-                const BottomNavigationBarItem(
-                  icon: Icon(Icons.analytics_outlined),
-                  activeIcon: Icon(Icons.analytics),
-                  label: 'מערכת',
-                  tooltip: 'מערכת',
-                ),
-              ]
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ],
           ),
-        )));
-      },
+        ),
+      ),
     );
   }
 

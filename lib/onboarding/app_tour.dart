@@ -91,7 +91,6 @@ class AppTour {
   static void startProvider(BuildContext ctx) {
     ShowCaseWidget.of(ctx).startShowCase([
       tourProviderOppKey,
-      tourProviderWalletKey,
       tourProviderProfileKey,
     ]);
   }
