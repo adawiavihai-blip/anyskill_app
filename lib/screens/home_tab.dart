@@ -566,23 +566,17 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             ],
           ),
 
-          // ── Center: Brand logo anchor — size driven by admin slider ────
+          // ── Center: Static brand logo — size driven by admin slider ────
           Expanded(
             child: Center(
-              child: GestureDetector(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const AcademyScreen()),
-                ),
-                child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                  stream: _settingsStream,
-                  builder: (context, snap) {
-                    final size = ((snap.data?.data() ?? {})['headerLogoSize']
-                            as num? ?? 32)
-                        .toDouble();
-                    return AnySkillBrandIcon(size: size);
-                  },
-                ),
+              child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: _settingsStream,
+                builder: (context, snap) {
+                  final size = ((snap.data?.data() ?? {})['headerLogoSize']
+                          as num? ?? 32)
+                      .toDouble();
+                  return AnySkillBrandIcon(size: size);
+                },
               ),
             ),
           ),
