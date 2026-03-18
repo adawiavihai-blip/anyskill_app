@@ -335,11 +335,12 @@ service cloud.firestore {
     }
 
     // ── System Settings (global UI config) ───────────────────────────────────
-    // Holds categoryCardScale and other real-time UI knobs.
-    // All authenticated users read (home_tab + sub_category_screen StreamBuilders).
+    // Holds categoryCardScale, logoSize, brandColor, etc. — no PII.
+    // Public read: login/register screens load before auth, so unauthenticated
+    // users need to read logo-size values for real-time branding control.
     // Only admin writes.
     match /system_settings/{docId} {
-      allow read:  if isAuth();
+      allow read:  if true;
       allow write: if isAdmin();
     }
 

@@ -10,6 +10,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:image_picker/image_picker.dart';
 import '../constants.dart';
 import '../l10n/app_localizations.dart';
+import '../widgets/anyskill_logo.dart';
 import '../services/category_ai_service.dart';
 import 'terms_of_service_screen.dart';
 
@@ -1110,36 +1111,32 @@ class _SignUpScreenState extends State<SignUpScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // Logo
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    const Text(
-                      'AnySkill',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 28,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.5,
-                      ),
+                // Logo — centered, dynamic size from admin branding control
+                Center(
+                  child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance
+                        .collection('system_settings')
+                        .doc('global')
+                        .snapshots(),
+                    builder: (context, snap) {
+                      final data = snap.data?.data() ?? {};
+                      final size = (data['authLogoSize'] as num? ?? 110).toDouble();
+                      return AnySkillBrandIcon(size: size);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // App name below logo
+                const Center(
+                  child: Text(
+                    'AnySkill',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5,
                     ),
-                    const SizedBox(width: 10),
-                    Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.asset(
-                          'assets/images/LOGO.png',
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
                 const SizedBox(height: 10),
 

@@ -89,9 +89,11 @@ class _AdminBrandAssetsTabState extends State<AdminBrandAssetsTab> {
     if (confirm != true) return;
 
     await _ref.set({
-      'logoUrl':      FieldValue.delete(),
-      'logoIconUrl':  FieldValue.delete(),
+      'logoUrl':       FieldValue.delete(),
+      'logoIconUrl':   FieldValue.delete(),
       'brandColorHex': '6366F1',
+      'headerLogoSize': 32.0,
+      'authLogoSize':   110.0,
     }, SetOptions(merge: true));
 
     _logoUrlCtrl.clear();
@@ -110,10 +112,12 @@ class _AdminBrandAssetsTabState extends State<AdminBrandAssetsTab> {
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: _ref.snapshots(),
       builder: (context, snap) {
-        final data         = snap.data?.data() ?? {};
-        final currentLogo  = (data['logoUrl']     as String?) ?? '';
-        final currentIcon  = (data['logoIconUrl'] as String?) ?? '';
-        final currentColor = (data['brandColorHex'] as String?) ?? '6366F1';
+        final data             = snap.data?.data() ?? {};
+        final currentLogo      = (data['logoUrl']       as String?) ?? '';
+        final currentIcon      = (data['logoIconUrl']   as String?) ?? '';
+        final currentColor     = (data['brandColorHex'] as String?) ?? '6366F1';
+        final headerLogoSize   = (data['headerLogoSize'] as num? ?? 32).toDouble();
+        final authLogoSize     = (data['authLogoSize']   as num? ?? 110).toDouble();
 
         // Pre-fill text fields once when Firestore data first arrives
         if (snap.connectionState == ConnectionState.active &&
@@ -177,6 +181,70 @@ class _AdminBrandAssetsTabState extends State<AdminBrandAssetsTab> {
             Text(
               'מוצג בשורת החיפוש, בכותרת ובמסכי ה-AppBar. השאר ריק לשימוש בנכס המוטמע.',
               style: TextStyle(color: Colors.grey[500], fontSize: 11),
+            ),
+            const SizedBox(height: 24),
+
+            // ── Header Logo Size ────────────────────────────────────────────────
+            _SectionHeader('גודל לוגו עליון (כותרת הבית)'),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                AnySkillBrandIcon(size: headerLogoSize.clamp(20, 60)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Slider(
+                    value:     headerLogoSize.clamp(20.0, 60.0),
+                    min:       20,
+                    max:       60,
+                    divisions: 40,
+                    label:     '${headerLogoSize.round()}px',
+                    activeColor: const Color(0xFF6366F1),
+                    onChanged: (_) {},
+                    onChangeEnd: (v) => _ref.set(
+                      {'headerLogoSize': v}, SetOptions(merge: true)),
+                  ),
+                ),
+                SizedBox(
+                  width: 40,
+                  child: Text(
+                    '${headerLogoSize.round()}px',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // ── Auth Screen Logo Size ────────────────────────────────────────────
+            _SectionHeader('גודל לוגו כניסה (Login/Register)'),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                AnySkillBrandIcon(size: (authLogoSize / 3).clamp(20, 60)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Slider(
+                    value:     authLogoSize.clamp(80.0, 200.0),
+                    min:       80,
+                    max:       200,
+                    divisions: 120,
+                    label:     '${authLogoSize.round()}px',
+                    activeColor: const Color(0xFF6366F1),
+                    onChanged: (_) {},
+                    onChangeEnd: (v) => _ref.set(
+                      {'authLogoSize': v}, SetOptions(merge: true)),
+                  ),
+                ),
+                SizedBox(
+                  width: 40,
+                  child: Text(
+                    '${authLogoSize.round()}px',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 24),
 

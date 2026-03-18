@@ -8,6 +8,7 @@ import 'sign_up_screen.dart';
 import '../services/credentials_service.dart';
 import '../l10n/app_localizations.dart';
 import '../constants.dart' show appVersion;
+import '../widgets/anyskill_logo.dart';
 
 // ── Brand tokens ──────────────────────────────────────────────────────────────
 const _kPurple      = Color(0xFF6366F1);
@@ -545,55 +546,45 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // Logo row
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        const Text(
-                          'AnySkill',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 32,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        Text(
-                          l10n.appSlogan,
-                          style: TextStyle(
-                            color:
-                                Colors.white.withValues(alpha: 0.85),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(width: 14),
-                    // Logo mark
-                    Container(
-                      width: 56, height: 56,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color:
-                              Colors.white.withValues(alpha: 0.3),
-                          width: 1,
+                // Logo — centered, dynamic size from admin branding control
+                Center(
+                  child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance
+                        .collection('system_settings')
+                        .doc('global')
+                        .snapshots(),
+                    builder: (context, snap) {
+                      final data = snap.data?.data() ?? {};
+                      final size = (data['authLogoSize'] as num? ?? 110).toDouble();
+                      return AnySkillBrandIcon(size: size);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // App name below logo
+                Center(
+                  child: Column(
+                    children: [
+                      const Text(
+                        'AnySkill',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.5,
                         ),
                       ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Image.asset(
-                          'assets/images/LOGO.png',
-                          fit: BoxFit.contain,
+                      const SizedBox(height: 2),
+                      Text(
+                        l10n.appSlogan,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.85),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 28),
 

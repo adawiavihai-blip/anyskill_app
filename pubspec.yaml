@@ -59,30 +59,30 @@ flutter_launcher_icons:
   android: "ic_launcher"
   ios: true
   remove_alpha_ios: true
-  image_path: "assets/images/LOGO.png"
+  image_path: "assets/images/NEW LOGO1.png"
   min_sdk_android: 21
-  # Adaptive icon for Android 8.0+ — logo on dark-indigo background
-  adaptive_icon_background: "#1E1B4B"
-  adaptive_icon_foreground: "assets/images/LOGO.png"
+  # Adaptive icon for Android 8.0+ — logo on white background
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/images/NEW LOGO1.png"
   web:
     generate: true
-    image_path: "assets/images/LOGO.png"
-    background_color: "#1E1B4B"
+    image_path: "assets/images/NEW LOGO1.png"
+    background_color: "#FFFFFF"
     theme_color: "#6366F1"
 
 # ── Native splash screen (run: dart run flutter_native_splash:create) ──────────
 flutter_native_splash:
-  # Dark indigo background to match the app theme
-  color: "#1E1B4B"
-  color_dark: "#1E1B4B"
-  image: assets/images/LOGO.png
-  image_dark: assets/images/LOGO.png
+  # White background — matches the Flutter splash screen
+  color: "#FFFFFF"
+  color_dark: "#FFFFFF"
+  image: assets/images/NEW LOGO1.png
+  image_dark: assets/images/NEW LOGO1.png
   # Keep splash visible until Flutter marks it ready
   android_12:
-    image: assets/images/LOGO.png
-    icon_background_color: "#1E1B4B"
-    image_dark: assets/images/LOGO.png
-    icon_background_color_dark: "#1E1B4B"
+    image: assets/images/NEW LOGO1.png
+    icon_background_color: "#FFFFFF"
+    image_dark: assets/images/NEW LOGO1.png
+    icon_background_color_dark: "#FFFFFF"
   fullscreen: true
   web: false
 
@@ -91,8 +91,6 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/images/LOGO.gif
-    - assets/images/LOGO.png
     - assets/images/NEW LOGO GIF.gif
     - assets/images/NEW LOGO1.png
     - assets/fonts/

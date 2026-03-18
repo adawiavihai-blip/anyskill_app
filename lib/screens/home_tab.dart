@@ -566,7 +566,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             ],
           ),
 
-          // ── Center: Brand logo anchor ────────────────────────────────
+          // ── Center: Brand logo anchor — size driven by admin slider ────
           Expanded(
             child: Center(
               child: GestureDetector(
@@ -574,7 +574,15 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   context,
                   MaterialPageRoute(builder: (_) => const AcademyScreen()),
                 ),
-                child: const AnySkillBrandIcon(size: 32),
+                child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                  stream: _settingsStream,
+                  builder: (context, snap) {
+                    final size = ((snap.data?.data() ?? {})['headerLogoSize']
+                            as num? ?? 32)
+                        .toDouble();
+                    return AnySkillBrandIcon(size: size);
+                  },
+                ),
               ),
             ),
           ),
