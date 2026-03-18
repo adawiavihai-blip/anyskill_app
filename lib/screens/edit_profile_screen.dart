@@ -25,7 +25,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late TextEditingController _priceController;
   late TextEditingController _taxIdController;
   
-  String? _selectedCategory;       // kept for backward compat but unused in save
   String? _selectedMainCatId;       // doc ID of selected main category
   String? _selectedSubCatId;        // doc ID of selected sub-category (nullable)
   List<Map<String, dynamic>> _mainCategories = [];
@@ -61,8 +60,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _isProvider = widget.userData['isProvider'] ?? false;
     _responseTimeMinutes = widget.userData['responseTimeMinutes'] as int?;
     _cancellationPolicy  = widget.userData['cancellationPolicy'] as String? ?? 'flexible';
-
-    _selectedCategory = widget.userData['serviceType'] as String?;
 
     _categorySub = CategoryService.stream().listen((cats) {
       if (!mounted) return;
@@ -123,18 +120,37 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _pickAndCompressGalleryImage() async {
+    // Gallery images are stored as base64 strings inside the Firestore user
+    // document (1 MB hard limit).  Without compression, a single 600×600 JPEG
+    // at default quality can reach 200-500 KB after base64 encoding.
+    // imageQuality: 60 keeps each image under ~50 KB, giving comfortable
+    // headroom for up to ~15 photos before the limit is approached.
     final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery, maxWidth: 600, maxHeight: 600);
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth:     600,
+      maxHeight:    600,
+      imageQuality: 60,   // ← JPEG compression; prevents Firestore 1 MB overflow
+    );
 
     if (image != null) {
       setState(() => _isLoading = true);
-      Uint8List imageBytes = await image.readAsBytes();
-      // דחיסה קלה לטובת ביצועים ב-Web
-      if (imageBytes.length > 500000) {
-        // אם התמונה גדולה מדי, נדחוס אותה במידת הצורך (אופציונלי ב-Web)
+      try {
+        final Uint8List imageBytes = await image.readAsBytes();
+        final String   encoded     = base64Encode(imageBytes);
+
+        // Sanity-check: warn if a single image is still unusually large
+        // (e.g. a PNG screenshot that imageQuality cannot compress further).
+        if (encoded.length > 150000) {
+          debugPrint(
+              'EditProfile: gallery image is ${encoded.length ~/ 1024} KB '
+              'after compression — consider a lower-res source.');
+        }
+
+        if (mounted) setState(() => _galleryImages.add(encoded));
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
       }
-      setState(() => _galleryImages.add(base64Encode(imageBytes)));
-      setState(() => _isLoading = false);
     }
   }
 
@@ -156,7 +172,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
 
     if (_isProvider) {
-      if (_selectedCategory == null) {
+      // Validate against the dropdown's own state (_selectedMainCatId), not the
+      // stale _selectedCategory field loaded from userData.
+      if (_selectedMainCatId == null) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.validationCategoryRequired), backgroundColor: Colors.orange));
         return;
       }
@@ -195,26 +213,39 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         serviceTypeName = main.isNotEmpty ? main['name'] as String? : null;
       }
 
-      // Base fields — safe to write for any user role
+      // Build payload — only include keys with non-null values.
+      // The Firestore Web SDK throws INTERNAL ASSERTION FAILED: Unexpected state
+      // when update() receives a null value.  Omitting the key is the correct
+      // approach for optional fields; use FieldValue.delete() only when you
+      // explicitly want to remove an existing field.
       final Map<String, dynamic> payload = {
-        'name':         _nameController.text.trim(),
-        'profileImage': _profileImageUrl,
-        'isCustomer':   _isCustomer,
-        'isProvider':   _isProvider,
-        'serviceType':  _isProvider ? serviceTypeName : 'לקוח',
-        'subCategoryId': _isProvider ? _selectedSubCatId : null,
+        'name':       _nameController.text.trim(),
+        'isCustomer': _isCustomer,
+        'isProvider': _isProvider,
+        if (_profileImageUrl != null) 'profileImage': _profileImageUrl,
+        if (_isProvider && serviceTypeName != null)
+          'serviceType': serviceTypeName
+        else if (!_isProvider)
+          'serviceType': 'לקוח',
+        // subCategoryId: write the value when set, delete the field when cleared
+        if (_isProvider && _selectedSubCatId != null)
+          'subCategoryId': _selectedSubCatId
+        else if (_isProvider && _selectedSubCatId == null)
+          'subCategoryId': FieldValue.delete(),
       };
 
-      // Provider-only fields — never written for pure customers to avoid
-      // overriding existing data or sending empty/null values to Firestore
+      // Provider-only fields — never written for pure customers
       if (_isProvider) {
-        payload['pricePerHour']       = double.tryParse(_priceController.text) ?? 0.0;
-        payload['aboutMe']            = _aboutController.text.trim();
-        payload['gallery']            = _galleryImages;
-        payload['responseTimeMinutes']= _responseTimeMinutes;
-        payload['taxId']              = _taxIdController.text.trim();
-        payload['quickTags']          = _selectedQuickTags.toList();
-        payload['cancellationPolicy'] = _cancellationPolicy;
+        payload['pricePerHour']      = double.tryParse(_priceController.text) ?? 0.0;
+        payload['aboutMe']           = _aboutController.text.trim();
+        payload['gallery']           = _galleryImages;
+        payload['taxId']             = _taxIdController.text.trim();
+        payload['quickTags']         = _selectedQuickTags.toList();
+        payload['cancellationPolicy']= _cancellationPolicy;
+        // responseTimeMinutes is optional — omit rather than write null
+        if (_responseTimeMinutes != null) {
+          payload['responseTimeMinutes'] = _responseTimeMinutes;
+        }
       }
 
       await FirebaseFirestore.instance
@@ -304,27 +335,43 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   // ── Main Category dropdown ──────────────────────────────
                   Text(l10n.profileFieldCategoryMain, style: const TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
-                  DropdownButtonFormField<String>(
-                    value: _mainCategories.any((c) => c['id'] == _selectedMainCatId) ? _selectedMainCatId : null,
-                    hint: Text(l10n.profileFieldCategoryMainHint, textAlign: TextAlign.right),
-                    items: _mainCategories.map((c) => DropdownMenuItem(
-                      value: c['id'] as String,
-                      child: Text(c['name'] as String? ?? '', textAlign: TextAlign.right),
-                    )).toList(),
-                    onChanged: (val) => setState(() {
-                      _selectedMainCatId = val;
-                      _selectedSubCatId  = null;
-                      _subCategories = _categories.where((c) => c['parentId'] == val).toList();
-                    }),
-                    decoration: const InputDecoration(border: OutlineInputBorder()),
-                  ),
+                  // Show a spinner until the CategoryService stream delivers
+                  // the first batch.  An empty-items DropdownButtonFormField is
+                  // visually non-responsive on Flutter Web.
+                  if (_mainCategories.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                    )
+                  else
+                    DropdownButtonFormField<String>(
+                      isExpanded: true,   // ← required on Web; without it the tap
+                                          //   target collapses to 0 in RTL columns
+                      value: _mainCategories.any((c) => c['id'] == _selectedMainCatId)
+                          ? _selectedMainCatId
+                          : null,
+                      hint: Text(l10n.profileFieldCategoryMainHint, textAlign: TextAlign.right),
+                      items: _mainCategories.map((c) => DropdownMenuItem(
+                        value: c['id'] as String,
+                        child: Text(c['name'] as String? ?? '', textAlign: TextAlign.right),
+                      )).toList(),
+                      onChanged: (val) => setState(() {
+                        _selectedMainCatId = val;
+                        _selectedSubCatId  = null;
+                        _subCategories = _categories.where((c) => c['parentId'] == val).toList();
+                      }),
+                      decoration: const InputDecoration(border: OutlineInputBorder()),
+                    ),
                   // ── Sub-Category dropdown (shown only when subs exist) ──
                   if (_subCategories.isNotEmpty) ...[
                     const SizedBox(height: 16),
                     Text(l10n.profileFieldCategorySub, style: const TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 6),
                     DropdownButtonFormField<String>(
-                      value: _subCategories.any((c) => c['id'] == _selectedSubCatId) ? _selectedSubCatId : null,
+                      isExpanded: true,   // ← same fix for sub-category
+                      value: _subCategories.any((c) => c['id'] == _selectedSubCatId)
+                          ? _selectedSubCatId
+                          : null,
                       hint: Text(l10n.profileFieldCategorySubHint, textAlign: TextAlign.right),
                       items: _subCategories.map((c) => DropdownMenuItem(
                         value: c['id'] as String,
