@@ -1,3 +1,4 @@
+// ignore_for_file: use_build_context_synchronously
 import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -150,7 +151,14 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // ─────────────────────────────────────────────────────────────────────────
 
   Future<void> _processEscrowPayment(
-      BuildContext context, double totalPrice, String cancellationPolicy) async {
+      BuildContext context, double totalPrice, String cancellationPolicy,
+      {bool isDemo = false}) async {
+    // ── Demo expert: show success illusion, log demand signal, no real writes ──
+    if (isDemo) {
+      await _handleDemoBooking(context);
+      return;
+    }
+
     if (_isProcessing) return;
     setState(() => _isProcessing = true);
 
@@ -265,6 +273,44 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
+  }
+
+  // ── Demo booking: fake success + admin demand signal ──────────────────────
+  // No real Firestore transaction, no wallet change, no job document.
+  // Closes the booking sheet, shows a success overlay, and silently logs
+  // the demand event to activity_log so the admin Live Feed picks it up.
+  Future<void> _handleDemoBooking(BuildContext context) async {
+    final navigator     = Navigator.of(context);
+    // Capture the root context (profile screen) BEFORE any awaits so we can
+    // show the success dialog after the sheet closes.
+    final rootContext   = this.context;
+
+    // 1. Close the booking summary sheet
+    navigator.pop();
+
+    // 2. Log demand signal to activity_log (admin Live Feed)
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    try {
+      await FirebaseFirestore.instance.collection('activity_log').add({
+        'type':       'demo_booking_attempt',
+        'expertId':   widget.expertId,
+        'expertName': widget.expertName,
+        'userId':     uid,
+        'timestamp':  FieldValue.serverTimestamp(),
+        'priority':   'high',
+        'message':    'משתמש ניסה להזמין מומחה דמו: ${widget.expertName}',
+      });
+    } catch (_) {
+      // Non-blocking — if logging fails the UX is unaffected
+    }
+
+    // 3. Show success dialog on the profile screen
+    if (!mounted) return;
+    await showDialog(
+      context: rootContext,
+      barrierDismissible: false,
+      builder: (_) => const _DemoBookingSuccessDialog(),
+    );
   }
 
   Future<void> _sendSystemNotification(
@@ -1654,6 +1700,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   void _showBookingSummary(
       BuildContext context, Map<String, dynamic> data, double price) {
     final l10n    = AppLocalizations.of(context);
+    final isDemo  = data['isDemo'] == true;
     final dateStr = _selectedDay != null
         ? "${_selectedDay!.day}/${_selectedDay!.month}/${_selectedDay!.year}"
         : "";
@@ -1794,7 +1841,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                       color: Colors.white,
                       fontWeight: FontWeight.bold)),
               onPressed: () =>
-                  _processEscrowPayment(context, price, policy),
+                  _processEscrowPayment(context, price, policy, isDemo: isDemo),
             ),
           ],
         ),
@@ -1973,6 +2020,147 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+// ─── Demo booking success dialog ─────────────────────────────────────────────
+// Shown instead of a real escrow flow when the expert has isDemo: true.
+// Auto-dismisses after 3 seconds or on tap.
+
+class _DemoBookingSuccessDialog extends StatefulWidget {
+  const _DemoBookingSuccessDialog();
+
+  @override
+  State<_DemoBookingSuccessDialog> createState() =>
+      _DemoBookingSuccessDialogState();
+}
+
+class _DemoBookingSuccessDialogState extends State<_DemoBookingSuccessDialog>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double>    _scale;
+  late final Animation<double>    _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _scale = CurvedAnimation(parent: _ctrl, curve: Curves.elasticOut);
+    _fade  = CurvedAnimation(parent: _ctrl, curve: Curves.easeIn);
+    _ctrl.forward();
+
+    // Auto-dismiss after 3 s
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) Navigator.of(context).pop();
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => Navigator.of(context).pop(),
+      child: FadeTransition(
+        opacity: _fade,
+        child: Dialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          child: ScaleTransition(
+            scale: _scale,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(28, 32, 28, 28),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF6366F1).withValues(alpha: 0.18),
+                    blurRadius: 40,
+                    offset: const Offset(0, 12),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Success circle
+                  Container(
+                    width: 80,
+                    height: 80,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color:
+                              const Color(0xFF6366F1).withValues(alpha: 0.35),
+                          blurRadius: 20,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.check_rounded,
+                        color: Colors.white, size: 40),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    '✅ ההזמנה נשלחה בהצלחה!',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1E293B),
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'המומחה יאשר את המועד בקרוב.\nתקבל עדכון בהודעה.',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey[500],
+                      height: 1.5,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6366F1),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                        elevation: 0,
+                      ),
+                      child: const Text('סגור',
+                          style: TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
