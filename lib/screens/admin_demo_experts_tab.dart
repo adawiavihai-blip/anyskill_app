@@ -111,7 +111,14 @@ class _AdminDemoExpertsTabState extends State<AdminDemoExpertsTab> {
                     final uid    = doc.id;
                     final name   = d['name']         as String? ?? '—';
                     final img    = d['profileImage'] as String? ?? '';
-                    final cat    = d['serviceType']  as String? ?? '—';
+                    // Show "Parent › Sub" when both exist, otherwise whichever is set
+                    final parent = d['parentCategory'] as String?;
+                    final sub    = (d['subCategoryName'] as String?)?.isNotEmpty == true
+                        ? d['subCategoryName'] as String
+                        : null;
+                    final cat = parent != null && sub != null
+                        ? '$parent › $sub'
+                        : (parent ?? sub ?? d['serviceType'] as String? ?? '—');
                     final rating = (d['rating']      as num? ?? 0).toDouble();
                     final reviews = (d['reviewsCount'] as num? ?? 0).toInt();
                     final gallery = (d['gallery']    as List? ?? []).length;
@@ -329,8 +336,15 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
       _galleryUrls[i] = gallery[i];
     }
 
-    _selectedCategoryName  = e['serviceType']  as String?;
-    _selectedSubCategory   = e['subCategory']  as String?;
+    // When editing an existing demo expert:
+    // serviceType holds the most-specific name (sub or main), so restore the
+    // parent from parentCategory and the sub from subCategoryName.
+    final parentCat = e['parentCategory'] as String?;
+    _selectedCategoryName = parentCat?.isNotEmpty == true
+        ? parentCat
+        : e['serviceType'] as String?;
+    _selectedSubCategory  = e['subCategoryName'] as String?
+        ?? e['subCategory'] as String?; // legacy fallback
 
     _loadCategories();
   }
@@ -472,13 +486,22 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
       final gallery    = _galleryUrls.where((u) => u.isNotEmpty).toList();
       final uid        = widget.uid ?? _db.collection('users').doc().id;
 
+      // serviceType must equal the MOST SPECIFIC category name so that
+      // CategoryResultsScreen's query (`where serviceType == categoryName`)
+      // finds this expert when the user taps the sub-category card.
+      //   • Sub-category selected → serviceType = sub-category name
+      //   • Main category only   → serviceType = main category name
+      final hasSub        = (_selectedSubCategory ?? '').isNotEmpty;
+      final effectiveType = hasSub ? _selectedSubCategory! : (_selectedCategoryName ?? '');
+
       final data = <String, dynamic>{
-        'name':          _nameCtrl.text.trim(),
-        'aboutMe':       _bioCtrl.text.trim(),
-        'profileImage':  _profileImageUrl,
-        'serviceType':   _selectedCategoryName ?? '',
-        'subCategory':   _selectedSubCategory  ?? '',
-        'gallery':       gallery,
+        'name':             _nameCtrl.text.trim(),
+        'aboutMe':          _bioCtrl.text.trim(),
+        'profileImage':     _profileImageUrl,
+        'serviceType':      effectiveType,
+        'subCategoryName':  _selectedSubCategory ?? '',
+        if (hasSub) 'parentCategory': _selectedCategoryName ?? '',
+        'gallery':          gallery,
         'completedJobs': int.tryParse(_jobsCtrl.text.trim()) ?? 54,
         'rating':        rating,
         'reviewsCount':  _reviews.length,
