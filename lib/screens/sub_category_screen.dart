@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../services/category_service.dart';
 import '../widgets/category_image_card.dart';
+import '../widgets/category_edit_sheet.dart';
 import 'category_results_screen.dart';
 import '../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
 
@@ -16,6 +18,9 @@ class SubCategoryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isAdmin =
+        FirebaseAuth.instance.currentUser?.email == 'adawiavihai@gmail.com';
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -108,9 +113,12 @@ class SubCategoryScreen extends StatelessWidget {
                           final icon     = CategoryService.getIcon(iconName);
 
                           return _SubCategoryCard(
-                            name: name,
+                            docId:    sub['id'] as String? ?? '',
+                            name:     name,
+                            iconName: iconName,
                             imageUrl: imageUrl,
-                            icon: icon,
+                            icon:     icon,
+                            isAdmin:  isAdmin,
                             onTap: () => Navigator.push(
                               context,
                               MaterialPageRoute(
@@ -132,30 +140,57 @@ class SubCategoryScreen extends StatelessWidget {
   }
 }
 
-class _SubCategoryCard extends StatelessWidget {
-  final String name;
-  final String imageUrl;
-  final IconData icon;
+class _SubCategoryCard extends StatefulWidget {
+  final String      docId;
+  final String      name;
+  final String      iconName;
+  final String      imageUrl;
+  final IconData    icon;
+  final bool        isAdmin;
   final VoidCallback onTap;
 
   const _SubCategoryCard({
+    required this.docId,
     required this.name,
+    required this.iconName,
     required this.imageUrl,
     required this.icon,
     required this.onTap,
+    this.isAdmin = false,
   });
+
+  @override
+  State<_SubCategoryCard> createState() => _SubCategoryCardState();
+}
+
+class _SubCategoryCardState extends State<_SubCategoryCard> {
+  void _openEditSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => CategoryEditSheet(
+        docId:           widget.docId,
+        initialName:     widget.name,
+        initialIconName: widget.iconName,
+        initialImageUrl: widget.imageUrl,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: widget.onTap,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(22),
         child: Stack(
           fit: StackFit.expand,
           children: [
             // Background image with shimmer + branded gradient fallback
-            CategoryImageBackground(imageUrl: imageUrl),
+            CategoryImageBackground(imageUrl: widget.imageUrl),
 
             // Name + icon at bottom
             Positioned(
@@ -165,10 +200,10 @@ class _SubCategoryCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Icon(icon, color: Colors.white, size: 22),
+                  Icon(widget.icon, color: Colors.white, size: 22),
                   const SizedBox(height: 6),
                   Text(
-                    name,
+                    widget.name,
                     textAlign: TextAlign.right,
                     style: const TextStyle(
                       color: Colors.white,
@@ -179,6 +214,28 @@ class _SubCategoryCard extends StatelessWidget {
                 ],
               ),
             ),
+
+            // ── ✏️ Admin edit button — top-right ─────────────────────────
+            if (widget.isAdmin)
+              Positioned(
+                top:   10,
+                right: 10,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _openEditSheet,
+                  child: Container(
+                    padding: const EdgeInsets.all(7),
+                    decoration: BoxDecoration(
+                      color:  Colors.black.withValues(alpha: 0.55),
+                      shape:  BoxShape.circle,
+                      border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.30)),
+                    ),
+                    child: const Icon(Icons.edit_rounded,
+                        size: 14, color: Colors.white),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

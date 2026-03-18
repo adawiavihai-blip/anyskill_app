@@ -48,4 +48,16 @@ class CategoryService {
       stream().map((cats) => cats
           .where((c) => c['parentId'] == parentId)
           .toList());
+
+  /// Admin-only: update any fields on a category document.
+  /// Strips null values so the Web SDK never receives undefined.
+  static Future<void> updateCategory(
+      String docId, Map<String, dynamic> updates) {
+    // Remove nulls — Firestore Web SDK throws INTERNAL ASSERTION on null values
+    updates.removeWhere((_, v) => v == null);
+    return FirebaseFirestore.instance
+        .collection('categories')
+        .doc(docId)
+        .update(updates);
+  }
 }

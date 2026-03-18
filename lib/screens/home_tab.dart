@@ -14,6 +14,7 @@ import 'sub_category_screen.dart';
 import 'search_screen/search_page.dart';
 import 'search_screen/widgets/stories_row.dart';
 import '../widgets/skeleton_loader.dart';
+import '../widgets/category_edit_sheet.dart';
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
@@ -178,6 +179,10 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final isProvider = widget.userData['isProvider'] == true;
+    // Admin check — only the owner email sees edit overlays.
+    // Regular users and providers never see this flag as true.
+    final isAdmin =
+        FirebaseAuth.instance.currentUser?.email == 'adawiavihai@gmail.com';
 
     // Outer StreamBuilder feeds the category grid without needing shrinkWrap.
     // This lets CustomScrollView use proper SliverGrid for performance.
@@ -306,11 +311,14 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                           final isTrend  = trendingIds.contains(doc.id);
 
                           return _HomeCategoryCard(
+                            docId:      doc.id,
                             name:       name,
+                            iconName:   iconName,
                             imageUrl:   imageUrl,
                             icon:       icon,
                             hasSubs:    hasSubs,
                             isTrending: isTrend,
+                            isAdmin:    isAdmin,
                             onTap: () {
                               if (hasSubs) {
                                 Navigator.push(
@@ -761,20 +769,26 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 // Admin edit is intentionally omitted; editing lives in the Search tab.
 
 class _HomeCategoryCard extends StatefulWidget {
+  final String      docId;      // Firestore document ID — needed by edit sheet
   final String      name;
+  final String      iconName;   // Raw icon key — needed by edit sheet
   final String      imageUrl;
   final IconData    icon;
   final bool        hasSubs;
   final bool        isTrending;
+  final bool        isAdmin;    // When true the edit pencil overlay is shown
   final VoidCallback onTap;
 
   const _HomeCategoryCard({
+    required this.docId,
     required this.name,
+    required this.iconName,
     required this.imageUrl,
     required this.icon,
     required this.onTap,
     this.hasSubs    = false,
     this.isTrending = false,
+    this.isAdmin    = false,
   });
 
   @override
@@ -784,6 +798,22 @@ class _HomeCategoryCard extends StatefulWidget {
 class _HomeCategoryCardState extends State<_HomeCategoryCard> {
   bool _pressed = false;
   bool _hovered = false;
+
+  void _openEditSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,    // lets the sheet resize with the keyboard
+      backgroundColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => CategoryEditSheet(
+        docId:            widget.docId,
+        initialName:      widget.name,
+        initialIconName:  widget.iconName,
+        initialImageUrl:  widget.imageUrl,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -879,6 +909,31 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: const Text('🔥', style: TextStyle(fontSize: 9)),
+                  ),
+                ),
+
+              // ── ✏️ Admin edit button — top-right ───────────────────────
+              // Completely invisible to regular users and providers.
+              // Inner GestureDetector absorbs the tap before it reaches the
+              // outer card GestureDetector, so the card does NOT navigate.
+              if (widget.isAdmin)
+                Positioned(
+                  top:   4,
+                  right: 4,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _openEditSheet,
+                    child: Container(
+                      padding: const EdgeInsets.all(5),
+                      decoration: BoxDecoration(
+                        color:  Colors.black.withValues(alpha: 0.55),
+                        shape:  BoxShape.circle,
+                        border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.30)),
+                      ),
+                      child: const Icon(Icons.edit_rounded,
+                          size: 11, color: Colors.white),
+                    ),
                   ),
                 ),
             ],
