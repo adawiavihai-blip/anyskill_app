@@ -600,7 +600,7 @@ async function _awardXpDynamic(uid, points, reason) {
     console.log(`XP: ${points >= 0 ? '+' : ''}${points} to ${uid} for ${reason}`);
 }
 
-// ── Job completed → +100 XP to expert ────────────────────────────────────────
+// ── Job completed → +100 XP (or +300 XP for volunteer jobs) ─────────────────
 exports.awardXpJobCompleted = onDocumentUpdated("jobs/{jobId}", async (event) => {
     const before = event.data.before.data();
     const after  = event.data.after.data();
@@ -608,8 +608,39 @@ exports.awardXpJobCompleted = onDocumentUpdated("jobs/{jobId}", async (event) =>
     if (after.status !== 'completed')   return null;
     const expertId = after.expertId;
     if (!expertId) return null;
+
+    const isVolunteerJob = after.isVolunteer === true;
+
     try {
-        await _awardXpDynamic(expertId, 100, 'job_completed');
+        if (isVolunteerJob) {
+            // 3× XP multiplier for volunteer jobs
+            await _awardXpDynamic(expertId, 300, 'volunteer_job_completed');
+
+            // Track volunteer task counter + award gold badge at 5
+            const db      = admin.firestore();
+            const userRef = db.collection('users').doc(expertId);
+            await db.runTransaction(async (tx) => {
+                const snap  = await tx.get(userRef);
+                if (!snap.exists) return;
+                const data  = snap.data();
+                const count = (data.volunteerTasksCompleted ?? 0) + 1;
+                const update = { volunteerTasksCompleted: count };
+                if (count >= 5) update.volunteerBadge = 'gold';
+                tx.update(userRef, update);
+            });
+
+            // Notify the expert
+            await db.collection('notifications').add({
+                userId:    expertId,
+                title:     '🌟 3× XP על עזרה לקהילה!',
+                body:      'קיבלת 300 XP על עזרה לקהילה! המשך כך ❤️',
+                type:      'volunteer_xp',
+                isRead:    false,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        } else {
+            await _awardXpDynamic(expertId, 100, 'job_completed');
+        }
     } catch (e) {
         console.error('XP job_completed error:', e);
     }

@@ -19,6 +19,9 @@ const _kGold       = Color(0xFFFBBF24);
 class CategoryResultsScreen extends StatefulWidget {
   final String categoryName;
 
+  /// כאשר true — מציג רק מומחים עם isVolunteer==true (קהילה).
+  final bool volunteerOnly;
+
   /// זרם אופציונלי — מוזרק בבדיקות במקום Firestore האמיתי.
   /// בסביבת ייצור תמיד null (נשתמש ב-Firestore).
   final Stream<List<Map<String, dynamic>>>? testStream;
@@ -26,6 +29,7 @@ class CategoryResultsScreen extends StatefulWidget {
   const CategoryResultsScreen({
     super.key,
     required this.categoryName,
+    this.volunteerOnly = false,
     this.testStream,
   });
 
@@ -59,12 +63,17 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   /// חד-פעמי — מונע את באג ה-Firestore web SDK שמתרחש כאשר
   /// מאזין real-time מתבטל באמצע עדכון (assertion ve:-1).
   Future<List<Map<String, dynamic>>> _fetchExperts() async {
-    final snap = await FirebaseFirestore.instance
+    Query<Map<String, dynamic>> q = FirebaseFirestore.instance
         .collection('users')
-        .where('isProvider', isEqualTo: true)
-        .where('serviceType', isEqualTo: widget.categoryName)
-        .limit(50)
-        .get();
+        .where('isProvider', isEqualTo: true);
+
+    if (widget.volunteerOnly) {
+      q = q.where('isVolunteer', isEqualTo: true);
+    } else {
+      q = q.where('serviceType', isEqualTo: widget.categoryName);
+    }
+
+    final snap = await q.limit(50).get();
     return snap.docs.map((d) {
       final map = d.data();
       map['uid'] = d.id;
@@ -538,6 +547,10 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                 const SizedBox(width: 4),
                 const Icon(Icons.verified,
                     color: Color(0xFF1877F2), size: 15),
+              ],
+              if (data['isVolunteer'] == true) ...[
+                const SizedBox(width: 4),
+                const Icon(Icons.favorite, color: Colors.red, size: 15),
               ],
               const SizedBox(width: 4),
               Flexible(

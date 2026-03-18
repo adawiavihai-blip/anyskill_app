@@ -38,8 +38,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   List<dynamic> _galleryImages = [];
   bool _isLoading = false;
 
-  bool _isCustomer = false;
-  bool _isProvider = false;
+  bool _isCustomer  = false;
+  bool _isProvider  = false;
+  bool _isVolunteer = false;
 
   List<Map<String, dynamic>> _categories = [];
   late StreamSubscription<List<Map<String, dynamic>>> _categorySub;
@@ -56,8 +57,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         (widget.userData['quickTags'] as List? ?? []).cast<String>());
     _profileImageUrl = widget.userData['profileImage'];
     
-    _isCustomer = widget.userData['isCustomer'] ?? true;
-    _isProvider = widget.userData['isProvider'] ?? false;
+    _isCustomer  = widget.userData['isCustomer']  ?? true;
+    _isProvider  = widget.userData['isProvider']  ?? false;
+    _isVolunteer = widget.userData['isVolunteer'] ?? false;
     _responseTimeMinutes = widget.userData['responseTimeMinutes'] as int?;
     _cancellationPolicy  = widget.userData['cancellationPolicy'] as String? ?? 'flexible';
 
@@ -236,6 +238,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       // Provider-only fields — never written for pure customers
       if (_isProvider) {
+        payload['isVolunteer']       = _isVolunteer;
         payload['pricePerHour']      = double.tryParse(_priceController.text) ?? 0.0;
         payload['aboutMe']           = _aboutController.text.trim();
         payload['gallery']           = _galleryImages;
@@ -329,6 +332,55 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                   ],
                 ),
+
+                // ── Volunteer toggle (providers only) ────────────────────
+                if (_isProvider) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: _isVolunteer
+                          ? const Color(0xFFECFDF5)
+                          : Colors.grey[50],
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: _isVolunteer
+                            ? const Color(0xFF10B981)
+                            : Colors.grey.shade200,
+                        width: _isVolunteer ? 1.5 : 1,
+                      ),
+                    ),
+                    child: SwitchListTile.adaptive(
+                      value: _isVolunteer,
+                      onChanged: (val) => setState(() => _isVolunteer = val),
+                      activeColor: const Color(0xFF10B981),
+                      title: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          const Text(
+                            'אני מעוניין להתנדב',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 15),
+                          ),
+                          const SizedBox(width: 6),
+                          if (_isVolunteer)
+                            const Icon(Icons.favorite,
+                                color: Colors.red, size: 18),
+                        ],
+                      ),
+                      subtitle: Align(
+                        alignment: AlignmentDirectional.centerEnd,
+                        child: Text(
+                          'הצע את כישוריך ללא עלות לאנשים הזקוקים לעזרה',
+                          style:
+                              TextStyle(fontSize: 12, color: Colors.grey[600]),
+                          textAlign: TextAlign.right,
+                        ),
+                      ),
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                    ),
+                  ),
+                ],
 
                 if (_isProvider) ...[
                   const SizedBox(height: 25),

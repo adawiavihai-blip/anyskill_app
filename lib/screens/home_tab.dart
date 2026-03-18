@@ -284,7 +284,80 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   )
 
                 // ── Full visual category grid ──────────────────────────────
-                else
+                else ...[
+                  // ── AnySkill Community banner ──────────────────────────
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+                      child: GestureDetector(
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const CategoryResultsScreen(
+                              categoryName: 'volunteer',
+                              volunteerOnly: true,
+                            ),
+                          ),
+                        ),
+                        child: Container(
+                          height: 80,
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF10B981), Color(0xFFF59E0B)],
+                              begin: Alignment.centerRight,
+                              end: Alignment.centerLeft,
+                            ),
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF10B981)
+                                    .withValues(alpha: 0.3),
+                                blurRadius: 12,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            children: [
+                              const SizedBox(width: 16),
+                              const Icon(Icons.volunteer_activism,
+                                  color: Colors.white, size: 32),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'AnySkill למען הקהילה',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'מומחים שמתנדבים מרצונם – ללא עלות',
+                                      style: TextStyle(
+                                        color: Colors.white
+                                            .withValues(alpha: 0.88),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Icon(Icons.chevron_left,
+                                  color: Colors.white),
+                              const SizedBox(width: 8),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
                     sliver: SliverGrid(
@@ -342,6 +415,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                       ),
                     ),
                   ),
+                ], // end else [...] community + grid
 
                 // ── Bottom padding (clear the FAB) ─────────────────────────
                 const SliverPadding(padding: EdgeInsets.only(bottom: 100)),

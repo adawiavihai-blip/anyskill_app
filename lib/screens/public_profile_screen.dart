@@ -307,7 +307,29 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   }
 
   Widget _buildMainInfo(Map<String, dynamic> data) {
-    return Padding(padding: const EdgeInsets.symmetric(horizontal: 25), child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text(data['name'] ?? "", style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)), Text(data['serviceType'] ?? "מאמן AnySkill", style: const TextStyle(fontSize: 16, color: Colors.grey))]));
+    final isVolunteer = data['isVolunteer'] == true;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 25),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              if (isVolunteer) ...[
+                const Icon(Icons.favorite, color: Colors.red, size: 22),
+                const SizedBox(width: 6),
+              ],
+              Text(data['name'] ?? "",
+                  style: const TextStyle(
+                      fontSize: 28, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          Text(data['serviceType'] ?? "מאמן AnySkill",
+              style: const TextStyle(fontSize: 16, color: Colors.grey)),
+        ],
+      ),
+    );
   }
 
   Widget _buildSection(String title, String content) {
