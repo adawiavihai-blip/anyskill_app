@@ -26,6 +26,7 @@ class HomeTab extends StatefulWidget {
   final VoidCallback onGoToBookings;
   final VoidCallback onGoToChat;
   final VoidCallback onOpenQuickRequest;
+  final VoidCallback onGoToProfile;
 
   const HomeTab({
     super.key,
@@ -36,6 +37,7 @@ class HomeTab extends StatefulWidget {
     required this.onGoToBookings,
     required this.onGoToChat,
     required this.onOpenQuickRequest,
+    required this.onGoToProfile,
   });
 
   @override
@@ -50,6 +52,9 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   late final Stream<QuerySnapshot> _categoriesStream;
   late final Stream<QuerySnapshot> _urgentStream;
   late final Stream<QuerySnapshot> _notificationsStream;
+
+  // ── Avatar press feedback ─────────────────────────────────────────────────
+  bool _avatarTapped = false;
 
   // ── Live online status ─────────────────────────────────────────────────────
   // HomeTab lives inside a Navigator route created by _nestedTab(). When
@@ -472,27 +477,40 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                 const SizedBox(width: 10),
               ],
 
-              // Profile avatar
-              CircleAvatar(
-                radius: 22,
-                backgroundColor: const Color(0xFFEEF2FF),
-                backgroundImage: profileImage.isNotEmpty
-                    ? NetworkImage(profileImage)
-                    : null,
-                child: profileImage.isEmpty
-                    ? Text(
-                        (widget.userData['name'] as String? ?? '?')
-                            .characters
-                            .firstOrNull
-                            ?.toUpperCase() ??
-                            '?',
-                        style: const TextStyle(
-                          color: Color(0xFF6366F1),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      )
-                    : null,
+              // Profile avatar — tap navigates to Profile tab
+              GestureDetector(
+                onTap: () {
+                  setState(() => _avatarTapped = false);
+                  widget.onGoToProfile();
+                },
+                onTapDown: (_) => setState(() => _avatarTapped = true),
+                onTapUp:   (_) => setState(() => _avatarTapped = false),
+                onTapCancel: () => setState(() => _avatarTapped = false),
+                child: AnimatedOpacity(
+                  opacity: _avatarTapped ? 0.55 : 1.0,
+                  duration: const Duration(milliseconds: 100),
+                  child: CircleAvatar(
+                    radius: 22,
+                    backgroundColor: const Color(0xFFEEF2FF),
+                    backgroundImage: profileImage.isNotEmpty
+                        ? NetworkImage(profileImage)
+                        : null,
+                    child: profileImage.isEmpty
+                        ? Text(
+                            (widget.userData['name'] as String? ?? '?')
+                                .characters
+                                .firstOrNull
+                                ?.toUpperCase() ??
+                                '?',
+                            style: const TextStyle(
+                              color: Color(0xFF6366F1),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          )
+                        : null,
+                  ),
+                ),
               ),
             ],
           ),

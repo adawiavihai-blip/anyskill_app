@@ -91,7 +91,8 @@ class AppTour {
   static void startProvider(BuildContext ctx) {
     ShowCaseWidget.of(ctx).startShowCase([
       tourProviderOppKey,
-      tourProviderProfileKey,
+      tourProviderWalletKey,
+      // tourProviderProfileKey removed — Profile is now accessed via header avatar
     ]);
   }
 }

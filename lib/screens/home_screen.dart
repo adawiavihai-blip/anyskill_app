@@ -9,6 +9,7 @@ import 'profile_screen.dart';
 import 'admin_screen.dart';
 import 'chat_list_screen.dart';
 import 'system_wallet_screen.dart';
+import 'finance_screen.dart';
 import 'my_bookings_screen.dart';
 import 'opportunities_screen.dart';
 import 'my_requests_screen.dart';
@@ -228,6 +229,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         // Because the keys are FIXED to the logical index, Flutter never
         // confuses AdminScreen with OpportunitiesScreen even when roles
         // arrive asynchronously from Firestore.
+        // Profile tab position: 4 (not in bottom nav — accessed via header avatar).
+        // Wallet restored to position 3 (key 3) so the bottom nav has:
+        //   Home(0), Bookings(1), [QR center], Chat(2), Wallet(3).
+        final int profileTabPos = 4;
+
         final List<Widget> tabs = [
           _nestedTab(0, HomeTab(
             userData: data,
@@ -237,14 +243,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             onGoToBookings: () => setState(() => _selectedIndex = 1),
             onGoToChat: () => setState(() => _selectedIndex = 2),
             onOpenQuickRequest: () => _showQuickRequestSheet(context, data),
+            onGoToProfile: () => setState(() => _selectedIndex = profileTabPos),
           )),
           _nestedTab(1, MyBookingsScreen(onGoToSearch: goToSearch)),
           _nestedTab(2, ChatListScreen(onGoToSearch: goToSearch)),
-          // idx 3 — Profile (key 4 keeps old navigator state stable; key 3 was Wallet)
-          _nestedTab(4, const ProfileScreen()),
+          _nestedTab(3, const FinanceScreen()),   // pos 3 / key 3 — Wallet
+          _nestedTab(4, const ProfileScreen()),   // pos 4 / key 4 — Profile (avatar only)
         ];
 
-        // Index 4 — Opportunities (providers only)
+        // Index 5 — Opportunities (providers only)
         if (isProvider) {
           tabs.add(_nestedTab(5, OpportunitiesScreen(
             key: ValueKey(serviceType),
@@ -309,26 +316,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   /// Maps a list position (safeIndex) to the correct _tabNavKeys index.
   ///
-  /// Tab list layout (Wallet removed from nav — key 3 is unused/reserved):
+  /// Tab list layout — positions and keys are 1:1 for 0–5:
   ///   pos 0 → key 0 (Home)
   ///   pos 1 → key 1 (Bookings)
   ///   pos 2 → key 2 (Chat)
-  ///   pos 3 → key 4 (Profile — key 3 was Wallet, kept unused for stability)
-  ///   pos 4 → key 5 (Opportunities, provider only)
-  ///   pos 5 → key 6 (Admin) / key 5 if no Opp (non-provider admin)
-  ///   pos 6 → key 7 (System)
+  ///   pos 3 → key 3 (Wallet)
+  ///   pos 4 → key 4 (Profile — not in nav bar, reached via header avatar)
+  ///   pos 5 → key 5 (Opportunities, provider only)
+  ///   pos 6 → key 6 (Admin)  / key 6 even without Opp (non-provider admin)
+  ///   pos 7 → key 7 (System) / key 7 even without Opp
+  ///
+  /// Without a provider tab the list is shorter, so non-provider admins have:
+  ///   pos 5 → key 6 (Admin), pos 6 → key 7 (System)
   int _tabKeyForPos(int pos, bool isProvider) {
-    if (pos <= 2) return pos;
-    if (pos == 3) return 4;   // Profile
-    if (isProvider) {
-      if (pos == 4) return 5; // Opportunities
-      if (pos == 5) return 6; // Admin
-      if (pos == 6) return 7; // System
-    } else {
-      if (pos == 4) return 6; // Admin (no Opp tab)
-      if (pos == 5) return 7; // System
-    }
-    return pos;
+    if (pos <= 4) return pos;                // 0–4: perfect 1:1
+    if (isProvider) return pos;              // 5=Opp, 6=Admin, 7=System
+    return pos + 1;                          // no Opp: pos5→key6(Admin), pos6→key7(System)
   }
 
   /// (Re)builds the opportunities badge stream when serviceType or lastViewed changes.
@@ -392,11 +395,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         }
 
         // Tab list positions:
-        //   0=Home, 1=Bookings, 2=Chat, 3=Profile
-        //   4=Opp (provider), 5=Admin, 6=System (or 4=Admin,5=System without Opp)
-        final int oppTabPos  = isProvider ? 4 : -1;
-        final int adminTabPos = isProvider ? 5 : 4;
-        final int sysTabPos  = isProvider ? 6 : 5;
+        //   0=Home, 1=Bookings, 2=Chat, 3=Wallet, 4=Profile(avatar only)
+        //   5=Opp (provider), 6=Admin, 7=System (or 5=Admin,6=System without Opp)
+        final int oppTabPos   = isProvider ? 5 : -1;
+        final int adminTabPos = isProvider ? 6 : 5;
+        final int sysTabPos   = isProvider ? 7 : 6;
 
         void onNavTap(int pos) {
           setState(() {
@@ -463,7 +466,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           ),
                           // Center gap for the Quick Request anchor button
                           const SizedBox(width: 72),
-                          // Right: Chat, Profile
+                          // Right: Chat, Wallet
                           _navItem(
                             icon: Icons.chat_bubble_outline,
                             activeIcon: Icons.chat_bubble,
@@ -474,15 +477,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             badge: unreadCount,
                           ),
                           _navItem(
-                            icon: Icons.person_outline,
-                            activeIcon: Icons.person,
-                            label: l10n.tabProfile,
+                            icon: Icons.account_balance_wallet_outlined,
+                            activeIcon: Icons.account_balance_wallet,
+                            label: l10n.tabWallet,
                             index: 3,
                             currentIndex: safeIndex,
                             onTap: () => onNavTap(3),
-                            tourKey: tourProviderProfileKey,
-                            tourTitle: 'הפרופיל שלי 🌟',
-                            tourDesc: 'ערוך תמונות, מחיר, תגיות ולוח זמינות כדי למשוך יותר לקוחות',
+                            tourKey: tourProviderWalletKey,
+                            tourTitle: 'ארנק שלי 💰',
+                            tourDesc: 'כאן תראה את יתרתך, תוכל למשוך לחשבון בנק ולעקוב אחר כל תשלום',
                           ),
                           // Opportunities (providers)
                           if (isProvider)
