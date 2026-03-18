@@ -194,7 +194,10 @@ class _SubCategoryCardState extends State<_SubCategoryCard> {
       onEnter: (_) => setState(() => _hovered = true),
       onExit:  (_) => setState(() => _hovered = false),
       child: GestureDetector(
-      onTap:       widget.onTap,
+      onTap: () {
+        CategoryService.incrementClickCount(widget.docId);
+        widget.onTap();
+      },
       onTapDown:   (_) => setState(() => _pressed = true),
       onTapUp:     (_) => setState(() => _pressed = false),
       onTapCancel: () => setState(() => _pressed = false),

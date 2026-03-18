@@ -204,11 +204,18 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                 .where((d) =>
                     ((d.data() as Map)['parentId'] as String? ?? '').isEmpty)
                 .toList()
-              // Client-side sort: same logic as CategoryService.stream() so
-              // both code paths always agree on display order.
+              // Client-side sort — mirrors CategoryService.stream() exactly:
+              //   1. clickCount DESC  2. order ASC  3. name ASC
               ..sort((a, b) {
-                final oA = ((a.data() as Map)['order'] as num? ?? 999).toInt();
-                final oB = ((b.data() as Map)['order'] as num? ?? 999).toInt();
+                final cA =
+                    ((a.data() as Map)['clickCount'] as num? ?? 0).toInt();
+                final cB =
+                    ((b.data() as Map)['clickCount'] as num? ?? 0).toInt();
+                if (cA != cB) return cB.compareTo(cA);
+                final oA =
+                    ((a.data() as Map)['order'] as num? ?? 999).toInt();
+                final oB =
+                    ((b.data() as Map)['order'] as num? ?? 999).toInt();
                 if (oA != oB) return oA.compareTo(oB);
                 return (((a.data() as Map)['name'] as String?) ?? '')
                     .compareTo(((b.data() as Map)['name'] as String?) ?? '');
@@ -925,7 +932,12 @@ class _HomeCategoryCardState extends State<_HomeCategoryCard> {
       onEnter: (_) => setState(() => _hovered = true),
       onExit:  (_) => setState(() => _hovered = false),
       child: GestureDetector(
-      onTap: widget.onTap,
+      onTap: () {
+        // Fire-and-forget — FieldValue.increment is atomic, catchError
+        // inside the service means a network error never blocks navigation.
+        CategoryService.incrementClickCount(widget.docId);
+        widget.onTap();
+      },
       onTapDown:   (_) => setState(() => _pressed = true),
       onTapUp:     (_) => setState(() => _pressed = false),
       onTapCancel: () => setState(() => _pressed = false),
