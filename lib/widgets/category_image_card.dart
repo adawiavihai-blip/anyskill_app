@@ -64,10 +64,17 @@ class CategoryImageBackground extends StatelessWidget {
           child: imageUrl.isEmpty
               ? _GradientFill(gradient: _fallbackGradient())
               : CachedNetworkImage(
-                  imageUrl:    imageUrl,
-                  fit:         BoxFit.cover,
-                  placeholder: (_, __) => const _ShimmerPlaceholder(),
-                  errorWidget: (_, __, ___) =>
+                  imageUrl:       imageUrl,
+                  fit:            BoxFit.cover,
+                  // Cap decoded size to 400 px — prevents 4K images from eating
+                  // ~50 MB of RAM per card.  The card is never wider than 400 px
+                  // even on large tablets, so there is no visual quality loss.
+                  memCacheWidth:  400,
+                  memCacheHeight: 400,
+                  fadeInDuration: const Duration(milliseconds: 260),
+                  fadeOutDuration: const Duration(milliseconds: 80),
+                  placeholder:    (_, __) => const _ShimmerPlaceholder(),
+                  errorWidget:    (_, __, ___) =>
                       _GradientFill(gradient: _fallbackGradient()),
                 ),
         ),

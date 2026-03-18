@@ -15,6 +15,7 @@ import 'search_screen/search_page.dart';
 import 'search_screen/widgets/stories_row.dart';
 import '../widgets/skeleton_loader.dart';
 import '../widgets/category_edit_sheet.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
@@ -566,8 +567,14 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   child: CircleAvatar(
                     radius: 22,
                     backgroundColor: const Color(0xFFEEF2FF),
+                    // CachedNetworkImageProvider: disk-cached, no re-download
+                    // on every build, and gracefully falls back on error.
                     backgroundImage: profileImage.isNotEmpty
-                        ? NetworkImage(profileImage)
+                        ? CachedNetworkImageProvider(
+                            profileImage,
+                            maxWidth:  88, // 44px radius × 2× DPR
+                            maxHeight: 88,
+                          )
                         : null,
                     child: profileImage.isEmpty
                         ? Text(

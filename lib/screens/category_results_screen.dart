@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:shimmer/shimmer.dart';
 import 'package:geolocator/geolocator.dart';
 import 'expert_profile_screen.dart';
 import '../utils/expert_filter.dart';
@@ -309,9 +310,14 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
             // ── Image or placeholder ──────────────────────────────────────
             hasImg
                 ? CachedNetworkImage(
-                    imageUrl: actionImg,
-                    fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) => _imagePlaceholder(),
+                    imageUrl:       actionImg,
+                    fit:            BoxFit.cover,
+                    // Expert card is 130 px wide × ~200 px tall; 2× DPR cap.
+                    memCacheWidth:  260,
+                    memCacheHeight: 400,
+                    fadeInDuration: const Duration(milliseconds: 220),
+                    placeholder:    (_, __) => _ImageShimmer(),
+                    errorWidget:    (_, __, ___) => _imagePlaceholder(),
                   )
                 : _imagePlaceholder(),
 
@@ -972,6 +978,18 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       itemCount: experts.length,
       itemBuilder: (_, index) => _buildExpertCard(experts[index]),
+    );
+  }
+}
+
+// ── Shimmer placeholder for expert card images ────────────────────────────────
+class _ImageShimmer extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Shimmer.fromColors(
+      baseColor:      const Color(0xFFE2E8F0),
+      highlightColor: const Color(0xFFF8FAFC),
+      child: Container(color: const Color(0xFFE2E8F0)),
     );
   }
 }

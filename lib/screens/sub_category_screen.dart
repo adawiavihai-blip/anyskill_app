@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shimmer/shimmer.dart';
 import '../services/category_service.dart';
 import '../widgets/category_image_card.dart';
 import '../widgets/category_edit_sheet.dart';
@@ -37,7 +38,7 @@ class SubCategoryScreen extends StatelessWidget {
         stream: CategoryService.streamSubCategories(parentId),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return _SubCategoryShimmerGrid();
           }
 
           final subs = snapshot.data ?? [];
@@ -280,5 +281,41 @@ class _SubCategoryCardState extends State<_SubCategoryCard> {
       ),         // closes AnimatedContainer
       ),         // closes GestureDetector
     );           // closes MouseRegion
+  }
+}
+
+// ── Shimmer skeleton grid shown while sub-categories are loading ──────────────
+class _SubCategoryShimmerGrid extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final w    = constraints.maxWidth;
+          final cols = w >= 900 ? 4 : w >= 600 ? 3 : 2;
+          return GridView.builder(
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount:   cols,
+              crossAxisSpacing: 14,
+              mainAxisSpacing:  14,
+              childAspectRatio: w >= 900 ? 1.0 : w >= 600 ? 0.90 : 0.85,
+            ),
+            itemCount: cols * 2, // fill two rows
+            itemBuilder: (_, __) => Shimmer.fromColors(
+              baseColor:      const Color(0xFFE2E8F0),
+              highlightColor: const Color(0xFFF8FAFC),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE2E8F0),
+                  borderRadius: BorderRadius.circular(22),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 }
