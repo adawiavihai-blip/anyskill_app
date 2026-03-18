@@ -29,7 +29,8 @@ class AdminScreen extends StatefulWidget {
 }
 
 class _AdminScreenState extends State<AdminScreen> {
-  String _searchQuery = "";
+  String _searchQuery  = "";
+  int    _sectionIndex = 0; // 0 = ניהול (Management), 1 = מערכת (System)
   double _feePct        = 10.0;
   double _urgencyFeePct = 5.0;
   bool   _settingsLoaded = false;
@@ -901,92 +902,347 @@ class _AdminScreenState extends State<AdminScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 19,
-      child: Scaffold(
-        backgroundColor: const Color(0xFFF5F7FA),
-        appBar: AppBar(
-          title: const Text("Control Center", style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.2)),
-          centerTitle: true,
-          elevation: 0,
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black,
-          actions: [
-            IconButton(icon: const Icon(Icons.campaign_rounded, color: Colors.blueAccent, size: 30), onPressed: _showBroadcastDialog),
-            const SizedBox(width: 10),
-          ],
-          bottom: const TabBar(
-            isScrollable: true,
-            labelColor: Colors.blueAccent,
-            indicatorColor: Colors.blueAccent,
-            tabs: [Tab(text: "הכל"), Tab(text: "לקוחות"), Tab(text: "ספקים"), Tab(text: "חסומים"), Tab(text: "מחלוקות 🔴"), Tab(text: "משיכות 💸"), Tab(text: "קטגוריות 🏷️"), Tab(text: "באנרים 🎨"), Tab(text: "מוניטיזציה 💰"), Tab(text: "תובנות 📊"), Tab(text: "בינה עסקית 🧠"), Tab(text: "XP & רמות 🎮"), Tab(text: "ביצועים 🖥️"), Tab(text: "אימות זהות 🪪"), Tab(text: "משפך הרשמה 📈"), Tab(text: "לייב פיד 📡"), Tab(text: "צ'אטים 💬"), Tab(text: "דמו ★"), Tab(text: "מיתוג 🎨")],
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F7FA),
+      appBar: AppBar(
+        title: _buildSectionToggle(),
+        centerTitle: true,
+        elevation: 0,
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.campaign_rounded, color: Colors.blueAccent, size: 28),
+            onPressed: _showBroadcastDialog,
           ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection('users').limit(500).snapshots(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          final allUsers  = snapshot.data!.docs;
+          final customers = allUsers.where((d) => (d.data() as Map)['isCustomer'] == true).length;
+          final providers = allUsers.where((d) => (d.data() as Map)['isProvider'] == true).length;
+
+          return IndexedStack(
+            index: _sectionIndex,
+            children: [
+              _buildManagementSection(allUsers, customers, providers),
+              _buildSystemSection(allUsers),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // ── Section toggle (SegmentedButton in AppBar title) ────────────────────────
+
+  Widget _buildSectionToggle() {
+    return SegmentedButton<int>(
+      segments: const [
+        ButtonSegment(
+          value: 0,
+          label: Text('ניהול'),
+          icon: Icon(Icons.manage_accounts_rounded, size: 15),
         ),
-        body: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance.collection('users').limit(500).snapshots(),
-          builder: (context, snapshot) {
-            if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-            var allUsers = snapshot.data!.docs;
-
-            int customers = allUsers.where((d) => (d.data() as Map)['isCustomer'] == true).length;
-            int providers = allUsers.where((d) => (d.data() as Map)['isProvider'] == true).length;
-
-            return Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(15),
-                  child: TextField(
-                    onChanged: (v) => setState(() => _searchQuery = v),
-                    decoration: InputDecoration(
-                      hintText: "חפש שם, מייל או מזהה...",
-                      prefixIcon: const Icon(Icons.search),
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      _pulseBadge("👥 $customers לקוחות"),
-                      _pulseBadge("🛠️ $providers ספקים"),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Expanded(
-                  child: TabBarView(
-                    children: [
-                      _buildList(allUsers),
-                      _buildList(allUsers.where((d) => (d.data() as Map)['isCustomer'] == true).toList()),
-                      _buildList(allUsers.where((d) => (d.data() as Map)['isProvider'] == true).toList()),
-                      _buildList(allUsers.where((d) => (d.data() as Map)['isBanned'] == true).toList()),
-                      const DisputeResolutionScreen(),
-                      _buildWithdrawalsList(),
-                      _buildCategoriesTab(),
-                      _buildBannersTab(),
-                      _buildMonetizationTab(allUsers),
-                      _buildInsightsTab(allUsers),
-                      const BusinessAiScreen(),
-                      const XpManagerScreen(),
-                      const SystemPerformanceTab(),
-                      _buildIdVerificationTab(),
-                      const RegistrationFunnelTab(),
-                      const LiveActivityTab(),
-                      _buildSupportTab(),
-                      const AdminDemoExpertsTab(),
-                      const AdminBrandAssetsTab(),
-                    ],
-                  ),
-                ),
-              ],
-            );
-          },
+        ButtonSegment(
+          value: 1,
+          label: Text('מערכת'),
+          icon: Icon(Icons.settings_rounded, size: 15),
+        ),
+      ],
+      selected: {_sectionIndex},
+      onSelectionChanged: (s) => setState(() => _sectionIndex = s.first),
+      style: ButtonStyle(
+        tapTargetSize:  MaterialTapTargetSize.shrinkWrap,
+        visualDensity:  VisualDensity.compact,
+        textStyle:      WidgetStateProperty.all(
+          const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
         ),
       ),
+    );
+  }
+
+  // ── Management section (ניהול) — 13 tabs ──────────────────────────────────
+
+  Widget _buildManagementSection(
+    List<QueryDocumentSnapshot> allUsers,
+    int customers,
+    int providers,
+  ) {
+    return DefaultTabController(
+      length: 13,
+      child: Column(
+        children: [
+          // Search bar
+          Padding(
+            padding: const EdgeInsets.fromLTRB(15, 12, 15, 6),
+            child: TextField(
+              onChanged: (v) => setState(() => _searchQuery = v),
+              decoration: InputDecoration(
+                hintText: "חפש שם, מייל או מזהה...",
+                prefixIcon: const Icon(Icons.search),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+          // Stats badges
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _pulseBadge("👥 $customers לקוחות"),
+                _pulseBadge("🛠️ $providers ספקים"),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          // Tabs
+          const TabBar(
+            isScrollable: true,
+            labelColor:     Colors.blueAccent,
+            indicatorColor: Colors.blueAccent,
+            tabs: [
+              Tab(text: "הכל"),
+              Tab(text: "לקוחות"),
+              Tab(text: "ספקים"),
+              Tab(text: "חסומים"),
+              Tab(text: "מחלוקות 🔴"),
+              Tab(text: "משיכות 💸"),
+              Tab(text: "XP & רמות 🎮"),
+              Tab(text: "אימות זהות 🪪"),
+              Tab(text: "משפך הרשמה 📈"),
+              Tab(text: "לייב פיד 📡"),
+              Tab(text: "צ'אטים 💬"),
+              Tab(text: "דמו ★"),
+              Tab(text: "בינה עסקית 🧠"),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _buildList(allUsers),
+                _buildList(allUsers.where((d) => (d.data() as Map)['isCustomer'] == true).toList()),
+                _buildList(allUsers.where((d) => (d.data() as Map)['isProvider'] == true).toList()),
+                _buildList(allUsers.where((d) => (d.data() as Map)['isBanned'] == true).toList()),
+                const DisputeResolutionScreen(),
+                _buildWithdrawalsList(),
+                const XpManagerScreen(),
+                _buildIdVerificationTab(),
+                const RegistrationFunnelTab(),
+                const LiveActivityTab(),
+                _buildSupportTab(),
+                const AdminDemoExpertsTab(),
+                const BusinessAiScreen(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── System section (מערכת) — 7 tabs ──────────────────────────────────────
+
+  Widget _buildSystemSection(List<QueryDocumentSnapshot> allUsers) {
+    return DefaultTabController(
+      length: 7,
+      child: Column(
+        children: [
+          const SizedBox(height: 8),
+          const TabBar(
+            isScrollable: true,
+            labelColor:     Color(0xFF7C3AED),
+            indicatorColor: Color(0xFF7C3AED),
+            tabs: [
+              Tab(text: "קטגוריות 🏷️"),
+              Tab(text: "באנרים 🎨"),
+              Tab(text: "מוניטיזציה 💰"),
+              Tab(text: "תובנות 📊"),
+              Tab(text: "ביצועים 🖥️"),
+              Tab(text: "מיתוג 🎨"),
+              Tab(text: "חסימות 🛡️"),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _buildCategoriesTab(),
+                _buildBannersTab(),
+                _buildMonetizationTab(allUsers),
+                _buildInsightsTab(allUsers),
+                const SystemPerformanceTab(),
+                const AdminBrandAssetsTab(),
+                _buildChatGuardTab(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Chat Guard admin tab ──────────────────────────────────────────────────
+
+  Widget _buildChatGuardTab() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('activity_log')
+          .where('type', isEqualTo: 'bypass_attempt')
+          .limit(50)
+          .snapshots(),
+      builder: (context, snap) {
+        final docs = snap.data?.docs ?? [];
+
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // ── Status card ──────────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF7C3AED), Color(0xFF6366F1)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.shield_rounded, color: Colors.white, size: 36),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Chat Guard — פעיל',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        Text(
+                          '${docs.length} ניסיונות עקיפה זוהו',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.85),
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // ── Active patterns ──────────────────────────────────────────
+            const Text(
+              'פטרנים פעילים',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                '📵 טלפון ישראלי', '💬 וואטסאפ', '💵 מזומן',
+                '🔗 wa.me', '📞 טלפון', '💳 ביט',
+                '🌐 Outside App', '💸 Cash',
+              ].map((label) => Chip(
+                label: Text(label, style: const TextStyle(fontSize: 12)),
+                backgroundColor: const Color(0xFFEDE9FE),
+                side: const BorderSide(color: Color(0xFF7C3AED), width: 0.5),
+              )).toList(),
+            ),
+            const SizedBox(height: 24),
+
+            // ── Bypass attempts log ──────────────────────────────────────
+            const Text(
+              'ניסיונות עקיפה אחרונים',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+            const SizedBox(height: 10),
+
+            if (docs.isEmpty)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    'אין ניסיונות עקיפה עדיין ✅',
+                    style: TextStyle(color: Colors.grey[500]),
+                  ),
+                ),
+              )
+            else
+              ...docs.map((doc) {
+                final d         = doc.data() as Map<String, dynamic>;
+                final userId    = (d['userId']    as String?) ?? '—';
+                final flagType  = (d['flagType']  as String?) ?? '—';
+                final attempts  = (d['attemptCount'] as num?)?.toInt() ?? 1;
+                final ts        = (d['timestamp'] as dynamic);
+                String timeStr  = '';
+                if (ts != null) {
+                  try {
+                    final dt = (ts as dynamic).toDate() as DateTime;
+                    timeStr  = '${dt.day}/${dt.month} ${dt.hour}:${dt.minute.toString().padLeft(2,'0')}';
+                  } catch (_) {}
+                }
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  elevation: 0,
+                  color: attempts >= 3
+                      ? const Color(0xFFFFF1F2)
+                      : const Color(0xFFFAF5FF),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    side: BorderSide(
+                      color: attempts >= 3
+                          ? const Color(0xFFFCA5A5)
+                          : const Color(0xFFDDD6FE),
+                    ),
+                  ),
+                  child: ListTile(
+                    dense: true,
+                    leading: CircleAvatar(
+                      radius: 16,
+                      backgroundColor: attempts >= 3
+                          ? const Color(0xFFEF4444)
+                          : const Color(0xFF7C3AED),
+                      child: Text(
+                        '$attempts',
+                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    title: Text(
+                      userId.length > 20 ? '${userId.substring(0, 20)}…' : userId,
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      '$flagType  •  $timeStr',
+                      style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                    ),
+                    trailing: attempts >= 3
+                        ? const Icon(Icons.warning_amber_rounded, color: Color(0xFFEF4444), size: 18)
+                        : null,
+                  ),
+                );
+              }),
+          ],
+        );
+      },
     );
   }
 
