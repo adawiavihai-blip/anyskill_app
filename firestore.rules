@@ -17,7 +17,7 @@ service cloud.firestore {
     // ── Users ─────────────────────────────────────────────────────
     match /users/{uid} {
       allow read:   if isAuth();
-      allow create: if isOwner(uid) || (isAuth() && uid == 'anyskill_system');
+      allow create: if isOwner(uid) || (isAuth() && uid == 'anyskill_system') || isAdmin();
       allow update: if (isOwner(uid)
                         // 🔒 Server-side only (Cloud Functions / Admin SDK):
                         //    xp, current_xp, level, isPromoted  — gamification engine
@@ -140,8 +140,8 @@ service cloud.firestore {
     // ── Reviews ───────────────────────────────────────────────────
     match /reviews/{reviewId} {
       allow read: if true;
-      allow create: if isAuth()
-                    && request.resource.data.reviewerId == request.auth.uid;
+      allow create: if (isAuth() && request.resource.data.reviewerId == request.auth.uid)
+                    || isAdmin();
       // הספק יכול להוסיף תגובה (providerResponse) לביקורות שלו בלבד
       allow update: if isAuth()
                     && resource.data.expertId == request.auth.uid
