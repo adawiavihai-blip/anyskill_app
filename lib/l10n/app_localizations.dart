@@ -490,6 +490,7 @@ final Map<String, Map<String, String>> _translations = {
     'catResultsNoResultsHint':    'נסה לשנות את החיפוש או לבטל את הפילטר',
     'catResultsBeFirst':          'היה הראשון להצטרף לקטגוריה זו!',
     'catResultsClearFilters':     'נקה פילטרים',
+    'catResultsLoadMore':         'טען עוד מומחים',
 
     // ── Expert Profile Screen ─────────────────────────────────────────────────
     'traitPunctual':             'תמיד בזמן',
@@ -1321,6 +1322,7 @@ final Map<String, Map<String, String>> _translations = {
     'catResultsNoResultsHint':    'Try changing the search or clearing the filter',
     'catResultsBeFirst':          'Be the first to join this category!',
     'catResultsClearFilters':     'Clear Filters',
+    'catResultsLoadMore':         'Load more experts',
 
     // ── Expert Profile Screen ─────────────────────────────────────────────────
     'traitPunctual':             'Always on time',
@@ -2152,6 +2154,7 @@ final Map<String, Map<String, String>> _translations = {
     'catResultsNoResultsHint':    'Intenta cambiar la búsqueda o quitar el filtro',
     'catResultsBeFirst':          '¡Sé el primero en unirte a esta categoría!',
     'catResultsClearFilters':     'Limpiar Filtros',
+    'catResultsLoadMore':         'Cargar más expertos',
 
     // ── Expert Profile Screen ─────────────────────────────────────────────────
     'traitPunctual':             'Siempre puntual',
@@ -3088,6 +3091,7 @@ class AppLocalizations {
   String catResultsNoExperts(String category) => _tp('catResultsNoExperts', {'category': category});
   String get catResultsNoResultsHint    => _t('catResultsNoResultsHint');
   String get catResultsBeFirst          => _t('catResultsBeFirst');
+  String get catResultsLoadMore         => _t('catResultsLoadMore');
   String get catResultsClearFilters     => _t('catResultsClearFilters');
 
   // ── ToS screen ───────────────────────────────────────────────────────────────

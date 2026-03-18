@@ -44,14 +44,24 @@ class CategoryResultsScreen extends StatefulWidget {
 class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   String _searchQuery    = '';
   bool   _filterUnder100 = false;
-  int    _refreshTrigger = 0;
-  Future<List<Map<String, dynamic>>>? _expertsFuture;
   Position? _currentPosition;
+
+  // ── Pagination state ───────────────────────────────────────────────────────
+  static const int _kPageSize = 15;
+
+  final List<Map<String, dynamic>> _allExperts = [];
+  bool _isLoading     = true;
+  bool _isLoadingMore = false;
+  bool _hasMore       = true;
+  DocumentSnapshot<Map<String, dynamic>>? _lastDoc;
+
+  late final ScrollController _scrollCtrl;
 
   @override
   void initState() {
     super.initState();
-    _expertsFuture = _fetchExperts();
+    _scrollCtrl = ScrollController()..addListener(_onScroll);
+    _loadInitial();
     // Use cached position instantly; fall back to a dialog-based request
     final cached = LocationService.cached;
     if (cached != null) {
@@ -64,9 +74,48 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     }
   }
 
-  /// חד-פעמי — מונע את באג ה-Firestore web SDK שמתרחש כאשר
-  /// מאזין real-time מתבטל באמצע עדכון (assertion ve:-1).
-  Future<List<Map<String, dynamic>>> _fetchExperts() async {
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollCtrl.position.pixels >=
+        _scrollCtrl.position.maxScrollExtent * 0.85) {
+      _loadMore();
+    }
+  }
+
+  Future<void> _loadInitial() async {
+    setState(() {
+      _isLoading = true;
+      _allExperts.clear();
+      _lastDoc = null;
+      _hasMore = true;
+    });
+    final page = await _fetchPage();
+    if (!mounted) return;
+    setState(() {
+      _allExperts.addAll(page);
+      _isLoading = false;
+    });
+  }
+
+  Future<void> _loadMore() async {
+    if (_isLoadingMore || !_hasMore || _isLoading) return;
+    setState(() => _isLoadingMore = true);
+    final page = await _fetchPage();
+    if (!mounted) return;
+    setState(() {
+      _allExperts.addAll(page);
+      _isLoadingMore = false;
+    });
+  }
+
+  /// Fetches the next page of experts using Firestore cursor pagination.
+  /// Applies isVerified / isHidden client-side filters to each page.
+  Future<List<Map<String, dynamic>>> _fetchPage() async {
     Query<Map<String, dynamic>> q = FirebaseFirestore.instance
         .collection('users')
         .where('isProvider', isEqualTo: true);
@@ -77,18 +126,22 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       q = q.where('serviceType', isEqualTo: widget.categoryName);
     }
 
-    final snap = await q.limit(50).get();
+    if (_lastDoc != null) q = q.startAfterDocument(_lastDoc!);
+    q = q.limit(_kPageSize);
+
+    final snap = await q.get();
+    if (snap.docs.length < _kPageSize) {
+      if (mounted) setState(() => _hasMore = false);
+    }
+    if (snap.docs.isNotEmpty) _lastDoc = snap.docs.last;
+
     return snap.docs.map((d) {
       final map = d.data();
       map['uid'] = d.id;
       return map;
     })
-    // Exclude providers explicitly flagged as not-yet-verified.
-    // Docs without 'isVerified' field (legacy accounts) pass through
-    // so existing users are never hidden during migration.
     .where((m) => m['isVerified'] != false)
-    // Exclude demo experts that the admin has toggled to hidden.
-    .where((m) => m['isHidden'] != true)
+    .where((m) => m['isHidden']   != true)
     .toList();
   }
 
@@ -785,12 +838,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           _buildSearchAndFilter(),
           Expanded(
             child: RefreshIndicator(
-              onRefresh: () async {
-                setState(() {
-                  _refreshTrigger++;
-                  _expertsFuture = _fetchExperts();
-                });
-              },
+              onRefresh: _loadInitial,
               color: _kPurple,
               strokeWidth: 2.5,
               child: _buildList(),
@@ -972,51 +1020,27 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   }
 
   Widget _buildList() {
-    // בדיקות מזריקות Stream; ייצור משתמש ב-Future (מונע באג Firestore web SDK)
+    // Test injection path — kept for unit tests
     if (widget.testStream != null) {
       return StreamBuilder<List<Map<String, dynamic>>>(
         stream: widget.testStream,
-        builder: (context, snapshot) => _buildContent(context, snapshot),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          return _renderExperts(context, snapshot.data ?? []);
+        },
       );
     }
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      key: ValueKey(_refreshTrigger),
-      future: _expertsFuture,
-      builder: (context, snapshot) => _buildContent(context, snapshot),
-    );
+    return _buildContent(context);
   }
 
-  Widget _buildContent(
-      BuildContext context, AsyncSnapshot<List<Map<String, dynamic>>> snapshot) {
-    final l10n = AppLocalizations.of(context);
-    if (snapshot.connectionState == ConnectionState.waiting) {
+  Widget _buildContent(BuildContext context) {
+    if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (snapshot.hasError) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.wifi_off_rounded, size: 48, color: Colors.grey),
-            const SizedBox(height: 16),
-            Text(l10n.catResultsLoadError,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.refresh),
-              label: Text(l10n.retryButton),
-              onPressed: () => setState(() {
-                _refreshTrigger++;
-                _expertsFuture = _fetchExperts();
-              }),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final all = (snapshot.data ?? []).toList();
+    final all = List<Map<String, dynamic>>.from(_allExperts);
     // ── Unified weighted ranking formula ──────────────────────────────────
     // Score = (XP × 0.6) + (Distance_Score × 0.2) + (ActiveStoryBonus × 0.2)
     //         + Promoted_Add (200 if isPromoted — always floats above non-promoted)
@@ -1036,7 +1060,12 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       underHundred: _filterUnder100,
     );
 
-    if (experts.isEmpty) {
+    return _renderExperts(context, experts);
+  }
+
+  Widget _renderExperts(BuildContext context, List<Map<String, dynamic>> experts) {
+    final l10n = AppLocalizations.of(context);
+    if (experts.isEmpty && !_isLoadingMore && !_hasMore) {
       final hasFilters = _searchQuery.isNotEmpty || _filterUnder100;
       return Center(
         child: Padding(
@@ -1093,10 +1122,33 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       );
     }
 
+    // +1 sentinel item for the load-more spinner / "all loaded" indicator
+    final sentinelCount = (_isLoadingMore || _hasMore) ? 1 : 0;
     return ListView.builder(
+      controller: _scrollCtrl,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-      itemCount: experts.length,
-      itemBuilder: (_, index) => _buildExpertCard(experts[index]),
+      itemCount: experts.length + sentinelCount,
+      itemBuilder: (_, index) {
+        if (index == experts.length) {
+          // Bottom sentinel
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: _isLoadingMore
+                  ? const SizedBox(
+                      width: 28, height: 28,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                    )
+                  : TextButton.icon(
+                      onPressed: _loadMore,
+                      icon: const Icon(Icons.expand_more_rounded),
+                      label: Text(l10n.catResultsLoadMore),
+                    ),
+            ),
+          );
+        }
+        return RepaintBoundary(child: _buildExpertCard(experts[index]));
+      },
     );
   }
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -4496,12 +4497,12 @@ class _AdminScreenState extends State<AdminScreen> {
                       const SizedBox(height: 12),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(10),
-                        child: Image.network(
-                          idUrl,
+                        child: CachedNetworkImage(
+                          imageUrl: idUrl,
                           height: 160,
                           width: double.infinity,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
+                          errorWidget: (_, __, ___) => Container(
                             height: 80,
                             color: Colors.grey.shade100,
                             child: const Center(

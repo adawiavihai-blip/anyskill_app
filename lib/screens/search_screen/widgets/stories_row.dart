@@ -1,6 +1,7 @@
 // ignore_for_file: use_build_context_synchronously
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -344,9 +345,10 @@ class _MyStorySlotState extends State<_MyStorySlot>
                     // Avatar
                     ClipOval(
                       child: avatar.isNotEmpty
-                          ? Image.network(avatar,
+                          ? CachedNetworkImage(
+                              imageUrl: avatar,
                               width: 56, height: 56, fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => _avatarFallback(name))
+                              errorWidget: (_, __, ___) => _avatarFallback(name))
                           : _avatarFallback(name),
                     ),
                     // "+" badge when no story
@@ -819,7 +821,8 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen> {
                     // Avatar
                     ClipOval(
                       child: widget.providerAvatar.isNotEmpty
-                          ? Image.network(widget.providerAvatar,
+                          ? CachedNetworkImage(
+                              imageUrl: widget.providerAvatar,
                               width: 42, height: 42, fit: BoxFit.cover)
                           : _avatarFallback(widget.providerName, size: 42),
                     ),

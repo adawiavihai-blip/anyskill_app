@@ -1,5 +1,6 @@
 // ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/academy_service.dart';
@@ -278,10 +279,10 @@ class _CourseCard extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    Image.network(
-                      thumb,
+                    CachedNetworkImage(
+                      imageUrl: thumb,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
+                      errorWidget: (_, __, ___) => Container(
                         color: const Color(0xFF2D2D44),
                         child: const Icon(Icons.play_circle_outline,
                             color: Colors.white54, size: 48),

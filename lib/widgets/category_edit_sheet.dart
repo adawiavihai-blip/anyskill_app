@@ -1,5 +1,6 @@
 // ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -393,9 +394,10 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: previewUrl.isNotEmpty
-                      ? Image.network(previewUrl,
+                      ? CachedNetworkImage(
+                          imageUrl: previewUrl,
                           width: 72, height: 60, fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
+                          errorWidget: (_, __, ___) =>
                               _imagePlaceholder())
                       : _imagePlaceholder(),
                 ),

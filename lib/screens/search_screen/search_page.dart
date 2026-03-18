@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -1024,9 +1025,10 @@ class _StoryAvatar extends StatelessWidget {
             padding: const EdgeInsets.all(2.5),
             child: ClipOval(
               child: imageUrl.isNotEmpty
-                  ? Image.network(imageUrl,
+                  ? CachedNetworkImage(
+                      imageUrl: imageUrl,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _placeholder())
+                      errorWidget: (_, __, ___) => _placeholder())
                   : _placeholder(),
             ),
           ),
@@ -1437,11 +1439,12 @@ class _EditCategorySheetState extends State<_EditCategorySheet> {
                           height: 160,
                           width: double.infinity,
                           fit: BoxFit.cover)
-                      : Image.network(widget.currentImg,
+                      : CachedNetworkImage(
+                          imageUrl: widget.currentImg,
                           height: 160,
                           width: double.infinity,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
+                          errorWidget: (_, __, ___) =>
                               Container(height: 160, color: Colors.grey[200])),
                 ),
                 Positioned.fill(

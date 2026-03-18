@@ -446,15 +446,20 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                       final globalScale =
                           SettingsService.cardScaleFrom(settingsSnap.data);
                       final w    = MediaQuery.sizeOf(context).width;
-                      final cols = w >= 900 ? 4 : w >= 600 ? 3 : 2;
-                      // Base aspect ratio matches SubCategoryScreen exactly
-                      final baseRatio  = w >= 900 ? 1.0 : w >= 600 ? 0.90 : 0.85;
-                      // Scale UP → cards taller → ratio LOWER (width/height)
+                      // Mobile: 3 cols — compact tiles so 4+ rows fit above
+                      // the fold without scrolling.
+                      // Tablet: 3 cols — same comfortable density as before.
+                      // Desktop: 4 cols — unchanged.
+                      final cols    = w >= 900 ? 4 : 3;
+                      final spacing = w >= 600 ? 8.0 : 6.0;
+                      // Aspect ratio: wider-than-tall for compact mobile tiles.
+                      // Scale UP (globalScale > 1) → cards taller → ratio lower.
+                      final baseRatio = w >= 900 ? 1.0 : w >= 600 ? 1.0 : 1.05;
                       final adjustedRatio =
                           (baseRatio / globalScale).clamp(0.35, 2.0);
 
                       return SliverPadding(
-                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+                        padding: EdgeInsets.fromLTRB(spacing, 0, spacing, 0),
                         sliver: SliverGrid(
                           delegate: SliverChildBuilderDelegate(
                             (context, index) {
@@ -470,7 +475,8 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                               final perCardScale =
                                   (data['cardScale'] as num? ?? 1.0).toDouble();
 
-                              return _HomeCategoryCard(
+                              return RepaintBoundary(
+                               child: _HomeCategoryCard(
                                 docId:        doc.id,
                                 name:         name,
                                 iconName:     iconName,
@@ -501,7 +507,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                                     );
                                   }
                                 },
-                              );
+                              )); // RepaintBoundary
                             },
                             childCount: filteredDocs.length,
                           ),
