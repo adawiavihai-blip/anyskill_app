@@ -288,5 +288,73 @@ service cloud.firestore {
                         .affectedKeys().hasOnly(['isReviewed']);
       allow create, delete: if false; // Admin SDK only
     }
+
+    // ── Academy Courses (public catalogue) ───────────────────────────────────
+    // Any visitor may read course metadata (title, description, videoUrl, quiz).
+    // Only admins may create / edit / delete courses.
+    match /courses/{courseId} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+
+    // ── Academy User Progress ────────────────────────────────────────────────
+    // Each user owns their progress subcollection: user_progress/{uid}/courses/
+    // Admin may read all progress (analytics).
+    match /user_progress/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      // Top-level doc is never written directly — only subcollection is.
+      allow write: if false;
+
+      match /courses/{courseId} {
+        allow read:   if isOwner(uid) || isAdmin();
+        // User writes their own watch-progress; completeCourse() uses a batch
+        // that also updates users/{uid} xp — both allowed by respective rules.
+        allow create, update: if isOwner(uid);
+        allow delete: if false;
+      }
+    }
+
+    // ── Activity Log (admin Live Feed) ───────────────────────────────────────
+    // Written by:
+    //   • Cloud Functions (logJobRequestCreated, logJobAccepted, etc.) via Admin SDK
+    //   • Flutter client (ChatGuardService.logBypassAttempt, _checkDemoExpert)
+    // Only admins may read.
+    match /activity_log/{logId} {
+      allow create: if isAuth();
+      allow read:   if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ── Broadcast History ────────────────────────────────────────────────────
+    // Written by Flutter client (admin panel) AND sendGlobalBroadcast CF.
+    // Only admins may read.
+    match /broadcast_history/{docId} {
+      allow create: if isAuth();
+      allow read:   if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ── System Settings (global UI config) ───────────────────────────────────
+    // Holds categoryCardScale and other real-time UI knobs.
+    // All authenticated users read (home_tab + sub_category_screen StreamBuilders).
+    // Only admin writes.
+    match /system_settings/{docId} {
+      allow read:  if isAuth();
+      allow write: if isAdmin();
+    }
+
+    // ── Volunteer Requests ───────────────────────────────────────────────────
+    // Any authenticated user may create a volunteer request.
+    // Cloud Function logVolunteerRequest (Admin SDK) reads on creation.
+    // Admin may read and update (moderation).
+    match /volunteer_requests/{reqId} {
+      allow create: if isAuth()
+                    && request.resource.data.clientId == request.auth.uid;
+      allow read:   if isAuth()
+                    && resource.data.clientId == request.auth.uid
+                    || isAdmin();
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
   }
 }
