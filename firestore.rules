@@ -123,8 +123,10 @@ service cloud.firestore {
                     && resource.data.userId == request.auth.uid
                     && request.resource.data.diff(resource.data)
                         .affectedKeys().hasOnly(['isRead']);
-      // All writes (create/delete) are done by Cloud Functions via Admin SDK
-      allow create, delete: if false;
+      // create: Cloud Functions / Admin SDK only
+      // delete: owner may delete their own notifications (Clear All)
+      allow create: if false;
+      allow delete: if isAuth() && resource.data.userId == request.auth.uid;
     }
 
     // ── Notifications subcollection (legacy — written by client SDK) ──────────
