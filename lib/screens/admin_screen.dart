@@ -4399,184 +4399,415 @@ class _AdminScreenState extends State<AdminScreen> {
 
   // ── ID Verification Tab ────────────────────────────────────────────────────
   Widget _buildIdVerificationTab() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .where('idVerificationStatus', isEqualTo: 'pending')
-          .limit(100)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final docs = snapshot.data!.docs;
-        if (docs.isEmpty) {
-          return const Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ── Expert Applications ──────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Row(
               children: [
-                Icon(Icons.check_circle_outline_rounded,
-                    size: 64, color: Colors.green),
-                SizedBox(height: 12),
-                Text('אין ספקים הממתינים לאימות',
-                    style: TextStyle(fontSize: 16, color: Colors.grey)),
+                const Text('🚀', style: TextStyle(fontSize: 20)),
+                const SizedBox(width: 8),
+                const Text('בקשות הצטרפות כמומחים',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ],
             ),
-          );
-        }
-        return ListView.separated(
-          padding: const EdgeInsets.all(16),
-          itemCount: docs.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12),
-          itemBuilder: (context, i) {
-            final data = docs[i].data() as Map<String, dynamic>;
-            final uid  = docs[i].id;
-            final name  = data['name']  as String? ?? 'ללא שם';
-            final email = data['email'] as String? ?? '';
-            final idUrl = data['idVerificationUrl'] as String?;
+          ),
+          StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('users')
+                .where('isPendingExpert', isEqualTo: true)
+                .limit(50)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              final docs = snapshot.data!.docs;
+              if (docs.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 8),
+                  child: Text('אין בקשות ממתינות',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey[500])),
+                );
+              }
+              return ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                itemCount: docs.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                itemBuilder: (ctx, i) =>
+                    _buildExpertApplicationCard(ctx, docs[i]),
+              );
+            },
+          ),
 
-            return Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    // User info row
-                    Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 22,
-                          backgroundColor: Colors.indigo.shade50,
-                          child: Text(
-                            name.isNotEmpty ? name[0] : '?',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.indigo),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(name,
-                                  textAlign: TextAlign.right,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 15)),
-                              Text(email,
-                                  textAlign: TextAlign.right,
-                                  style: TextStyle(
-                                      fontSize: 12, color: Colors.grey[600])),
-                            ],
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: Colors.amber.shade50,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                                color: Colors.amber.shade300),
-                          ),
-                          child: const Text('ממתין',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.amber,
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                      ],
-                    ),
+          const Divider(height: 1, thickness: 1),
+          const SizedBox(height: 8),
 
-                    // ID photo
-                    if (idUrl != null) ...[
-                      const SizedBox(height: 12),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: CachedNetworkImage(
-                          imageUrl: idUrl,
-                          height: 160,
-                          width: double.infinity,
-                          fit: BoxFit.cover,
-                          errorWidget: (_, __, ___) => Container(
-                            height: 80,
-                            color: Colors.grey.shade100,
-                            child: const Center(
-                                child: Icon(Icons.broken_image_outlined,
-                                    color: Colors.grey)),
-                          ),
-                        ),
-                      ),
-                    ] else ...[
-                      const SizedBox(height: 10),
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Text('לא הועלתה תמונת מסמך',
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                                color: Colors.red, fontSize: 12)),
-                      ),
+          // ── ID Verification ──────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Row(
+              children: [
+                const Text('🪪', style: TextStyle(fontSize: 20)),
+                const SizedBox(width: 8),
+                const Text('אימות זהות',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+          StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('users')
+                .where('idVerificationStatus', isEqualTo: 'pending')
+                .limit(100)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              final docs = snapshot.data!.docs;
+              if (docs.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 8),
+                  child: Text('אין ספקים הממתינים לאימות',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey[500])),
+                );
+              }
+              return ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                itemCount: docs.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                itemBuilder: (ctx, i) =>
+                    _buildIdVerificationCard(ctx, docs[i]),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExpertApplicationCard(
+      BuildContext context, DocumentSnapshot doc) {
+    final data    = doc.data() as Map<String, dynamic>;
+    final uid     = doc.id;
+    final name    = data['name']  as String? ?? 'ללא שם';
+    final email   = data['email'] as String? ?? '';
+    final appData = data['expertApplicationData'] as Map<String, dynamic>? ?? {};
+    final category = appData['category'] as String? ?? '';
+    final aboutMe  = appData['aboutMe']  as String? ?? '';
+    final taxId    = appData['taxId']    as String? ?? '';
+
+    return Card(
+      elevation: 2,
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // User info row
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 22,
+                  backgroundColor: Colors.purple.shade50,
+                  child: Text(
+                    name.isNotEmpty ? name[0] : '?',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.purple),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(name,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 15)),
+                      Text(email,
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                              fontSize: 12, color: Colors.grey[600])),
                     ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.purple.shade50,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.purple.shade200),
+                  ),
+                  child: const Text('ממתין לאישור',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.purple,
+                          fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
 
-                    const SizedBox(height: 12),
+            // Application details
+            if (category.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text(category,
+                      style: const TextStyle(fontSize: 13)),
+                  const SizedBox(width: 6),
+                  const Icon(Icons.work_outline_rounded,
+                      size: 15, color: Colors.grey),
+                ],
+              ),
+            ],
+            if (taxId.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text(taxId,
+                      style: const TextStyle(fontSize: 13)),
+                  const SizedBox(width: 6),
+                  const Icon(Icons.badge_outlined,
+                      size: 15, color: Colors.grey),
+                ],
+              ),
+            ],
+            if (aboutMe.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(aboutMe,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(fontSize: 13)),
+              ),
+            ],
 
-                    // Action buttons
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        // Reject button
-                        OutlinedButton.icon(
-                          onPressed: _verifyingUids.contains(uid)
-                              ? null
-                              : () => _rejectVerification(context, uid, name, email),
-                          icon: const Icon(Icons.close_rounded,
-                              size: 16, color: Colors.red),
-                          label: const Text('דחה',
-                              style: TextStyle(color: Colors.red)),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Colors.red),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        // Approve button
-                        ElevatedButton.icon(
-                          onPressed: _verifyingUids.contains(uid)
-                              ? null
-                              : () => _approveVerification(context, uid, name, email),
-                          icon: _verifyingUids.contains(uid)
-                              ? const SizedBox(
-                                  width: 14, height: 14,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2, color: Colors.white))
-                              : const Icon(Icons.check_rounded,
-                                  size: 16, color: Colors.white),
-                          label: const Text('אמת',
-                              style: TextStyle(color: Colors.white)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+            const SizedBox(height: 12),
+
+            // Action buttons
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _verifyingUids.contains(uid)
+                      ? null
+                      : () => _rejectExpertApplication(
+                          context, uid, name),
+                  icon: const Icon(Icons.close_rounded,
+                      size: 16, color: Colors.red),
+                  label:
+                      const Text('דחה', style: TextStyle(color: Colors.red)),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Colors.red),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton.icon(
+                  onPressed: _verifyingUids.contains(uid)
+                      ? null
+                      : () => _approveExpertApplication(
+                          context, uid, name, email, category),
+                  icon: _verifyingUids.contains(uid)
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.check_rounded,
+                          size: 16, color: Colors.white),
+                  label: const Text('אשר כמומחה',
+                      style: TextStyle(color: Colors.white)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.purple,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIdVerificationCard(
+      BuildContext context, DocumentSnapshot doc) {
+    final data  = doc.data() as Map<String, dynamic>;
+    final uid   = doc.id;
+    final name  = data['name']  as String? ?? 'ללא שם';
+    final email = data['email'] as String? ?? '';
+    final idUrl = data['idVerificationUrl'] as String?;
+
+    return Card(
+      elevation: 2,
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // User info row
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 22,
+                  backgroundColor: Colors.indigo.shade50,
+                  child: Text(
+                    name.isNotEmpty ? name[0] : '?',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.indigo),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(name,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 15)),
+                      Text(email,
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                              fontSize: 12, color: Colors.grey[600])),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade50,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.amber.shade300),
+                  ),
+                  child: const Text('ממתין',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.amber,
+                          fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+
+            // ID photo
+            if (idUrl != null) ...[
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: CachedNetworkImage(
+                  imageUrl: idUrl,
+                  height: 160,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  errorWidget: (_, __, ___) => Container(
+                    height: 80,
+                    color: Colors.grey.shade100,
+                    child: const Center(
+                        child: Icon(Icons.broken_image_outlined,
+                            color: Colors.grey)),
+                  ),
                 ),
               ),
-            );
-          },
-        );
-      },
+            ] else ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text('לא הועלתה תמונת מסמך',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(color: Colors.red, fontSize: 12)),
+              ),
+            ],
+
+            const SizedBox(height: 12),
+
+            // Action buttons
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _verifyingUids.contains(uid)
+                      ? null
+                      : () => _rejectVerification(
+                          context, uid, name, email),
+                  icon: const Icon(Icons.close_rounded,
+                      size: 16, color: Colors.red),
+                  label:
+                      const Text('דחה', style: TextStyle(color: Colors.red)),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Colors.red),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton.icon(
+                  onPressed: _verifyingUids.contains(uid)
+                      ? null
+                      : () => _approveVerification(
+                          context, uid, name, email),
+                  icon: _verifyingUids.contains(uid)
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.check_rounded,
+                          size: 16, color: Colors.white),
+                  label: const Text('אמת',
+                      style: TextStyle(color: Colors.white)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -4641,6 +4872,89 @@ class _AdminScreenState extends State<AdminScreen> {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('$name נדחה/ה — אימייל נשלח'),
+          backgroundColor: Colors.orange.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('שגיאה בדחייה: $e'),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _verifyingUids.remove(uid));
+    }
+  }
+
+  Future<void> _approveExpertApplication(BuildContext context, String uid,
+      String name, String email, String category) async {
+    if (_verifyingUids.contains(uid)) return;
+    setState(() => _verifyingUids.add(uid));
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'isProvider':        true,
+        'isPendingExpert':   false,
+        'isVerifiedProvider': true,
+        'isVerified':        true,
+        'serviceType':       category,
+      });
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('✅ $name אושר/ה כמומחה בהצלחה'),
+          backgroundColor: Colors.purple.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('שגיאה באישור: $e'),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _verifyingUids.remove(uid));
+    }
+  }
+
+  Future<void> _rejectExpertApplication(
+      BuildContext context, String uid, String name) async {
+    if (_verifyingUids.contains(uid)) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('אישור דחייה'),
+        content: Text('לדחות את הבקשה של $name?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('ביטול')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('דחה', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+    setState(() => _verifyingUids.add(uid));
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'isPendingExpert':    false,
+        'expertApplicationData': FieldValue.delete(),
+      });
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('$name — הבקשה נדחתה'),
           backgroundColor: Colors.orange.shade700,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),

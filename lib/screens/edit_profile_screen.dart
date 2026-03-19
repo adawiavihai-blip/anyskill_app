@@ -38,9 +38,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   List<dynamic> _galleryImages = [];
   bool _isLoading = false;
 
-  bool _isCustomer  = false;
-  bool _isProvider  = false;
-  bool _isVolunteer = false;
+  bool _isCustomer     = false;
+  bool _isProvider     = false;
+  bool _isVolunteer    = false;
+  bool _isPendingExpert = false;
 
   List<Map<String, dynamic>> _categories = [];
   late StreamSubscription<List<Map<String, dynamic>>> _categorySub;
@@ -57,9 +58,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         (widget.userData['quickTags'] as List? ?? []).cast<String>());
     _profileImageUrl = widget.userData['profileImage'];
     
-    _isCustomer  = widget.userData['isCustomer']  ?? true;
-    _isProvider  = widget.userData['isProvider']  ?? false;
-    _isVolunteer = widget.userData['isVolunteer'] ?? false;
+    _isCustomer     = widget.userData['isCustomer']     ?? true;
+    _isProvider     = widget.userData['isProvider']     ?? false;
+    _isVolunteer    = widget.userData['isVolunteer']    ?? false;
+    _isPendingExpert = widget.userData['isPendingExpert'] ?? false;
     _responseTimeMinutes = widget.userData['responseTimeMinutes'] as int?;
     _cancellationPolicy  = widget.userData['cancellationPolicy'] as String? ?? 'flexible';
 
@@ -266,6 +268,142 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  Widget _buildPendingExpertBanner() {
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E1),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFFC107)),
+      ),
+      child: const Row(
+        children: [
+          SizedBox(
+            width: 20, height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.amber),
+          ),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text('הבקשה שלך בבדיקה 🕐',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                SizedBox(height: 4),
+                Text('הצוות שלנו בודק את הפרטים ויחזור אליך בקרוב.',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(fontSize: 12, color: Colors.brown)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildApplyToBeExpertButton() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: GestureDetector(
+        onTap: _showExpertApplicationForm,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+            ),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF6366F1).withValues(alpha: 0.3),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.work_outline_rounded, color: Colors.white, size: 22),
+              SizedBox(width: 10),
+              Text('רוצה לעבוד ולהרוויח כסף? לחץ כאן',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showExpertApplicationForm() async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _ExpertApplicationSheet(
+        mainCategories: _mainCategories,
+        onSubmit: _submitExpertApplication,
+      ),
+    );
+  }
+
+  Future<void> _submitExpertApplication({
+    required String category,
+    required String taxId,
+    required String aboutMe,
+  }) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      batch.update(
+        FirebaseFirestore.instance.collection('users').doc(uid),
+        {
+          'isPendingExpert': true,
+          'expertApplicationData': {
+            'category': category,
+            'taxId': taxId,
+            'aboutMe': aboutMe,
+            'submittedAt': FieldValue.serverTimestamp(),
+          },
+        },
+      );
+      batch.set(
+        FirebaseFirestore.instance.collection('activity_log').doc(),
+        {
+          'type': 'expert_application',
+          'userId': uid,
+          'userName': widget.userData['name'] ?? '',
+          'category': category,
+          'priority': 'high',
+          'timestamp': FieldValue.serverTimestamp(),
+          'message': 'בקשה להצטרפות כמומחה: ${widget.userData['name'] ?? uid}',
+        },
+      );
+      await batch.commit();
+      if (mounted) {
+        setState(() => _isPendingExpert = true);
+        messenger.showSnackBar(const SnackBar(
+          content: Text('✅ הבקשה שלך נשלחה! נחזור אליך בקרוב.'),
+          backgroundColor: Colors.green,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text('שגיאה: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -314,24 +452,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 const SizedBox(height: 25),
 
                 Text(l10n.profileFieldRole, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    FilterChip(
-                      label: Text(l10n.roleProvider),
-                      selected: _isProvider,
-                      onSelected: (val) => setState(() => _isProvider = val),
-                      selectedColor: Colors.green[100],
-                    ),
-                    const SizedBox(width: 10),
-                    FilterChip(
-                      label: Text(l10n.roleCustomer),
-                      selected: _isCustomer,
-                      onSelected: (val) => setState(() => _isCustomer = val),
-                      selectedColor: Colors.blue[100],
-                    ),
-                  ],
-                ),
+                if (_isProvider)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      FilterChip(
+                        label: Text(l10n.roleProvider),
+                        selected: _isProvider,
+                        onSelected: (val) => setState(() => _isProvider = val),
+                        selectedColor: Colors.green[100],
+                      ),
+                      const SizedBox(width: 10),
+                      FilterChip(
+                        label: Text(l10n.roleCustomer),
+                        selected: _isCustomer,
+                        onSelected: (val) => setState(() => _isCustomer = val),
+                        selectedColor: Colors.blue[100],
+                      ),
+                    ],
+                  )
+                else if (_isPendingExpert)
+                  _buildPendingExpertBanner()
+                else
+                  _buildApplyToBeExpertButton(),
 
                 // ── Volunteer toggle (providers only) ────────────────────
                 if (_isProvider) ...[
@@ -761,5 +904,195 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           );
         }), // Builder
     );
+  }
+}
+
+// ── Expert Application Bottom Sheet ─────────────────────────────────────────
+class _ExpertApplicationSheet extends StatefulWidget {
+  final List<Map<String, dynamic>> mainCategories;
+  final Future<void> Function({
+    required String category,
+    required String taxId,
+    required String aboutMe,
+  }) onSubmit;
+
+  const _ExpertApplicationSheet({
+    required this.mainCategories,
+    required this.onSubmit,
+  });
+
+  @override
+  State<_ExpertApplicationSheet> createState() =>
+      _ExpertApplicationSheetState();
+}
+
+class _ExpertApplicationSheetState extends State<_ExpertApplicationSheet> {
+  String? _selectedCategory;
+  final _taxIdCtrl  = TextEditingController();
+  final _aboutCtrl  = TextEditingController();
+  bool _submitting  = false;
+
+  @override
+  void dispose() {
+    _taxIdCtrl.dispose();
+    _aboutCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      builder: (_, scrollCtrl) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: ListView(
+          controller: scrollCtrl,
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+          children: [
+            // Drag handle
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            // Header
+            const Text('הגש מועמדות כמומחה',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text('מלא את הפרטים ואנחנו נבדוק את הבקשה שלך',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+            const SizedBox(height: 24),
+
+            // Category
+            const Text('תחום עיסוק *',
+                textAlign: TextAlign.right,
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            DropdownButtonFormField<String>(
+              value: _selectedCategory,
+              hint: const Text('בחר תחום', textAlign: TextAlign.right),
+              decoration: InputDecoration(
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              ),
+              items: widget.mainCategories.map((cat) {
+                return DropdownMenuItem<String>(
+                  value: cat['name'] as String,
+                  child: Text(cat['name'] as String),
+                );
+              }).toList(),
+              onChanged: (val) => setState(() => _selectedCategory = val),
+            ),
+            const SizedBox(height: 16),
+
+            // Tax / ID
+            const Text('מספר ת.ז. / ח.פ. *',
+                textAlign: TextAlign.right,
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _taxIdCtrl,
+              keyboardType: TextInputType.number,
+              textAlign: TextAlign.right,
+              decoration: InputDecoration(
+                hintText: 'הכנס מספר זהות',
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // About Me
+            const Text('ספר על עצמך *',
+                textAlign: TextAlign.right,
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _aboutCtrl,
+              maxLines: 4,
+              textAlign: TextAlign.right,
+              decoration: InputDecoration(
+                hintText: 'תאר את הניסיון שלך, השירותים שאתה מציע...',
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+            const SizedBox(height: 28),
+
+            // Submit
+            ElevatedButton(
+              onPressed: _submitting ? null : _handleSubmit,
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 54),
+                backgroundColor: const Color(0xFF6366F1),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+              child: _submitting
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                          color: Colors.white, strokeWidth: 2))
+                  : const Text('שלח בקשה',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleSubmit() async {
+    if (_selectedCategory == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('בחר תחום עיסוק'),
+              backgroundColor: Colors.orange));
+      return;
+    }
+    if (_taxIdCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('הכנס מספר זהות'),
+              backgroundColor: Colors.orange));
+      return;
+    }
+    if (_aboutCtrl.text.trim().length < 20) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('כתוב לפחות 20 תווים על עצמך'),
+              backgroundColor: Colors.orange));
+      return;
+    }
+    setState(() => _submitting = true);
+    try {
+      await widget.onSubmit(
+        category: _selectedCategory!,
+        taxId: _taxIdCtrl.text.trim(),
+        aboutMe: _aboutCtrl.text.trim(),
+      );
+      if (mounted) Navigator.pop(context);
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 }
