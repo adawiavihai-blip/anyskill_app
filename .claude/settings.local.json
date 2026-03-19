@@ -126,7 +126,10 @@
       "Bash(sed -n '268,278p' \"c:/Users/aviha/Desktop/anyskill_app/lib/screens/category_results_screen.dart\")",
       "Bash(grep -v \"//.*Image\\\\.network\")",
       "Bash(find c:/Users/aviha/Desktop/anyskill_app -name *function* -type f)",
-      "Bash(find c:/Users/aviha/Desktop/anyskill_app/functions -name *.js -path */src/* -type f)"
+      "Bash(find c:/Users/aviha/Desktop/anyskill_app/functions -name *.js -path */src/* -type f)",
+      "Bash(find /c/Users/aviha/Desktop/anyskill_app/lib/screens -name \"opportunities_screen.dart\" -exec grep -n \"build\\\\|AppBar\" {} +)",
+      "Bash(find /c/Users/aviha/Desktop/anyskill_app/lib/screens -name \"my_bookings_screen.dart\" -exec grep -n \"build\\\\|AppBar\\\\|_isProvider\\\\|Client\\\\|Expert\" {} +)",
+      "Bash(find /c/Users/aviha/Desktop/anyskill_app/lib/screens -name \"finance_screen.dart\" -exec grep -n \"build\\\\|AppBar\" {} +)"
     ]
   }
 }

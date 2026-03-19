@@ -180,8 +180,14 @@ service cloud.firestore {
 
     // ── Rebook reminders (written by Cloud Functions only) ────────────
     match /scheduled_reminders/{remId} {
-      allow read:  if isAdmin();
-      allow write: if false; // Admin SDK (Cloud Functions) only
+      allow read:  if isAdmin()
+                   || (isAuth() && resource.data.userId == request.auth.uid);
+      // Users may only flip isDismissed on their own reminders
+      allow update: if isAuth()
+                    && resource.data.userId == request.auth.uid
+                    && request.resource.data.diff(resource.data)
+                        .affectedKeys().hasOnly(['isDismissed']);
+      allow create, delete: if false; // Admin SDK (Cloud Functions) only
     }
 
     // ── Mail (Firebase Trigger Email extension) ───────────────────────

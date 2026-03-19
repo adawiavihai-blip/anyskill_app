@@ -57,6 +57,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   late final Stream<QuerySnapshot>                          _urgentStream;
   late final Stream<QuerySnapshot>                          _notificationsStream;
   late final Stream<DocumentSnapshot<Map<String, dynamic>>> _settingsStream;
+  late final Stream<QuerySnapshot>                          _remindersStream;
 
   // ── Avatar press feedback ─────────────────────────────────────────────────
   bool _avatarTapped = false;
@@ -141,6 +142,17 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
     // Global card-size settings stream
     _settingsStream = SettingsService.stream;
+
+    // AI Re-Engagement reminders — active, non-dismissed reminders for this user
+    _remindersStream = uid.isEmpty
+        ? const Stream.empty()
+        : FirebaseFirestore.instance
+            .collection('scheduled_reminders')
+            .where('userId',      isEqualTo: uid)
+            .where('isDismissed', isEqualTo: false)
+            .where('isActive',    isEqualTo: true)
+            .limit(3)
+            .snapshots();
 
     // Back-fill missing category images once per app session
     VisualFetcherService.backfillAll();
@@ -415,6 +427,20 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                           ),
                         ),
                       ),
+                    ),
+                  ),
+
+                  // ── AI Re-Engagement offer card ────────────────────────
+                  SliverToBoxAdapter(
+                    child: StreamBuilder<QuerySnapshot>(
+                      stream: _remindersStream,
+                      builder: (context, remSnap) {
+                        final remDocs = remSnap.data?.docs ?? [];
+                        if (remDocs.isEmpty) return const SizedBox.shrink();
+                        final data  = remDocs.first.data() as Map<String, dynamic>;
+                        final remId = remDocs.first.id;
+                        return _buildReengagementCard(data, remId);
+                      },
                     ),
                   ),
 
@@ -960,6 +986,136 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ── AI Re-Engagement Card ─────────────────────────────────────────────────
+
+  Widget _buildReengagementCard(Map<String, dynamic> data, String remId) {
+    final expertName = data['expertName'] as String? ?? 'המומחה';
+    final category   = data['category']  as String? ?? '';
+    final message    = data['message']   as String? ?? 'מוכן להזמין שוב?';
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 2, 12, 8),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1E1B4B), Color(0xFF3730A3)],
+          begin: Alignment.centerRight,
+          end: Alignment.centerLeft,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF4338CA).withValues(alpha: 0.35),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // ── Header: badge + dismiss ─────────────────────────────
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                GestureDetector(
+                  onTap: () => FirebaseFirestore.instance
+                      .collection('scheduled_reminders')
+                      .doc(remId)
+                      .update({'isDismissed': true}),
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.close_rounded,
+                        color: Colors.white, size: 16),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF59E0B),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('✨', style: TextStyle(fontSize: 11)),
+                      SizedBox(width: 4),
+                      Text('הצעה חכמה',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            // ── Expert avatar + message ─────────────────────────────
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: Text(
+                    message,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      height: 1.45,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                CircleAvatar(
+                  radius: 24,
+                  backgroundColor: const Color(0xFF6366F1),
+                  child: Text(
+                    expertName.isNotEmpty ? expertName[0] : '?',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 20),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+
+            // ── CTA ────────────────────────────────────────────────
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () =>
+                    _openSearch(preselectedCategory: category),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6366F1),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  elevation: 0,
+                ),
+                child: const Text('הזמן עכשיו',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 14)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

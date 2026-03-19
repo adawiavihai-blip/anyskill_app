@@ -3360,3 +3360,161 @@ exports.sendGlobalBroadcast = onCall(
     return { sent, total: tokens.length };
   }
 );
+
+// ── AI Re-Engagement Engine ─────────────────────────────────────────────────
+// Runs daily at 08:00 Israel time.
+// Scans completed jobs whose re-booking cycle has elapsed and creates
+// entries in scheduled_reminders (customer-facing) + activity_log (admin feed).
+exports.reengagementEngine = onSchedule(
+  { schedule: '0 8 * * *', timeZone: 'Asia/Jerusalem' },
+  async () => {
+    const db  = admin.firestore();
+    const now = Date.now();
+
+    // Category → typical re-booking cycle in days.
+    // Any category not in this map falls back to DEFAULT_CYCLE.
+    const SERVICE_CYCLES = {
+      'ניקיון בית':       14,
+      'ניקיון משרד':       7,
+      'גיהוץ':             7,
+      'גינון':            30,
+      'טיפול בעלי חיים':  30,
+      'מאמן כושר':        30,
+      'שיעורים פרטיים':   30,
+      'ניקיון מזגן':     180,
+      'מזגנים':          180,
+      'הדברה':           365,
+      'שיפוצים':         365,
+      'אינסטלציה':       365,
+      'חשמלאי':          365,
+      'צביעה':          1825,
+      'ריצוף':          1825,
+      'נגרות':           730,
+    };
+    const DEFAULT_CYCLE = 365; // days
+
+    // Seasonal "why now" reason string — changes monthly
+    const WHY_NOW_BY_MONTH = [
+      'החורף בשיאו',        // Jan
+      'לקראת הפורים',       // Feb
+      'לקראת הפסח',         // Mar
+      'חג הפסח מתקרב',      // Apr
+      'הקיץ מגיע',          // May
+      'הקיץ כבר כאן',       // Jun
+      'שיא הקיץ',           // Jul
+      'לפני חזרה לשגרה',    // Aug
+      'לקראת החגים',        // Sep
+      'ראש השנה החדש',      // Oct
+      'אחרי החגים',         // Nov
+      'לקראת החנוכה',       // Dec
+    ];
+    const whyNow = WHY_NOW_BY_MONTH[new Date().getMonth()];
+
+    // ------------------------------------------------------------------
+    // 1. Pre-load all existing reminder originJobIds to avoid per-job
+    //    dedup queries (single read instead of N reads).
+    // ------------------------------------------------------------------
+    const existingSnap = await db.collection('scheduled_reminders')
+      .select('originalJobId')
+      .limit(5000)
+      .get();
+    const existingJobIds = new Set(
+      existingSnap.docs.map(d => d.data().originalJobId).filter(Boolean)
+    );
+
+    // ------------------------------------------------------------------
+    // 2. Fetch completed jobs from the last 3 years.
+    // ------------------------------------------------------------------
+    const cutoff = new Date(now - 3 * 365 * 24 * 3600 * 1000);
+    const jobsSnap = await db.collection('jobs')
+      .where('status', '==', 'completed')
+      .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(cutoff))
+      .limit(200)
+      .get();
+
+    // ------------------------------------------------------------------
+    // 3. Evaluate each job; build batched writes.
+    // ------------------------------------------------------------------
+    const reminderBatch  = db.batch();
+    const activityBatch  = db.batch();
+    let created = 0;
+    let skipped = 0;
+
+    for (const jobDoc of jobsSnap.docs) {
+      const job         = jobDoc.data();
+      const customerId  = job.customerId;
+      const expertId    = job.expertId;
+      const category    = job.category || job.serviceType || '';
+      const completedTs = job.completedAt || job.createdAt;
+      const completedAt = completedTs?.toDate?.() || null;
+
+      if (!customerId || !expertId || !completedAt) { skipped++; continue; }
+      if (existingJobIds.has(jobDoc.id))             { skipped++; continue; }
+
+      // Check if cycle has elapsed
+      const cycleDays = SERVICE_CYCLES[category] ?? DEFAULT_CYCLE;
+      const remindMs  = completedAt.getTime() + cycleDays * 24 * 3600 * 1000;
+      if (remindMs > now) { skipped++; continue; }
+
+      // Fetch customer + expert names (only when we will write)
+      let customerName = job.customerName || '';
+      let expertName   = job.expertName   || '';
+      if (!customerName) {
+        const custSnap = await db.collection('users').doc(customerId).get();
+        customerName = custSnap.exists ? (custSnap.data().name || 'לקוח') : 'לקוח';
+      }
+      if (!expertName) {
+        const expSnap = await db.collection('users').doc(expertId).get();
+        expertName = expSnap.exists ? (expSnap.data().name || 'המומחה') : 'המומחה';
+      }
+
+      // Build personalized message
+      const message = `מוכן ל${category} עם ${expertName}? ${whyNow} — לחץ להזמנה!`;
+
+      // Write reminder doc (doc ID = original job ID for idempotency)
+      const reminderRef = db.collection('scheduled_reminders').doc(jobDoc.id);
+      reminderBatch.set(reminderRef, {
+        userId:        customerId,
+        customerId,
+        expertId,
+        customerName,
+        expertName,
+        category,
+        originalJobId: jobDoc.id,
+        cycleDays,
+        whyNow,
+        message,
+        isActive:      true,
+        isDismissed:   false,
+        createdAt:     admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // Write activity_log entry (admin Live Feed)
+      const logRef = db.collection('activity_log').doc();
+      activityBatch.set(logRef, {
+        type:         'ai_reengagement_sent',
+        userId:       customerId,
+        expertId,
+        customerName,
+        expertName,
+        category,
+        jobId:        jobDoc.id,
+        whyNow,
+        priority:     'normal',
+        timestamp:    admin.firestore.FieldValue.serverTimestamp(),
+        message:      `AI Reminder: ${customerName} → ${category} עם ${expertName} (${whyNow})`,
+      });
+
+      existingJobIds.add(jobDoc.id); // prevent duplicates within same batch
+      created++;
+    }
+
+    if (created > 0) {
+      await reminderBatch.commit();
+      await activityBatch.commit();
+    }
+
+    console.log(`[reengagementEngine] created=${created} skipped=${skipped}`);
+    return null;
+  }
+);
