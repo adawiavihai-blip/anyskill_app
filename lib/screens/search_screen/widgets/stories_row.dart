@@ -702,16 +702,46 @@ class _StoryViewerScreen extends StatefulWidget {
   State<_StoryViewerScreen> createState() => _StoryViewerScreenState();
 }
 
-class _StoryViewerScreenState extends State<_StoryViewerScreen> {
+class _StoryViewerScreenState extends State<_StoryViewerScreen>
+    with TickerProviderStateMixin {
+  // ── Video ─────────────────────────────────────────────────────────────────
   late VideoPlayerController _ctrl;
   bool _initialized = false;
   bool _error       = false;
+
+  // ── Like system ───────────────────────────────────────────────────────────
+  bool _isLiked          = false;
+  bool _showFloatingHeart = false;
+  // Button bounce animation (plays on every like tap)
+  late final AnimationController _likeCtrl;
+  late final Animation<double>   _likeScale;
+  // Floating heart animation (plays on double-tap)
+  late final AnimationController _floatCtrl;
+  late final Animation<double>   _floatOpacity;
 
   @override
   void initState() {
     super.initState();
     _initVideo();
     _incrementViewCount();
+    _checkIsLiked();
+
+    // Like button bounce: 1.0 → 1.55 → 1.0
+    _likeCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 320));
+    _likeScale = TweenSequence([
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.55), weight: 50),
+      TweenSequenceItem(tween: Tween(begin: 1.55, end: 1.0),  weight: 50),
+    ]).animate(CurvedAnimation(parent: _likeCtrl, curve: Curves.easeInOut));
+
+    // Floating heart: fade in then out
+    _floatCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 700));
+    _floatOpacity = TweenSequence([
+      TweenSequenceItem(tween: Tween(begin: 0.0, end: 1.0), weight: 30),
+      TweenSequenceItem(tween: ConstantTween(1.0),           weight: 40),
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 0.0), weight: 30),
+    ]).animate(_floatCtrl);
   }
 
   Future<void> _initVideo() async {
@@ -760,12 +790,83 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen> {
         .catchError((_) {});
   }
 
+  // ── Like helpers ──────────────────────────────────────────────────────────
+
+  /// Reads the story doc once on open to pre-set liked state.
+  Future<void> _checkIsLiked() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (uid.isEmpty) return;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('stories')
+          .doc(widget.providerUid)
+          .get();
+      final likedBy =
+          (doc.data()?['likedBy'] as List?)?.cast<String>() ?? [];
+      if (mounted) setState(() => _isLiked = likedBy.contains(uid));
+    } catch (_) {}
+  }
+
+  /// Performs the like action: deduplication, Firestore writes, XP, activity log.
+  Future<void> _like() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    // Guard: not logged in, or already liked (dedup), or own story
+    if (uid.isEmpty || _isLiked || uid == widget.providerUid) return;
+
+    setState(() => _isLiked = true);
+    unawaited(_likeCtrl.forward(from: 0)); // button bounce
+
+    try {
+      // 1. Increment like count + add uid to likedBy (arrayUnion is idempotent)
+      await FirebaseFirestore.instance
+          .collection('stories')
+          .doc(widget.providerUid)
+          .update({
+        'likeCount': FieldValue.increment(1),
+        'likedBy':   FieldValue.arrayUnion([uid]),
+      });
+
+      // 2. Award +2 XP to the provider
+      unawaited(FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.providerUid)
+          .update({'xp': FieldValue.increment(2)}));
+
+      // 3. Activity log
+      unawaited(FirebaseFirestore.instance.collection('activity_log').add({
+        'type':         'story_liked',
+        'storyOwnerId': widget.providerUid,
+        'providerName': widget.providerName,
+        'likedByUid':   uid,
+        'createdAt':    FieldValue.serverTimestamp(),
+        'priority':     'normal',
+        'title':        '❤️ לייק לסטורי של ${widget.providerName}',
+        'detail':       '',
+      }));
+    } catch (_) {
+      // Rollback optimistic update on failure
+      if (mounted) setState(() => _isLiked = false);
+    }
+  }
+
+  /// Double-tap handler: shows floating heart + triggers like.
+  void _doubleTapLike() {
+    if (_isLiked || widget.providerUid == (FirebaseAuth.instance.currentUser?.uid ?? '')) return;
+    setState(() => _showFloatingHeart = true);
+    _floatCtrl.forward(from: 0).then((_) {
+      if (mounted) setState(() => _showFloatingHeart = false);
+    });
+    _like();
+  }
+
   @override
   void dispose() {
     if (_initialized) {
       _ctrl.removeListener(_onUpdate);
       _ctrl.dispose();
     }
+    _likeCtrl.dispose();
+    _floatCtrl.dispose();
     super.dispose();
   }
 
@@ -784,30 +885,54 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // ── Video ──────────────────────────────────────────────────
-            if (_initialized)
+            // ── Video (double-tap to like) ────────────────────────────
+            GestureDetector(
+              onDoubleTap: _doubleTapLike,
+              child: _initialized
+                  ? Center(
+                      child: AspectRatio(
+                        aspectRatio: _ctrl.value.aspectRatio,
+                        child: VideoPlayer(_ctrl),
+                      ),
+                    )
+                  : _error
+                      ? const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.broken_image_rounded,
+                                  color: Colors.white54, size: 64),
+                              SizedBox(height: 12),
+                              Text('לא ניתן לטעון את הסיפור',
+                                  style: TextStyle(color: Colors.white54)),
+                            ],
+                          ),
+                        )
+                      : const Center(
+                          child: CircularProgressIndicator(color: Colors.white),
+                        ),
+            ),
+
+            // ── Floating heart (double-tap feedback) ─────────────────
+            if (_showFloatingHeart)
               Center(
-                child: AspectRatio(
-                  aspectRatio: _ctrl.value.aspectRatio,
-                  child: VideoPlayer(_ctrl),
+                child: FadeTransition(
+                  opacity: _floatOpacity,
+                  child: ScaleTransition(
+                    scale: Tween(begin: 0.6, end: 1.2).animate(
+                      CurvedAnimation(
+                          parent: _floatCtrl, curve: Curves.elasticOut),
+                    ),
+                    child: const Icon(
+                      Icons.favorite_rounded,
+                      color: Colors.white,
+                      size: 100,
+                      shadows: [
+                        Shadow(color: Colors.black38, blurRadius: 20),
+                      ],
+                    ),
+                  ),
                 ),
-              )
-            else if (_error)
-              const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.broken_image_rounded,
-                        color: Colors.white54, size: 64),
-                    SizedBox(height: 12),
-                    Text('לא ניתן לטעון את הסיפור',
-                        style: TextStyle(color: Colors.white54)),
-                  ],
-                ),
-              )
-            else
-              const Center(
-                child: CircularProgressIndicator(color: Colors.white),
               ),
 
             // ── Progress bar at top ───────────────────────────────────
@@ -888,81 +1013,103 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen> {
               ),
             ),
 
-            // ── "Book Now" CTA at bottom ──────────────────────────────
+            // ── Bottom bar: stats + like + CTA ───────────────────────
             Positioned(
               bottom: 24,
               left: 24,
               right: 24,
-              child: Row(
-                children: [
-                  // View count
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: StreamBuilder<DocumentSnapshot>(
-                      stream: FirebaseFirestore.instance
-                          .collection('stories')
-                          .doc(widget.providerUid)
-                          .snapshots(),
-                      builder: (_, snap) {
-                        final views = ((snap.data?.data()
-                                as Map<String, dynamic>?)?['viewCount']
-                            as num?) ??
-                            0;
-                        return Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.visibility_outlined,
-                                color: Colors.white70, size: 14),
-                            const SizedBox(width: 4),
-                            Text('$views',
-                                style: const TextStyle(
-                                    color: Colors.white70, fontSize: 12)),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                  const Spacer(),
-                  // View Profile CTA
-                  GestureDetector(
-                    onTap: _goToProfile,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 22, vertical: 12),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [_kGradStart, _kGradMid],
-                        ),
-                        borderRadius: BorderRadius.circular(24),
-                        boxShadow: [
-                          BoxShadow(
-                            color: _kGradStart.withValues(alpha: 0.5),
-                            blurRadius: 12,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text('צפה בפרופיל',
-                              style: TextStyle(
+              child: StreamBuilder<DocumentSnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('stories')
+                    .doc(widget.providerUid)
+                    .snapshots(),
+                builder: (_, snap) {
+                  final d     = snap.data?.data() as Map<String, dynamic>? ?? {};
+                  final views = (d['viewCount'] as num?)?.toInt() ?? 0;
+                  final likes = (d['likeCount'] as num?)?.toInt() ?? 0;
+
+                  return Row(
+                    children: [
+                      // View count pill
+                      _StatPill(icon: Icons.visibility_outlined, count: views),
+                      const SizedBox(width: 8),
+
+                      // Like pill — animated heart button + counter
+                      ScaleTransition(
+                        scale: _likeScale,
+                        child: GestureDetector(
+                          onTap: _like,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: _isLiked
+                                  ? const Color(0xFFEF4444).withValues(alpha: 0.85)
+                                  : Colors.black.withValues(alpha: 0.5),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _isLiked
+                                      ? Icons.favorite_rounded
+                                      : Icons.favorite_border_rounded,
                                   color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14)),
-                          SizedBox(width: 6),
-                          Icon(Icons.person_outline_rounded,
-                              color: Colors.white, size: 16),
-                        ],
+                                  size: 15,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '$likes',
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                ],
+
+                      const Spacer(),
+
+                      // View Profile CTA
+                      GestureDetector(
+                        onTap: _goToProfile,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 22, vertical: 12),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                                colors: [_kGradStart, _kGradMid]),
+                            borderRadius: BorderRadius.circular(24),
+                            boxShadow: [
+                              BoxShadow(
+                                color: _kGradStart.withValues(alpha: 0.5),
+                                blurRadius: 12,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('צפה בפרופיל',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14)),
+                              SizedBox(width: 6),
+                              Icon(Icons.person_outline_rounded,
+                                  color: Colors.white, size: 16),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
           ],
@@ -1507,6 +1654,41 @@ class _SourceTile extends StatelessWidget {
                 color: Colors.grey, size: 20),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stat pill (views / likes counter)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _StatPill extends StatelessWidget {
+  const _StatPill({required this.icon, required this.count});
+  final IconData icon;
+  final int      count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: Colors.white, size: 14),
+          const SizedBox(width: 4),
+          Text(
+            '$count',
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w600),
+          ),
+        ],
       ),
     );
   }
