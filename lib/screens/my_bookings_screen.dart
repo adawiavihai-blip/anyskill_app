@@ -11,6 +11,7 @@ import '../services/payment_service.dart';
 import '../services/cancellation_policy_service.dart';
 import '../widgets/receipt_sheet.dart';
 import '../l10n/app_localizations.dart';
+import '../widgets/hint_icon.dart';
 import 'expert_profile_screen.dart';
 import 'chat_screen.dart';
 
@@ -867,6 +868,12 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                 fontWeight: FontWeight.bold,
                 fontSize: 20),
           ),
+          actions: [
+            HintIcon(
+                screenKey: _isProvider
+                    ? 'my_tasks_expert'
+                    : 'my_bookings_client'),
+          ],
           bottom: PreferredSize(
             preferredSize: const Size.fromHeight(46),
             child: Container(

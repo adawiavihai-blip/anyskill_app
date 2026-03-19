@@ -10,6 +10,7 @@ import '../services/location_service.dart';
 import '../services/gamification_service.dart';
 import '../widgets/level_badge.dart';
 import '../l10n/app_localizations.dart';
+import '../widgets/hint_icon.dart';
 
 // ── Sort modes (user-selectable filter chips) ─────────────────────────────────
 enum _SortMode { nearest, profitable, urgent }
@@ -297,6 +298,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
         automaticallyImplyLeading: false,
         title: Text(l10n.oppTitle,
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        actions: const [HintIcon(screenKey: 'opportunities')],
       ),
       body: Center(
         child: Padding(
@@ -446,6 +448,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
             style: const TextStyle(fontSize: 12, color: Colors.grey),
           ),
         ]),
+        actions: const [HintIcon(screenKey: 'opportunities')],
       ),
       body: Column(children: [
         _buildXpBanner(),

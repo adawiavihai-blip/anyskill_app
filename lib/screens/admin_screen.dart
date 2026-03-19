@@ -20,6 +20,7 @@ import 'live_activity_tab.dart';
 import 'admin_chat_view_screen.dart';
 import 'admin_demo_experts_tab.dart';
 import 'admin_brand_assets_tab.dart';
+import '../widgets/hint_icon.dart';
 
 
 class AdminScreen extends StatefulWidget {
@@ -4403,6 +4404,12 @@ class _AdminScreenState extends State<AdminScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // ── Hint icon (admin-controlled help) ───────────────────────────
+          const Align(
+            alignment: AlignmentDirectional.centerEnd,
+            child: HintIcon(screenKey: 'identity_verification'),
+          ),
+
           // ── Expert Applications ──────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),

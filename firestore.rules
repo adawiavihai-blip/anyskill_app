@@ -373,6 +373,14 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ── App Hints (contextual help icons — admin-controlled content) ─────────
+    // Public read: any user (including unauthenticated) may read help content.
+    // Only admin may write (create / update / delete hints).
+    match /app_hints/{screenKey} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+
     // ── Volunteer Requests ───────────────────────────────────────────────────
     // Any authenticated user may create a volunteer request.
     // Cloud Function logVolunteerRequest (Admin SDK) reads on creation.

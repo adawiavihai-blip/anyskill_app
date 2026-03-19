@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../widgets/banner_carousel.dart';
 import 'withdrawal_modal.dart';
 import '../l10n/app_localizations.dart';
+import '../widgets/hint_icon.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const _kCardStart  = Color(0xFF1A0E3C);
@@ -111,6 +112,7 @@ class _FinanceScreenState extends State<FinanceScreen>
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0.5,
+        actions: const [HintIcon(screenKey: 'wallet')],
       ),
       body: StreamBuilder<DocumentSnapshot>(
         stream: FirebaseFirestore.instance
