@@ -1,5 +1,7 @@
 // ignore_for_file: use_build_context_synchronously
+import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -7,7 +9,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
-import '../../../services/gamification_service.dart';
 import '../../expert_profile_screen.dart';
 import '../../../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
 
@@ -92,7 +93,16 @@ class _StoriesRowState extends State<StoriesRow> {
           return tb.compareTo(ta); // descending
         });
 
-        final allDocs   = rawDocs;
+        // Client-side 24-hour expiry filter
+        final now = DateTime.now();
+        final allDocs = rawDocs.where((d) {
+          final data = d.data() as Map<String, dynamic>;
+          final expiresAt = (data['expiresAt'] as Timestamp?)?.toDate();
+          if (expiresAt != null) return expiresAt.isAfter(now);
+          // Fallback for legacy docs without expiresAt
+          final ts = (data['timestamp'] as Timestamp?)?.toDate();
+          return ts != null && now.difference(ts).inHours < 24;
+        }).toList();
         final ownDoc    = allDocs.where((d) => d.id == _uid).firstOrNull;
         final otherDocs = allDocs.where((d) => d.id != _uid).toList();
 
@@ -1047,10 +1057,63 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
   String?  _errorMessage;
 
   Future<void> _pickVideo() async {
+    // On web camera video is unreliable — skip source selection
+    ImageSource source = ImageSource.gallery;
+    if (!kIsWeb) {
+      final picked = await showModalBottomSheet<ImageSource>(
+        context: context,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (sheetCtx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36, height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text('בחר מקור',
+                    style: TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                _SourceTile(
+                  icon: Icons.photo_library_rounded,
+                  label: 'גלריה',
+                  sub: 'בחר סרטון קיים',
+                  onTap: () => Navigator.pop(sheetCtx, ImageSource.gallery),
+                ),
+                const SizedBox(height: 8),
+                _SourceTile(
+                  icon: Icons.videocam_rounded,
+                  label: 'מצלמה',
+                  sub: 'צלם עכשיו',
+                  onTap: () => Navigator.pop(sheetCtx, ImageSource.camera),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        ),
+      );
+      if (picked == null) return;
+      source = picked;
+    }
+
     final picker = ImagePicker();
     final file = await picker.pickVideo(
-      source:        ImageSource.gallery,
-      maxDuration:   const Duration(seconds: 60),
+      source:      source,
+      maxDuration: const Duration(seconds: 60),
     );
     if (file != null && mounted) setState(() => _pickedVideo = file);
   }
@@ -1136,8 +1199,23 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
             'storyTimestamp':  now,
           });
 
-      // 5. Award XP for story_upload event (fire-and-forget)
-      _awardStoryXP(widget.uid);
+      // 5a. Direct +10 XP on upload
+      unawaited(FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.uid)
+          .update({'xp': FieldValue.increment(10)}));
+
+      // 5b. Admin activity log (fire-and-forget)
+      unawaited(FirebaseFirestore.instance.collection('activity_log').add({
+        'type':        'story_upload',
+        'userId':      widget.uid,
+        'expertName':  name,
+        'serviceType': serviceType,
+        'createdAt':   FieldValue.serverTimestamp(),
+        'priority':    'normal',
+        'title':       '📱 סטורי חדש: $name',
+        'detail':      'שירות: $serviceType',
+      }));
 
       if (!mounted) return;
       widget.onSuccess();
@@ -1168,17 +1246,6 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
         });
       }
     }
-  }
-
-  void _awardStoryXP(String uid) {
-    // Non-blocking — Cloud Function updateUserXP handles XP + level update
-    // We trigger it via a Firestore write to xp_events (lightweight trigger pattern)
-    FirebaseFirestore.instance.collection('xp_events').add({
-      'userId':  uid,
-      'eventId': GamificationService.evStoryUpload,
-      'timestamp': FieldValue.serverTimestamp(),
-    // ignore: avoid_types_on_closure_parameters
-    }).catchError((Object _) => FirebaseFirestore.instance.collection('xp_events').doc());
   }
 
   @override
@@ -1234,7 +1301,7 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
               Row(children: [
                 _perkChip(Icons.trending_up_rounded, 'בוסט בחיפוש'),
                 const SizedBox(width: 8),
-                _perkChip(Icons.star_rounded, '+5 XP'),
+                _perkChip(Icons.star_rounded, '+10 XP'),
                 const SizedBox(width: 8),
                 _perkChip(Icons.access_time_rounded, '24 שעות'),
               ]),
@@ -1386,6 +1453,64 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Source picker tile (gallery / camera)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SourceTile extends StatelessWidget {
+  const _SourceTile({
+    required this.icon,
+    required this.label,
+    required this.sub,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String   label;
+  final String   sub;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5F5FF),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40, height: 40,
+              decoration: BoxDecoration(
+                color: _kGradStart.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: _kGradStart, size: 20),
+            ),
+            const SizedBox(width: 14),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 14)),
+                Text(sub,
+                    style: const TextStyle(
+                        fontSize: 11, color: Colors.grey)),
+              ],
+            ),
+            const Spacer(),
+            const Icon(Icons.chevron_left_rounded,
+                color: Colors.grey, size: 20),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 Widget _avatarFallback(String name, {double size = 56}) => Container(
       width:  size,

@@ -342,9 +342,18 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   // Card: Action Image (left 38%)
   // ─────────────────────────────────────────────────────────────────────────
 
+  /// Returns true when the expert has an active story uploaded in the last 24h.
+  bool _isStoryActive(Map<String, dynamic> data) {
+    if (data['hasActiveStory'] != true) return false;
+    final ts = (data['storyTimestamp'] as Timestamp?)?.toDate();
+    if (ts == null) return false;
+    return DateTime.now().difference(ts).inHours < 24;
+  }
+
   Widget _buildActionImage(Map<String, dynamic> data, bool isOnline) {
-    final l10n = AppLocalizations.of(context);
-    final gallery = (data['gallery'] as List?)?.cast<String>() ?? [];
+    final l10n     = AppLocalizations.of(context);
+    final hasStory = _isStoryActive(data);
+    final gallery  = (data['gallery'] as List?)?.cast<String>() ?? [];
     final actionImg =
         gallery.isNotEmpty ? gallery.first : (data['profileImage'] as String? ?? '');
     final hasImg = actionImg.isNotEmpty;
@@ -460,6 +469,70 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                   )).toList(),
                 ),
               ),
+
+            // ── Active Story: gradient border ring + pill badge ───────────
+            if (hasStory) ...[
+              // Gradient border overlay (3-layer: gradient fill → white gap → image)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: const BorderRadius.only(
+                        topRight: Radius.circular(16),
+                        bottomRight: Radius.circular(16),
+                      ),
+                      gradient: const LinearGradient(
+                        colors: [
+                          Color(0xFF6366F1),
+                          Color(0xFFEC4899),
+                          Color(0xFFF59E0B),
+                          Color(0xFF6366F1),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(3),
+                      child: DecoratedBox(
+                        decoration: const BoxDecoration(
+                          color: Colors.transparent,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              // "STORY" pill badge
+              Positioned(
+                bottom: 8,
+                right: 6,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF6366F1), Color(0xFFEC4899)],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.play_circle_fill_rounded,
+                          color: Colors.white, size: 10),
+                      SizedBox(width: 3),
+                      Text('STORY',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.3)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
