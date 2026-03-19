@@ -24,11 +24,14 @@ class ChatScreen extends StatefulWidget {
   final String receiverName;
   final String? currentUserName;
 
+  final String? initialMessage;
+
   const ChatScreen({
     super.key,
     required this.receiverId,
     required this.receiverName,
     this.currentUserName,
+    this.initialMessage,
   });
 
   @override
@@ -76,6 +79,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _handleMarkAsRead();
     _listenToTyping();
     _checkDemoExpert();
+    if (widget.initialMessage?.isNotEmpty == true) {
+      _msgCtrl.text = widget.initialMessage!;
+    }
   }
 
   /// One-time check: if the receiver is a demo expert, log a high-priority
