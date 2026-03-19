@@ -85,6 +85,35 @@ class _SignUpScreenState extends State<SignUpScreen>
   bool  _partialDocCreated = false;
   Timer? _partialSaveTimer;
 
+  // ── Funnel step tracking ──────────────────────────────────────────────────
+  // One-shot flags prevent duplicate events per session.
+  bool _loggedStep2 = false; // name first typed
+  bool _loggedStep3 = false; // email first typed
+  bool _loggedStep4 = false; // submit attempted
+  bool _loggedStep5 = false; // registration completed
+
+  static const _kStepLabels = <String, String>{
+    'reg_step_1': 'פתח מסך הרשמה',
+    'reg_step_2': 'התחיל למלא שם',
+    'reg_step_3': 'הזין כתובת אימייל',
+    'reg_step_4': 'לחץ כפתור הרשמה',
+    'reg_step_5': 'הרשמה הושלמה בהצלחה',
+  };
+
+  Future<void> _logRegStep(String step) async {
+    try {
+      await FirebaseFirestore.instance.collection('activity_log').add({
+        'type':      step,
+        'sessionId': _sessionId,
+        'role':      _currentRole == UserRole.expert ? 'expert' : 'customer',
+        'createdAt': FieldValue.serverTimestamp(),
+        'title':     _kStepLabels[step] ?? step,
+        'detail':    '',
+        'priority':  'normal',
+      });
+    } catch (_) {}
+  }
+
   @override
   void initState() {
     super.initState();
@@ -96,6 +125,8 @@ class _SignUpScreenState extends State<SignUpScreen>
     _nameCtrl.addListener(_onPartialChange);
     _emailCtrl.addListener(_onPartialChange);
     _phoneCtrl.addListener(_onPartialChange);
+    // Step 1: user opened the sign-up screen
+    _logRegStep('reg_step_1');
   }
 
   @override
@@ -119,6 +150,16 @@ class _SignUpScreenState extends State<SignUpScreen>
     _partialSaveTimer?.cancel();
     _partialSaveTimer =
         Timer(const Duration(seconds: 2), _savePartialRegistration);
+    // Step 2: first time a name is typed
+    if (!_loggedStep2 && _nameCtrl.text.trim().isNotEmpty) {
+      _loggedStep2 = true;
+      _logRegStep('reg_step_2');
+    }
+    // Step 3: first time an email is typed
+    if (!_loggedStep3 && _emailCtrl.text.trim().isNotEmpty) {
+      _loggedStep3 = true;
+      _logRegStep('reg_step_3');
+    }
   }
 
   Future<void> _savePartialRegistration() async {
@@ -303,6 +344,12 @@ class _SignUpScreenState extends State<SignUpScreen>
       return;
     }
 
+    // Step 4: user pressed submit
+    if (!_loggedStep4) {
+      _loggedStep4 = true;
+      _logRegStep('reg_step_4');
+    }
+
     setState(() { _isLoading = true; _loadingStepMsg = 'יוצר חשבון...'; });
     final nav  = Navigator.of(context);
     final msg  = ScaffoldMessenger.of(context);
@@ -404,6 +451,12 @@ class _SignUpScreenState extends State<SignUpScreen>
               'completedAt': FieldValue.serverTimestamp(),
             }, SetOptions(merge: true))
             .catchError((_) {});
+      }
+
+      // Step 5: registration completed
+      if (!_loggedStep5) {
+        _loggedStep5 = true;
+        _logRegStep('reg_step_5');
       }
 
       if (mounted) {

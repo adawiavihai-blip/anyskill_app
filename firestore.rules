@@ -320,7 +320,27 @@ service cloud.firestore {
     //   • Flutter client (ChatGuardService.logBypassAttempt, _checkDemoExpert)
     // Only admins may read.
     match /activity_log/{logId} {
-      allow create: if isAuth();
+      // Authenticated users AND unauthenticated sign-up flow (reg_step_1..5)
+      allow create: if isAuth()
+                    || (request.resource.data.type is string
+                        && request.resource.data.type.matches('reg_step_[1-5]'));
+      allow read:   if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ── Incomplete Registrations (abandoned-lead funnel) ──────────────────────
+    // Written by unauthenticated users during sign-up (partial saves).
+    // Admin may read/update for re-engagement; users may update their own session.
+    match /incomplete_registrations/{sessionId} {
+      allow create: if true;  // unauthenticated during sign-up
+      allow update: if true;  // progress updates + completion mark
+      allow read:   if isAdmin();
+      allow delete: if false;
+    }
+
+    // ── Re-engagement Log ─────────────────────────────────────────────────────
+    match /reengagement_log/{logId} {
+      allow create: if isAdmin();
       allow read:   if isAdmin();
       allow update, delete: if false;
     }

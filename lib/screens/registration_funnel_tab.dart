@@ -9,13 +9,11 @@ const _kRed     = Color(0xFFEF4444);
 
 /// Admin tab: Registration Funnel & Abandoned Lead Tracker.
 ///
-/// Data source: `incomplete_registrations/{sessionId}` documents written by
-/// [SignUpScreen] as users type into the form.
+/// Funnel data source: `activity_log` docs with type `reg_step_1..5`
+/// written by [SignUpScreen] at each stage.
 ///
-/// Each document contains:
-///   name, email, phone (optional — written as fields are filled)
-///   role, lastField, isRegistrationComplete, startedAt, lastUpdatedAt
-///   reengaged (bool), reengagedAt (Timestamp) — set by Cloud Function
+/// Abandoned leads source: `incomplete_registrations/{sessionId}` docs
+/// written by [SignUpScreen] as users type into the form.
 class RegistrationFunnelTab extends StatefulWidget {
   const RegistrationFunnelTab({super.key});
 
@@ -23,65 +21,131 @@ class RegistrationFunnelTab extends StatefulWidget {
   State<RegistrationFunnelTab> createState() => _RegistrationFunnelTabState();
 }
 
+// ── Data model ────────────────────────────────────────────────────────────────
+class _FunnelData {
+  const _FunnelData({required this.counts, required this.abandoned});
+  final Map<String, int>              counts;
+  final List<QueryDocumentSnapshot>   abandoned;
+}
+
 class _RegistrationFunnelTabState extends State<RegistrationFunnelTab> {
-  // Filter: only show sessions from the last N days
   int _dayFilter = 30;
-  // Track which lead IDs are being pinged (prevents double-tap)
   final Set<String> _pinging = {};
+  Future<_FunnelData>? _future;
 
   @override
-  Widget build(BuildContext context) {
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  // ── Load funnel + abandoned leads ──────────────────────────────────────────
+  Future<_FunnelData> _load() async {
     final cutoff = Timestamp.fromDate(
       DateTime.now().subtract(Duration(days: _dayFilter)),
     );
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('incomplete_registrations')
-          .orderBy('startedAt', descending: true)
-          .limit(500)
-          .snapshots(),
+    // 1. Funnel events — query activity_log for all reg_step types.
+    //    Date filter is applied client-side to avoid composite index.
+    final snap = await FirebaseFirestore.instance
+        .collection('activity_log')
+        .where('type', whereIn: [
+          'reg_step_1',
+          'reg_step_2',
+          'reg_step_3',
+          'reg_step_4',
+          'reg_step_5',
+        ])
+        .limit(2000)
+        .get();
+
+    final stepSessions = <String, Set<String>>{
+      'reg_step_1': {},
+      'reg_step_2': {},
+      'reg_step_3': {},
+      'reg_step_4': {},
+      'reg_step_5': {},
+    };
+
+    for (final doc in snap.docs) {
+      final d  = doc.data();
+      final ts = d['createdAt'] as Timestamp?;
+      if (ts == null || ts.compareTo(cutoff) < 0) continue;
+      final type = d['type'] as String? ?? '';
+      // Use sessionId for deduplication; fall back to doc ID
+      final sid  = (d['sessionId'] as String?)?.isNotEmpty == true
+          ? d['sessionId'] as String
+          : doc.id;
+      stepSessions[type]?.add(sid);
+    }
+
+    final counts = stepSessions.map((k, v) => MapEntry(k, v.length));
+
+    // 2. Abandoned leads from incomplete_registrations.
+    //    No orderBy — sort client-side to avoid composite index requirement.
+    final leadsSnap = await FirebaseFirestore.instance
+        .collection('incomplete_registrations')
+        .limit(300)
+        .get();
+
+    final abandoned = leadsSnap.docs.where((d) {
+      final m  = d.data();
+      final ts = m['startedAt'] as Timestamp?;
+      if (ts == null || ts.compareTo(cutoff) < 0) return false;
+      return m['isRegistrationComplete'] != true &&
+          ((m['email'] as String? ?? '').isNotEmpty ||
+           (m['phone'] as String? ?? '').isNotEmpty);
+    }).toList()
+      ..sort((a, b) {
+        final ta = (a.data()['lastUpdatedAt'] as Timestamp?)?.toDate() ??
+                   DateTime(2000);
+        final tb = (b.data()['lastUpdatedAt'] as Timestamp?)?.toDate() ??
+                   DateTime(2000);
+        return tb.compareTo(ta); // newest first
+      });
+
+    return _FunnelData(counts: counts, abandoned: abandoned);
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────────
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<_FunnelData>(
+      future: _future,
       builder: (context, snapshot) {
+        // ── Error state ─────────────────────────────────────────────────────
+        if (snapshot.hasError) {
+          return _ErrorState(
+            error: snapshot.error.toString(),
+            onRetry: () => setState(() => _future = _load()),
+          );
+        }
+
+        // ── Loading state ───────────────────────────────────────────────────
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        // ── Filter by date client-side (avoids composite index requirement) ──
-        final allDocs = snapshot.data!.docs.where((d) {
-          final ts = (d.data() as Map<String, dynamic>)['startedAt'] as Timestamp?;
-          if (ts == null) return false;
-          return ts.compareTo(cutoff) >= 0;
-        }).toList();
+        final data     = snapshot.data!;
+        final counts   = data.counts;
+        final abandoned = data.abandoned;
 
-        // ── Compute funnel metrics ─────────────────────────────────────────
-        final total     = allDocs.length;
-        final withName  = allDocs.where(_hasField('name')).length;
-        final withEmail = allDocs.where(_hasField('email')).length;
-        final withPhone = allDocs.where(_hasField('phone')).length;
-        final completed = allDocs.where((d) =>
-            (d.data() as Map<String, dynamic>)['isRegistrationComplete'] == true).length;
-
-        // Abandoned = incomplete AND has at least email or phone
-        final abandoned = allDocs.where((d) {
-          final m = d.data() as Map<String, dynamic>;
-          return m['isRegistrationComplete'] != true &&
-              ((m['email'] as String? ?? '').isNotEmpty ||
-               (m['phone'] as String? ?? '').isNotEmpty);
-        }).toList();
-
-        final convRate = total == 0 ? 0.0 : completed / total * 100;
-
-        // ── Detect drop-off hotspot ────────────────────────────────────────
+        // ── Funnel steps definition ─────────────────────────────────────────
         final steps = [
-          _FunnelStep('פתח טופס', total,       total,  const Color(0xFF6366F1)),
-          _FunnelStep('שם',        withName,    total,  const Color(0xFF8B5CF6)),
-          _FunnelStep('אימייל',    withEmail,   total,  const Color(0xFFF59E0B)),
-          _FunnelStep('טלפון',     withPhone,   total,  const Color(0xFFEF4444)),
-          _FunnelStep('הושלם',     completed,   total,  const Color(0xFF10B981)),
+          _FunnelStep('פתח הרשמה',  counts['reg_step_1'] ?? 0, _totalSessions(counts), const Color(0xFF6366F1)),
+          _FunnelStep('מילא שם',    counts['reg_step_2'] ?? 0, _totalSessions(counts), const Color(0xFF8B5CF6)),
+          _FunnelStep('הזין אימייל', counts['reg_step_3'] ?? 0, _totalSessions(counts), const Color(0xFFF59E0B)),
+          _FunnelStep('לחץ הרשמה',  counts['reg_step_4'] ?? 0, _totalSessions(counts), const Color(0xFFEF4444)),
+          _FunnelStep('הושלם',      counts['reg_step_5'] ?? 0, _totalSessions(counts), const Color(0xFF10B981)),
         ];
 
+        final total     = steps[0].count;
+        final completed = steps[4].count;
+        final convRate  = total == 0 ? 0.0 : completed / total * 100;
+
+        // ── Drop-off hotspot ────────────────────────────────────────────────
         int hotspotIdx = 1;
-        int maxDrop = 0;
+        int maxDrop    = 0;
         for (int i = 1; i < steps.length; i++) {
           final drop = steps[i - 1].count - steps[i].count;
           if (drop > maxDrop) { maxDrop = drop; hotspotIdx = i; }
@@ -92,7 +156,7 @@ class _RegistrationFunnelTabState extends State<RegistrationFunnelTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Header row ───────────────────────────────────────────────
+              // ── Header row ──────────────────────────────────────────────
               Row(
                 children: [
                   const Expanded(
@@ -102,75 +166,94 @@ class _RegistrationFunnelTabState extends State<RegistrationFunnelTab> {
                         Text('📊 Registration Funnel',
                             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                         SizedBox(height: 2),
-                        Text('מעקב נטישת הרשמה ולידים פתוחים',
+                        Text('מעקב שלבי הרשמה ולידים פתוחים',
                             style: TextStyle(fontSize: 12, color: Colors.grey)),
                       ],
                     ),
                   ),
+                  // Refresh button
+                  IconButton(
+                    onPressed: () => setState(() => _future = _load()),
+                    icon: const Icon(Icons.refresh_rounded, size: 20),
+                    tooltip: 'רענן',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  ),
+                  const SizedBox(width: 4),
                   _DayFilterChip(
                     value: _dayFilter,
                     options: const [7, 14, 30, 90],
-                    onChanged: (v) => setState(() => _dayFilter = v),
+                    onChanged: (v) => setState(() {
+                      _dayFilter = v;
+                      _future    = _load();
+                    }),
                   ),
                 ],
               ),
               const SizedBox(height: 16),
 
-              // ── KPI cards ────────────────────────────────────────────────
+              // ── KPI cards ─────────────────────────────────────────────
               Row(children: [
-                _KpiCard('סשנים', total.toString(),  Icons.person_add_alt_1_rounded, _kIndigo),
+                _KpiCard('סשנים',  total.toString(),     Icons.person_add_alt_1_rounded, _kIndigo),
                 const SizedBox(width: 10),
-                _KpiCard('הושלמו',  completed.toString(), Icons.check_circle_rounded,  _kGreen),
+                _KpiCard('הושלמו', completed.toString(), Icons.check_circle_rounded,    _kGreen),
                 const SizedBox(width: 10),
-                _KpiCard('נטשו',    abandoned.length.toString(), Icons.exit_to_app_rounded, _kRed),
+                _KpiCard('נטשו',   abandoned.length.toString(), Icons.exit_to_app_rounded, _kRed),
                 const SizedBox(width: 10),
-                _KpiCard('המרה',  '${convRate.toStringAsFixed(0)}%', Icons.trending_up_rounded, _kAmber),
+                _KpiCard('המרה',   '${convRate.toStringAsFixed(0)}%', Icons.trending_up_rounded, _kAmber),
               ]),
               const SizedBox(height: 20),
 
-              // ── Conversion funnel bars ───────────────────────────────────
+              // ── Funnel bars ───────────────────────────────────────────
               _SectionHeader('🔽 משפך ההמרה'),
-              const SizedBox(height: 12),
-              ...steps.asMap().entries.map((e) {
-                final isHot = e.key == hotspotIdx;
-                return _FunnelBar(
-                  step:     e.value,
-                  isHotspot: isHot,
-                  prevCount: e.key > 0 ? steps[e.key - 1].count : null,
-                );
-              }),
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
 
-              // ── Hotspot callout ──────────────────────────────────────────
-              if (total > 0 && maxDrop > 0)
-                Container(
-                  margin: const EdgeInsets.only(top: 4, bottom: 20),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: _kRed.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: _kRed.withValues(alpha: 0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Text('🔥', style: TextStyle(fontSize: 18)),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'נקודת נטישה עיקרית: ${steps[hotspotIdx].label} '
-                          '(${steps[hotspotIdx - 1].count - steps[hotspotIdx].count} משתמשים נטשו כאן)',
-                          style: const TextStyle(
-                            color: _kRed,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
+              if (total == 0)
+                _EmptyState(
+                  icon: Icons.analytics_outlined,
+                  label: 'אין נתוני הרשמה עדיין',
+                  sub: 'הנתונים יופיעו כאשר משתמשים יפתחו את מסך ההרשמה',
+                )
+              else ...[
+                const SizedBox(height: 8),
+                ...steps.asMap().entries.map((e) => _FunnelBar(
+                      step:      e.value,
+                      isHotspot: e.key == hotspotIdx,
+                      prevCount: e.key > 0 ? steps[e.key - 1].count : null,
+                    )),
+                const SizedBox(height: 8),
+
+                // ── Hotspot callout ──────────────────────────────────
+                if (maxDrop > 0)
+                  Container(
+                    margin: const EdgeInsets.only(top: 4, bottom: 20),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: _kRed.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: _kRed.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Text('🔥', style: TextStyle(fontSize: 18)),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'נקודת נטישה עיקרית: ${steps[hotspotIdx].label} '
+                            '(${steps[hotspotIdx - 1].count - steps[hotspotIdx].count} משתמשים נטשו כאן)',
+                            style: const TextStyle(
+                              color: _kRed,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
+              ],
 
-              // ── Abandoned leads list ─────────────────────────────────────
+              // ── Abandoned leads list ──────────────────────────────────
               _SectionHeader('📋 לידים שנטשו (${abandoned.length})'),
               const SizedBox(height: 12),
 
@@ -194,25 +277,22 @@ class _RegistrationFunnelTabState extends State<RegistrationFunnelTab> {
     );
   }
 
-  // ── Helper: has field ───────────────────────────────────────────────────────
-  bool Function(QueryDocumentSnapshot) _hasField(String field) =>
-      (d) => ((d.data() as Map<String, dynamic>)[field] as String? ?? '').isNotEmpty;
+  int _totalSessions(Map<String, int> counts) =>
+      counts['reg_step_1'] ?? 0;
 
-  // ── Ping a lead: mark reengaged + add log entry ─────────────────────────────
+  // ── Ping a lead ────────────────────────────────────────────────────────────
   Future<void> _pingLead(QueryDocumentSnapshot doc) async {
     if (_pinging.contains(doc.id)) return;
     setState(() => _pinging.add(doc.id));
     try {
       final batch = FirebaseFirestore.instance.batch();
 
-      // Mark as re-engaged so the scheduled CF won't double-send
       batch.update(doc.reference, {
         'reengaged':   true,
         'reengagedAt': FieldValue.serverTimestamp(),
         'reengagedBy': 'admin_manual',
       });
 
-      // Log entry for audit trail
       batch.set(
         FirebaseFirestore.instance.collection('reengagement_log').doc(),
         {
@@ -229,7 +309,7 @@ class _RegistrationFunnelTabState extends State<RegistrationFunnelTab> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('✅ ליד סומן לריאנגייג׳מנט וניתן לו דגל'),
+          content: const Text('✅ ליד סומן לריאנגייג׳מנט'),
           backgroundColor: _kGreen,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -312,73 +392,66 @@ class _FunnelBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final drop = prevCount != null ? prevCount! - step.count : 0;
+    final drop      = prevCount != null ? prevCount! - step.count : 0;
     final dropLabel = drop > 0 ? '  -$drop' : '';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              SizedBox(
-                width: 60,
-                child: Text(step.label,
-                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-              ),
-              Expanded(
-                child: LayoutBuilder(builder: (_, c) {
-                  return Stack(
-                    children: [
-                      Container(
-                        height: 26,
-                        width: c.maxWidth,
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                      ),
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 600),
-                        curve: Curves.easeOut,
-                        height: 26,
-                        width: c.maxWidth * step.pct,
-                        decoration: BoxDecoration(
-                          color: isHotspot
-                              ? _kRed.withValues(alpha: 0.85)
-                              : step.color.withValues(alpha: 0.85),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                      ),
-                      if (isHotspot)
-                        const Positioned(
-                          right: 6,
-                          top: 4,
-                          child: Text('🔥',
-                              style: TextStyle(fontSize: 14)),
-                        ),
-                    ],
-                  );
-                }),
-              ),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 56,
-                child: Text(
-                  '${step.count}  (${(step.pct * 100).toStringAsFixed(0)}%)',
-                  style: const TextStyle(fontSize: 11, color: Colors.black54),
-                ),
-              ),
-              if (dropLabel.isNotEmpty)
-                Text(dropLabel,
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: isHotspot ? _kRed : Colors.grey,
-                        fontWeight:
-                            isHotspot ? FontWeight.bold : FontWeight.normal)),
-            ],
+          SizedBox(
+            width: 72,
+            child: Text(step.label,
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
           ),
+          Expanded(
+            child: LayoutBuilder(builder: (_, c) {
+              return Stack(
+                children: [
+                  Container(
+                    height: 26,
+                    width: c.maxWidth,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 700),
+                    curve: Curves.easeOut,
+                    height: 26,
+                    width: c.maxWidth * step.pct,
+                    decoration: BoxDecoration(
+                      color: isHotspot
+                          ? _kRed.withValues(alpha: 0.85)
+                          : step.color.withValues(alpha: 0.85),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                  if (isHotspot)
+                    const Positioned(
+                      right: 6, top: 4,
+                      child: Text('🔥', style: TextStyle(fontSize: 14)),
+                    ),
+                ],
+              );
+            }),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 64,
+            child: Text(
+              '${step.count}  (${(step.pct * 100).toStringAsFixed(0)}%)',
+              style: const TextStyle(fontSize: 11, color: Colors.black54),
+            ),
+          ),
+          if (dropLabel.isNotEmpty)
+            Text(dropLabel,
+                style: TextStyle(
+                    fontSize: 11,
+                    color: isHotspot ? _kRed : Colors.grey,
+                    fontWeight:
+                        isHotspot ? FontWeight.bold : FontWeight.normal)),
         ],
       ),
     );
@@ -399,14 +472,14 @@ class _LeadCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final email      = data['email'] as String? ?? '';
-    final phone      = data['phone'] as String? ?? '';
-    final lastField  = data['lastField'] as String? ?? '—';
-    final role       = data['role'] as String? ?? 'customer';
-    final reengaged  = data['reengaged'] == true;
-    final ts         = data['lastUpdatedAt'] as Timestamp?;
-    final elapsed    = ts != null ? _elapsed(ts.toDate()) : '—';
-    final contact    = email.isNotEmpty ? email : phone;
+    final email     = data['email']     as String? ?? '';
+    final phone     = data['phone']     as String? ?? '';
+    final lastField = data['lastField'] as String? ?? '—';
+    final role      = data['role']      as String? ?? 'customer';
+    final reengaged = data['reengaged'] == true;
+    final ts        = data['lastUpdatedAt'] as Timestamp?;
+    final elapsed   = ts != null ? _elapsed(ts.toDate()) : '—';
+    final contact   = email.isNotEmpty ? email : phone;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -429,11 +502,10 @@ class _LeadCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          // Avatar
           CircleAvatar(
             radius: 20,
-            backgroundColor: (role == 'expert' ? _kIndigo : _kAmber)
-                .withValues(alpha: 0.12),
+            backgroundColor:
+                (role == 'expert' ? _kIndigo : _kAmber).withValues(alpha: 0.12),
             child: Icon(
               role == 'expert' ? Icons.work_outline : Icons.person_outline,
               size: 18,
@@ -441,16 +513,13 @@ class _LeadCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-
-          // Details
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   contact.isNotEmpty ? contact : 'לא ידוע',
-                  style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w600),
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -467,8 +536,6 @@ class _LeadCard extends StatelessWidget {
               ],
             ),
           ),
-
-          // Ping button
           if (!reengaged)
             SizedBox(
               width: 70,
@@ -567,6 +634,48 @@ class _EmptyState extends StatelessWidget {
         const SizedBox(height: 4),
         Text(sub, style: const TextStyle(fontSize: 12, color: Colors.grey)),
       ]),
+    );
+  }
+}
+
+class _ErrorState extends StatelessWidget {
+  const _ErrorState({required this.error, required this.onRetry});
+  final String       error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline_rounded, size: 48, color: _kRed),
+            const SizedBox(height: 12),
+            const Text('שגיאה בטעינת הנתונים',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 6),
+            Text(error,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('נסה שוב'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _kIndigo,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
