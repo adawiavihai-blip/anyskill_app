@@ -507,11 +507,26 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     );
     if (confirm != true || !context.mounted) return;
 
+    final uid     = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final reason  = reasonCtrl.text.trim();
+
     await FirebaseFirestore.instance.collection('jobs').doc(jobId).update({
-      'status': 'disputed',
-      'disputeReason': reasonCtrl.text.trim(),
+      'status':          'disputed',
+      'disputeReason':   reason,
       'disputeOpenedAt': FieldValue.serverTimestamp(),
+      'disputerId':      uid,
     });
+
+    // ── Activity log → Admin Live Feed ───────────────────────────────
+    FirebaseFirestore.instance.collection('activity_log').add({
+      'type':      'new_dispute',
+      'title':     '⚖️ מחלוקת חדשה נפתחה',
+      'detail':    reason.isNotEmpty ? reason : '(ללא פירוט)',
+      'jobId':     jobId,
+      'disputerId': uid,
+      'createdAt': FieldValue.serverTimestamp(),
+      'priority':  'high',
+    }).ignore();
 
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

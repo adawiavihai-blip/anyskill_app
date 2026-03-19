@@ -28,15 +28,55 @@ class DisputeResolutionScreen extends StatelessWidget {
       stream: FirebaseFirestore.instance
           .collection('jobs')
           .where('status', isEqualTo: 'disputed')
-          .orderBy('disputeOpenedAt', descending: true)
           .limit(100)
           .snapshots(),
       builder: (context, snap) {
-        if (!snap.hasData) {
+        // Permissions error or network failure — never show infinite spinner
+        if (snap.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.error_outline_rounded,
+                      size: 56, color: Colors.red.shade300),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'שגיאה בטעינת המחלוקות',
+                    style: TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    snap.error.toString(),
+                    style: TextStyle(
+                        fontSize: 12, color: Colors.grey.shade500),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final docs = snap.data!.docs;
+        // Sort client-side by disputeOpenedAt desc (avoids composite index)
+        final docs = List.of(snap.data?.docs ?? [])
+          ..sort((a, b) {
+            final ta =
+                ((a.data() as Map)['disputeOpenedAt'] as Timestamp?)
+                    ?.millisecondsSinceEpoch ??
+                    0;
+            final tb =
+                ((b.data() as Map)['disputeOpenedAt'] as Timestamp?)
+                    ?.millisecondsSinceEpoch ??
+                    0;
+            return tb.compareTo(ta);
+          });
 
         if (docs.isEmpty) {
           return const _EmptyState();
