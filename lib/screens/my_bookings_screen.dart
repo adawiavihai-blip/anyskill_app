@@ -64,6 +64,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   // ── Calendar / availability state ─────────────────────────────────────────
   Set<DateTime> _unavailableDates = {};
   DateTime _calendarFocusedDay = DateTime.now();
+  DateTime? _selectedCalendarDay;
   bool _calendarSaving = false;
 
   // ── Stable streams ─────────────────────────────────────────────────────────
@@ -960,8 +961,88 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
           return _buildEmptyState(isExpert: true, isHistory: false);
         }
 
-        return _buildGroupedList(docs, isExpert: true);
+        return _buildExpertTasksList(docs);
       },
+    );
+  }
+
+  // ── Expert tasks: Today (active) + History ─────────────────────────────────
+  Widget _buildExpertTasksList(List<QueryDocumentSnapshot> docs) {
+    const activeStatuses = {'paid_escrow', 'expert_completed'};
+    final activeDocs  = docs
+        .where((d) => activeStatuses.contains(
+            (d.data() as Map<String, dynamic>)['status'] as String? ?? ''))
+        .toList();
+    final historyDocs = docs
+        .where((d) => !activeStatuses.contains(
+            (d.data() as Map<String, dynamic>)['status'] as String? ?? ''))
+        .toList();
+
+    // Sum expected earnings from pending (paid_escrow) jobs
+    double todayEarnings = 0;
+    for (final doc in activeDocs) {
+      final d = doc.data() as Map<String, dynamic>;
+      if (d['status'] == 'paid_escrow') {
+        todayEarnings += ((d['netAmountForExpert'] ??
+                d['totalPaidByCustomer'] ??
+                d['totalAmount'] ??
+                0.0) as num)
+            .toDouble();
+      }
+    }
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
+      children: [
+        // ── Today earnings summary ──────────────────────────────────
+        if (activeDocs.isNotEmpty) ...[
+          _ExpertEarningsSummary(
+              expectedEarnings: todayEarnings,
+              activeCount: activeDocs
+                  .where((d) =>
+                      (d.data() as Map<String, dynamic>)['status'] ==
+                      'paid_escrow')
+                  .length),
+          const SizedBox(height: 16),
+          _groupHeader('פעיל', activeDocs.length),
+          const SizedBox(height: 10),
+          for (final doc in activeDocs)
+            _ExpertJobCard(
+              key: ValueKey(doc.id),
+              job: doc.data() as Map<String, dynamic>,
+              jobId: doc.id,
+              onMarkDone: (jobId, chatRoomId) =>
+                  _markJobDone(context, jobId, chatRoomId),
+              onCancel: (jobId) => _providerCancelBooking(
+                  context, jobId, doc.data() as Map<String, dynamic>),
+              onDetails: () => _showJobDetailsSheet(
+                  context, doc.data() as Map<String, dynamic>, doc.id),
+              onReceipt: () =>
+                  _showReceiptFor(context, doc.data() as Map<String, dynamic>),
+            ),
+          const SizedBox(height: 20),
+        ],
+
+        // ── History ─────────────────────────────────────────────────
+        if (historyDocs.isNotEmpty) ...[
+          _groupHeader('היסטוריה', historyDocs.length),
+          const SizedBox(height: 10),
+          for (final doc in historyDocs)
+            _ExpertJobCard(
+              key: ValueKey(doc.id),
+              job: doc.data() as Map<String, dynamic>,
+              jobId: doc.id,
+              onMarkDone: (jobId, chatRoomId) =>
+                  _markJobDone(context, jobId, chatRoomId),
+              onCancel: (jobId) => _providerCancelBooking(
+                  context, jobId, doc.data() as Map<String, dynamic>),
+              onDetails: () => _showJobDetailsSheet(
+                  context, doc.data() as Map<String, dynamic>, doc.id),
+              onReceipt: () =>
+                  _showReceiptFor(context, doc.data() as Map<String, dynamic>),
+            ),
+        ],
+      ],
     );
   }
 
@@ -1093,117 +1174,286 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     );
   }
 
-  // ── Calendar view (provider availability) ─────────────────────────────────
+  // ── Calendar view (provider availability + scheduled jobs) ───────────────
   Widget _buildCalendarView() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          const Text('ניהול זמינות',
-              style:
-                  TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          Text(
-            'לחץ על תאריך כדי לסמן אותו כחסום. לחץ שוב להסרה.',
-            style: TextStyle(color: Colors.grey[600], fontSize: 13),
-            textAlign: TextAlign.right,
-          ),
-          const SizedBox(height: 12),
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.grey.shade300),
-              boxShadow: [
-                BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.04),
-                    blurRadius: 10)
-              ],
-            ),
-            child: TableCalendar(
-              firstDay: DateTime.now(),
-              lastDay: DateTime.now().add(const Duration(days: 365)),
-              focusedDay: _calendarFocusedDay,
-              calendarFormat: CalendarFormat.month,
-              availableCalendarFormats: const {
-                CalendarFormat.month: 'חודש'
-              },
-              startingDayOfWeek: StartingDayOfWeek.sunday,
-              headerStyle: const HeaderStyle(
-                formatButtonVisible: false,
-                titleCentered: true,
-                titleTextStyle:
-                    TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+    return StreamBuilder<QuerySnapshot>(
+      stream: _expertStream,
+      builder: (context, snap) {
+        // Build appointment-day lookup from stream data
+        final appointmentDays = <DateTime>{};
+        final jobsByDay       = <DateTime, List<Map<String, dynamic>>>{};
+        for (final doc in snap.data?.docs ?? []) {
+          final d  = doc.data() as Map<String, dynamic>;
+          final ts = d['appointmentDate'] as Timestamp?;
+          if (ts == null) continue;
+          final dt   = ts.toDate();
+          final norm = DateTime.utc(dt.year, dt.month, dt.day);
+          appointmentDays.add(norm);
+          jobsByDay.putIfAbsent(norm, () => []).add(d);
+        }
+
+        // Jobs for the currently selected day
+        final selJobs = _selectedCalendarDay == null
+            ? <Map<String, dynamic>>[]
+            : jobsByDay[DateTime.utc(
+                    _selectedCalendarDay!.year,
+                    _selectedCalendarDay!.month,
+                    _selectedCalendarDay!.day)] ??
+                [];
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              const Text('ניהול זמינות',
+                  style: TextStyle(
+                      fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Text(
+                'לחץ על תאריך לבחירה. לחיצה ארוכה לחסימה/שחרור.',
+                style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                textAlign: TextAlign.right,
               ),
-              calendarStyle: CalendarStyle(
-                selectedDecoration: const BoxDecoration(
-                    color: Colors.redAccent, shape: BoxShape.circle),
-                todayDecoration: BoxDecoration(
-                    color: Colors.blue.withValues(alpha: 0.3),
-                    shape: BoxShape.circle),
-                selectedTextStyle:
-                    const TextStyle(color: Colors.white),
-              ),
-              selectedDayPredicate: (day) {
-                final normalized =
-                    DateTime.utc(day.year, day.month, day.day);
-                return _unavailableDates.contains(normalized);
-              },
-              onDaySelected: (selectedDay, focusedDay) {
-                final normalized = DateTime.utc(
-                    selectedDay.year, selectedDay.month, selectedDay.day);
-                setState(() {
-                  if (_unavailableDates.contains(normalized)) {
-                    _unavailableDates.remove(normalized);
-                  } else {
-                    _unavailableDates.add(normalized);
-                  }
-                  _calendarFocusedDay = focusedDay;
-                });
-              },
-              onPageChanged: (focusedDay) {
-                setState(() => _calendarFocusedDay = focusedDay);
-              },
-            ),
-          ),
-          if (_unavailableDates.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              children: (_unavailableDates.toList()..sort())
-                  .map((d) => Chip(
-                        label: Text(
-                            '${d.day}/${d.month}/${d.year}',
-                            style: const TextStyle(fontSize: 12)),
-                        backgroundColor: Colors.red[50],
-                        deleteIcon: const Icon(Icons.close, size: 16),
-                        onDeleted: () => setState(
-                            () => _unavailableDates.remove(d)),
-                      ))
-                  .toList(),
-            ),
-          ],
-          const SizedBox(height: 24),
-          _calendarSaving
-              ? const Center(child: CircularProgressIndicator())
-              : ElevatedButton(
-                  onPressed: _saveUnavailableDates,
-                  style: ElevatedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 52),
-                    backgroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                  child: const Text('שמור שינויים',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15)),
+              const SizedBox(height: 4),
+              // Legend
+              Row(children: [
+                Container(
+                    width: 12, height: 12,
+                    decoration: BoxDecoration(
+                        color: Colors.red[200],
+                        borderRadius: BorderRadius.circular(3))),
+                const SizedBox(width: 5),
+                Text('חסום', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                const SizedBox(width: 14),
+                Container(
+                    width: 8, height: 8,
+                    decoration: const BoxDecoration(
+                        color: Color(0xFF6366F1), shape: BoxShape.circle)),
+                const SizedBox(width: 5),
+                Text('הזמנה', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+              ]),
+              const SizedBox(height: 12),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.grey.shade300),
+                  boxShadow: [BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.04),
+                      blurRadius: 10)],
                 ),
-        ],
-      ),
+                child: TableCalendar(
+                  firstDay: DateTime.now().subtract(const Duration(days: 365)),
+                  lastDay: DateTime.now().add(const Duration(days: 365)),
+                  focusedDay: _calendarFocusedDay,
+                  calendarFormat: CalendarFormat.month,
+                  availableCalendarFormats: const {CalendarFormat.month: 'חודש'},
+                  startingDayOfWeek: StartingDayOfWeek.sunday,
+                  headerStyle: const HeaderStyle(
+                    formatButtonVisible: false,
+                    titleCentered: true,
+                    titleTextStyle: TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  // Purple dots for days with appointments
+                  eventLoader: (day) {
+                    final norm = DateTime.utc(day.year, day.month, day.day);
+                    return appointmentDays.contains(norm) ? ['job'] : [];
+                  },
+                  calendarStyle: CalendarStyle(
+                    // Selected day (user tap to view appointments)
+                    selectedDecoration: const BoxDecoration(
+                        color: Color(0xFF6366F1), shape: BoxShape.circle),
+                    selectedTextStyle: const TextStyle(color: Colors.white),
+                    todayDecoration: BoxDecoration(
+                        color: const Color(0xFF6366F1).withValues(alpha: 0.2),
+                        shape: BoxShape.circle),
+                    todayTextStyle: const TextStyle(
+                        color: Color(0xFF6366F1),
+                        fontWeight: FontWeight.bold),
+                    // Purple marker dots
+                    markerDecoration: const BoxDecoration(
+                        color: Color(0xFF6366F1), shape: BoxShape.circle),
+                    markersMaxCount: 1,
+                    markerSize: 5,
+                  ),
+                  // Custom builder: overlay stripe pattern on blocked dates
+                  calendarBuilders: CalendarBuilders(
+                    defaultBuilder: (context, day, focusedDay) {
+                      final norm = DateTime.utc(day.year, day.month, day.day);
+                      if (!_unavailableDates.contains(norm)) return null;
+                      return _StripedBlockedDay(day: day, isSelected: false);
+                    },
+                    selectedBuilder: (context, day, focusedDay) {
+                      final norm = DateTime.utc(day.year, day.month, day.day);
+                      if (_unavailableDates.contains(norm)) {
+                        return _StripedBlockedDay(day: day, isSelected: true);
+                      }
+                      return null; // use default selected style
+                    },
+                  ),
+                  selectedDayPredicate: (day) =>
+                      _selectedCalendarDay != null &&
+                      isSameDay(_selectedCalendarDay, day),
+                  onDaySelected: (selectedDay, focusedDay) {
+                    setState(() {
+                      _selectedCalendarDay = selectedDay;
+                      _calendarFocusedDay  = focusedDay;
+                    });
+                  },
+                  onDayLongPressed: (selectedDay, focusedDay) {
+                    final norm = DateTime.utc(
+                        selectedDay.year, selectedDay.month, selectedDay.day);
+                    setState(() {
+                      if (_unavailableDates.contains(norm)) {
+                        _unavailableDates.remove(norm);
+                      } else {
+                        _unavailableDates.add(norm);
+                      }
+                      _calendarFocusedDay = focusedDay;
+                    });
+                  },
+                  onPageChanged: (focusedDay) =>
+                      setState(() => _calendarFocusedDay = focusedDay),
+                ),
+              ),
+
+              // ── Selected day appointments ─────────────────────────────
+              if (_selectedCalendarDay != null) ...[
+                const SizedBox(height: 16),
+                Row(children: [
+                  const Icon(Icons.event_note_rounded,
+                      size: 15, color: Color(0xFF6366F1)),
+                  const SizedBox(width: 6),
+                  Text(
+                    DateFormat('EEEE, d בMMMM', 'he')
+                        .format(_selectedCalendarDay!),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        color: Color(0xFF1A1A2E)),
+                  ),
+                ]),
+                const SizedBox(height: 8),
+                if (selJobs.isEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 14, horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Text(
+                      'אין הזמנות ביום זה',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontSize: 13, color: Colors.grey[500]),
+                    ),
+                  )
+                else
+                  for (final j in selJobs)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                            color: const Color(0xFF6366F1)
+                                .withValues(alpha: 0.3)),
+                        boxShadow: [BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.04),
+                          blurRadius: 6,
+                        )],
+                      ),
+                      child: Row(children: [
+                        Container(
+                          width: 38, height: 38,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFEEF2FF),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.person_rounded,
+                              color: Color(0xFF6366F1), size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(j['customerName'] ?? 'לקוח',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13)),
+                              if ((j['appointmentTime'] ?? '')
+                                  .toString()
+                                  .isNotEmpty)
+                                Text(j['appointmentTime'],
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey[600])),
+                            ],
+                          ),
+                        ),
+                        _StatusBadge(j['status'] ?? ''),
+                      ]),
+                    ),
+              ],
+
+              // ── Blocked dates chips ───────────────────────────────────
+              if (_unavailableDates.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Row(children: [
+                  const Icon(Icons.block_rounded,
+                      size: 14, color: Colors.redAccent),
+                  const SizedBox(width: 6),
+                  const Text('תאריכים חסומים:',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF64748B))),
+                ]),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: (_unavailableDates.toList()..sort())
+                      .map((d) => Chip(
+                            label: Text('${d.day}/${d.month}/${d.year}',
+                                style: const TextStyle(fontSize: 12)),
+                            backgroundColor: Colors.red[50],
+                            deleteIcon:
+                                const Icon(Icons.close, size: 16),
+                            onDeleted: () =>
+                                setState(() => _unavailableDates.remove(d)),
+                          ))
+                      .toList(),
+                ),
+              ],
+              const SizedBox(height: 24),
+              _calendarSaving
+                  ? const Center(child: CircularProgressIndicator())
+                  : ElevatedButton(
+                      onPressed: _saveUnavailableDates,
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 52),
+                        backgroundColor: Colors.black,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: const Text('שמור חסימות',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15)),
+                    ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -2264,7 +2514,7 @@ class _BookingStepIndicator extends StatelessWidget {
 
 // ── Expert job card ────────────────────────────────────────────────────────
 
-class _ExpertJobCard extends StatelessWidget {
+class _ExpertJobCard extends StatefulWidget {
   final Map<String, dynamic> job;
   final String jobId;
   final void Function(String jobId, String chatRoomId) onMarkDone;
@@ -2283,24 +2533,113 @@ class _ExpertJobCard extends StatelessWidget {
   });
 
   @override
+  State<_ExpertJobCard> createState() => _ExpertJobCardState();
+}
+
+class _ExpertJobCardState extends State<_ExpertJobCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulseCtrl;
+  late final Animation<double>   _pulse;
+  Timer? _workTimer;
+  bool _startingWork = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1200))
+      ..repeat(reverse: true);
+    _pulse = Tween<double>(begin: 0.4, end: 1.0)
+        .animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
+    _workTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _pulseCtrl.dispose();
+    _workTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _markWorkStarted() async {
+    setState(() => _startingWork = true);
+    try {
+      await FirebaseFirestore.instance
+          .collection('jobs')
+          .doc(widget.jobId)
+          .update({
+        'workStartedAt': FieldValue.serverTimestamp(),
+        'expertOnWay':   false,
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: Colors.red,
+          content: Text('שגיאה: $e'),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _startingWork = false);
+    }
+  }
+
+  Future<void> _navigateToJob(String? lat, String? lng, String address) async {
+    Uri uri;
+    if (lat != null && lng != null) {
+      // Try Waze first (field workers prefer it), fallback to Google Maps URL
+      uri = Uri.parse('https://waze.com/ul?ll=$lat,$lng&navigate=yes');
+    } else if (address.isNotEmpty) {
+      final enc = Uri.encodeComponent(address);
+      uri = Uri.parse('https://maps.google.com/?q=$enc');
+    } else {
+      return;
+    }
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final status       = job['status'] as String? ?? '';
+    final job          = widget.job;
+    final status       = job['status']       as String? ?? '';
     final customerId   = job['customerId']   as String? ?? '';
     final customerName = job['customerName'] as String? ?? 'לקוח';
+    final customerPhone = job['customerPhone'] as String? ?? '';
     final chatRoomId   = job['chatRoomId']   as String? ?? '';
+    final address      = job['location']     as String? ?? '';
+    final clientLat    = (job['clientLat'] as num?)?.toDouble().toString();
+    final clientLng    = (job['clientLng'] as num?)?.toDouble().toString();
     final netAmount    = (job['netAmountForExpert'] ??
             job['totalPaidByCustomer'] ??
             job['totalAmount'] ??
             0.0)
         .toDouble();
+    final workStartedTs = job['workStartedAt'] as Timestamp?;
+    final workMinutes   = workStartedTs != null
+        ? DateTime.now().difference(workStartedTs.toDate()).inMinutes
+        : 0;
 
-    DateTime? createdDate;
-    if (job['createdAt'] is Timestamp) {
-      createdDate = (job['createdAt'] as Timestamp).toDate();
+    DateTime? apptDate;
+    if (job['appointmentDate'] is Timestamp) {
+      apptDate = (job['appointmentDate'] as Timestamp).toDate();
     }
-    final dateStr = createdDate != null
-        ? DateFormat('dd/MM/yy').format(createdDate)
-        : 'תאריך לא ידוע';
+    final apptStr  = apptDate != null
+        ? DateFormat('dd/MM/yy').format(apptDate)
+        : (() {
+            if (job['createdAt'] is Timestamp) {
+              return DateFormat('dd/MM/yy')
+                  .format((job['createdAt'] as Timestamp).toDate());
+            }
+            return 'תאריך לא ידוע';
+          })();
+    final apptTime = job['appointmentTime'] as String? ?? '';
+
+    final isPending   = status == 'paid_escrow';
+    final isWaiting   = status == 'expert_completed';
+    final isCompleted = status == 'completed';
+    final isActive    = isPending || isWaiting;
+    final hasNav      = address.isNotEmpty || (clientLat != null && clientLng != null);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
@@ -2318,38 +2657,95 @@ class _ExpertJobCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+
           // ── Header ──────────────────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-            child: Row(
-              children: [
-                _ProfileAvatar(uid: customerId, name: customerName, size: 50),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(customerName,
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: Row(children: [
+              _ProfileAvatar(uid: customerId, name: customerName, size: 50),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(customerName,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: Color(0xFF1A1A2E))),
+                    const SizedBox(height: 2),
+                    Row(children: [
+                      const Icon(Icons.calendar_today_rounded,
+                          size: 12, color: Color(0xFF94A3B8)),
+                      const SizedBox(width: 4),
+                      Text(
+                          apptTime.isNotEmpty
+                              ? '$apptStr · $apptTime'
+                              : apptStr,
                           style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              color: Color(0xFF1A1A2E))),
-                      const SizedBox(height: 3),
-                      Row(children: [
-                        const Icon(Icons.calendar_today_rounded,
-                            size: 12, color: Color(0xFF94A3B8)),
-                        const SizedBox(width: 4),
-                        Text(dateStr,
-                            style: const TextStyle(
-                                fontSize: 12, color: Color(0xFF94A3B8))),
-                      ]),
-                    ],
-                  ),
+                              fontSize: 12, color: Color(0xFF94A3B8))),
+                    ]),
+                  ],
                 ),
-                _StatusBadge(status),
-              ],
-            ),
+              ),
+              _StatusBadge(status),
+            ]),
           ),
+
+          // ── Client address + phone row ──────────────────────────────
+          if (address.isNotEmpty || customerPhone.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (address.isNotEmpty)
+                      Row(children: [
+                        const Icon(Icons.location_on_outlined,
+                            size: 13, color: Color(0xFF6366F1)),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(address,
+                              style: const TextStyle(
+                                  fontSize: 12, color: Color(0xFF475569))),
+                        ),
+                      ]),
+                    if (address.isNotEmpty && customerPhone.isNotEmpty)
+                      const SizedBox(height: 4),
+                    if (customerPhone.isNotEmpty)
+                      GestureDetector(
+                        onTap: () => launchUrl(
+                          Uri.parse('tel:$customerPhone'),
+                          mode: LaunchMode.externalApplication,
+                        ),
+                        child: Row(children: [
+                          const Icon(Icons.phone_rounded,
+                              size: 13, color: Color(0xFF16A34A)),
+                          const SizedBox(width: 6),
+                          Text(customerPhone,
+                              style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF16A34A),
+                                  fontWeight: FontWeight.w600,
+                                  decoration: TextDecoration.underline)),
+                        ]),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 12),
 
           // ── Net amount strip ─────────────────────────────────────────
           Container(
@@ -2357,28 +2753,88 @@ class _ExpertJobCard extends StatelessWidget {
             padding:
                 const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: const Color(0xFFF0FFF4),
+              color: isCompleted
+                  ? const Color(0xFFF0FFF4)
+                  : const Color(0xFFF8FAFC),
               borderRadius: BorderRadius.circular(12),
+              border: isCompleted
+                  ? Border.all(
+                      color: const Color(0xFF16A34A).withValues(alpha: 0.3))
+                  : null,
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Row(children: [
-                  Icon(Icons.savings_rounded,
-                      size: 14, color: Color(0xFF16A34A)),
-                  SizedBox(width: 5),
-                  Text('הרווח שלך',
-                      style: TextStyle(
-                          fontSize: 12, color: Color(0xFF16A34A))),
+                Row(children: [
+                  Icon(
+                    isCompleted
+                        ? Icons.check_circle_rounded
+                        : Icons.savings_rounded,
+                    size: isCompleted ? 18 : 14,
+                    color: isCompleted
+                        ? const Color(0xFF16A34A)
+                        : const Color(0xFF6366F1),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    isCompleted ? 'סה"כ הרווח' : 'הרווח הצפוי',
+                    style: TextStyle(
+                      fontSize: isCompleted ? 13 : 12,
+                      fontWeight: isCompleted
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                      color: isCompleted
+                          ? const Color(0xFF15803D)
+                          : const Color(0xFF64748B),
+                    ),
+                  ),
                 ]),
-                Text('₪${netAmount.toStringAsFixed(0)}',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        color: Color(0xFF16A34A))),
+                Text(
+                  '₪${netAmount.toStringAsFixed(0)}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: isCompleted ? 20 : 16,
+                    color: isCompleted
+                        ? const Color(0xFF15803D)
+                        : const Color(0xFF1A1A2E),
+                  ),
+                ),
               ],
             ),
           ),
+
+          // ── Work-in-progress timer ────────────────────────────────
+          if (workStartedTs != null && isPending) ...[
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: const Color(0xFF16A34A).withValues(alpha: 0.3)),
+                ),
+                child: Row(children: [
+                  AnimatedBuilder(
+                    animation: _pulse,
+                    builder: (_, __) => Icon(Icons.construction_rounded,
+                        size: 14,
+                        color: const Color(0xFF16A34A)
+                            .withValues(alpha: 0.5 + _pulse.value * 0.5)),
+                  ),
+                  const SizedBox(width: 8),
+                  Text('עבודה החלה לפני $workMinutes דקות',
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF15803D))),
+                ]),
+              ),
+            ),
+          ],
 
           const SizedBox(height: 14),
 
@@ -2387,12 +2843,63 @@ class _ExpertJobCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
             child: Column(
               children: [
-                if (status == 'paid_escrow') ...[
+
+                // pending: navigate + start work + mark done
+                if (isPending) ...[
+
+                  // Navigate to Job button
+                  if (hasNav) ...[
+                    _PrimaryButton(
+                      label: 'נווט לעבודה 🚗',
+                      icon: Icons.directions_car_rounded,
+                      color: const Color(0xFF0F172A),
+                      onPressed: () =>
+                          _navigateToJob(clientLat, clientLng, address),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+
+                  // Start Work button (only if not yet started)
+                  if (workStartedTs == null) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF6366F1),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          minimumSize: const Size(double.infinity, 52),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                          shadowColor: const Color(0xFF6366F1)
+                              .withValues(alpha: 0.4),
+                        ),
+                        icon: _startingWork
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white))
+                            : const Icon(Icons.handyman_rounded, size: 20),
+                        label: const Text('הגעתי — התחל עבודה 🛠️',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15)),
+                        onPressed:
+                            _startingWork ? null : _markWorkStarted,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+
+                  // Mark done (after work started)
                   _PrimaryButton(
                     label: 'סיימתי את העבודה',
                     icon: Icons.check_circle_rounded,
                     color: const Color(0xFF16A34A),
-                    onPressed: () => onMarkDone(jobId, chatRoomId),
+                    onPressed: () =>
+                        widget.onMarkDone(widget.jobId, chatRoomId),
                   ),
                   const SizedBox(height: 8),
                   Row(children: [
@@ -2420,13 +2927,14 @@ class _ExpertJobCard extends StatelessWidget {
                         label: 'בטל הזמנה',
                         color: const Color(0xFFFEF2F2),
                         iconColor: Colors.red,
-                        onPressed: () => onCancel(jobId),
+                        onPressed: () => widget.onCancel(widget.jobId),
                       ),
                     ),
                   ]),
                 ],
 
-                if (status == 'expert_completed') ...[
+                // waiting for client release
+                if (isWaiting) ...[
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(
@@ -2450,34 +2958,31 @@ class _ExpertJobCard extends StatelessWidget {
                   ),
                 ],
 
-                if (status == 'completed') ...[
-                  Container(
+                // completed: prominent receipt
+                if (isCompleted) ...[
+                  SizedBox(
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF0FFF4),
-                      borderRadius: BorderRadius.circular(12),
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF16A34A),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        minimumSize: const Size(double.infinity, 52),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                      icon: const Icon(Icons.receipt_long_rounded, size: 20),
+                      label: const Text('הצג קבלה',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 15)),
+                      onPressed: widget.onReceipt,
                     ),
-                    child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.check_circle_rounded,
-                              size: 15, color: Color(0xFF16A34A)),
-                          SizedBox(width: 6),
-                          Text('הושלם — התשלום שוחרר',
-                              style: TextStyle(
-                                  fontSize: 13,
-                                  color: Color(0xFF16A34A),
-                                  fontWeight: FontWeight.w600)),
-                        ]),
                   ),
-                  const SizedBox(height: 8),
-                  _QuickActionChip(
-                    icon: Icons.receipt_long_rounded,
-                    label: 'הצג קבלה',
-                    onPressed: onReceipt,
-                  ),
+                ],
+
+                // other statuses (cancelled / disputed)
+                if (!isActive && !isCompleted) ...[
+                  _StatusBadge(status),
                 ],
               ],
             ),
@@ -2485,7 +2990,7 @@ class _ExpertJobCard extends StatelessWidget {
 
           // ── Footer ───────────────────────────────────────────────────
           InkWell(
-            onTap: onDetails,
+            onTap: widget.onDetails,
             borderRadius:
                 const BorderRadius.vertical(bottom: Radius.circular(24)),
             child: Container(
@@ -2517,6 +3022,136 @@ class _ExpertJobCard extends StatelessWidget {
       ),
     );
   }
+}
+
+// ── Expert earnings summary bar ────────────────────────────────────────────
+
+class _ExpertEarningsSummary extends StatelessWidget {
+  final double expectedEarnings;
+  final int    activeCount;
+
+  const _ExpertEarningsSummary({
+    required this.expectedEarnings,
+    required this.activeCount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF6366F1).withValues(alpha: 0.3),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.2),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.account_balance_wallet_rounded,
+              color: Colors.white, size: 22),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('סה"כ רווח צפוי',
+                  style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500)),
+              Text(
+                '₪${expectedEarnings.toStringAsFixed(0)}',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 26,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: -0.5),
+              ),
+            ],
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text('$activeCount',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold)),
+            const Text('הזמנות',
+                style: TextStyle(color: Colors.white70, fontSize: 11)),
+          ],
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Striped blocked day cell (calendar) ────────────────────────────────────
+
+class _StripedBlockedDay extends StatelessWidget {
+  final DateTime day;
+  final bool     isSelected;
+
+  const _StripedBlockedDay({required this.day, required this.isSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(
+            color: Colors.redAccent.withValues(alpha: 0.7), width: 1.5),
+      ),
+      child: ClipOval(
+        child: CustomPaint(
+          painter: _DiagonalStripesPainter(),
+          child: Center(
+            child: Text(
+              '${day.day}',
+              style: TextStyle(
+                color: isSelected ? Colors.redAccent : Colors.red[700],
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DiagonalStripesPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.red.withValues(alpha: 0.12)
+      ..strokeWidth = 3;
+    const step = 6.0;
+    for (double x = -size.height; x < size.width + size.height; x += step) {
+      canvas.drawLine(Offset(x, 0), Offset(x + size.height, size.height), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter old) => false;
 }
 
 // ── Shared button widgets ──────────────────────────────────────────────────
