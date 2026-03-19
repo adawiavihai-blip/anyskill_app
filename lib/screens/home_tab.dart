@@ -302,12 +302,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   ),
                 ),
 
-                // ── Stories row (always visible, independent of search) ────
-                SliverToBoxAdapter(
-                  child: StoriesRow(isProvider: isProvider),
-                ),
-
-
                 // ── Loading shimmer ────────────────────────────────────────
                 if (catSnap.connectionState == ConnectionState.waiting)
                   const CategoryGridSkeleton()
@@ -420,6 +414,66 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                             ],
                           ),
                         ),
+                      ),
+                    ),
+                  ),
+
+                  // ── Stylized Story Carousel strip ─────────────────────
+                  SliverToBoxAdapter(
+                    child: Container(
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFF8F8F8),
+                        border: Border.symmetric(
+                          horizontal: BorderSide(
+                            color: Color(0xFFE5E7EB),
+                            width: 0.8,
+                          ),
+                        ),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // "Live" header label
+                          Padding(
+                            padding: const EdgeInsetsDirectional.only(
+                                start: 14, bottom: 6),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFEF4444),
+                                    borderRadius: BorderRadius.circular(5),
+                                  ),
+                                  child: const Text(
+                                    'לייב',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                const Text(
+                                  'עדכונים חיים מהמומחים',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF6B7280),
+                                    letterSpacing: 0.1,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          StoriesRow(isProvider: isProvider),
+                        ],
                       ),
                     ),
                   ),
