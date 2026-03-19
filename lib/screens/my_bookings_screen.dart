@@ -1,9 +1,11 @@
 // ignore_for_file: use_build_context_synchronously
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'chat_modules/payment_module.dart';
 import '../services/payment_service.dart';
 import '../services/cancellation_policy_service.dart';
@@ -1208,17 +1210,19 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   // ── Empty state ────────────────────────────────────────────────────────────
   Widget _buildEmptyState(
       {required bool isExpert, required bool isHistory}) {
-    final icon   = isHistory ? Icons.history_rounded : Icons.work_outline;
+    final icon   = isHistory ? Icons.history_rounded
+        : isExpert ? Icons.work_outline
+        : Icons.home_repair_service_rounded;
     final title  = isExpert
         ? 'אין משימות עדיין'
         : isHistory
             ? 'אין היסטוריית הזמנות'
-            : 'אין הזמנות פעילות';
+            : 'הבית שלך בידיים טובות';
     final subtitle = isExpert
         ? 'הזמנות מלקוחות יופיעו כאן. ודא שהפרופיל שלך מעודכן.'
         : isHistory
             ? 'הזמנות שהושלמו יופיעו כאן.'
-            : 'הזמן מומחה ותראה את ההזמנה שלך כאן.';
+            : 'עדיין אין הזמנות? המומחים שלנו מחכים לך.';
 
     return Center(
       child: Padding(
@@ -1255,7 +1259,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                       borderRadius: BorderRadius.circular(14)),
                 ),
                 icon: const Icon(Icons.search, color: Colors.white),
-                label: const Text('חפש מומחה',
+                label: const Text('חפש מומחה עכשיו',
                     style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -1462,7 +1466,7 @@ class _StatusBadge extends StatelessWidget {
 
 // ── Customer booking card ──────────────────────────────────────────────────
 
-class _CustomerBookingCard extends StatelessWidget {
+class _CustomerBookingCard extends StatefulWidget {
   final Map<String, dynamic> job;
   final String jobId;
   final String currentUserId;
@@ -1489,11 +1493,112 @@ class _CustomerBookingCard extends StatelessWidget {
   });
 
   @override
+  State<_CustomerBookingCard> createState() => _CustomerBookingCardState();
+}
+
+class _CustomerBookingCardState extends State<_CustomerBookingCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulseCtrl;
+  late final Animation<double>   _pulse;
+  Timer? _workTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1200))
+      ..repeat(reverse: true);
+    _pulse = Tween<double>(begin: 0.3, end: 1.0)
+        .animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
+    // Rebuild every 30 s so "work started X min ago" stays fresh
+    _workTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _pulseCtrl.dispose();
+    _workTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _sendTip(BuildContext context, double tipAmount) async {
+    final expertId   = widget.job['expertId']   as String? ?? '';
+    final expertName = widget.job['expertName'] as String? ?? 'מומחה';
+    if (expertId.isEmpty || widget.currentUserId.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('שלח טיפ',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        content: Text(
+          'לשלוח ₪${tipAmount.toStringAsFixed(0)} טיפ ל-$expertName?',
+          textAlign: TextAlign.center,
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: const Text('ביטול')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6366F1)),
+            onPressed: () => Navigator.pop(c, true),
+            child:
+                const Text('שלח', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+
+    final db  = FirebaseFirestore.instance;
+    final bat = db.batch();
+    bat.set(db.collection('transactions').doc(), {
+      'type':         'tip',
+      'senderId':     widget.currentUserId,
+      'receiverId':   expertId,
+      'senderName':   widget.job['customerName'] ?? 'לקוח',
+      'receiverName': expertName,
+      'amount':       tipAmount,
+      'jobId':        widget.jobId,
+      'timestamp':    FieldValue.serverTimestamp(),
+    });
+    bat.update(db.collection('users').doc(expertId), {
+      'pendingBalance': FieldValue.increment(tipAmount),
+    });
+    bat.update(db.collection('users').doc(widget.currentUserId), {
+      'balance': FieldValue.increment(-tipAmount),
+    });
+    try {
+      await bat.commit();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: const Color(0xFF6366F1),
+          content: Text('₪${tipAmount.toStringAsFixed(0)} נשלחו ל-$expertName 🎉'),
+        ));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: Colors.red,
+          content: Text('שגיאה בשליחת טיפ: $e'),
+        ));
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final status     = job['status'] as String? ?? '';
-    final expertId   = job['expertId']   as String? ?? '';
-    final expertName = job['expertName'] as String? ?? 'מומחה';
-    final amount     = (job['totalAmount'] ??
+    final job         = widget.job;
+    final status      = job['status'] as String? ?? '';
+    final expertId    = job['expertId']   as String? ?? '';
+    final expertName  = job['expertName'] as String? ?? 'מומחה';
+    final expertPhone = job['expertPhone'] as String? ?? '';
+    final amount      = (job['totalAmount'] ??
             job['totalPaidByCustomer'] ??
             job['amount'] ??
             0.0)
@@ -1503,15 +1608,36 @@ class _CustomerBookingCard extends StatelessWidget {
     if (job['appointmentDate'] is Timestamp) {
       apptDate = (job['appointmentDate'] as Timestamp).toDate();
     }
-    final apptStr = apptDate != null
+    final apptStr  = apptDate != null
         ? DateFormat('dd/MM/yy').format(apptDate)
         : 'טרם נקבע';
-    final apptTime = job['appointmentTime'] as String? ?? '';
-
-    final chatRoomId = job['chatRoomId'] as String? ?? '';
+    final apptTime   = job['appointmentTime'] as String? ?? '';
+    final chatRoomId = job['chatRoomId']      as String? ?? '';
     final isCompleted = status == 'completed';
     final isActive    = status == 'paid_escrow' || status == 'expert_completed';
     final isReviewed  = job['isReviewed'] == true;
+
+    // ── Live signal fields ──────────────────────────────────────────
+    final expertOnWay   = job['expertOnWay']   == true;
+    final workStartedTs = job['workStartedAt'] as Timestamp?;
+    final expertLat     = (job['expertLat'] as num?)?.toDouble();
+    final expertLng     = (job['expertLng'] as num?)?.toDouble();
+
+    // ── Step index ──────────────────────────────────────────────────
+    final int stepIndex;
+    if (status == 'expert_completed' || status == 'completed') {
+      stepIndex = 3;
+    } else if (workStartedTs != null) {
+      stepIndex = 2;
+    } else if (expertOnWay) {
+      stepIndex = 1;
+    } else {
+      stepIndex = 0;
+    }
+
+    final workMinutes = workStartedTs != null
+        ? DateTime.now().difference(workStartedTs.toDate()).inMinutes
+        : 0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
@@ -1529,6 +1655,7 @@ class _CustomerBookingCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+
           // ── Card header ─────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
@@ -1565,10 +1692,136 @@ class _CustomerBookingCard extends StatelessWidget {
             ),
           ),
 
-          // ── Amount strip ────────────────────────────────────────────
+          // ── Step tracker (active bookings) ───────────────────────────
+          if (isActive || status == 'expert_completed') ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _BookingStepIndicator(currentStep: stepIndex),
+            ),
+            const SizedBox(height: 12),
+          ],
+
+          // ── "On the way" live signal ──────────────────────────────────
+          if (expertOnWay && workStartedTs == null) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                      color: const Color(0xFF3B82F6).withValues(alpha: 0.4)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      AnimatedBuilder(
+                        animation: _pulse,
+                        builder: (_, __) => Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF3B82F6)
+                                .withValues(alpha: _pulse.value),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Text('Live',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF3B82F6))),
+                      const SizedBox(width: 6),
+                      const Expanded(
+                        child: Text('המומחה בדרך אליך',
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1E40AF))),
+                      ),
+                    ]),
+                    if (expertLat != null && expertLng != null) ...[
+                      const SizedBox(height: 8),
+                      GestureDetector(
+                        onTap: () => launchUrl(
+                          Uri.parse(
+                              'https://maps.google.com/?q=$expertLat,$expertLng'),
+                          mode: LaunchMode.externalApplication,
+                        ),
+                        child: Container(
+                          width: double.infinity,
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF3B82F6),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.location_on_rounded,
+                                  color: Colors.white, size: 15),
+                              SizedBox(width: 6),
+                              Text('צפה במומחה על המפה 📍',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+
+          // ── "In progress" timer ───────────────────────────────────────
+          if (workStartedTs != null && status == 'paid_escrow') ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                      color: const Color(0xFF16A34A).withValues(alpha: 0.3)),
+                ),
+                child: Row(children: [
+                  AnimatedBuilder(
+                    animation: _pulse,
+                    builder: (_, __) => Icon(Icons.construction_rounded,
+                        size: 16,
+                        color: const Color(0xFF16A34A)
+                            .withValues(alpha: 0.5 + _pulse.value * 0.5)),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'העבודה החלה לפני $workMinutes דקות',
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF15803D)),
+                  ),
+                ]),
+              ),
+            ),
+          ],
+
+          // ── Amount strip ─────────────────────────────────────────────
           Container(
             margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
               color: const Color(0xFFF8FAFC),
               borderRadius: BorderRadius.circular(12),
@@ -1601,140 +1854,410 @@ class _CustomerBookingCard extends StatelessWidget {
 
           const SizedBox(height: 14),
 
-          // ── Action buttons ──────────────────────────────────────────
+          // ── Action buttons ────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
             child: Column(
               children: [
-                // expert_completed → release payment (primary CTA)
+
+                // expert_completed → release payment
                 if (status == 'expert_completed') ...[
                   _PrimaryButton(
                     label: 'אשר ושחרר תשלום',
                     icon: Icons.check_circle_rounded,
                     color: const Color(0xFF16A34A),
-                    onPressed: () => onCompleteJob(amount),
+                    onPressed: () => widget.onCompleteJob(amount),
                   ),
                   const SizedBox(height: 8),
                   _SecondaryButton(
                     label: 'יש בעיה — פתח מחלוקת',
                     icon: Icons.report_outlined,
                     color: Colors.red,
-                    onPressed: onDispute,
+                    onPressed: widget.onDispute,
                   ),
                 ],
 
-                // paid_escrow → quick-chat + cancel
+                // paid_escrow → cancel only (contact via sticky bar below)
                 if (status == 'paid_escrow') ...[
-                  Row(children: [
-                    Expanded(
-                      child: _QuickActionChip(
-                        icon: Icons.chat_bubble_outline_rounded,
-                        label: 'צ׳אט מהיר',
-                        onPressed: chatRoomId.isNotEmpty
-                            ? () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => ChatScreen(
-                                      receiverId: expertId,
-                                      receiverName: expertName,
-                                    ),
-                                  ),
-                                )
-                            : null,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _QuickActionChip(
-                        icon: Icons.cancel_outlined,
-                        label: 'בטל הזמנה',
-                        color: const Color(0xFFFEF2F2),
-                        iconColor: Colors.red,
-                        onPressed: () => onCancel(amount),
-                      ),
-                    ),
-                  ]),
+                  _QuickActionChip(
+                    icon: Icons.cancel_outlined,
+                    label: 'בטל הזמנה',
+                    color: const Color(0xFFFEF2F2),
+                    iconColor: Colors.red,
+                    onPressed: () => widget.onCancel(amount),
+                  ),
                 ],
 
-                // completed → rebook (primary CTA) + receipt + rate
+                // completed → FEEDBACK CARD ────────────────────────────
                 if (isCompleted) ...[
+                  if (!isReviewed) ...[
+                    // Inline feedback card
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        children: [
+                          const Text('איך היה השירות?',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14)),
+                          const SizedBox(height: 10),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: List.generate(
+                              5,
+                              (i) => GestureDetector(
+                                onTap: widget.onRate,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 4),
+                                  child: Icon(Icons.star_rounded,
+                                      size: 34,
+                                      color: Colors.white
+                                          .withValues(alpha: 0.45 + i * 0.11)),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          GestureDetector(
+                            onTap: widget.onRate,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 24, vertical: 9),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Text('שלח ביקורת ⭐',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                      color: Color(0xFF6366F1))),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    // Quick Tip row
+                    Row(children: [
+                      const Icon(Icons.volunteer_activism_rounded,
+                          size: 13, color: Color(0xFF94A3B8)),
+                      const SizedBox(width: 5),
+                      const Text('שלח טיפ:',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF64748B),
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(width: 8),
+                      for (final tip in [10.0, 20.0, 50.0])
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => _sendTip(context, tip),
+                            child: Container(
+                              margin: const EdgeInsetsDirectional.only(end: 6),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFFBEB),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                    color: const Color(0xFFFBBF24),
+                                    width: 1),
+                              ),
+                              child: Text(
+                                '₪${tip.toStringAsFixed(0)}',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF92400E)),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ]),
+                    const SizedBox(height: 10),
+                  ] else ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0FFF4),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.check_circle_outline_rounded,
+                                size: 14, color: Color(0xFF16A34A)),
+                            SizedBox(width: 6),
+                            Text('ביקורת נשלחה — תודה!',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF16A34A))),
+                          ]),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   _PrimaryButton(
                     label: 'הזמן שוב את $expertName',
                     icon: Icons.replay_rounded,
                     color: const Color(0xFF6366F1),
-                    onPressed: onRebook,
+                    onPressed: widget.onRebook,
                   ),
                   const SizedBox(height: 8),
-                  Row(children: [
-                    Expanded(
-                      child: _QuickActionChip(
-                        icon: Icons.receipt_long_rounded,
-                        label: 'קבלה',
-                        onPressed: onReceipt,
-                      ),
-                    ),
-                    if (!isReviewed) ...[
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _QuickActionChip(
-                          icon: Icons.star_outline_rounded,
-                          label: 'דרג',
-                          color: const Color(0xFFFFFBEB),
-                          iconColor: Colors.amber,
-                          onPressed: onRate,
-                        ),
-                      ),
-                    ] else ...[
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: _QuickActionChip(
-                          icon: Icons.check_circle_outline_rounded,
-                          label: 'ביקורת נשלחה',
-                          color: Color(0xFFF0FFF4),
-                          iconColor: Color(0xFF16A34A),
-                          onPressed: null,
-                        ),
-                      ),
-                    ],
-                  ]),
+                  _QuickActionChip(
+                    icon: Icons.receipt_long_rounded,
+                    label: 'קבלה',
+                    onPressed: widget.onReceipt,
+                  ),
                 ],
               ],
             ),
           ),
 
-          // ── Footer: details link ────────────────────────────────────
-          InkWell(
-            onTap: onDetails,
-            borderRadius:
-                const BorderRadius.vertical(bottom: Radius.circular(24)),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 12),
+          // ── Direct Contact Bar (active bookings) ───────────────────
+          if (isActive) ...[
+            const SizedBox(height: 4),
+            Container(
               decoration: BoxDecoration(
                 color: const Color(0xFFF8FAFC),
-                borderRadius:
-                    const BorderRadius.vertical(bottom: Radius.circular(24)),
+                borderRadius: const BorderRadius.vertical(
+                    bottom: Radius.circular(24)),
                 border: Border(
-                    top: BorderSide(
-                        color: Colors.grey.shade100, width: 1)),
+                    top: BorderSide(color: Colors.grey.shade100, width: 1)),
               ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+              child: Row(
                 children: [
-                  Text('פרטי הזמנה',
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF64748B),
-                          fontWeight: FontWeight.w500)),
-                  SizedBox(width: 4),
-                  Icon(Icons.keyboard_arrow_down_rounded,
-                      size: 16, color: Color(0xFF94A3B8)),
+                  Expanded(
+                    child: InkWell(
+                      onTap: expertPhone.isNotEmpty
+                          ? () => launchUrl(
+                              Uri.parse('tel:$expertPhone'),
+                              mode: LaunchMode.externalApplication)
+                          : () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => ExpertProfileScreen(
+                                    expertId: expertId,
+                                    expertName: expertName,
+                                  ),
+                                ),
+                              ),
+                      borderRadius: const BorderRadius.only(
+                          bottomLeft: Radius.circular(24)),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.phone_rounded,
+                                size: 16,
+                                color: expertPhone.isNotEmpty
+                                    ? const Color(0xFF16A34A)
+                                    : const Color(0xFF94A3B8)),
+                            const SizedBox(width: 6),
+                            Text('📞 התקשר למומחה',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: expertPhone.isNotEmpty
+                                        ? const Color(0xFF16A34A)
+                                        : const Color(0xFF94A3B8))),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Container(
+                      width: 1,
+                      height: 30,
+                      color: Colors.grey.shade200),
+                  Expanded(
+                    child: InkWell(
+                      onTap: chatRoomId.isNotEmpty
+                          ? () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => ChatScreen(
+                                    receiverId: expertId,
+                                    receiverName: expertName,
+                                  ),
+                                ),
+                              )
+                          : null,
+                      borderRadius: const BorderRadius.only(
+                          bottomRight: Radius.circular(24)),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.chat_bubble_outline_rounded,
+                                size: 16,
+                                color: chatRoomId.isNotEmpty
+                                    ? const Color(0xFF6366F1)
+                                    : const Color(0xFF94A3B8)),
+                            const SizedBox(width: 6),
+                            Text('💬 צ\'אט מהיר',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: chatRoomId.isNotEmpty
+                                        ? const Color(0xFF6366F1)
+                                        : const Color(0xFF94A3B8))),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
-          ),
+          ],
+
+          // ── Footer: details link (non-active) ─────────────────────
+          if (!isActive) ...[
+            InkWell(
+              onTap: widget.onDetails,
+              borderRadius:
+                  const BorderRadius.vertical(bottom: Radius.circular(24)),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: const BorderRadius.vertical(
+                      bottom: Radius.circular(24)),
+                  border: Border(
+                      top: BorderSide(
+                          color: Colors.grey.shade100, width: 1)),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text('פרטי הזמנה',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF64748B),
+                            fontWeight: FontWeight.w500)),
+                    SizedBox(width: 4),
+                    Icon(Icons.keyboard_arrow_down_rounded,
+                        size: 16, color: Color(0xFF94A3B8)),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
       ),
+    );
+  }
+}
+
+// ── Booking step indicator (Uber-style horizontal tracker) ─────────────────
+
+class _BookingStepIndicator extends StatelessWidget {
+  final int currentStep; // 0–3
+
+  const _BookingStepIndicator({required this.currentStep});
+
+  static const _steps = ['התקבלה', 'בדרך', 'בעבודה', 'הושלם'];
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: List.generate(_steps.length * 2 - 1, (i) {
+        if (i.isOdd) {
+          final filled = i ~/ 2 < currentStep;
+          return Expanded(
+            child: Container(
+              height: 3,
+              decoration: BoxDecoration(
+                color: filled
+                    ? const Color(0xFF6366F1)
+                    : const Color(0xFFE2E8F0),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          );
+        }
+        final step     = i ~/ 2;
+        final isActive = step == currentStep;
+        final isDone   = step < currentStep;
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              width:  isActive ? 30 : 22,
+              height: isActive ? 30 : 22,
+              decoration: BoxDecoration(
+                color: isDone
+                    ? const Color(0xFF6366F1)
+                    : isActive
+                        ? Colors.white
+                        : const Color(0xFFE2E8F0),
+                shape: BoxShape.circle,
+                border: isActive
+                    ? Border.all(
+                        color: const Color(0xFF6366F1), width: 2.5)
+                    : null,
+                boxShadow: isActive
+                    ? [
+                        BoxShadow(
+                          color: const Color(0xFF6366F1)
+                              .withValues(alpha: 0.4),
+                          blurRadius: 10,
+                          spreadRadius: 2,
+                        )
+                      ]
+                    : null,
+              ),
+              child: Center(
+                child: isDone
+                    ? const Icon(Icons.check_rounded,
+                        color: Colors.white, size: 12)
+                    : isActive
+                        ? Container(
+                            width: 10,
+                            height: 10,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF6366F1),
+                              shape: BoxShape.circle,
+                            ),
+                          )
+                        : null,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _steps[step],
+              style: TextStyle(
+                  fontSize: 9,
+                  fontWeight:
+                      isActive ? FontWeight.bold : FontWeight.normal,
+                  color: isActive
+                      ? const Color(0xFF6366F1)
+                      : isDone
+                          ? const Color(0xFF6366F1).withValues(alpha: 0.7)
+                          : const Color(0xFF94A3B8)),
+            ),
+          ],
+        );
+      }),
     );
   }
 }
