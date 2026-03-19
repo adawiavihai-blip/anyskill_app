@@ -4,11 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'chat_screen.dart';
 import '../services/location_service.dart';
 import '../services/gamification_service.dart';
 import '../widgets/level_badge.dart';
 import '../l10n/app_localizations.dart';
+
+// ── Sort modes (user-selectable filter chips) ─────────────────────────────────
+enum _SortMode { nearest, profitable, urgent }
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const _kIndigo   = Color(0xFF6366F1);
@@ -55,6 +59,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
   DateTime?  _boostExpiry;            // non-null when boost is active
   double     _platformFee      = 0.15; // loaded from Firestore; 15 % default
   Timer?     _tickTimer;              // periodic rebuild so temperature cools in real-time
+  _SortMode  _sortMode         = _SortMode.nearest;
 
   @override
   void initState() {
@@ -444,6 +449,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
       ),
       body: Column(children: [
         _buildXpBanner(),
+        _buildSortChips(),
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
             stream: _buildQuery(),
@@ -455,36 +461,51 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                 return Center(child: Text(l10n.oppError('${snapshot.error}')));
               }
               final docs = snapshot.data?.docs ?? [];
-              // Belt-and-suspenders: also hide any doc explicitly marked
-              // inactive (Option A manual close) or somehow older than 24 h.
               final cutoff = DateTime.now().subtract(const Duration(hours: 24));
-              final filtered = docs.where((doc) {
+              var filtered = docs.where((doc) {
                 final d   = doc.data() as Map<String, dynamic>;
                 if (d['isActive'] == false) return false;
                 final ts  = d['createdAt'] as Timestamp?;
                 if (ts != null && ts.toDate().isBefore(cutoff)) return false;
+                // "דחוף" filter: only HOT cards (< 10 min)
+                if (_sortMode == _SortMode.urgent) {
+                  return _temperatureOf(d['createdAt'] as Timestamp?) ==
+                      _CardTemperature.hot;
+                }
                 return true;
               }).toList();
 
-              if (_currentPosition != null) {
-                filtered.sort((a, b) {
-                  final da   = a.data() as Map<String, dynamic>;
-                  final dbMap = b.data() as Map<String, dynamic>;
-                  final distA = LocationService.distanceMeters(
-                    _currentPosition!.latitude, _currentPosition!.longitude,
-                    (da['clientLat']    as num?)?.toDouble(),
-                    (da['clientLng']    as num?)?.toDouble(),
-                  );
-                  final distB = LocationService.distanceMeters(
-                    _currentPosition!.latitude, _currentPosition!.longitude,
-                    (dbMap['clientLat'] as num?)?.toDouble(),
-                    (dbMap['clientLng'] as num?)?.toDouble(),
-                  );
-                  if (distA == null && distB == null) return 0;
-                  if (distA == null) return 1;
-                  if (distB == null) return -1;
-                  return distA.compareTo(distB);
-                });
+              // Sort based on selected mode
+              switch (_sortMode) {
+                case _SortMode.nearest:
+                  if (_currentPosition != null) {
+                    filtered.sort((a, b) {
+                      final da    = a.data() as Map<String, dynamic>;
+                      final dbMap = b.data() as Map<String, dynamic>;
+                      final distA = LocationService.distanceMeters(
+                        _currentPosition!.latitude, _currentPosition!.longitude,
+                        (da['clientLat']    as num?)?.toDouble(),
+                        (da['clientLng']    as num?)?.toDouble(),
+                      );
+                      final distB = LocationService.distanceMeters(
+                        _currentPosition!.latitude, _currentPosition!.longitude,
+                        (dbMap['clientLat'] as num?)?.toDouble(),
+                        (dbMap['clientLng'] as num?)?.toDouble(),
+                      );
+                      if (distA == null && distB == null) return 0;
+                      if (distA == null) return 1;
+                      if (distB == null) return -1;
+                      return distA.compareTo(distB);
+                    });
+                  }
+                case _SortMode.profitable:
+                  filtered.sort((a, b) {
+                    final maxA = ((a.data() as Map)['budgetMax'] as num? ?? 0).toDouble();
+                    final maxB = ((b.data() as Map)['budgetMax'] as num? ?? 0).toDouble();
+                    return maxB.compareTo(maxA); // descending
+                  });
+                case _SortMode.urgent:
+                  break; // already filtered to HOT, keep Firestore order
               }
 
               if (filtered.isEmpty) return _buildEmptyState();
@@ -651,6 +672,46 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
       ]),
     );
   }
+
+  // ── Sort / filter chips ────────────────────────────────────────────────────
+  Widget _buildSortChips() {
+    const chips = [
+      (_SortMode.nearest,    '📍 הכי קרוב'),
+      (_SortMode.profitable, '💰 הכי רווחי'),
+      (_SortMode.urgent,     '🔥 דחוף'),
+    ];
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: chips.map((e) {
+            final selected = _sortMode == e.$1;
+            return Padding(
+              padding: const EdgeInsetsDirectional.only(end: 8),
+              child: ChoiceChip(
+                label: Text(e.$2),
+                selected: selected,
+                onSelected: (_) => setState(() => _sortMode = e.$1),
+                selectedColor: _kIndigo,
+                backgroundColor: const Color(0xFFF3F4F6),
+                labelStyle: TextStyle(
+                  color: selected ? Colors.white : Colors.black87,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20)),
+                side: BorderSide.none,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
 }
 
 // ── Animated request card ─────────────────────────────────────────────────────
@@ -789,10 +850,16 @@ class _RequestCardState extends State<_RequestCard>
     final temp     = _temperature;
     final isHot    = temp == _CardTemperature.hot  && !isClosed;
     final isWarm   = temp == _CardTemperature.warm && !isClosed;
-    final viewers  = isHot ? _viewersNow() : 0;
-    final netLabel = _netEarningsLabel();
     final ts                = d['createdAt'] as Timestamp?;
     final timeAgo           = ts != null ? _timeAgo(ts.toDate()) : '';
+    final isUrgentFlag = d['isUrgent'] == true;
+    final ageMin   = ts != null
+        ? DateTime.now().difference(ts.toDate()).inMinutes
+        : 999;
+    // New-lead yellow glow: 10–15 min window (WARM but very fresh)
+    final isNewLead = !isHot && !isClosed && ageMin < 15;
+    final viewers  = _viewersNow();
+    final netLabel = _netEarningsLabel();
     final location          = (d['location']    ?? '') as String;
     final category          = (d['category']    ?? '') as String;
     final description       = (d['description'] ?? '') as String;
@@ -823,7 +890,7 @@ class _RequestCardState extends State<_RequestCard>
           builder: (_, child) => Container(
             margin: const EdgeInsets.only(bottom: 16),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: isNewLead ? const Color(0xFFFFFBEB) : Colors.white,
               borderRadius: BorderRadius.circular(22),
               border: isHot
                   ? Border.all(
@@ -891,6 +958,18 @@ class _RequestCardState extends State<_RequestCard>
                                       const Icon(Icons.circle,
                                           size: 7, color: Color(0xFF4ADE80)),
                                       const SizedBox(width: 4),
+                                    ],
+                                    if (isUrgentFlag) ...[
+                                      AnimatedBuilder(
+                                        animation: _pulse,
+                                        builder: (_, __) => Icon(
+                                          Icons.priority_high_rounded,
+                                          size: 13,
+                                          color: Colors.white
+                                              .withValues(alpha: _pulse.value),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 2),
                                     ],
                                     Text(timeAgo,
                                         style: TextStyle(
@@ -976,8 +1055,8 @@ class _RequestCardState extends State<_RequestCard>
                       ],
                     ),
 
-                    // Social proof — viewers counter (HOT only)
-                    if (isHot && viewers > 0) ...[
+                    // Social proof — viewers counter
+                    if (!isClosed && viewers > 0) ...[
                       const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -996,9 +1075,9 @@ class _RequestCardState extends State<_RequestCard>
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            l10n.oppViewersNow(viewers),
-                            style: const TextStyle(
-                                color: Colors.white,
+                            '$viewers מומחים נוספים בוחנים את ההצעה',
+                            style: TextStyle(
+                                color: isClosed ? Colors.grey[600] : Colors.white,
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600),
                           ),
@@ -1038,44 +1117,102 @@ class _RequestCardState extends State<_RequestCard>
                           style: const TextStyle(
                               fontSize: 15, height: 1.55, color: Colors.black87)),
 
-                      // Location + distance
+                      // Location + distance + proximity badge + map button
                       Builder(builder: (_) {
                         final hasLoc    = location.isNotEmpty;
-                        final distLabel = (widget.currentPosition != null &&
+                        final distMeters = (widget.currentPosition != null &&
                                 clientLat != null && clientLng != null)
-                            ? LocationService.distanceLabel(
+                            ? LocationService.distanceMeters(
                                 widget.currentPosition!.latitude,
                                 widget.currentPosition!.longitude,
                                 clientLat, clientLng)
                             : null;
-                        if (!hasLoc && distLabel == null) {
+                        final distLabel = distMeters != null
+                            ? LocationService.distanceLabel(
+                                widget.currentPosition!.latitude,
+                                widget.currentPosition!.longitude,
+                                clientLat!, clientLng!)
+                            : null;
+                        final isNearby  = distMeters != null && distMeters < 5000;
+                        final hasMap    = clientLat != null && clientLng != null;
+                        if (!hasLoc && distLabel == null && !hasMap) {
                           return const SizedBox.shrink();
                         }
                         return Padding(
                           padding: const EdgeInsets.only(top: 10),
-                          child: Row(children: [
-                            const Icon(Icons.location_on_rounded,
-                                size: 14, color: _kIndigo),
-                            const SizedBox(width: 4),
-                            if (hasLoc)
-                              Text(location,
-                                  style: const TextStyle(
-                                      fontSize: 13, color: Colors.grey)),
-                            if (hasLoc && distLabel != null)
-                              const Text(' · ',
-                                  style: TextStyle(color: Colors.grey, fontSize: 13)),
-                            if (distLabel != null)
-                              Text(distLabel,
-                                  style: const TextStyle(
-                                      fontSize: 13,
-                                      color: _kIndigo,
-                                      fontWeight: FontWeight.w700)),
-                          ]),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(children: [
+                                const Icon(Icons.location_on_rounded,
+                                    size: 14, color: _kIndigo),
+                                const SizedBox(width: 4),
+                                if (hasLoc)
+                                  Text(location,
+                                      style: const TextStyle(
+                                          fontSize: 13, color: Colors.grey)),
+                                if (hasLoc && distLabel != null)
+                                  const Text(' · ',
+                                      style: TextStyle(
+                                          color: Colors.grey, fontSize: 13)),
+                                if (distLabel != null)
+                                  Text(distLabel,
+                                      style: const TextStyle(
+                                          fontSize: 13,
+                                          color: _kIndigo,
+                                          fontWeight: FontWeight.w700)),
+                                if (isNearby) ...[
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 7, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFEF2F2),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                          color: const Color(0xFFFCA5A5),
+                                          width: 1),
+                                    ),
+                                    child: const Text(
+                                      '🔥 קרוב אליך',
+                                      style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700,
+                                          color: Color(0xFFDC2626)),
+                                    ),
+                                  ),
+                                ],
+                              ]),
+                              if (hasMap) ...[
+                                const SizedBox(height: 6),
+                                GestureDetector(
+                                  onTap: () => launchUrl(
+                                    Uri.parse(
+                                        'https://maps.google.com/?q=$clientLat,$clientLng'),
+                                    mode: LaunchMode.externalApplication,
+                                  ),
+                                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                    const Icon(Icons.map_outlined,
+                                        size: 13, color: _kIndigo),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'צפה במיקום על המפה',
+                                      style: TextStyle(
+                                          fontSize: 11,
+                                          color: _kIndigo.withValues(alpha: 0.8),
+                                          fontWeight: FontWeight.w600,
+                                          decoration: TextDecoration.underline),
+                                    ),
+                                  ]),
+                                ),
+                              ],
+                            ],
+                          ),
                         );
                       }),
 
-                      // Financial transparency — HOT + budget present
-                      if (isHot && netLabel != null) ...[
+                      // Financial transparency — shown for all cards with budget
+                      if (netLabel != null) ...[
                         const SizedBox(height: 10),
                         Container(
                           padding: const EdgeInsets.symmetric(
