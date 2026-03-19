@@ -12,6 +12,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'utils/web_utils.dart';
 import 'services/permission_service.dart';
 import 'services/locale_provider.dart';
+import 'services/cache_service.dart';
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
@@ -82,7 +83,7 @@ void main() async {
       await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
       FirebaseFirestore.instance.settings = const Settings(
         persistenceEnabled: true,   // IndexedDB cache — serves cold reads from cache (<20ms)
-        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+        cacheSizeBytes: 10485760,   // 10 MB cap — prevents unbounded IndexedDB growth
       );
       debugPrint("AnySkill Web: Auth LOCAL persistence set, Firestore cache ENABLED");
     } catch (e) {
@@ -91,6 +92,9 @@ void main() async {
   }
 
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // ── CacheService housekeeping — purge expired TTL entries every 5 minutes ──
+  Timer.periodic(const Duration(minutes: 5), (_) => CacheService.purgeExpired());
 
   // ── Global Flutter error logger ───────────────────────────────────────────
   // Writes every unhandled Flutter rendering/framework error to Firestore

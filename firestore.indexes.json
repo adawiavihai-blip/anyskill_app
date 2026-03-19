@@ -146,13 +146,6 @@
       ]
     },
     {
-      "collectionGroup": "completed_works",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "completedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
       "collectionGroup": "users",
       "queryScope": "COLLECTION",
       "fields": [
@@ -169,11 +162,78 @@
         { "fieldPath": "timestamp",   "order": "DESCENDING" }
       ]
     },
+
+    // ── Added for Re-Engagement Engine (home_tab.dart _remindersStream) ───
     {
-      "collectionGroup": "market_alerts",
+      "collectionGroup": "scheduled_reminders",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "lastAlertedAt", "order": "DESCENDING" }
+        { "fieldPath": "userId",      "order": "ASCENDING" },
+        { "fieldPath": "isDismissed", "order": "ASCENDING" },
+        { "fieldPath": "isActive",    "order": "ASCENDING" }
+      ]
+    },
+
+    // ── Added for Expert Application workflow (admin_screen.dart) ─────────
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isPendingExpert", "order": "ASCENDING" },
+        { "fieldPath": "createdAt",       "order": "DESCENDING" }
+      ]
+    },
+
+    // ── Expert task list: 3-field composite for provider task queries ──────
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "expertId",  "order": "ASCENDING"  },
+        { "fieldPath": "status",    "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+
+    // ── Admin live feed: filter by type, sorted by time ───────────────────
+    {
+      "collectionGroup": "activity_log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "type",      "order": "ASCENDING"  },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+
+    // ── Notifications: userId + isRead + createdAt (bell icon stream) ─────
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId",    "order": "ASCENDING"  },
+        { "fieldPath": "isRead",    "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+
+    // ── Jobs: customerId + status + createdAt (client bookings with sort) ─
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "customerId", "order": "ASCENDING"  },
+        { "fieldPath": "status",     "order": "ASCENDING"  },
+        { "fieldPath": "createdAt",  "order": "DESCENDING" }
+      ]
+    },
+
+    // ── Reengagement: completed jobs by date (Cloud Function daily scan) ──
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",    "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "ASCENDING"  }
       ]
     }
   ],

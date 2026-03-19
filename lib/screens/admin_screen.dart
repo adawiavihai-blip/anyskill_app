@@ -82,12 +82,27 @@ class _AdminScreenState extends State<AdminScreen> {
   String    _peakReco  = '';
   bool      _peakLoaded = false;
 
+  // ── DAU (Daily Active Users) — decoupled from allUsers stream ───────────────
+  int  _insDau       = 0;
+  bool _insDauLoaded = false;
+  StreamSubscription<QuerySnapshot>? _insDauSub;
+
+  // ── Paginated user list ─────────────────────────────────────────────────────
+  final List<QueryDocumentSnapshot> _users = [];
+  QueryDocumentSnapshot?            _lastUserDoc;
+  bool _hasMoreUsers = true;
+  bool _loadingUsers = false;
+  bool _usersLoaded  = false;
+  int  _totalCustomers = 0;
+  int  _totalProviders = 0;
+
   @override
   void initState() {
     super.initState();
     _syncAppVersion();
     _loadAdminSettings();
     _setupInsightsStreams();
+    _loadUsersPage();
   }
 
   // ── Auto-sync app version to Firestore ───────────────────────────────────────
@@ -117,6 +132,7 @@ class _AdminScreenState extends State<AdminScreen> {
     _insTxSub?.cancel();
     _insUnanswSub?.cancel();
     _insBannersSub?.cancel();
+    _insDauSub?.cancel();
     super.dispose();
   }
 
@@ -143,6 +159,7 @@ class _AdminScreenState extends State<AdminScreen> {
     _insTxSub?.cancel();
     _insUnanswSub?.cancel();
     _insBannersSub?.cancel();
+    _insDauSub?.cancel();
 
     // Reset loaded flags so UI shows a brief spinner while first snapshots arrive
     if (mounted) {
@@ -153,6 +170,7 @@ class _AdminScreenState extends State<AdminScreen> {
         _insTxLoaded      = false;
         _insUnanswLoaded  = false;
         _insBannersLoaded = false;
+        _insDauLoaded     = false;
         _pulseLoaded      = false;
         _peakLoaded       = false;
       });
@@ -244,6 +262,54 @@ class _AdminScreenState extends State<AdminScreen> {
     }, onError: (_) {
       if (mounted) setState(() { _insBanners = []; _insBannersLoaded = true; });
     });
+
+    // 7. DAU — users active today (lastOnlineAt or lastActive >= today 00:00)
+    final todayStart = DateTime.now();
+    final dayStart = DateTime(todayStart.year, todayStart.month, todayStart.day);
+    _insDauSub = FirebaseFirestore.instance
+        .collection('users')
+        .where('lastOnlineAt', isGreaterThanOrEqualTo: Timestamp.fromDate(dayStart))
+        .limit(200)
+        .snapshots()
+        .listen((snap) {
+      if (mounted) setState(() { _insDau = snap.docs.length; _insDauLoaded = true; });
+    }, onError: (_) {
+      if (mounted) setState(() { _insDau = 0; _insDauLoaded = true; });
+    });
+  }
+
+  // ── Paginated user list loader ─────────────────────────────────────────────
+  Future<void> _loadUsersPage() async {
+    if (_loadingUsers || !_hasMoreUsers) return;
+    setState(() => _loadingUsers = true);
+
+    Query<Map<String, dynamic>> query = FirebaseFirestore.instance
+        .collection('users')
+        .limit(50);
+    if (_lastUserDoc != null) {
+      query = query.startAfterDocument(_lastUserDoc!);
+    }
+
+    try {
+      final snap = await query.get();
+      if (!mounted) return;
+      setState(() {
+        _users.addAll(snap.docs);
+        _hasMoreUsers = snap.docs.length == 50;
+        if (snap.docs.isNotEmpty) _lastUserDoc = snap.docs.last;
+        _usersLoaded  = true;
+        _loadingUsers = false;
+        _totalCustomers = _users
+            .where((d) => (d.data() as Map)['isCustomer'] == true)
+            .length;
+        _totalProviders = _users
+            .where((d) => (d.data() as Map)['isProvider'] == true)
+            .length;
+      });
+    } catch (e) {
+      if (mounted) setState(() { _loadingUsers = false; _usersLoaded = true; });
+      debugPrint('Admin: _loadUsersPage error — $e');
+    }
   }
 
   // ── Pulse analytics loader ─────────────────────────────────────────────────
@@ -920,23 +986,15 @@ class _AdminScreenState extends State<AdminScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('users').limit(500).snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final allUsers  = snapshot.data!.docs;
-          final customers = allUsers.where((d) => (d.data() as Map)['isCustomer'] == true).length;
-          final providers = allUsers.where((d) => (d.data() as Map)['isProvider'] == true).length;
-
-          return IndexedStack(
-            index: _sectionIndex,
-            children: [
-              _buildManagementSection(allUsers, customers, providers),
-              _buildSystemSection(allUsers),
-            ],
-          );
-        },
-      ),
+      body: !_usersLoaded
+          ? const Center(child: CircularProgressIndicator())
+          : IndexedStack(
+              index: _sectionIndex,
+              children: [
+                _buildManagementSection(_users, _totalCustomers, _totalProviders),
+                _buildSystemSection(),
+              ],
+            ),
     );
   }
 
@@ -1055,7 +1113,7 @@ class _AdminScreenState extends State<AdminScreen> {
 
   // ── System section (מערכת) — 7 tabs ──────────────────────────────────────
 
-  Widget _buildSystemSection(List<QueryDocumentSnapshot> allUsers) {
+  Widget _buildSystemSection() {
     return DefaultTabController(
       length: 7,
       child: Column(
@@ -1080,8 +1138,8 @@ class _AdminScreenState extends State<AdminScreen> {
               children: [
                 _buildCategoriesTab(),
                 _buildBannersTab(),
-                _buildMonetizationTab(allUsers),
-                _buildInsightsTab(allUsers),
+                _buildMonetizationTab(),
+                _buildInsightsTab(),
                 const SystemPerformanceTab(),
                 const AdminBrandAssetsTab(),
                 _buildChatGuardTab(),
@@ -2182,6 +2240,7 @@ class _AdminScreenState extends State<AdminScreen> {
           .collection('withdrawals')
           .where('status', isEqualTo: 'pending')
           .orderBy('requestedAt', descending: true)
+          .limit(100)
           .snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
@@ -2388,8 +2447,25 @@ class _AdminScreenState extends State<AdminScreen> {
 
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: 100, top: 10),
-      itemCount: filtered.length,
+      itemCount: filtered.length + (_hasMoreUsers || _loadingUsers ? 1 : 0),
       itemBuilder: (context, index) {
+        // "Load More" footer
+        if (index == filtered.length) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: _loadingUsers
+                ? const Center(child: CircularProgressIndicator())
+                : OutlinedButton.icon(
+                    onPressed: _loadUsersPage,
+                    icon: const Icon(Icons.expand_more_rounded),
+                    label: const Text("טען 50 משתמשים נוספים"),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+          );
+        }
         var data = filtered[index].data() as Map<String, dynamic>;
         String uid = filtered[index].id;
         bool isVerified         = data['isVerified']         ?? false;
@@ -3193,10 +3269,7 @@ class _AdminScreenState extends State<AdminScreen> {
 
   // ── Monetization Tab ─────────────────────────────────────────────────────
 
-  Widget _buildMonetizationTab(List<QueryDocumentSnapshot> allUsers) {
-    final promotedUsers = allUsers
-        .where((d) => (d.data() as Map<String, dynamic>)['isPromoted'] == true)
-        .toList();
+  Widget _buildMonetizationTab() {
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -3331,48 +3404,59 @@ class _AdminScreenState extends State<AdminScreen> {
           const SizedBox(height: 22),
 
           // ── Promoted Providers ────────────────────────────────────────
-          _monoCard(
-            icon: Icons.star_rounded,
-            color: Colors.amber[700]!,
-            title: "ספקים מקודמים (${promotedUsers.length})",
-            child: promotedUsers.isEmpty
-                ? const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 12),
-                    child: Text("אין ספקים מקודמים כרגע",
-                        style: TextStyle(color: Colors.grey, fontSize: 13)),
-                  )
-                : Column(
-                    children: promotedUsers.map((doc) {
-                      final d = doc.data() as Map<String, dynamic>;
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: CircleAvatar(
-                          radius: 20,
-                          backgroundImage: (d['profileImage'] != null &&
-                                  d['profileImage'] != '')
-                              ? NetworkImage(d['profileImage'])
-                              : null,
-                          child:
-                              d['profileImage'] == null ? const Icon(Icons.person) : null,
-                        ),
-                        title: Text(d['name'] ?? '—',
-                            style: const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: Text(d['serviceType'] ?? d['email'] ?? '',
-                            style: const TextStyle(fontSize: 12)),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.star_rounded,
-                              color: Colors.amber, size: 22),
-                          tooltip: "בטל קידום",
-                          onPressed: () {
-                            FirebaseFirestore.instance
-                                .collection('users')
-                                .doc(doc.id)
-                                .update({'isPromoted': false});
-                          },
-                        ),
-                      );
-                    }).toList(),
-                  ),
+          StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('users')
+                .where('isPromoted', isEqualTo: true)
+                .limit(100)
+                .snapshots(),
+            builder: (ctx, snap) {
+              final promotedUsers = snap.data?.docs ?? [];
+              return _monoCard(
+                icon: Icons.star_rounded,
+                color: Colors.amber[700]!,
+                title: "ספקים מקודמים (${promotedUsers.length})",
+                child: promotedUsers.isEmpty
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Text("אין ספקים מקודמים כרגע",
+                            style: TextStyle(color: Colors.grey, fontSize: 13)),
+                      )
+                    : Column(
+                        children: promotedUsers.map((doc) {
+                          final d = doc.data() as Map<String, dynamic>;
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: CircleAvatar(
+                              radius: 20,
+                              backgroundImage: (d['profileImage'] != null &&
+                                      d['profileImage'] != '')
+                                  ? NetworkImage(d['profileImage'])
+                                  : null,
+                              child: d['profileImage'] == null
+                                  ? const Icon(Icons.person)
+                                  : null,
+                            ),
+                            title: Text(d['name'] ?? '—',
+                                style: const TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Text(d['serviceType'] ?? d['email'] ?? '',
+                                style: const TextStyle(fontSize: 12)),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.star_rounded,
+                                  color: Colors.amber, size: 22),
+                              tooltip: "בטל קידום",
+                              onPressed: () {
+                                FirebaseFirestore.instance
+                                    .collection('users')
+                                    .doc(doc.id)
+                                    .update({'isPromoted': false});
+                              },
+                            ),
+                          );
+                        }).toList(),
+                      ),
+              );
+            },
           ),
           const SizedBox(height: 22),
 
@@ -3706,16 +3790,9 @@ class _AdminScreenState extends State<AdminScreen> {
 
   // ── Insights & Analytics Tab ──────────────────────────────────────────────
 
-  Widget _buildInsightsTab(List<QueryDocumentSnapshot> allUsers) {
-    // DAU: from allUsers stream (already live via parent StreamBuilder)
-    // Try both field names for last-seen timestamp
-    final now        = DateTime.now();
-    final todayStart = DateTime(now.year, now.month, now.day);
-    final dau = allUsers.where((d) {
-      final data = d.data() as Map<String, dynamic>;
-      final ts = ((data['lastOnlineAt'] ?? data['lastActive']) as Timestamp?)?.toDate();
-      return ts != null && ts.isAfter(todayStart);
-    }).length;
+  Widget _buildInsightsTab() {
+    // DAU is computed by _insDauSub stream subscription in _setupInsightsStreams
+    final dau = _insDau;
 
     // All 4 financial metrics must have loaded before showing numbers
     final finLoaded = _insGmvLoaded && _insNetRevLoaded && _insEscrowLoaded && _insTxLoaded;
@@ -3783,7 +3860,9 @@ class _AdminScreenState extends State<AdminScreen> {
             child: Row(
               children: [
                 Expanded(child: _insightsMiniCard(
-                    'פעילים היום (DAU)', dau.toString(), Colors.purple)),
+                    'פעילים היום (DAU)',
+                    _insDauLoaded ? dau.toString() : '…',
+                    Colors.purple)),
                 const SizedBox(width: 10),
                 Expanded(child: _insightsMiniCard(
                     'בקשות ללא מענה',
@@ -3820,11 +3899,10 @@ class _AdminScreenState extends State<AdminScreen> {
                       )
                     : Column(
                         children: _insBanners.map((b) {
-                          final clicks   = b['clicks'] as int;
-                          final maxClicks =
-                              (_insBanners.first['clicks'] as int) < 1
-                                  ? 1
-                                  : _insBanners.first['clicks'] as int;
+                          final clicks    = (b['clicks']   as int? ?? 0);
+                          final firstClicks =
+                              (_insBanners.first['clicks'] as int? ?? 0);
+                          final maxClicks = firstClicks < 1 ? 1 : firstClicks;
                           final ratio = clicks / maxClicks;
                           return Padding(
                             padding: const EdgeInsets.symmetric(vertical: 5),
@@ -3864,13 +3942,13 @@ class _AdminScreenState extends State<AdminScreen> {
           ),
           const SizedBox(height: 16),
 
-          // ── Top Rated Providers (from parent allUsers stream) ─────────
+          // ── Top Rated Providers (from loaded user pages) ──────────────
           _monoCard(
             icon: Icons.star_rounded,
             color: const Color(0xFFF59E0B),
             title: "ספקים מובילים",
             child: Builder(builder: (context) {
-              final providers = allUsers
+              final providers = _users
                   .map((d) => d.data() as Map<String, dynamic>)
                   .where((d) =>
                       d['isProvider'] == true &&

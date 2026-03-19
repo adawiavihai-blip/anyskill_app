@@ -15,6 +15,7 @@ import 'opportunities_screen.dart';
 import 'my_requests_screen.dart';
 import '../services/location_service.dart';
 import '../services/ai_analysis_service.dart';
+import '../services/cache_service.dart';
 import '../onboarding/app_tour.dart';
 import '../main.dart' show PendingNotification;
 import 'home_tab.dart';
@@ -735,13 +736,13 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
           (_analysis.suggestedCategory ?? '');
       final isUrgent = _analysis.urgency == 'urgent';
 
-      // Read urgency fee % from admin settings (only when needed)
+      // Read urgency fee % from admin settings (only when needed — cached 1 min)
       double urgencyFeePct = 0;
       if (isUrgent) {
-        final settingsDoc = await FirebaseFirestore.instance
-            .collection('admin').doc('admin')
-            .collection('settings').doc('settings').get();
-        final sd = settingsDoc.data() ?? {};
+        final sd = await CacheService.getDoc(
+          'admin/admin/settings', 'settings',
+          ttl: CacheService.kAdminSettings,
+        );
         // Admin stores decimal fraction (0.05 = 5%) — multiply ×100 for display
         urgencyFeePct = (((sd['urgencyFeePercentage'] as num?) ?? 0.05) * 100).toDouble();
       }

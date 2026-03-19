@@ -119,6 +119,7 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
           stream: FirebaseFirestore.instance
               .collection('jobs')
               .where('status', whereIn: ['paid_escrow', 'expert_completed'])
+              .limit(500) // hard cap — prevents full-table scan under load
               .snapshots(),
           builder: (context, jobsSnap) {
             double pendingFees = 0.0;

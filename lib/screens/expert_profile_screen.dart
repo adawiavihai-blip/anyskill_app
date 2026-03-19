@@ -11,6 +11,7 @@ import 'package:table_calendar/table_calendar.dart';
 import 'chat_screen.dart';
 import '../constants/quick_tags.dart';
 import '../services/cancellation_policy_service.dart';
+import '../services/cache_service.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/anyskill_logo.dart';
 
@@ -1906,18 +1907,19 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
-      body: FutureBuilder<DocumentSnapshot>(
+      body: FutureBuilder<Map<String, dynamic>>(
         key: ValueKey(_refreshTrigger),
-        future: FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.expertId)
-            .get(),
+        future: CacheService.getDoc(
+          'users', widget.expertId,
+          ttl: CacheService.kExpertProfile,
+          forceRefresh: _refreshTrigger > 0,
+        ),
         builder: (context, snapshot) {
           if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
           final l10n    = AppLocalizations.of(context);
-          final data    = snapshot.data!.data() as Map<String, dynamic>;
+          final data    = snapshot.data!;
           final unavail = _parseUnavailableDates(data);
 
           return Stack(

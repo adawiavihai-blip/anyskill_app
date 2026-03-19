@@ -21,7 +21,15 @@ const NUM_SHARDS = 5;
 // QA: הפונקציה מאזינה ליצירת הודעה חדשה בתוך הצא'טים
 // maxInstances + concurrency מאפשרים עד 100 * 500 = 50,000 בקשות במקביל ללא cold starts
 exports.sendchatnotification = onDocumentCreated(
-    { document: "chats/{roomId}/messages/{messageId}", maxInstances: 100, concurrency: 500 },
+    {
+      document: "chats/{roomId}/messages/{messageId}",
+      // minInstances: 1 keeps one warm instance ready at all times,
+      // eliminating cold-start latency (~800ms) on the hot notification path.
+      // Cost: ~$1.50/mo for one always-on instance vs. UX degradation at scale.
+      minInstances: 1,
+      maxInstances: 100,
+      concurrency: 500,
+    },
     async (event) => {
     const snapshot = event.data;
     if (!snapshot) return null;
@@ -3433,11 +3441,10 @@ exports.reengagementEngine = onSchedule(
       .get();
 
     // ------------------------------------------------------------------
-    // 3. Evaluate each job; build batched writes.
+    // 3. Pass 1 — qualify jobs without any extra Firestore reads.
+    //    Collect the unique user IDs we'll need for name resolution.
     // ------------------------------------------------------------------
-    const reminderBatch  = db.batch();
-    const activityBatch  = db.batch();
-    let created = 0;
+    const qualifyingJobs = [];
     let skipped = 0;
 
     for (const jobDoc of jobsSnap.docs) {
@@ -3451,29 +3458,50 @@ exports.reengagementEngine = onSchedule(
       if (!customerId || !expertId || !completedAt) { skipped++; continue; }
       if (existingJobIds.has(jobDoc.id))             { skipped++; continue; }
 
-      // Check if cycle has elapsed
       const cycleDays = SERVICE_CYCLES[category] ?? DEFAULT_CYCLE;
       const remindMs  = completedAt.getTime() + cycleDays * 24 * 3600 * 1000;
       if (remindMs > now) { skipped++; continue; }
 
-      // Fetch customer + expert names (only when we will write)
-      let customerName = job.customerName || '';
-      let expertName   = job.expertName   || '';
-      if (!customerName) {
-        const custSnap = await db.collection('users').doc(customerId).get();
-        customerName = custSnap.exists ? (custSnap.data().name || 'לקוח') : 'לקוח';
-      }
-      if (!expertName) {
-        const expSnap = await db.collection('users').doc(expertId).get();
-        expertName = expSnap.exists ? (expSnap.data().name || 'המומחה') : 'המומחה';
-      }
+      qualifyingJobs.push({ jobDoc, job, customerId, expertId, category, cycleDays });
+    }
 
-      // Build personalized message
-      const message = `מוכן ל${category} עם ${expertName}? ${whyNow} — לחץ להזמנה!`;
+    // ------------------------------------------------------------------
+    // 4. Pass 2 — batch-fetch all user names in parallel (Promise.all).
+    //    Only fetch IDs not already embedded in the job doc.
+    //    Dedup across jobs so we never fetch the same user twice.
+    // ------------------------------------------------------------------
+    const idsToFetch = [...new Set(
+      qualifyingJobs.flatMap(({ job, customerId, expertId }) => {
+        const needed = [];
+        if (!job.customerName) needed.push(customerId);
+        if (!job.expertName)   needed.push(expertId);
+        return needed;
+      })
+    )];
 
-      // Write reminder doc (doc ID = original job ID for idempotency)
-      const reminderRef = db.collection('scheduled_reminders').doc(jobDoc.id);
-      reminderBatch.set(reminderRef, {
+    // Concurrent fetches — scales to hundreds of unique users in one round-trip
+    const userSnaps = await Promise.all(
+      idsToFetch.map(uid => db.collection('users').doc(uid).get())
+    );
+    const userNameById = {};
+    for (const snap of userSnaps) {
+      userNameById[snap.id] = snap.exists ? (snap.data().name || '') : '';
+    }
+
+    // ------------------------------------------------------------------
+    // 5. Pass 3 — build batched Firestore writes synchronously (no more awaits).
+    // ------------------------------------------------------------------
+    const reminderBatch = db.batch();
+    const activityBatch = db.batch();
+    let created = 0;
+
+    for (const { jobDoc, job, customerId, expertId, category, cycleDays } of qualifyingJobs) {
+      const customerName = job.customerName || userNameById[customerId] || 'לקוח';
+      const expertName   = job.expertName   || userNameById[expertId]   || 'המומחה';
+      const message      = `מוכן ל${category} עם ${expertName}? ${whyNow} — לחץ להזמנה!`;
+
+      // Reminder doc — ID = job ID for idempotency
+      reminderBatch.set(db.collection('scheduled_reminders').doc(jobDoc.id), {
         userId:        customerId,
         customerId,
         expertId,
@@ -3489,9 +3517,8 @@ exports.reengagementEngine = onSchedule(
         createdAt:     admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      // Write activity_log entry (admin Live Feed)
-      const logRef = db.collection('activity_log').doc();
-      activityBatch.set(logRef, {
+      // Activity log entry for admin Live Feed
+      activityBatch.set(db.collection('activity_log').doc(), {
         type:         'ai_reengagement_sent',
         userId:       customerId,
         expertId,
@@ -3505,16 +3532,15 @@ exports.reengagementEngine = onSchedule(
         message:      `AI Reminder: ${customerName} → ${category} עם ${expertName} (${whyNow})`,
       });
 
-      existingJobIds.add(jobDoc.id); // prevent duplicates within same batch
+      existingJobIds.add(jobDoc.id);
       created++;
     }
 
     if (created > 0) {
-      await reminderBatch.commit();
-      await activityBatch.commit();
+      await Promise.all([reminderBatch.commit(), activityBatch.commit()]);
     }
 
-    console.log(`[reengagementEngine] created=${created} skipped=${skipped}`);
+    console.log(`[reengagementEngine] created=${created} skipped=${skipped} userFetches=${idsToFetch.length}`);
     return null;
   }
 );

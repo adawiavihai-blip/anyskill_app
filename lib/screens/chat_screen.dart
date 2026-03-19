@@ -8,6 +8,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../widgets/skeleton_loader.dart';
 
 import 'chat_modules/location_module.dart';
+import '../services/cache_service.dart';
 import 'chat_modules/image_module.dart';
 import 'chat_modules/payment_module.dart';
 import 'chat_modules/chat_ui_helper.dart';
@@ -89,11 +90,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _checkDemoExpert() async {
     if (currentUserId.isEmpty || widget.receiverId.isEmpty) return;
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.receiverId)
-          .get();
-      final d = snap.data() ?? {};
+      // CacheService: receiver profile is read once per chat open.
+      // Caching for 5 min eliminates redundant Firestore reads when the user
+      // navigates away and back (common pattern).
+      final d = await CacheService.getDoc(
+        'users', widget.receiverId, ttl: CacheService.kUserProfile);
       if (d['isDemo'] != true) return;
 
       // Deduplicate: don't log if already logged today for this pair
