@@ -109,9 +109,24 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
     if (confirm == true) {
       try {
-        var messages = await FirebaseFirestore.instance.collection('chats').doc(chatId).collection('messages').get();
-        for (var doc in messages.docs) {
-          await doc.reference.delete();
+        // Delete messages in batched pages of 400 (well under the 500-write limit).
+        // An unbounded .get() on a large chat room would OOM on low-end devices.
+        const int pageSize = 400;
+        bool hasMore = true;
+        while (hasMore) {
+          final page = await FirebaseFirestore.instance
+              .collection('chats')
+              .doc(chatId)
+              .collection('messages')
+              .limit(pageSize)
+              .get();
+          if (page.docs.isEmpty) break;
+          final batch = FirebaseFirestore.instance.batch();
+          for (final doc in page.docs) {
+            batch.delete(doc.reference);
+          }
+          await batch.commit();
+          hasMore = page.docs.length == pageSize;
         }
         await FirebaseFirestore.instance.collection('chats').doc(chatId).delete();
         if (mounted) {
@@ -253,7 +268,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
 
     bool isTyping = chatData['typing_$otherId'] ?? false;
-    String imgUrl = userData['profileImage'] ?? "";
+    // Cached image — used as the first-frame fallback before the stream fires.
+    final String cachedImg = userData['profileImage'] as String? ?? '';
+    final String name      = userData['name']         as String? ?? '';
 
     String timeStr = "";
     if (lastTime != null) {
@@ -274,25 +291,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
         ),
         child: Row(
           children: [
-            Stack(
-              children: [
-                CircleAvatar(
-                  radius: 30,
-                  backgroundColor: Colors.grey[200],
-                  backgroundImage: (imgUrl.isNotEmpty && imgUrl.startsWith('http'))
-                      ? CachedNetworkImageProvider(imgUrl)
-                      : null,
-                  child: (imgUrl.isEmpty || !imgUrl.startsWith('http')) ? const Icon(Icons.person, color: Colors.grey) : null,
-                ),
-                if (userData['isOnline'] == true)
-                  Positioned(
-                    right: 0, bottom: 0,
-                    child: Container(
-                      width: 14, height: 14,
-                      decoration: BoxDecoration(color: Colors.green, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)),
-                    ),
-                  ),
-              ],
+            // Live avatar — streams the other user's doc so image + online
+            // status always reflect Firestore even after profile updates.
+            _LiveAvatar(
+              userId:       otherId,
+              fallbackImg:  cachedImg,
+              fallbackName: name,
+              isOnlineFallback: userData['isOnline'] == true,
             ),
             const SizedBox(width: 15),
             Expanded(
@@ -480,6 +485,110 @@ class _PulsingUnreadBadgeState extends State<_PulsingUnreadBadge>
           textAlign: TextAlign.center,
           style: const TextStyle(
               color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Live avatar for chat list tiles ──────────────────────────────────────────
+//
+// Uses ClipOval + CachedNetworkImage (widget, not provider) because
+// CircleAvatar.backgroundImage with CachedNetworkImageProvider silently fails
+// on Flutter Web due to the dart:html rendering path.  The widget path goes
+// through the browser's <img> element which handles CORS correctly.
+class _LiveAvatar extends StatelessWidget {
+  final String userId;
+  final String fallbackImg;       // from _userCache — shown on first frame
+  final String fallbackName;      // used for initial letter
+  final bool   isOnlineFallback;
+
+  const _LiveAvatar({
+    required this.userId,
+    required this.fallbackImg,
+    required this.fallbackName,
+    required this.isOnlineFallback,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .snapshots(),
+      builder: (context, snap) {
+        final d        = snap.data?.data() as Map<String, dynamic>? ?? {};
+        // Prefer live Firestore value; fall back to cache on first frame
+        final liveImg  = (d['profileImage'] as String?)?.trim() ?? '';
+        final photo    = liveImg.isNotEmpty ? liveImg : fallbackImg.trim();
+        final isOnline = d.isNotEmpty
+            ? (d['isOnline'] == true)
+            : isOnlineFallback;
+        final initial  = fallbackName.isNotEmpty
+            ? fallbackName[0].toUpperCase()
+            : '?';
+
+        return Stack(
+          children: [
+            // Avatar: ClipOval + CachedNetworkImage renders correctly on web
+            SizedBox(
+              width:  60,
+              height: 60,
+              child: ClipOval(
+                child: photo.isNotEmpty
+                    ? CachedNetworkImage(
+                        imageUrl:    photo,
+                        width:       60,
+                        height:      60,
+                        fit:         BoxFit.cover,
+                        fadeInDuration: const Duration(milliseconds: 200),
+                        placeholder: (_, __) => _InitialFill(initial: initial),
+                        errorWidget: (_, __, ___) =>
+                            _InitialFill(initial: initial),
+                      )
+                    : _InitialFill(initial: initial),
+              ),
+            ),
+            // Online dot
+            if (isOnline)
+              Positioned(
+                right:  0,
+                bottom: 0,
+                child: Container(
+                  width:  14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color:  Colors.green,
+                    shape:  BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// Solid indigo fill with initial letter — shown while image loads or on error.
+class _InitialFill extends StatelessWidget {
+  final String initial;
+  const _InitialFill({required this.initial});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFFEEF2FF),
+      child: Center(
+        child: Text(
+          initial,
+          style: const TextStyle(
+            color:      Color(0xFF6366F1),
+            fontWeight: FontWeight.bold,
+            fontSize:   18,
+          ),
         ),
       ),
     );

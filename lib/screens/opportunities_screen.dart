@@ -6,10 +6,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'chat_screen.dart';
+import '../services/audio_service.dart';
 import '../services/location_service.dart';
 import '../services/gamification_service.dart';
+import '../services/business_coach_service.dart';
 import '../widgets/level_badge.dart';
 import '../l10n/app_localizations.dart';
+import '../constants.dart' show resolveCanonicalCategory;
 import '../widgets/hint_icon.dart';
 
 // ── Sort modes (user-selectable filter chips) ─────────────────────────────────
@@ -62,6 +65,13 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
   Timer?     _tickTimer;              // periodic rebuild so temperature cools in real-time
   _SortMode  _sortMode         = _SortMode.nearest;
 
+  // ── Opportunity sound wiring ──────────────────────────────────────────────
+  // Null = first snapshot not yet received (baseline phase — no sound).
+  // Non-null = set of doc IDs we already know about.
+  // Sound fires once per batch of truly new IDs, never on initial load.
+  StreamSubscription<QuerySnapshot>? _opportunitySub;
+  Set<String>? _knownOpportunityIds;
+
   @override
   void initState() {
     super.initState();
@@ -76,6 +86,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
     }
     _loadUserData();
     _loadPlatformFee();
+    _subscribeOpportunities();
     // Rebuild every 60 s so "Posted X min ago" labels and card temperatures
     // update without waiting for a Firestore event.
     _tickTimer = Timer.periodic(const Duration(seconds: 60), (_) {
@@ -83,9 +94,32 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
     });
   }
 
+  // ── New-opportunity sound subscription ───────────────────────────────────
+  // Uses _buildQuery() so it inherits the same serviceType / status filters —
+  // Sigalit (Personal Trainer) will never hear a sound for a Plumber job.
+  void _subscribeOpportunities() {
+    _opportunitySub = _buildQuery().listen((snapshot) {
+      final incoming = {for (final d in snapshot.docs) d.id};
+
+      if (_knownOpportunityIds == null) {
+        // First delivery — silent baseline; sound only for future arrivals.
+        _knownOpportunityIds = incoming;
+        return;
+      }
+
+      final newIds = incoming.difference(_knownOpportunityIds!);
+      if (newIds.isNotEmpty) {
+        // Play once regardless of how many new jobs arrived in this batch.
+        AudioService.instance.play(AppSound.opportunityPulse);
+      }
+      _knownOpportunityIds = incoming;
+    });
+  }
+
   @override
   void dispose() {
     _tickTimer?.cancel();
+    _opportunitySub?.cancel();
     super.dispose();
   }
 
@@ -251,7 +285,11 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
         .where('status',    isEqualTo: 'open')
         .where('createdAt', isGreaterThan: cutoff);
     if (!widget.isAdmin && widget.serviceType.isNotEmpty) {
-      q = q.where('category', isEqualTo: widget.serviceType);
+      // Resolve plural/singular variants (e.g. "מאמני כושר" → "אימון כושר")
+      // so the Firestore exact-match filter hits the canonical category name
+      // that customers select when posting a job request.
+      final canonical = resolveCanonicalCategory(widget.serviceType);
+      q = q.where('category', isEqualTo: canonical);
     }
     return q.orderBy('createdAt', descending: true).limit(50).snapshots();
   }
@@ -451,6 +489,8 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
         actions: const [HintIcon(screenKey: 'opportunities')],
       ),
       body: Column(children: [
+        if (!widget.isAdmin)
+          _CoachingBriefCard(uid: _uid),
         _buildXpBanner(),
         _buildSortChips(),
         Expanded(
@@ -1394,4 +1434,360 @@ class _RequestCardState extends State<_RequestCard>
       ),
     );
   }
+}
+
+// =============================================================================
+// ── AI Coaching Brief Card ────────────────────────────────────────────────────
+// Displayed at the top of the Opportunities tab for verified providers.
+// Shows a cached coaching result from Firestore; refreshes via Cloud Function.
+// =============================================================================
+
+class _CoachingBriefCard extends StatefulWidget {
+  const _CoachingBriefCard({required this.uid});
+  final String uid;
+
+  @override
+  State<_CoachingBriefCard> createState() => _CoachingBriefCardState();
+}
+
+class _CoachingBriefCardState extends State<_CoachingBriefCard> {
+  CoachingResult? _result;
+  bool            _loading   = false;
+  bool            _expanded  = false;
+  bool            _initiated = false;
+
+  // Priority → color map
+  static const _priorityColor = {
+    'high':   Color(0xFFEF4444),
+    'medium': Color(0xFFF59E0B),
+    'low':    Color(0xFF10B981),
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCached();
+  }
+
+  Future<void> _loadCached() async {
+    if (widget.uid.isEmpty) return;
+    final cached = await BusinessCoachService.getCached(widget.uid);
+    if (mounted) setState(() => _result = cached);
+  }
+
+  Future<void> _refresh() async {
+    setState(() => _loading = true);
+    final result = await BusinessCoachService.analyze();
+    if (mounted) {
+      setState(() {
+        _loading  = false;
+        _result   = result;
+        _expanded = result != null;
+      });
+    }
+  }
+
+  // Called when user taps the card for the first time (no cached result)
+  Future<void> _analyzeFirst() async {
+    setState(() { _loading = true; _initiated = true; });
+    final result = await BusinessCoachService.analyze();
+    if (mounted) {
+      setState(() {
+        _loading  = false;
+        _result   = result;
+        _expanded = result != null;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Nothing to show until the user initiates or cache exists
+    if (_result == null && !_loading && !_initiated) {
+      return _buildCta();
+    }
+    if (_loading && _result == null) {
+      return _buildLoadingShimmer();
+    }
+    if (_result == null) return const SizedBox.shrink();
+    return _buildCard(_result!);
+  }
+
+  // ── CTA (never analysed before) ──────────────────────────────────────────
+  Widget _buildCta() => GestureDetector(
+    onTap: _analyzeFirst,
+    child: Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1E1B4B), Color(0xFF4C1D95)],
+          begin: Alignment.centerRight,
+          end: Alignment.centerLeft,
+        ),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(children: [
+        const Icon(Icons.arrow_back_ios_new_rounded,
+            size: 14, color: Colors.white54),
+        const Spacer(),
+        const Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text('🤖 ניתוח AI — איך להשיג יותר עבודות?',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13.5)),
+          SizedBox(height: 2),
+          Text('הקש לניתוח חינמי של הפרופיל שלך',
+              style: TextStyle(color: Colors.white60, fontSize: 11.5)),
+        ]),
+        const SizedBox(width: 10),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: const Icon(Icons.auto_awesome_rounded,
+              color: Colors.white, size: 18),
+        ),
+      ]),
+    ),
+  );
+
+  // ── Loading shimmer ──────────────────────────────────────────────────────
+  Widget _buildLoadingShimmer() => Container(
+    margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+    decoration: BoxDecoration(
+      gradient: const LinearGradient(
+        colors: [Color(0xFF1E1B4B), Color(0xFF4C1D95)],
+        begin: Alignment.centerRight,
+        end: Alignment.centerLeft,
+      ),
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+      const SizedBox(
+        width: 18, height: 18,
+        child: CircularProgressIndicator(
+            strokeWidth: 2, color: Colors.white),
+      ),
+      const SizedBox(width: 12),
+      Text('מנתח את הפרופיל שלך...',
+          style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.85),
+              fontSize: 13)),
+    ]),
+  );
+
+  // ── Main card ────────────────────────────────────────────────────────────
+  Widget _buildCard(CoachingResult result) {
+    return GestureDetector(
+      onTap: () => setState(() => _expanded = !_expanded),
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeInOut,
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1E1B4B), Color(0xFF4C1D95)],
+              begin: Alignment.topRight,
+              end: Alignment.bottomLeft,
+            ),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF4C1D95).withValues(alpha: 0.35),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            // ── Header row ──────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+              child: Row(children: [
+                // Expand chevron
+                Icon(
+                  _expanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  color: Colors.white54, size: 20,
+                ),
+                const Spacer(),
+                // Summary text
+                Expanded(
+                  child: Text(
+                    result.summary,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                // Score badge + robot icon
+                Column(children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.auto_awesome_rounded,
+                        color: Colors.white, size: 18),
+                  ),
+                  const SizedBox(height: 4),
+                  _ScoreRing(scorePct: result.scorePct),
+                ]),
+              ]),
+            ),
+
+            // ── Expanded: tips + refresh ────────────────────────────────────
+            if (_expanded) ...[
+              Divider(
+                  color: Colors.white.withValues(alpha: 0.12),
+                  height: 1,
+                  thickness: 1),
+              ...result.tips.asMap().entries.map((e) =>
+                  _buildTipRow(e.key + 1, e.value)),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
+                child: Row(children: [
+                  // Refresh button
+                  GestureDetector(
+                    onTap: _loading ? null : _refresh,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        if (_loading)
+                          const SizedBox(
+                            width: 12, height: 12,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 1.5,
+                                color: Colors.white),
+                          )
+                        else
+                          const Icon(Icons.refresh_rounded,
+                              color: Colors.white70, size: 14),
+                        const SizedBox(width: 6),
+                        const Text('רענן ניתוח',
+                            style: TextStyle(
+                                color: Colors.white70, fontSize: 12)),
+                      ]),
+                    ),
+                  ),
+                  const Spacer(),
+                  if (result.updatedAt != null)
+                    Text(
+                      'עודכן לפני ${DateTime.now().difference(result.updatedAt!).inHours}ש\'',
+                      style: const TextStyle(
+                          color: Colors.white38, fontSize: 11),
+                    ),
+                ]),
+              ),
+            ],
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTipRow(int num, CoachingTip tip) {
+    final color = _priorityColor[tip.priority] ?? const Color(0xFF6366F1);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Priority dot
+        Container(
+          width: 6, height: 6,
+          margin: const EdgeInsets.only(top: 6, left: 8),
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        // Tip text
+        Expanded(
+          child: Text(
+            '${tip.icon} ${tip.text}',
+            textAlign: TextAlign.right,
+            textDirection: TextDirection.rtl,
+            style: const TextStyle(
+                color: Colors.white, fontSize: 12.5, height: 1.5),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Score ring (mini arc) ─────────────────────────────────────────────────────
+class _ScoreRing extends StatelessWidget {
+  const _ScoreRing({required this.scorePct});
+  final int scorePct;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = scorePct >= 70
+        ? const Color(0xFF34D399)
+        : scorePct >= 45
+            ? const Color(0xFFFBBF24)
+            : const Color(0xFFEF4444);
+
+    return SizedBox(
+      width: 34, height: 34,
+      child: Stack(alignment: Alignment.center, children: [
+        CustomPaint(
+          size: const Size(34, 34),
+          painter: _ArcPainter(
+              fill: scorePct / 100.0,
+              color: color,
+              bg: Colors.white.withValues(alpha: 0.15)),
+        ),
+        Text('$scorePct',
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.bold)),
+      ]),
+    );
+  }
+}
+
+class _ArcPainter extends CustomPainter {
+  const _ArcPainter({required this.fill, required this.color, required this.bg});
+  final double fill;
+  final Color color;
+  final Color bg;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const stroke = 3.5;
+    const startAngle = -1.5708; // -π/2 (top)
+    final rect = Rect.fromLTWH(
+        stroke / 2, stroke / 2,
+        size.width - stroke, size.height - stroke);
+
+    canvas.drawArc(rect, startAngle, 6.2832, false,
+        Paint()..color = bg..style = PaintingStyle.stroke..strokeWidth = stroke
+          ..strokeCap = StrokeCap.round);
+    if (fill > 0) {
+      canvas.drawArc(rect, startAngle, 6.2832 * fill, false,
+          Paint()..color = color..style = PaintingStyle.stroke..strokeWidth = stroke
+            ..strokeCap = StrokeCap.round);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ArcPainter o) =>
+      o.fill != fill || o.color != color || o.bg != bg;
 }

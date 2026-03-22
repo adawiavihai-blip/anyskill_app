@@ -14,6 +14,10 @@ import '../services/cancellation_policy_service.dart';
 import '../services/cache_service.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/anyskill_logo.dart';
+import '../widgets/favorite_button.dart';
+import '../widgets/pro_badge.dart';
+import '../services/service_architect.dart';
+import '../models/pricing_model.dart';
 
 // Brand tokens
 const _kPurple     = Color(0xFF6366F1);
@@ -75,6 +79,10 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // ── Bio expand state ───────────────────────────────────────────────────────
   bool _bioExpanded = false;
 
+  // ── Dynamic pricing state ──────────────────────────────────────────────────
+  /// Indices of add-ons the client has checked in the order sheet.
+  final Set<int> _selectedAddOnIndices = {};
+
   final List<String> _timeSlots = [
     "08:00", "09:00", "10:00", "11:00",
     "14:00", "15:00", "16:00", "17:00", "18:00", "19:00",
@@ -96,27 +104,18 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // Derived service tiers (no separate Firestore collection needed)
   // ─────────────────────────────────────────────────────────────────────────
 
+  /// Builds category-aware service tiers from [ServiceArchitect] templates.
   List<Map<String, dynamic>> _deriveServices(
-      double pricePerHour, AppLocalizations l10n) => [
-        {
-          'title':    l10n.serviceSingleLesson,
-          'subtitle': l10n.serviceSingleSubtitle,
-          'duration': l10n.serviceSingle60min,
-          'price':    pricePerHour,
-        },
-        {
-          'title':    l10n.serviceExtendedLesson,
-          'subtitle': l10n.serviceExtendedSubtitle,
-          'duration': l10n.serviceExtended90min,
-          'price':    (pricePerHour * 1.4).roundToDouble(),
-        },
-        {
-          'title':    l10n.serviceFullSession,
-          'subtitle': l10n.serviceFullSubtitle,
-          'duration': l10n.serviceFullSession120min,
-          'price':    (pricePerHour * 1.8).roundToDouble(),
-        },
-      ];
+      double pricePerHour, String category) {
+    final templates = ServiceArchitect.templatesFor(category);
+    return templates.map((t) => {
+      'title':     t.title,
+      'subtitle':  t.subtitle,
+      'unitLabel': t.unitLabel,
+      'unitIcon':  t.unitIcon,
+      'price':     (pricePerHour * t.multiplier).roundToDouble(),
+    }).toList();
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Helpers
@@ -151,22 +150,31 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // Payment / booking (UNCHANGED LOGIC)
   // ─────────────────────────────────────────────────────────────────────────
 
-  Future<void> _processEscrowPayment(
+  // Returns true on success, false on any error (error UI already shown).
+  //
+  // v4.3.0 — WriteBatch architecture:
+  //   Phase 1: Sequential reads (fee %, balance, slot existence) — plain awaits,
+  //            no runTransaction wrapper, so no JS Promise retry loop on Web.
+  //   Phase 2: WriteBatch.commit() — single batched RPC, stable on all platforms
+  //            including Desktop Chrome where runTransaction's internal Promise
+  //            chain caused "Dart exception from converted Future" (minified:kt).
+  //
+  // navigator.pop() is still intentionally NOT called here — the success view's
+  // "Done" button is the sole trigger, decoupled from every async chain.
+  Future<bool> _processEscrowPayment(
       BuildContext context, double totalPrice, String cancellationPolicy,
       {bool isDemo = false}) async {
     // ── Demo expert: show success illusion, log demand signal, no real writes ──
     if (isDemo) {
-      await _handleDemoBooking(context);
-      return;
+      return await _handleDemoBooking(context);
     }
 
-    if (_isProcessing) return;
+    if (_isProcessing) return false;
     setState(() => _isProcessing = true);
 
     // Capture l10n strings before any await (context may be gone after await)
-    final l10n = AppLocalizations.of(context);
+    final l10n                   = AppLocalizations.of(context);
     final msgInsufficientBalance = l10n.expertInsufficientBalance;
-    final msgEscrowSuccess       = l10n.expertEscrowSuccess;
     final msgTransactionTitle    = l10n.expertTransactionTitle(widget.expertName);
     final dateStr = _selectedDay != null
         ? '${_selectedDay!.day}/${_selectedDay!.month}'
@@ -183,113 +191,192 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         .collection('settings')
         .doc('settings');
 
-    double expertNetEarnings = totalPrice * 0.90;
-    final navigator  = Navigator.of(context);
-    final messenger  = ScaffoldMessenger.of(context);
+    // Sentinel thrown to signal a slot collision (distinct from generic errors).
+    const kSlotConflict = '__SLOT_CONFLICT__';
+
+    // messenger captured only for error feedback.
+    final messenger = ScaffoldMessenger.of(context);
 
     try {
-      await firestore.runTransaction((transaction) async {
-        final adminSnap = await transaction.get(adminSettingsRef);
-        final double feePercentage =
-            ((adminSnap.exists ? adminSnap.get('feePercentage') : null) ??
-                    0.10)
-                .toDouble();
-        final double commission    = totalPrice * feePercentage;
-        expertNetEarnings          = totalPrice - commission;
+      // ── Phase 1: reads ────────────────────────────────────────────────────
+      // Plain sequential awaits — no transaction wrapper, no JS Promise retries.
 
-        final customerRef  = firestore.collection('users').doc(currentUserId);
-        final customerSnap = await transaction.get(customerRef);
-        final double currentBalance =
-            (customerSnap['balance'] ?? 0.0).toDouble();
+      // 1a. Admin fee
+      final adminSnap = await adminSettingsRef.get();
+      final Map<String, dynamic> adminData = adminSnap.data() ?? {};
+      final double feePercentage =
+          ((adminData['feePercentage']) ?? 0.10).toDouble();
+      final double commission        = totalPrice * feePercentage;
+      final double expertNetEarnings = totalPrice - commission;
 
-        if (currentBalance < totalPrice) {
-          throw msgInsufficientBalance;
-        }
+      // 1b. Customer balance
+      final customerRef  = firestore.collection('users').doc(currentUserId);
+      final customerSnap = await customerRef.get();
+      final Map<String, dynamic> customerData = customerSnap.data() ?? {};
+      final double currentBalance  = (customerData['balance'] ?? 0.0).toDouble();
+      if (currentBalance < totalPrice) throw msgInsufficientBalance;
 
-        // Calculate cancellation deadline based on provider's policy
-        final cancelDeadline = CancellationPolicyService.deadline(
-          policy:          cancellationPolicy,
-          appointmentDate: _selectedDay,
-          timeSlot:        _selectedTimeSlot,
-        );
+      // 1c. Slot collision pre-flight
+      //     Two users booking the same slot in the same millisecond is
+      //     vanishingly rare in a boutique marketplace; a pre-flight read is a
+      //     practical guard without the Promise-chain overhead of runTransaction.
+      DocumentReference? slotRef;
+      final d = _selectedDay;
+      final t = _selectedTimeSlot;
+      if (d != null && t != null) {
+        final slotKey =
+            '${widget.expertId}_'
+            '${d.year}${d.month.toString().padLeft(2, '0')}${d.day.toString().padLeft(2, '0')}_'
+            '${t.replaceAll(':', '').replaceAll(' ', '')}';
+        slotRef = firestore.collection('bookingSlots').doc(slotKey);
+        final slotSnap = await slotRef.get();
+        if (slotSnap.exists) throw kSlotConflict;
+      }
 
-        final jobRef = firestore.collection('jobs').doc();
-        transaction.set(jobRef, {
-          'jobId':                 jobRef.id,
-          'chatRoomId':            chatRoomId,
-          'customerId':            currentUserId,
-          'customerName':          customerSnap['name'] ?? "",
-          'expertId':              widget.expertId,
-          'expertName':            widget.expertName,
-          'totalPaidByCustomer':   totalPrice,
-          'totalAmount':           totalPrice,
-          'commissionAmount':      commission,
-          'netAmountForExpert':    expertNetEarnings,
-          'appointmentDate':       _selectedDay,
-          'appointmentTime':       _selectedTimeSlot,
-          'status':                'paid_escrow',
-          'createdAt':             FieldValue.serverTimestamp(),
-          'cancellationPolicy':    cancellationPolicy,
-          if (cancelDeadline != null)
-            'cancellationDeadline': Timestamp.fromDate(cancelDeadline),
+      // ── Phase 2: WriteBatch commit ─────────────────────────────────────────
+      // WriteBatch.commit() issues a single batched Firestore write RPC.
+      // Unlike runTransaction it has no retry loop and does not create a
+      // nested JS Promise chain, making it stable on Desktop Web (Chrome/Edge).
+      final cancelDeadline = CancellationPolicyService.deadline(
+        policy:          cancellationPolicy,
+        appointmentDate: _selectedDay,
+        timeSlot:        _selectedTimeSlot,
+      );
+
+      final batch  = firestore.batch();
+      final jobRef = firestore.collection('jobs').doc();
+
+      // Reserve booking slot (prevents duplicate in normal flow)
+      if (slotRef != null) {
+        batch.set(slotRef, {
+          'expertId':  widget.expertId,
+          'createdAt': FieldValue.serverTimestamp(),
         });
+      }
 
-        transaction.update(
-            customerRef, {'balance': FieldValue.increment(-totalPrice)});
-
-        transaction.set(firestore.collection('platform_earnings').doc(), {
-          'jobId':          jobRef.id,
-          'amount':         commission,
-          'sourceExpertId': widget.expertId,
-          'timestamp':      FieldValue.serverTimestamp(),
-          'status':         'pending_escrow',
-        });
-
-        transaction.set(firestore.collection('transactions').doc(), {
-          'userId':    currentUserId,
-          'amount':    -totalPrice,
-          'title':     msgTransactionTitle,
-          'timestamp': FieldValue.serverTimestamp(),
-          'status':    'escrow',
-        });
+      // Job document — immediately visible to provider's StreamBuilder
+      batch.set(jobRef, {
+        'jobId':               jobRef.id,
+        'chatRoomId':          chatRoomId,
+        'customerId':          currentUserId,
+        'customerName':        customerData['name'] ?? '',
+        'expertId':            widget.expertId,
+        'expertName':          widget.expertName,
+        'totalPaidByCustomer': totalPrice,
+        'totalAmount':         totalPrice,
+        'commissionAmount':    commission,
+        'netAmountForExpert':  expertNetEarnings,
+        'appointmentDate':     _selectedDay,
+        'appointmentTime':     _selectedTimeSlot,
+        'status':              'paid_escrow',
+        'createdAt':           FieldValue.serverTimestamp(),
+        'cancellationPolicy':  cancellationPolicy,
+        if (cancelDeadline != null)
+          'cancellationDeadline': Timestamp.fromDate(cancelDeadline),
       });
 
+      // Deduct customer balance
+      batch.update(customerRef, {'balance': FieldValue.increment(-totalPrice)});
+
+      // Platform commission record
+      batch.set(firestore.collection('platform_earnings').doc(), {
+        'jobId':          jobRef.id,
+        'amount':         commission,
+        'sourceExpertId': widget.expertId,
+        'timestamp':      FieldValue.serverTimestamp(),
+        'status':         'pending_escrow',
+      });
+
+      // Wallet transaction log
+      batch.set(firestore.collection('transactions').doc(), {
+        'userId':    currentUserId,
+        'amount':    -totalPrice,
+        'title':     msgTransactionTitle,
+        'timestamp': FieldValue.serverTimestamp(),
+        'status':    'escrow',
+      });
+
+      await batch.commit();
+
+      // Debug: confirm the exact expertId written so we can verify it matches
+      // the provider's UID in my_bookings_screen.dart's _expertStream query.
+      // Compare this value against the "[AnySkill] isProvider" log on the
+      // provider's device — they must be identical for the stream to pick it up.
+
+      // System chat message (non-critical; after batch so batch failure is clean)
       await _sendSystemNotification(
           chatRoomId, totalPrice, expertNetEarnings, currentUserId,
           systemMsg: l10n.expertSystemMessage(
-              dateStr, _selectedTimeSlot ?? '', expertNetEarnings.toStringAsFixed(0)));
+              dateStr, _selectedTimeSlot ?? '',
+              expertNetEarnings.toStringAsFixed(0)));
 
-      if (mounted) {
-        navigator.pop();
-        messenger.showSnackBar(SnackBar(
-          backgroundColor: Colors.green,
-          content: Text(msgEscrowSuccess),
-        ));
-      }
+      // Batch committed — signal success. The sheet's StatefulBuilder will swap
+      // to the success view; the user's "Done" tap triggers pop() as a plain
+      // synchronous gesture, with zero async-chain coupling.
+      return true;
     } catch (e) {
+      // Debug: print full error to console so the exact Firestore error code
+      // (e.g. PERMISSION_DENIED, NOT_FOUND) is visible in browser DevTools.
+      // ignore: avoid_print
+      print('[AnySkill] Booking error: ${e.toString()}');
       if (mounted) {
-        messenger.showSnackBar(
-            SnackBar(backgroundColor: Colors.red, content: Text(e.toString())));
+        if (e == kSlotConflict) {
+          showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20)),
+              title: const Row(children: [
+                Icon(Icons.event_busy_rounded,
+                    color: Color(0xFFEF4444), size: 22),
+                SizedBox(width: 8),
+                Text('המועד תפוס',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ]),
+              content: const Text(
+                'מישהו כבר הזמין את המומחה לאותו מועד.\n'
+                'אנא בחר תאריך או שעה אחרים.',
+                textAlign: TextAlign.right,
+              ),
+              actions: [
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF6366F1),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12))),
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('הבנתי',
+                      style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            ),
+          );
+        } else {
+          messenger.showSnackBar(SnackBar(
+            backgroundColor: Colors.red,
+            content: Text(
+              e.toString() == msgInsufficientBalance
+                  ? msgInsufficientBalance
+                  : e.toString().toLowerCase().contains('permission') ||
+                          e.toString().toLowerCase().contains('insufficient')
+                      ? 'חלה שגיאה בתהליך ההזמנה, אנא נסה שנית.'
+                      : e.toString(),
+            ),
+          ));
+        }
       }
+      return false;
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
   }
 
   // ── Demo booking: fake success + admin demand signal ──────────────────────
-  // No real Firestore transaction, no wallet change, no job document.
-  // Closes the booking sheet, shows a success overlay, and silently logs
-  // the demand event to activity_log so the admin Live Feed picks it up.
-  Future<void> _handleDemoBooking(BuildContext context) async {
-    final navigator     = Navigator.of(context);
-    // Capture the root context (profile screen) BEFORE any awaits so we can
-    // show the success dialog after the sheet closes.
-    final rootContext   = this.context;
-
-    // 1. Close the booking summary sheet
-    navigator.pop();
-
-    // 2. Log demand signal to activity_log (admin Live Feed)
+  // No real Firestore writes (no job doc, no wallet deduction).
+  // Logs the demand event so the admin Live Feed picks it up, then returns
+  // true — the caller's StatefulBuilder switches to the shared success view.
+  Future<bool> _handleDemoBooking(BuildContext context) async {
+    // 1. Log demand signal to activity_log (admin Live Feed)
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
     try {
       await FirebaseFirestore.instance.collection('activity_log').add({
@@ -309,13 +396,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       // Non-blocking — if logging fails the UX is unaffected
     }
 
-    // 3. Show success dialog on the profile screen
-    if (!mounted) return;
-    await showDialog(
-      context: rootContext,
-      barrierDismissible: false,
-      builder: (_) => const _DemoBookingSuccessDialog(),
-    );
+    // The caller's StatefulBuilder switches to the shared success view.
+    // No navigator.pop() here — decoupled completely from this Future chain.
+    return true;
   }
 
   Future<void> _sendSystemNotification(
@@ -323,15 +406,17 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       {required String systemMsg}) async {
     final chatRef =
         FirebaseFirestore.instance.collection('chats').doc(chatRoomId);
+    // Ensure the chat doc exists with both participants BEFORE writing the
+    // message — the messages rule checks chats/{id}.data.users.
+    await chatRef.set(
+        {'users': [currentUserId, widget.expertId]},
+        SetOptions(merge: true));
     await chatRef.collection('messages').add({
       'senderId': 'system',
       'message':  systemMsg,
       'type':      'text',
       'timestamp': FieldValue.serverTimestamp(),
     });
-    await chatRef.set(
-        {'users': [currentUserId, widget.expertId]},
-        SetOptions(merge: true));
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -346,6 +431,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
 
     final isVerified = data['isVerified'] as bool? ?? false;
     final isPromoted = data['isPromoted'] as bool? ?? false;
+    final isPro      = data['isAnySkillPro'] == true;
 
     return Stack(
       fit: StackFit.expand,
@@ -442,6 +528,10 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                         shadows: [Shadow(blurRadius: 8, color: Colors.black54)],
                       ),
                     ),
+                    if (isPro) ...[
+                      const SizedBox(height: 6),
+                      const ProBadge(large: true),
+                    ],
                     if ((data['serviceType'] as String? ?? '').isNotEmpty)
                       Text(
                         data['serviceType'] as String,
@@ -666,11 +756,13 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildServiceMenu(Map<String, dynamic> data, AppLocalizations l10n) {
-    final price    = (data['pricePerHour'] as num? ?? 100).toDouble();
-    final services = _deriveServices(price, l10n);
+    final pricing  = PricingModel.fromFirestore(data);
+    final category = data['serviceType'] as String? ?? '';
+    final services = _deriveServices(pricing.basePrice, category);
 
     return Column(
-      children: List.generate(services.length, (i) {
+      children: [
+        ...List.generate(services.length, (i) {
         final svc      = services[i];
         final selected = i == _selectedServiceIndex;
         final svcPrice = svc['price'] as double;
@@ -741,13 +833,13 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.schedule_rounded,
+                                Icon(svc['unitIcon'] as IconData,
                                     size: 12,
                                     color: selected
                                         ? _kPurple
                                         : Colors.grey[600]),
                                 const SizedBox(width: 3),
-                                Text(svc['duration'] as String,
+                                Text(svc['unitLabel'] as String,
                                     style: TextStyle(
                                         fontSize: 11,
                                         color: selected
@@ -789,7 +881,114 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             ),
           ),
         );
-      }),
+        }),
+
+        // ── Add-ons panel ─────────────────────────────────────────────────
+        if (pricing.addOns.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          _buildAddOnsPanel(pricing),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildAddOnsPanel(PricingModel pricing) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _kPurpleSoft,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _kPurple.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          const Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Text('תוספות אופציונליות',
+                  style:
+                      TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              SizedBox(width: 6),
+              Icon(Icons.add_circle_outline_rounded,
+                  size: 16, color: _kPurple),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ...pricing.addOns.asMap().entries.map((entry) {
+            final i  = entry.key;
+            final ao = entry.value;
+            final checked = _selectedAddOnIndices.contains(i);
+            return GestureDetector(
+              onTap: () => setState(() {
+                if (checked) {
+                  _selectedAddOnIndices.remove(i);
+                } else {
+                  _selectedAddOnIndices.add(i);
+                }
+              }),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: checked ? _kPurple : Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: checked
+                        ? _kPurple
+                        : Colors.grey.shade200,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: checked
+                            ? Colors.white
+                            : Colors.transparent,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: checked
+                              ? Colors.white
+                              : Colors.grey.shade400,
+                          width: 2,
+                        ),
+                      ),
+                      child: checked
+                          ? const Icon(Icons.check_rounded,
+                              color: _kPurple, size: 13)
+                          : null,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      '+₪${ao.price.toStringAsFixed(0)}',
+                      style: TextStyle(
+                        color: checked ? Colors.white : _kPurple,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      ao.title,
+                      style: TextStyle(
+                        color: checked ? Colors.white : Colors.black87,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
     );
   }
 
@@ -1578,9 +1777,14 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
 
   Widget _buildBottomBar(BuildContext context, Map<String, dynamic> data) {
     final l10n       = AppLocalizations.of(context);
-    final price      = (data['pricePerHour'] as num? ?? 100).toDouble();
-    final services   = _deriveServices(price, l10n);
+    final pricing    = PricingModel.fromFirestore(data);
+    final category   = data['serviceType'] as String? ?? '';
+    final services   = _deriveServices(pricing.basePrice, category);
     final svcPrice   = services[_selectedServiceIndex]['price'] as double;
+    // Add selected add-ons on top of the tier price
+    final addOnTotal = _selectedAddOnIndices.fold<double>(
+        0.0, (acc, idx) => acc + (idx < pricing.addOns.length ? pricing.addOns[idx].price : 0.0));
+    final totalPrice = svcPrice + addOnTotal;
     final isReady    = _selectedDay != null && _selectedTimeSlot != null;
 
     return Positioned(
@@ -1640,7 +1844,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                       elevation: 0,
                     ),
                     onPressed:
-                        isReady ? () => _showBookingSummary(context, data, svcPrice) : null,
+                        isReady ? () => _showBookingSummary(context, data, totalPrice, addOns: pricing.addOns, selectedAddOns: _selectedAddOnIndices) : null,
                     child: _isProcessing
                         ? const CircularProgressIndicator(
                             color: Colors.white, strokeWidth: 2.5)
@@ -1661,7 +1865,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                         fontSize: 16),
                                   ),
                                   Text(
-                                    '₪${svcPrice.toStringAsFixed(0)}',
+                                    '₪${totalPrice.toStringAsFixed(0)}',
                                     style: const TextStyle(
                                         color: Colors.white,
                                         fontWeight: FontWeight.w900,
@@ -1674,7 +1878,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                     MainAxisAlignment.center,
                                 children: [
                                   Text(
-                                    l10n.expertStartingFrom(price.toStringAsFixed(0)),
+                                    l10n.expertStartingFrom(pricing.basePrice.toStringAsFixed(0)),
                                     style: const TextStyle(
                                         color: Colors.white70,
                                         fontSize: 11),
@@ -1703,7 +1907,10 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // ─────────────────────────────────────────────────────────────────────────
 
   void _showBookingSummary(
-      BuildContext context, Map<String, dynamic> data, double price) {
+      BuildContext context, Map<String, dynamic> data, double price, {
+      List<AddOn> addOns = const [],
+      Set<int> selectedAddOns = const {},
+  }) {
     final l10n    = AppLocalizations.of(context);
     final isDemo  = data['isDemo'] == true;
     final dateStr = _selectedDay != null
@@ -1727,11 +1934,33 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         : null;
     final penaltyPct = (CancellationPolicyService.penaltyFraction(policy) * 100).toInt();
 
+    // Both closure vars live outside the builder so they survive rebuilds.
+    // sheetBusy  — blocks all input while the transaction is in-flight.
+    // isSuccess  — when true, the builder renders the success view instead of
+    //              the summary form. The success view's "Done" button is the
+    //              ONLY place navigator.pop() is called, fully decoupled from
+    //              the Firestore Promise chain (root fix for Web "converted
+    //              Future" exception).
+    bool sheetBusy  = false;
+    bool isSuccess  = false;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
+      // isDismissible=false while busy so the user can't Escape mid-transaction
+      isDismissible: true,
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheetState) {
+          // ── Success view ──────────────────────────────────────────────────
+          if (isSuccess) {
+            return _buildBookingSuccessView(sheetCtx, l10n);
+          }
+
+          // ── Booking summary form ──────────────────────────────────────────
+          return AbsorbPointer(
+          absorbing: sheetBusy,
+          child: Container(
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -1786,7 +2015,19 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   _summaryRow(l10n.expertSummaryRowService, svcTitle),
                   _summaryRow(l10n.expertSummaryRowDate, dateStr),
                   _summaryRow(l10n.expertSummaryRowTime, _selectedTimeSlot ?? '—'),
-                  _summaryRow(l10n.expertSummaryRowPrice, "₪${price.toStringAsFixed(0)}"),
+                  // Base service price (before add-ons)
+                  _summaryRow(
+                    l10n.expertSummaryRowPrice,
+                    "₪${(price - selectedAddOns.fold<double>(0.0, (s, i) => s + (i < addOns.length ? addOns[i].price : 0.0))).toStringAsFixed(0)}",
+                  ),
+                  // Selected add-ons breakdown
+                  for (final i in selectedAddOns)
+                    if (i < addOns.length)
+                      _summaryRow(
+                        '+ ${addOns[i].title}',
+                        '+₪${addOns[i].price.toStringAsFixed(0)}',
+                        isAddOn: true,
+                      ),
                   _summaryRow(l10n.expertSummaryRowProtection, l10n.expertSummaryRowIncluded,
                       isGreen: true),
                   const Divider(height: 16),
@@ -1833,29 +2074,131 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             const SizedBox(height: 16),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                  backgroundColor: _kPurple,
+                  backgroundColor:
+                      sheetBusy ? Colors.grey : _kPurple,
                   minimumSize: const Size(double.infinity, 54),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14)),
                   elevation: 0),
-              icon: const Icon(Icons.lock_rounded,
-                  color: Colors.white, size: 18),
+              icon: sheetBusy
+                  ? const SizedBox(
+                      width: 18, height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.lock_rounded,
+                      color: Colors.white, size: 18),
               label: Text(l10n.expertConfirmPaymentButton,
                   style: const TextStyle(
                       fontSize: 16,
                       color: Colors.white,
                       fontWeight: FontWeight.bold)),
-              onPressed: () =>
-                  _processEscrowPayment(context, price, policy, isDemo: isDemo),
+              onPressed: sheetBusy
+                  ? null
+                  : () async {
+                      setSheetState(() => sheetBusy = true);
+                      final ok = await _processEscrowPayment(
+                          context, price, policy, isDemo: isDemo);
+                      if (ok) {
+                        // Switch to success view — pop is triggered by user
+                        // tapping "Done", not by this async chain.
+                        setSheetState(() => isSuccess = true);
+                      } else {
+                        // Error already shown via snackbar/dialog; re-enable.
+                        setSheetState(() => sheetBusy = false);
+                      }
+                    },
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'VERSION: 4.3.0',
+              style: TextStyle(fontSize: 10, color: Colors.grey[400]),
             ),
           ],
         ),
+      ),
+          );   // closes AbsorbPointer
+        },     // closes StatefulBuilder builder
+      ),       // closes StatefulBuilder
+    );
+  }
+
+  // ── Booking success view ──────────────────────────────────────────────────
+  // Replaces the booking summary inside the bottom sheet upon transaction
+  // commit. The "Done" button is the sole trigger for navigator.pop(), which
+  // means pop() is always a direct user gesture — never inside an async chain.
+  Widget _buildBookingSuccessView(BuildContext ctx, AppLocalizations l10n) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: const EdgeInsets.fromLTRB(24, 40, 24, 48),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ── Animated checkmark circle ────────────────────────────────────
+          TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0.0, end: 1.0),
+            duration: const Duration(milliseconds: 600),
+            curve: Curves.elasticOut,
+            builder: (_, v, child) => Transform.scale(scale: v, child: child),
+            child: Container(
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(
+                color: const Color(0xFF22C55E).withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.check_circle_rounded,
+                color: Color(0xFF22C55E),
+                size: 64,
+              ),
+            ),
+          ),
+          const SizedBox(height: 28),
+          // ── Title ────────────────────────────────────────────────────────
+          const Text(
+            'ההזמנה בוצעה בהצלחה! 🎉',
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1E1B4B),
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            l10n.expertEscrowSuccess,
+            style: const TextStyle(fontSize: 14, color: Colors.grey),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 36),
+          // ── Done button — only place pop() is called ─────────────────────
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF22C55E),
+              minimumSize: const Size(double.infinity, 54),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+              elevation: 0,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text(
+              'בוצע ✓',
+              style: TextStyle(
+                  fontSize: 17,
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _summaryRow(String label, String value,
-      {bool isBold = false, bool isGreen = false}) {
+      {bool isBold = false, bool isGreen = false, bool isAddOn = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
@@ -1863,20 +2206,23 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         children: [
           Text(label,
               style: TextStyle(
-                  fontSize: 14,
+                  fontSize: isAddOn ? 12 : 14,
                   fontWeight:
                       isBold ? FontWeight.bold : FontWeight.normal,
-                  color: Colors.grey[700])),
+                  color: isAddOn ? const Color(0xFF6366F1) : Colors.grey[700])),
           Text(value,
               style: TextStyle(
-                  fontSize: 14,
+                  fontSize: isAddOn ? 12 : 14,
                   color: isGreen
                       ? Colors.green
-                      : isBold
-                          ? Colors.black
-                          : Colors.black87,
-                  fontWeight:
-                      isBold ? FontWeight.bold : FontWeight.normal)),
+                      : isAddOn
+                          ? const Color(0xFF6366F1)
+                          : isBold
+                              ? Colors.black
+                              : Colors.black87,
+                  fontWeight: (isBold || isAddOn)
+                      ? FontWeight.bold
+                      : FontWeight.normal)),
         ],
       ),
     );
@@ -1937,8 +2283,17 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                       stretch: true,
                       backgroundColor: _kPurple,
                       foregroundColor: Colors.white,
-                      actions: const [
+                      actions: [
                         Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Center(
+                            child: FavoriteButton(
+                              providerId: widget.expertId,
+                              size: 26,
+                            ),
+                          ),
+                        ),
+                        const Padding(
                           padding: EdgeInsets.only(right: 12),
                           child: Center(child: AnySkillBrandIcon(size: 26)),
                         ),
@@ -2031,143 +2386,3 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   }
 }
 
-// ─── Demo booking success dialog ─────────────────────────────────────────────
-// Shown instead of a real escrow flow when the expert has isDemo: true.
-// Auto-dismisses after 3 seconds or on tap.
-
-class _DemoBookingSuccessDialog extends StatefulWidget {
-  const _DemoBookingSuccessDialog();
-
-  @override
-  State<_DemoBookingSuccessDialog> createState() =>
-      _DemoBookingSuccessDialogState();
-}
-
-class _DemoBookingSuccessDialogState extends State<_DemoBookingSuccessDialog>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  late final Animation<double>    _scale;
-  late final Animation<double>    _fade;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 600),
-    );
-    _scale = CurvedAnimation(parent: _ctrl, curve: Curves.elasticOut);
-    _fade  = CurvedAnimation(parent: _ctrl, curve: Curves.easeIn);
-    _ctrl.forward();
-
-    // Auto-dismiss after 3 s
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) Navigator.of(context).pop();
-    });
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => Navigator.of(context).pop(),
-      child: FadeTransition(
-        opacity: _fade,
-        child: Dialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          elevation: 0,
-          backgroundColor: Colors.transparent,
-          child: ScaleTransition(
-            scale: _scale,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(28, 32, 28, 28),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF6366F1).withValues(alpha: 0.18),
-                    blurRadius: 40,
-                    offset: const Offset(0, 12),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Success circle
-                  Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color:
-                              const Color(0xFF6366F1).withValues(alpha: 0.35),
-                          blurRadius: 20,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(Icons.check_rounded,
-                        color: Colors.white, size: 40),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    '✅ ההזמנה נשלחה בהצלחה!',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E293B),
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'המומחה יאשר את המועד בקרוב.\nתקבל עדכון בהודעה.',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[500],
-                      height: 1.5,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6366F1),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                        elevation: 0,
-                      ),
-                      child: const Text('סגור',
-                          style: TextStyle(
-                              fontSize: 15, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}

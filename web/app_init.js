@@ -29,7 +29,10 @@ window.addEventListener('load', function () {
         if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
           console.log('QA: New SW ready — sending SKIP_WAITING (banner will prompt user)');
           newWorker.postMessage('SKIP_WAITING');
-          // No window.location.reload() here — the Flutter banner handles it.
+          // Signal Flutter that a SW update is waiting.
+          // _handleWebUpdates() in main.dart reads this flag on next startup
+          // and shows the update banner without requiring an admin login.
+          try { sessionStorage.setItem('sw_update_pending', '1'); } catch (_) {}
         }
       });
     });

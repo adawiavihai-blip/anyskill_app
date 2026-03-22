@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'home_screen.dart';
+import '../services/auth_service.dart';
 
 class PendingVerificationScreen extends StatefulWidget {
   const PendingVerificationScreen({super.key});
@@ -181,7 +182,7 @@ class _PendingVerificationScreenState
                 width: double.infinity,
                 height: 50,
                 child: OutlinedButton.icon(
-                  onPressed: () => FirebaseAuth.instance.signOut(),
+                  onPressed: () => performSignOut(context),
                   icon: const Icon(Icons.logout_rounded, size: 18),
                   label: const Text(
                     'התנתק/י בינתיים',

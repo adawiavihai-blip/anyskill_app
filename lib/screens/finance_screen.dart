@@ -8,6 +8,7 @@ import '../widgets/banner_carousel.dart';
 import 'withdrawal_modal.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/hint_icon.dart';
+import '../services/audio_service.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const _kCardStart  = Color(0xFF1A0E3C);
@@ -61,6 +62,8 @@ class _FinanceScreenState extends State<FinanceScreen>
       CurvedAnimation(parent: _countCtrl, curve: Curves.easeOutCubic),
     );
     _countCtrl.forward();
+    // 💎 Wealth Crystal — fires as the balance animates into view
+    if (balance > 0) AudioService.instance.play(AppSound.wealthCrystal);
   }
 
   Future<void> _loadChartData() async {
@@ -126,6 +129,7 @@ class _FinanceScreenState extends State<FinanceScreen>
               (userData['balance'] as num? ?? 0).toDouble();
           final pending =
               (userData['pendingBalance'] as num? ?? 0).toDouble();
+          final isProvider = userData['isProvider'] == true;
 
           // Kick off the count-up once data arrives
           if (userSnap.connectionState != ConnectionState.waiting) {
@@ -146,12 +150,13 @@ class _FinanceScreenState extends State<FinanceScreen>
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-                    child: _buildGlassCard(context, uid, balance, pending),
+                    child: _buildGlassCard(
+                        context, uid, balance, pending, isProvider),
                   ),
                 ),
 
-                // ── 7-day earnings chart ──────────────────────────────
-                if (_chartLoaded) ...[
+                // ── 7-day earnings chart (providers only) ─────────────
+                if (_chartLoaded && isProvider) ...[
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
@@ -197,8 +202,8 @@ class _FinanceScreenState extends State<FinanceScreen>
 
   // ── Glassmorphism balance card ─────────────────────────────────────────────
 
-  Widget _buildGlassCard(
-      BuildContext context, String uid, double balance, double pending) {
+  Widget _buildGlassCard(BuildContext context, String uid, double balance,
+      double pending, bool isProvider) {
     final l10n = AppLocalizations.of(context);
     return Container(
       decoration: BoxDecoration(
@@ -263,7 +268,9 @@ class _FinanceScreenState extends State<FinanceScreen>
 
             // Card content
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+              padding: isProvider
+                  ? const EdgeInsets.fromLTRB(24, 24, 24, 24)
+                  : const EdgeInsets.fromLTRB(20, 14, 20, 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -271,7 +278,6 @@ class _FinanceScreenState extends State<FinanceScreen>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // Trust badge
                       Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 10, vertical: 5),
@@ -298,12 +304,11 @@ class _FinanceScreenState extends State<FinanceScreen>
                           ],
                         ),
                       ),
-                      // EMV-style chip
                       _buildChipIcon(),
                     ],
                   ),
 
-                  const SizedBox(height: 22),
+                  SizedBox(height: isProvider ? 22 : 10),
 
                   // ── Balance label ────────────────────────────────────
                   Text(
@@ -321,9 +326,9 @@ class _FinanceScreenState extends State<FinanceScreen>
                     animation: _countCtrl,
                     builder: (_, __) => Text(
                       '₪${_countAnim.value.toStringAsFixed(0)}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: Colors.white,
-                        fontSize: 46,
+                        fontSize: isProvider ? 46 : 34,
                         fontWeight: FontWeight.bold,
                         letterSpacing: -1.5,
                         height: 1.1,
@@ -331,100 +336,119 @@ class _FinanceScreenState extends State<FinanceScreen>
                     ),
                   ),
 
-                  // ── Pending balance ──────────────────────────────────
-                  const SizedBox(height: 6),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.10),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.hourglass_top_rounded,
-                                size: 11,
-                                color: Colors.white.withValues(alpha: 0.65)),
-                            const SizedBox(width: 4),
-                            Text(
-                              '₪${pending.toStringAsFixed(0)} ${l10n.financePending}',
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.65),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w500,
+                  // ── Pending balance (providers only) ─────────────────
+                  if (isProvider) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.hourglass_top_rounded,
+                                  size: 11,
+                                  color: Colors.white.withValues(alpha: 0.65)),
+                              const SizedBox(width: 4),
+                              Text(
+                                '₪${pending.toStringAsFixed(0)} ${l10n.financePending}',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.65),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 4),
-                  Text(
-                    l10n.financeMinWithdraw,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.38),
-                      fontSize: 11,
+                      ],
                     ),
-                  ),
+                    const SizedBox(height: 4),
+                    Text(
+                      l10n.financeMinWithdraw,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.38),
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
 
-                  const SizedBox(height: 22),
+                  SizedBox(height: isProvider ? 22 : 14),
 
                   // ── Action buttons ───────────────────────────────────
-                  Row(
-                    children: [
-                      // Add Funds — solid accent
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white,
-                            foregroundColor: _kCardMid,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                            padding: const EdgeInsets.symmetric(vertical: 13),
+                  if (isProvider)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.white,
+                              foregroundColor: _kCardMid,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 13),
+                            ),
+                            icon: const Icon(Icons.add_rounded, size: 17),
+                            label: Text(l10n.financeAddFunds,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13)),
+                            onPressed: () => _showAddFundsInfo(context),
                           ),
-                          icon: const Icon(Icons.add_rounded, size: 17),
-                          label: Text(
-                            l10n.financeAddFunds,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 13),
-                          ),
-                          onPressed: () => _showAddFundsInfo(context),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      // Withdraw — semi-transparent
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.white,
-                            side: BorderSide(
-                                color: Colors.white.withValues(alpha: 0.50),
-                                width: 1.5),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                            padding: const EdgeInsets.symmetric(vertical: 13),
-                            backgroundColor:
-                                Colors.white.withValues(alpha: 0.10),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: BorderSide(
+                                  color: Colors.white.withValues(alpha: 0.50),
+                                  width: 1.5),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 13),
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.10),
+                            ),
+                            icon: const Icon(Icons.savings_rounded, size: 17),
+                            label: Text(l10n.financeWithdrawButton,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13)),
+                            onPressed: () =>
+                                showWithdrawalModal(context, uid, balance),
                           ),
-                          icon: const Icon(Icons.savings_rounded, size: 17),
-                          label: Text(
-                            l10n.financeWithdrawButton,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 13),
-                          ),
-                          onPressed: () =>
-                              showWithdrawalModal(context, uid, balance),
                         ),
+                      ],
+                    )
+                  else
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: _kCardMid,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                        ),
+                        icon: const Icon(Icons.add_rounded, size: 17),
+                        label: Text(l10n.financeAddFunds,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 13)),
+                        onPressed: () => _showAddFundsInfo(context),
                       ),
-                    ],
-                  ),
+                    ),
                 ],
               ),
             ),

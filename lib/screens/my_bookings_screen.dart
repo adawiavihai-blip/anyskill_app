@@ -24,8 +24,14 @@ class MyBookingsScreen extends StatefulWidget {
 }
 
 class _MyBookingsScreenState extends State<MyBookingsScreen> {
-  bool _isProvider    = false;
+  bool _isProvider     = false;
   bool _providerLoaded = false;
+  bool _tasksTimedOut  = false;  // true after 10s if stream still has no data
+  Timer? _tasksTimeoutTimer;
+  // Live subscription to the user doc — keeps _isProvider in sync in real-time.
+  // A one-time get() could stay false if it raced with the first build, causing
+  // Sigalit to see only customer tabs and never find her provider task list.
+  StreamSubscription<DocumentSnapshot>? _userDocSub;
   final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
 
   // ── Loading overlay controller ─────────────────────────────────────────────
@@ -73,50 +79,75 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   late final Stream<QuerySnapshot> _customerStream;
 
   // ── Status buckets ─────────────────────────────────────────────────────────
-  static const _activeStatuses  = {'paid_escrow', 'expert_completed', 'disputed'};
+  // Active: jobs still in progress. History: terminal states only.
+  static const _activeStatuses  = {
+    'paid_escrow', 'expert_completed', 'disputed',
+    'pending', 'accepted', 'in_progress',
+  };
   static const _historyStatuses = {
-    'completed', 'cancelled', 'refunded', 'split_resolved', 'cancelled_with_penalty',
+    'completed', 'cancelled', 'refunded',
+    'split_resolved', 'cancelled_with_penalty',
   };
 
   @override
   void initState() {
     super.initState();
+    // No orderBy — avoids composite index requirement.
+    // Documents are sorted client-side in the list builders.
     _expertStream = FirebaseFirestore.instance
         .collection('jobs')
         .where('expertId', isEqualTo: currentUserId)
-        .orderBy('createdAt', descending: true)
         .limit(50)
         .snapshots();
     _customerStream = FirebaseFirestore.instance
         .collection('jobs')
         .where('customerId', isEqualTo: currentUserId)
-        .orderBy('createdAt', descending: true)
         .limit(50)
         .snapshots();
-    _loadProviderStatus();
+    _subscribeProviderStatus();
     _loadUnavailableDates();
+    // Fallback: if the expert stream hasn't delivered data after 10 s
+    // (e.g. index still building, offline), stop showing the shimmer
+    // and show the empty state instead so the UI is never stuck.
+    _tasksTimeoutTimer = Timer(const Duration(seconds: 10), () {
+      if (mounted) setState(() => _tasksTimedOut = true);
+    });
   }
 
-  Future<void> _loadProviderStatus() async {
+  @override
+  void dispose() {
+    _tasksTimeoutTimer?.cancel();
+    _userDocSub?.cancel();
+    super.dispose();
+  }
+
+  // Live subscription so _isProvider stays in sync even if the user doc
+  // updates (e.g. admin grants provider status while the screen is open).
+  // Replaces the old one-shot get() which could race with the first build
+  // and leave _isProvider=false, hiding the provider tabs permanently.
+  void _subscribeProviderStatus() {
     if (currentUserId.isEmpty) {
       setState(() => _providerLoaded = true);
       return;
     }
-    try {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(currentUserId)
-          .get();
-      final data = doc.data() ?? {};
-      if (mounted) {
+    _userDocSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(currentUserId)
+        .snapshots()
+        .listen(
+      (doc) {
+        if (!mounted) return;
+        final data = doc.data() ?? {};
+        final isProvider = data['isProvider'] == true;
         setState(() {
-          _isProvider     = data['isProvider'] == true;
+          _isProvider     = isProvider;
           _providerLoaded = true;
         });
-      }
-    } catch (_) {
-      if (mounted) setState(() => _providerLoaded = true);
-    }
+      },
+      onError: (_) {
+        if (mounted) setState(() => _providerLoaded = true);
+      },
+    );
   }
 
   // ── Availability calendar helpers ──────────────────────────────────────────
@@ -243,21 +274,34 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   Future<void> _markJobDone(
       BuildContext context, String jobId, String chatRoomId) async {
     final strMarkedDone = AppLocalizations.of(context).markedDoneSuccess;
+    // CRITICAL: use rootNavigator: true.
+    // showDialog() pushes to the ROOT navigator (its default useRootNavigator=true).
+    // The app wraps tabs in _nestedTab() nested navigators, so Navigator.of(context)
+    // without rootNavigator would get the NESTED navigator — pop() would then
+    // pop the wrong route and leave the loading dialog open forever ("freeze").
+    final nav       = Navigator.of(context, rootNavigator: true);
+    final messenger = ScaffoldMessenger.of(context);
+
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (c) =>
+      builder: (_) =>
           const Center(child: CircularProgressIndicator(color: Colors.white)),
     );
 
     try {
+      // 15-second timeout: prevents an indefinite spinner on bad mobile networks.
       await FirebaseFirestore.instance
           .collection('jobs')
           .doc(jobId)
           .update({
         'status': 'expert_completed',
         'expertCompletedAt': FieldValue.serverTimestamp(),
-      });
+      }).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () =>
+            throw TimeoutException('הזמן הסתיים. בדוק את חיבור האינטרנט.'),
+      );
 
       if (chatRoomId.isNotEmpty) {
         final chatRef =
@@ -275,21 +319,26 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         }, SetOptions(merge: true));
       }
 
-      if (context.mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              backgroundColor: Colors.green,
-              content: Text(strMarkedDone)),
-        );
-      }
+      messenger.showSnackBar(
+        SnackBar(backgroundColor: Colors.green, content: Text(strMarkedDone)),
+      );
     } catch (e) {
-      if (context.mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(backgroundColor: Colors.red, content: Text('שגיאה: $e')),
-        );
-      }
+      // ignore: avoid_print
+      messenger.showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.red,
+          content: Text(e is TimeoutException
+              ? (e.message ?? 'הזמן הסתיים')
+              : e.toString().toLowerCase().contains('permission')
+                  ? 'אין הרשאה לעדכן את סטטוס ההזמנה.'
+                  : 'שגיאה: $e'),
+        ),
+      );
+    } finally {
+      // Always dismiss the loading dialog regardless of success/failure/timeout.
+      // Guard with canPop() in case the route was already dismissed (e.g. the
+      // user navigated away or the stream rebuild disposed the route).
+      if (nav.canPop()) nav.pop();
     }
   }
 
@@ -371,6 +420,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     );
     if (confirm != true || !context.mounted) return;
 
+    final nav       = Navigator.of(context, rootNavigator: true);
+    final messenger = ScaffoldMessenger.of(context);
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -381,21 +433,17 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     try {
       await PaymentModule.cancelWithPolicy(
           jobId: jobId, cancelledBy: 'customer');
-      if (context.mounted) Navigator.pop(context);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          backgroundColor: Colors.green,
-          content: Text(hasPenalty
-              ? 'ההזמנה בוטלה — ₪${refund.toStringAsFixed(0)} הוחזרו לארנק'
-              : 'ההזמנה בוטלה — ₪${amount.toStringAsFixed(0)} הוחזרו לארנק'),
-        ));
-      }
+      messenger.showSnackBar(SnackBar(
+        backgroundColor: Colors.green,
+        content: Text(hasPenalty
+            ? 'ההזמנה בוטלה — ₪${refund.toStringAsFixed(0)} הוחזרו לארנק'
+            : 'ההזמנה בוטלה — ₪${amount.toStringAsFixed(0)} הוחזרו לארנק'),
+      ));
     } catch (e) {
-      if (context.mounted) Navigator.pop(context);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            backgroundColor: Colors.red, content: Text('שגיאה בביטול: $e')));
-      }
+      messenger.showSnackBar(SnackBar(
+          backgroundColor: Colors.red, content: Text('שגיאה בביטול: $e')));
+    } finally {
+      if (nav.canPop()) nav.pop();
     }
   }
 
@@ -435,6 +483,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     );
     if (confirm != true || !context.mounted) return;
 
+    final nav       = Navigator.of(context, rootNavigator: true);
+    final messenger = ScaffoldMessenger.of(context);
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -445,19 +496,15 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     try {
       await PaymentModule.cancelWithPolicy(
           jobId: jobId, cancelledBy: 'provider');
-      if (context.mounted) Navigator.pop(context);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          backgroundColor: Colors.orange,
-          content: Text('ההזמנה בוטלה — הלקוח יקבל החזר מלא'),
-        ));
-      }
+      messenger.showSnackBar(const SnackBar(
+        backgroundColor: Colors.orange,
+        content: Text('ההזמנה בוטלה — הלקוח יקבל החזר מלא'),
+      ));
     } catch (e) {
-      if (context.mounted) Navigator.pop(context);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            backgroundColor: Colors.red, content: Text('שגיאה בביטול: $e')));
-      }
+      messenger.showSnackBar(SnackBar(
+          backgroundColor: Colors.red, content: Text('שגיאה בביטול: $e')));
+    } finally {
+      if (nav.canPop()) nav.pop();
     }
   }
 
@@ -853,7 +900,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     }
 
     return DefaultTabController(
-      length: 2,
+      length: _isProvider ? 2 : 3,
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F5F7),
         appBar: AppBar(
@@ -921,6 +968,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
 
   // ── Customer filtered list ─────────────────────────────────────────────────
   Widget _buildFilteredCustomerList(Set<String> statusFilter) {
+    final isHistory = statusFilter == _historyStatuses;
     return StreamBuilder<QuerySnapshot>(
       stream: _customerStream,
       builder: (context, snapshot) {
@@ -929,23 +977,48 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
           return const _BookingsShimmer();
         }
         if (snapshot.hasError) {
-          return Center(child: Text('שגיאה: ${snapshot.error}'));
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.error_outline_rounded,
+                    size: 40, color: Color(0xFFEF4444)),
+                const SizedBox(height: 12),
+                const Text('לא ניתן לטעון את ההזמנות כרגע. אנא נסה שוב.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 14, color: Color(0xFF64748B))),
+              ]),
+            ),
+          );
         }
 
         final all = snapshot.data?.docs ?? [];
         final filtered = all.where((d) {
           final status =
               (d.data() as Map<String, dynamic>)['status'] as String? ?? '';
-          return statusFilter.contains(status);
-        }).toList();
+          if (status.isEmpty) return false;
+          // For the history tab: catch-all — show every status that is NOT
+          // an active status so no "unknown" terminal status falls through
+          // the cracks (e.g. if the Cloud Function writes 'paid' instead of
+          // 'completed').  For the active tab: use the explicit set as before.
+          return isHistory
+              ? !_activeStatuses.contains(status)
+              : statusFilter.contains(status);
+        }).toList()
+          ..sort((a, b) {
+            final ta = (a.data() as Map)['createdAt'];
+            final tb = (b.data() as Map)['createdAt'];
+            if (ta is Timestamp && tb is Timestamp) {
+              return tb.compareTo(ta); // newest first
+            }
+            return 0;
+          });
 
         if (filtered.isEmpty) {
-          return _buildEmptyState(
-              isExpert: false,
-              isHistory: statusFilter == _historyStatuses);
+          return _buildEmptyState(isExpert: false, isHistory: isHistory);
         }
 
-        return _buildGroupedList(filtered, isExpert: false);
+        return _buildGroupedList(filtered, isExpert: false, isHistory: isHistory);
       },
     );
   }
@@ -955,32 +1028,75 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     return StreamBuilder<QuerySnapshot>(
       stream: _expertStream,
       builder: (context, snapshot) {
+        // Show shimmer while waiting — but give up after 10 s so the UI is
+        // never permanently stuck (e.g. index building or offline).
         if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
+            !snapshot.hasData &&
+            !_tasksTimedOut) {
           return const _BookingsShimmer();
         }
+
         if (snapshot.hasError) {
-          return Center(child: Text('שגיאה: ${snapshot.error}'));
+          final err = snapshot.error.toString().toLowerCase();
+          final isPermission =
+              err.contains('permission') || err.contains('insufficient');
+          final isIndex = err.contains('index') ||
+              err.contains('failed-precondition') ||
+              err.contains('requires an index');
+          final msg = isPermission
+              ? 'אין הרשאה לצפות במשימות. פנה לתמיכה.'
+              : isIndex
+                  ? 'אינדקס מסד הנתונים עדיין נבנה. נסה שוב בעוד דקה.'
+                  : 'חלה שגיאה בטעינת המשימות, אנא נסה שנית.';
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.error_outline_rounded,
+                      size: 48, color: Color(0xFFEF4444)),
+                  const SizedBox(height: 16),
+                  Text(msg,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontSize: 15, color: Color(0xFF64748B))),
+                ],
+              ),
+            ),
+          );
         }
 
         final docs = snapshot.data?.docs ?? [];
+        // Debug: print how many jobs the stream returned for this expert.
         if (docs.isEmpty) {
           return _buildEmptyState(isExpert: true, isHistory: false);
         }
 
+        // Cancel the timeout timer — data arrived successfully.
+        _tasksTimeoutTimer?.cancel();
         return _buildExpertTasksList(docs);
       },
     );
   }
 
   // ── Expert tasks: Today (active) + History ─────────────────────────────────
+  int _jobTimestamp(QueryDocumentSnapshot d) {
+    final ts = (d.data() as Map)['createdAt'];
+    return ts is Timestamp ? ts.millisecondsSinceEpoch : 0;
+  }
+
   Widget _buildExpertTasksList(List<QueryDocumentSnapshot> docs) {
+    // Sort newest first (no server-side orderBy to avoid composite index).
+    final sorted = [...docs]
+      ..sort((a, b) => _jobTimestamp(b).compareTo(_jobTimestamp(a)));
+
     const activeStatuses = {'paid_escrow', 'expert_completed'};
-    final activeDocs  = docs
+    final activeDocs  = sorted
         .where((d) => activeStatuses.contains(
             (d.data() as Map<String, dynamic>)['status'] as String? ?? ''))
         .toList();
-    final historyDocs = docs
+    final historyDocs = sorted
         .where((d) => !activeStatuses.contains(
             (d.data() as Map<String, dynamic>)['status'] as String? ?? ''))
         .toList();
@@ -1055,7 +1171,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
 
   // ── Grouped list ───────────────────────────────────────────────────────────
   Widget _buildGroupedList(List<QueryDocumentSnapshot> docs,
-      {required bool isExpert}) {
+      {required bool isExpert, bool isHistory = false}) {
     final now = DateTime.now();
     final thisMonthStart  = DateTime(now.year, now.month, 1);
     final lastMonthStart  = DateTime(now.year, now.month - 1, 1);
@@ -1103,47 +1219,55 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                       onReceipt: () => _showReceiptFor(
                           context, doc.data() as Map<String, dynamic>),
                     )
-                  : _CustomerBookingCard(
-                      key: ValueKey(doc.id),
-                      job: doc.data() as Map<String, dynamic>,
-                      jobId: doc.id,
-                      currentUserId: currentUserId,
-                      onCompleteJob: (amount) => _handleCompleteJob(
-                          context,
-                          doc.id,
-                          doc.data() as Map<String, dynamic>,
-                          amount),
-                      onCancel: (amount) => _cancelBooking(
-                          context,
-                          doc.id,
-                          doc.data() as Map<String, dynamic>,
-                          amount),
-                      onDispute: () => _openDispute(context, doc.id),
-                      onRate: () => _showRatingDialog(
-                          context,
-                          (doc.data() as Map<String, dynamic>)['expertId'] ??
-                              '',
-                          doc.id),
-                      onDetails: () => _showJobDetailsSheet(
-                          context,
-                          doc.data() as Map<String, dynamic>,
-                          doc.id),
-                      onRebook: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => ExpertProfileScreen(
-                            expertId: (doc.data()
-                                    as Map<String, dynamic>)['expertId'] ??
-                                '',
-                            expertName: (doc.data()
-                                        as Map<String, dynamic>)['expertName'] ??
-                                    'מומחה',
+                  : isHistory
+                      ? _HistoryOrderCard(
+                          key: ValueKey(doc.id),
+                          job: doc.data() as Map<String, dynamic>,
+                          jobId: doc.id,
+                          onReceipt: () => _showReceiptFor(
+                              context, doc.data() as Map<String, dynamic>),
+                        )
+                      : _CustomerBookingCard(
+                          key: ValueKey(doc.id),
+                          job: doc.data() as Map<String, dynamic>,
+                          jobId: doc.id,
+                          currentUserId: currentUserId,
+                          onCompleteJob: (amount) => _handleCompleteJob(
+                              context,
+                              doc.id,
+                              doc.data() as Map<String, dynamic>,
+                              amount),
+                          onCancel: (amount) => _cancelBooking(
+                              context,
+                              doc.id,
+                              doc.data() as Map<String, dynamic>,
+                              amount),
+                          onDispute: () => _openDispute(context, doc.id),
+                          onRate: () => _showRatingDialog(
+                              context,
+                              (doc.data() as Map<String, dynamic>)['expertId'] ??
+                                  '',
+                              doc.id),
+                          onDetails: () => _showJobDetailsSheet(
+                              context,
+                              doc.data() as Map<String, dynamic>,
+                              doc.id),
+                          onRebook: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ExpertProfileScreen(
+                                expertId: (doc.data()
+                                        as Map<String, dynamic>)['expertId'] ??
+                                    '',
+                                expertName: (doc.data()
+                                            as Map<String, dynamic>)['expertName'] ??
+                                        'מומחה',
+                              ),
+                            ),
                           ),
+                          onReceipt: () => _showReceiptFor(
+                              context, doc.data() as Map<String, dynamic>),
                         ),
-                      ),
-                      onReceipt: () => _showReceiptFor(
-                          context, doc.data() as Map<String, dynamic>),
-                    ),
             const SizedBox(height: 12),
           ],
       ],
@@ -1474,12 +1598,12 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         ? 'אין משימות עדיין'
         : isHistory
             ? 'אין היסטוריית הזמנות'
-            : 'הבית שלך בידיים טובות';
+            : 'יש לך משימה? לנו יש את האדם הנכון בשבילה.';
     final subtitle = isExpert
         ? 'הזמנות מלקוחות יופיעו כאן. ודא שהפרופיל שלך מעודכן.'
         : isHistory
             ? 'הזמנות שהושלמו יופיעו כאן.'
-            : 'עדיין אין הזמנות? המומחים שלנו מחכים לך.';
+            : 'אל תתפשר על פחות מהטוב ביותר. בוא נתחיל?';
 
     return Center(
       child: Padding(
@@ -1516,7 +1640,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                       borderRadius: BorderRadius.circular(14)),
                 ),
                 icon: const Icon(Icons.search, color: Colors.white),
-                label: const Text('חפש מומחה עכשיו',
+                label: const Text('הזמן שירות עכשיו',
                     style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -1558,6 +1682,7 @@ class _KeepAlivePageState extends State<_KeepAlivePage>
     return widget.child;
   }
 }
+
 
 // ── Bookings shimmer skeleton ──────────────────────────────────────────────
 //
@@ -1717,6 +1842,129 @@ class _StatusBadge extends StatelessWidget {
       child: Text(label,
           style: TextStyle(
               color: fg, fontSize: 11, fontWeight: FontWeight.bold)),
+    );
+  }
+}
+
+// ── History order card (read-only, clean summary) ────────────────────────
+
+class _HistoryOrderCard extends StatelessWidget {
+  final Map<String, dynamic> job;
+  final String jobId;
+  final VoidCallback? onReceipt;
+
+  const _HistoryOrderCard({
+    super.key,
+    required this.job,
+    required this.jobId,
+    this.onReceipt,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final expertId   = job['expertId']   as String? ?? '';
+    final expertName = job['expertName'] as String? ?? 'מומחה';
+    final status     = job['status']     as String? ?? '';
+    final amount     = ((job['totalAmount'] ?? job['totalPaidByCustomer'] ?? 0.0) as num).toDouble();
+    final serviceType = job['serviceType'] as String? ?? '';
+
+    DateTime? date;
+    if (job['appointmentDate'] is Timestamp) {
+      date = (job['appointmentDate'] as Timestamp).toDate();
+    } else if (job['createdAt'] is Timestamp) {
+      date = (job['createdAt'] as Timestamp).toDate();
+    }
+    final dateStr = date != null ? DateFormat('dd/MM/yy').format(date) : '';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+        child: Row(
+          children: [
+            _ProfileAvatar(uid: expertId, name: expertName, size: 46),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    expertName,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                        color: Color(0xFF1A1A2E)),
+                  ),
+                  if (serviceType.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      serviceType,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF6366F1),
+                          fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      if (dateStr.isNotEmpty) ...[
+                        const Icon(Icons.calendar_today_rounded,
+                            size: 11, color: Color(0xFF94A3B8)),
+                        const SizedBox(width: 3),
+                        Text(dateStr,
+                            style: const TextStyle(
+                                fontSize: 12, color: Color(0xFF94A3B8))),
+                        const SizedBox(width: 10),
+                      ],
+                      const Icon(Icons.attach_money_rounded,
+                          size: 13, color: Color(0xFF94A3B8)),
+                      Text(
+                        '₪${amount.toStringAsFixed(0)}',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF475569)),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _StatusBadge(status),
+                if (onReceipt != null) ...[
+                  const SizedBox(height: 8),
+                  GestureDetector(
+                    onTap: onReceipt,
+                    child: const Text(
+                      'קבלה',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF6366F1),
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2550,17 +2798,29 @@ class _ExpertJobCardState extends State<_ExpertJobCard>
   Timer? _workTimer;
   bool _startingWork = false;
 
+  static const _terminalStatuses = {
+    'cancelled', 'cancelled_with_penalty', 'refunded',
+    'split_resolved', 'completed',
+  };
+
+  bool get _isTerminal =>
+      _terminalStatuses.contains(widget.job['status'] as String? ?? '');
+
   @override
   void initState() {
     super.initState();
     _pulseCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 1200))
-      ..repeat(reverse: true);
+        vsync: this, duration: const Duration(milliseconds: 1200));
     _pulse = Tween<double>(begin: 0.4, end: 1.0)
         .animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
-    _workTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) setState(() {});
-    });
+
+    // Only animate for live active jobs — terminal cards don't need the ticker.
+    if (!_isTerminal) {
+      _pulseCtrl.repeat(reverse: true);
+      _workTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+        if (mounted) setState(() {});
+      });
+    }
   }
 
   @override
@@ -2608,8 +2868,68 @@ class _ExpertJobCardState extends State<_ExpertJobCard>
 
   @override
   Widget build(BuildContext context) {
-    final job          = widget.job;
-    final status       = job['status']       as String? ?? '';
+    final job    = widget.job;
+    final status = job['status'] as String? ?? '';
+
+    // ── Guard: render a lightweight read-only card for terminal states ──────
+    // This prevents any crash caused by null fields that active-only code paths
+    // expect, and stops the animation controller from ticking needlessly.
+    if (_isTerminal) {
+      final customerName = job['customerName'] as String? ?? 'לקוח';
+      final customerId   = job['customerId']   as String? ?? '';
+      final amount = ((job['netAmountForExpert'] ??
+                  job['totalPaidByCustomer'] ??
+                  job['totalAmount'] ?? 0.0) as num)
+              .toDouble();
+      DateTime? apptDate;
+      if (job['appointmentDate'] is Timestamp) {
+        apptDate = (job['appointmentDate'] as Timestamp).toDate();
+      }
+      final dateStr = apptDate != null
+          ? DateFormat('dd/MM/yy').format(apptDate)
+          : '';
+      // Status-specific label
+      const cancelledBg = Color(0xFFFFF5F5);
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: cancelledBg,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.15)),
+        ),
+        child: ListTile(
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          leading: _ProfileAvatar(uid: customerId, name: customerName, size: 44),
+          title: Text(customerName,
+              style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  color: Color(0xFF1A1A2E))),
+          subtitle: Text(
+            [
+              if (dateStr.isNotEmpty) dateStr,
+              if (amount > 0) '₪${amount.toStringAsFixed(0)}',
+            ].join(' · '),
+            style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _StatusBadge(status),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: widget.onDetails,
+                child: const Icon(Icons.info_outline_rounded,
+                    size: 18, color: Color(0xFF94A3B8)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     final customerId   = job['customerId']   as String? ?? '';
     final customerName = job['customerName'] as String? ?? 'לקוח';
     final customerPhone = job['customerPhone'] as String? ?? '';

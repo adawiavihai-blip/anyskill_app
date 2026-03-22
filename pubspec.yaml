@@ -1,7 +1,7 @@
 name: anyskill_app
 description: "A new Flutter project for AnySkill."
 publish_to: 'none'
-version: 2.7.5+1
+version: 3.7.5+1
 
 environment:
   sdk: ^3.7.0
@@ -40,6 +40,7 @@ dependencies:
   firebase_performance: ^0.11.1+5
   firebase_analytics: ^12.1.3
   youtube_player_iframe: ^5.2.2
+  audioplayers: ^6.1.0
 
 dependency_overrides:
   # fl_chart 1.x calls translateByDouble/scaleByDouble which were added
@@ -59,29 +60,33 @@ flutter_launcher_icons:
   android: "ic_launcher"
   ios: true
   remove_alpha_ios: true
-  image_path: "assets/images/NEW LOGO1.png"
+  image_path: "assets/images/NEW_LOGO1.png.png"
   min_sdk_android: 21
-  # Adaptive icon for Android 8.0+ — logo on white background
+  # Adaptive icon for Android 8.0+ — logo on white background, avoids "icon in a box"
   adaptive_icon_background: "#FFFFFF"
-  adaptive_icon_foreground: "assets/images/NEW LOGO1.png"
+  adaptive_icon_foreground: "assets/images/NEW_LOGO1.png.png"
   web:
     generate: true
-    image_path: "assets/images/NEW LOGO1.png"
+    image_path: "assets/images/NEW_LOGO1.png.png"
     background_color: "#FFFFFF"
     theme_color: "#6366F1"
+  windows:
+    generate: true
+    image_path: "assets/images/NEW_LOGO1.png.png"
+    icon_size: 48
 
 # ── Native splash screen (run: dart run flutter_native_splash:create) ──────────
 flutter_native_splash:
   # White background — matches the Flutter splash screen
   color: "#FFFFFF"
   color_dark: "#FFFFFF"
-  image: assets/images/NEW LOGO1.png
-  image_dark: assets/images/NEW LOGO1.png
+  image: assets/images/NEW_LOGO1.png.png
+  image_dark: assets/images/NEW_LOGO1.png.png
   # Keep splash visible until Flutter marks it ready
   android_12:
-    image: assets/images/NEW LOGO1.png
+    image: assets/images/NEW_LOGO1.png.png
     icon_background_color: "#FFFFFF"
-    image_dark: assets/images/NEW LOGO1.png
+    image_dark: assets/images/NEW_LOGO1.png.png
     icon_background_color_dark: "#FFFFFF"
   fullscreen: true
   web: false
@@ -91,9 +96,9 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/images/NEW LOGO GIF.gif
-    - assets/images/NEW LOGO1.png
+    - assets/images/NEW_LOGO1.png.png
     - assets/fonts/
+    - assets/audio/
 
   fonts:
     - family: NotoSansHebrew

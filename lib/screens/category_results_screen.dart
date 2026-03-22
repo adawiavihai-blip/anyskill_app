@@ -1,11 +1,10 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:shimmer/shimmer.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../widgets/favorite_button.dart';
+import '../widgets/pro_badge.dart';
 import 'expert_profile_screen.dart';
 import '../utils/expert_filter.dart';
 import '../services/location_service.dart';
@@ -14,6 +13,7 @@ import '../services/category_service.dart';
 import '../widgets/level_badge.dart';
 import '../constants/quick_tags.dart';
 import '../l10n/app_localizations.dart';
+import 'search_screen/widgets/stories_row.dart';
 
 // Brand colours (shared with the rest of the app)
 const _kPurple     = Color(0xFF6366F1);
@@ -351,17 +351,15 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   }
 
   Widget _buildActionImage(Map<String, dynamic> data, bool isOnline) {
-    final l10n     = AppLocalizations.of(context);
-    final hasStory = _isStoryActive(data);
-    final gallery  = (data['gallery'] as List?)?.cast<String>() ?? [];
-    final actionImg =
-        gallery.isNotEmpty ? gallery.first : (data['profileImage'] as String? ?? '');
-    final hasImg = actionImg.isNotEmpty;
+    final l10n        = AppLocalizations.of(context);
+    final hasStory    = _isStoryActive(data);
+    final profileImg  = data['profileImage'] as String? ?? '';
+    final hasImg      = profileImg.isNotEmpty;
 
-    // Trust badges to overlay on the image
-    final orderCount  = (data['orderCount'] as num?)?.toInt() ?? 0;
-    final respTime    = (data['responseTimeMinutes'] as num?)?.toInt() ?? 0;
-    final rating      = (data['rating'] as num?)?.toDouble() ?? 0;
+    // Trust badges
+    final orderCount   = (data['orderCount'] as num?)?.toInt() ?? 0;
+    final respTime     = (data['responseTimeMinutes'] as num?)?.toInt() ?? 0;
+    final rating       = (data['rating'] as num?)?.toDouble() ?? 0;
     final reviewsCount = (data['reviewsCount'] as num?)?.toInt() ?? 0;
 
     final badges = <String>[];
@@ -377,188 +375,135 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       child: SizedBox(
         width: 130,
         child: Stack(
-          fit: StackFit.expand,
           children: [
-            // ── Image or placeholder ──────────────────────────────────────
-            hasImg
-                ? CachedNetworkImage(
-                    imageUrl:       actionImg,
-                    fit:            BoxFit.cover,
-                    // Expert card is 130 px wide × ~200 px tall; 2× DPR cap.
-                    memCacheWidth:  260,
-                    memCacheHeight: 400,
-                    fadeInDuration: const Duration(milliseconds: 220),
-                    placeholder:    (_, __) => _ImageShimmer(),
-                    errorWidget:    (_, __, ___) => _imagePlaceholder(),
-                  )
-                : _imagePlaceholder(),
-
-            // ── Dark gradient for text readability ────────────────────────
-            if (badges.isNotEmpty || isOnline)
-              Positioned.fill(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Colors.black.withValues(alpha: 0.55),
-                      ],
-                      stops: const [0.45, 1.0],
-                    ),
-                  ),
-                ),
-              ),
-
-            // ── Online dot ────────────────────────────────────────────────
-            if (isOnline)
-              Positioned(
-                top: 8,
-                right: 8,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 7, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.45),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.circle, color: Color(0xFF22C55E), size: 7),
-                      const SizedBox(width: 3),
-                      Text(l10n.onlineStatus,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600)),
-                    ],
-                  ),
-                ),
-              ),
-
-            // ── Trust badges (bottom of image) ────────────────────────────
-            if (badges.isNotEmpty)
-              Positioned(
-                bottom: 8,
-                left: 6,
-                right: 6,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: badges.map((b) => Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 7, vertical: 3),
-                          color: Colors.black.withValues(alpha: 0.40),
-                          child: Text(
-                            b,
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ),
-                    ),
-                  )).toList(),
-                ),
-              ),
-
-            // ── Active Story: gradient border ring + pill badge ───────────
-            if (hasStory) ...[
-              // Gradient border overlay (3-layer: gradient fill → white gap → image)
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: DecoratedBox(
+            // ── Background + centered CircleAvatar ───────────────────────
+            Positioned.fill(
+              child: Container(color: _kPurpleSoft),
+            ),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () async {
+                final expertId = data['uid'] as String? ?? '';
+                if (data['hasActiveStory'] != true || expertId.isEmpty) return;
+                final doc = await FirebaseFirestore.instance
+                    .collection('stories')
+                    .doc(expertId)
+                    .get();
+                if (!mounted || !doc.exists) return;
+                openStoryViewer(context, expertId, doc.data()!);
+              },
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Container(
                     decoration: BoxDecoration(
-                      borderRadius: const BorderRadius.only(
-                        topRight: Radius.circular(16),
-                        bottomRight: Radius.circular(16),
+                      shape: BoxShape.circle,
+                      border: hasStory
+                          ? null
+                          : Border.all(color: _kPurple.withValues(alpha: 0.18), width: 2),
+                      gradient: hasStory
+                          ? const LinearGradient(
+                              colors: [Color(0xFF6366F1), Color(0xFFEC4899), Color(0xFFF59E0B)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            )
+                          : null,
+                    ),
+                    padding: hasStory ? const EdgeInsets.all(3) : EdgeInsets.zero,
+                    child: CircleAvatar(
+                      radius: 46,
+                      backgroundColor: const Color(0xFFEEEBFF),
+                      backgroundImage: hasImg ? NetworkImage(profileImg) : null,
+                      child: hasImg
+                          ? null
+                          : Icon(Icons.person, size: 40,
+                              color: _kPurple.withValues(alpha: 0.5)),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // ── Badge row (top, clean — no overlap with avatar) ───────────
+            Positioned(
+              top: 6,
+              left: 4,
+              right: 4,
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 4,
+                runSpacing: 3,
+                children: [
+                  if (isOnline)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.50),
+                        borderRadius: BorderRadius.circular(20),
                       ),
-                      gradient: const LinearGradient(
-                        colors: [
-                          Color(0xFF6366F1),
-                          Color(0xFFEC4899),
-                          Color(0xFFF59E0B),
-                          Color(0xFF6366F1),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.circle, color: Color(0xFF22C55E), size: 7),
+                          const SizedBox(width: 3),
+                          Text(l10n.onlineStatus,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w600)),
                         ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
                       ),
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(3),
-                      child: DecoratedBox(
-                        decoration: const BoxDecoration(
-                          color: Colors.transparent,
+                  if (reviewsCount > 0)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.50),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.star_rounded,
+                              color: Color(0xFFFBBF24), size: 10),
+                          const SizedBox(width: 2),
+                          Text(rating.toStringAsFixed(1),
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                  if (hasStory)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF6366F1), Color(0xFFEC4899)],
                         ),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.play_circle_fill_rounded,
+                              color: Colors.white, size: 9),
+                          SizedBox(width: 2),
+                          Text('STORY',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.3)),
+                        ],
                       ),
                     ),
-                  ),
-                ),
+                ],
               ),
-              // "STORY" pill badge
-              Positioned(
-                bottom: 8,
-                right: 6,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 6, vertical: 3),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF6366F1), Color(0xFFEC4899)],
-                    ),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.play_circle_fill_rounded,
-                          color: Colors.white, size: 10),
-                      SizedBox(width: 3),
-                      Text('STORY',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 9,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.3)),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+            ),
           ],
         ),
-      ),
-    );
-  }
-
-  /// Branded placeholder shown when the provider hasn't uploaded a portfolio image.
-  Widget _imagePlaceholder() {
-    final l10n = AppLocalizations.of(context);
-    return Container(
-      color: _kPurpleSoft,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.add_photo_alternate_outlined,
-              size: 32, color: _kPurple.withValues(alpha: 0.5)),
-          const SizedBox(height: 6),
-          Text(
-            l10n.catResultsAddPhoto,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-                fontSize: 10,
-                color: _kPurple.withValues(alpha: 0.6),
-                height: 1.4),
-          ),
-        ],
       ),
     );
   }
@@ -611,6 +556,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     String expertId,
   ) {
     final l10n        = AppLocalizations.of(context);
+    final isPro       = data['isAnySkillPro'] == true;
     final name        = data['name'] as String? ?? l10n.catResultsExpertDefault;
     final price       = data['pricePerHour'] ?? 100;
     final rating      = (data['rating'] as num?)?.toDouble() ?? 5.0;
@@ -705,6 +651,13 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
               ),
             ],
           ),
+          if (isPro) ...[
+            const SizedBox(height: 5),
+            const Align(
+              alignment: Alignment.centerRight,
+              child: ProBadge(),
+            ),
+          ],
           const SizedBox(height: 4),
 
           // ── Bio (1 line) ─────────────────────────────────────────────────
@@ -838,7 +791,9 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           ),
         ),
       ),
-      child: Container(
+      child: Stack(
+        children: [
+          Container(
         margin: const EdgeInsets.only(bottom: 16),
         decoration: BoxDecoration(
           color: Colors.white,
@@ -878,6 +833,14 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
             ],
           ),
         ),
+          ),
+          // ── Favorite heart ────────────────────────────────────────────────
+          Positioned(
+            bottom: 24,
+            right: 12,
+            child: FavoriteButton(providerId: expertId),
+          ),
+        ],
       ),
     );
   }
@@ -888,14 +851,13 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FA),
+      backgroundColor: Colors.white,
       appBar: AppBar(
         title: Text(
             widget.volunteerOnly
                 ? 'AnySkill למען הקהילה ❤️'
-                : l10n.catResultsPageTitle(widget.categoryName),
+                : widget.categoryName,
             style: const TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true,
         backgroundColor: Colors.white,
@@ -1226,18 +1188,6 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   }
 }
 
-// ── Shimmer placeholder for expert card images ────────────────────────────────
-class _ImageShimmer extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Shimmer.fromColors(
-      baseColor:      const Color(0xFFE2E8F0),
-      highlightColor: const Color(0xFFF8FAFC),
-      child: Container(color: const Color(0xFFE2E8F0)),
-    );
-  }
-}
-
 // ── Community action button ───────────────────────────────────────────────────
 class _CommunityActionButton extends StatelessWidget {
   const _CommunityActionButton({
@@ -1339,9 +1289,11 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
   void initState() {
     super.initState();
     // Load category list once for the picker
+    // .first throws "Bad state: No element" if the stream closes empty.
+    // .catchError silently ignores that case — the picker just stays empty.
     CategoryService.streamMainCategories().first.then((cats) {
       if (mounted) setState(() => _mainCategories = cats);
-    });
+    }).catchError((_) {});
   }
 
   @override

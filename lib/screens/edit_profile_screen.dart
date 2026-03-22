@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import '../l10n/app_localizations.dart';
+import 'price_settings_screen.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -35,8 +37,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Set<String> _selectedQuickTags = {};
 
   String? _profileImageUrl;
+  String  _phoneDisplay = '';   // read-only — shown from Auth / Firestore
   List<dynamic> _galleryImages = [];
   bool _isLoading = false;
+
+  String? _verificationVideoUrl;
+  bool   _videoUploadInProgress = false;
+  double _videoUploadProgress   = 0.0;
 
   bool _isCustomer     = false;
   bool _isProvider     = false;
@@ -56,8 +63,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _galleryImages = List.from(widget.userData['gallery'] ?? []);
     _selectedQuickTags = Set<String>.from(
         (widget.userData['quickTags'] as List? ?? []).cast<String>());
-    _profileImageUrl = widget.userData['profileImage'];
-    
+    _profileImageUrl       = widget.userData['profileImage'];
+    _verificationVideoUrl  = widget.userData['verificationVideoUrl'] as String?;
+
+    // Phone: prefer Firestore value, fall back to Firebase Auth phoneNumber
+    _phoneDisplay = (widget.userData['phone']        as String? ?? '').trim();
+    if (_phoneDisplay.isEmpty) {
+      _phoneDisplay = (widget.userData['phoneNumber'] as String? ?? '').trim();
+    }
+    if (_phoneDisplay.isEmpty) {
+      _phoneDisplay = FirebaseAuth.instance.currentUser?.phoneNumber ?? '';
+    }
+
     _isCustomer     = widget.userData['isCustomer']     ?? true;
     _isProvider     = widget.userData['isProvider']     ?? false;
     _isVolunteer    = widget.userData['isVolunteer']    ?? false;
@@ -158,6 +175,62 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  Future<void> _pickAndUploadVerificationVideo() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    final ImagePicker picker = ImagePicker();
+    final XFile? video = await picker.pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(seconds: 60),
+    );
+    if (video == null) return;
+
+    setState(() {
+      _videoUploadInProgress = true;
+      _videoUploadProgress   = 0.0;
+    });
+
+    try {
+      final ref = FirebaseStorage.instance
+          .ref('users/$uid/verification_video.mp4');
+      final bytes = await video.readAsBytes();
+      final task  = ref.putData(bytes, SettableMetadata(contentType: 'video/mp4'));
+
+      task.snapshotEvents.listen((snap) {
+        if (!mounted) return;
+        final progress = snap.bytesTransferred / (snap.totalBytes == 0 ? 1 : snap.totalBytes);
+        setState(() => _videoUploadProgress = progress);
+      });
+
+      await task;
+      final downloadUrl = await ref.getDownloadURL();
+
+      // Save URL to Firestore immediately; reset verification flag so admin re-approves
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'verificationVideoUrl':  downloadUrl,
+        'videoVerifiedByAdmin':  false,
+      });
+
+      if (mounted) {
+        setState(() => _verificationVideoUrl = downloadUrl);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('✅ הסרטון הועלה בהצלחה! ממתין לאישור מנהל.'),
+          backgroundColor: Colors.green,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('שגיאה בהעלאת הסרטון: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _videoUploadInProgress = false);
+    }
+  }
+
   Future<void> _saveProfile() async {
     final l10n = AppLocalizations.of(context);
     final name = _nameController.text.trim();
@@ -226,6 +299,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'name':       _nameController.text.trim(),
         'isCustomer': _isCustomer,
         'isProvider': _isProvider,
+        // Always persist verified phone so it survives future profile edits
+        if (_phoneDisplay.isNotEmpty) 'phone': _phoneDisplay,
         if (_profileImageUrl != null) 'profileImage': _profileImageUrl,
         if (_isProvider && serviceTypeName != null)
           'serviceType': serviceTypeName
@@ -266,6 +341,60 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Widget _buildLockedPhoneField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            const Icon(Icons.lock_rounded, size: 13, color: Color(0xFF6366F1)),
+            const SizedBox(width: 4),
+            const Text('מספר טלפון',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8F7FF),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _phoneDisplay.isEmpty ? '—' : _phoneDisplay,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: _phoneDisplay.isEmpty ? Colors.grey[400] : Colors.black87,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.phone_rounded, size: 17,
+                  color: _phoneDisplay.isEmpty
+                      ? Colors.grey[400]
+                      : const Color(0xFF6366F1)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        const Align(
+          alignment: AlignmentDirectional.centerEnd,
+          child: Text(
+            'מספר הטלפון מאומת ולא ניתן לשינוי',
+            style: TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildPendingExpertBanner() {
@@ -422,52 +551,92 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // --- צילום תמונת פרופיל ---
+                // --- תמונת פרופיל ---
                 Center(
-                  child: GestureDetector(
-                    onTap: _pickProfileImage,
-                    child: Stack(
-                      children: [
-                        CircleAvatar(
-                          radius: 55,
-                          backgroundColor: Colors.grey[200],
-                          backgroundImage: (_profileImageUrl != null && _profileImageUrl!.isNotEmpty)
-                              ? (_profileImageUrl!.startsWith('http') 
-                                  ? NetworkImage(_profileImageUrl!) 
-                                  : MemoryImage(base64Decode(_profileImageUrl!.split(',').last)) as ImageProvider)
-                              : null,
-                          child: (_profileImageUrl == null || _profileImageUrl!.isEmpty)
-                              ? const Icon(Icons.person, size: 50, color: Colors.grey) : null,
+                  child: Column(
+                    children: [
+                      GestureDetector(
+                        onTap: _pickProfileImage,
+                        child: Stack(
+                          children: [
+                            CircleAvatar(
+                              radius: 55,
+                              backgroundColor: Colors.grey[200],
+                              backgroundImage: (_profileImageUrl != null && _profileImageUrl!.isNotEmpty)
+                                  ? (_profileImageUrl!.startsWith('http')
+                                      ? NetworkImage(_profileImageUrl!)
+                                      : MemoryImage(base64Decode(_profileImageUrl!.split(',').last)) as ImageProvider)
+                                  : null,
+                              child: (_profileImageUrl == null || _profileImageUrl!.isEmpty)
+                                  ? const Icon(Icons.person, size: 50, color: Colors.grey) : null,
+                            ),
+                            Positioned(
+                              bottom: 0, right: 0,
+                              child: CircleAvatar(
+                                radius: 18,
+                                backgroundColor: Colors.blue,
+                                child: const Icon(Icons.camera_alt, size: 18, color: Colors.white),
+                              ),
+                            ),
+                          ],
                         ),
-                        Positioned(bottom: 0, right: 0, child: CircleAvatar(radius: 18, backgroundColor: Colors.blue, child: const Icon(Icons.camera_alt, size: 18, color: Colors.white))),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'העלה תמונת פנים ברורה',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'פרופילים עם תמונה ברורה נהנים מפי 3 יותר פניות',
+                        style: TextStyle(fontSize: 11, color: Color(0xFF6366F1)),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 30),
+                const SizedBox(height: 24),
 
                 Text(l10n.profileFieldName, style: const TextStyle(fontWeight: FontWeight.bold)),
                 TextField(controller: _nameController, textAlign: TextAlign.start, decoration: InputDecoration(hintText: l10n.profileFieldNameHint)),
+
+                const SizedBox(height: 20),
+
+                // ── Phone — verified, read-only ──────────────────────────
+                _buildLockedPhoneField(),
 
                 const SizedBox(height: 25),
 
                 Text(l10n.profileFieldRole, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                 if (_isProvider)
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      FilterChip(
-                        label: Text(l10n.roleProvider),
-                        selected: _isProvider,
-                        onSelected: (val) => setState(() => _isProvider = val),
-                        selectedColor: Colors.green[100],
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          // Provider chip — locked selected, non-interactive
+                          FilterChip(
+                            label: Text(l10n.roleProvider),
+                            selected: true,
+                            onSelected: null,
+                            selectedColor: Colors.green[100],
+                            disabledColor: Colors.green[50],
+                          ),
+                          const SizedBox(width: 10),
+                          // Customer chip — locked unselected, non-interactive
+                          FilterChip(
+                            label: Text(l10n.roleCustomer),
+                            selected: false,
+                            onSelected: null,
+                            disabledColor: Colors.grey[100],
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 10),
-                      FilterChip(
-                        label: Text(l10n.roleCustomer),
-                        selected: _isCustomer,
-                        onSelected: (val) => setState(() => _isCustomer = val),
-                        selectedColor: Colors.blue[100],
+                      const SizedBox(height: 6),
+                      const Text(
+                        'שינוי סוג חשבון מתבצע מול שירות הלקוחות בלבד',
+                        textAlign: TextAlign.end,
+                        style: TextStyle(fontSize: 11.5, color: Colors.grey),
                       ),
                     ],
                   )
@@ -595,6 +764,71 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                   ),
                   const SizedBox(height: 20),
+
+                  // ── Price Settings shortcut ────────────────────────────
+                  GestureDetector(
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PriceSettingsScreen(
+                          userData: {
+                            ...widget.userData,
+                            // Pass the live price the user may have typed
+                            'pricePerHour': double.tryParse(
+                                    _priceController.text.trim()) ??
+                                widget.userData['pricePerHour'] ??
+                                100.0,
+                          },
+                        ),
+                      ),
+                    ),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 14),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                        ),
+                        borderRadius: BorderRadius.circular(14),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF6366F1)
+                                .withValues(alpha: 0.3),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.arrow_back_ios_new_rounded,
+                                  color: Colors.white70, size: 14),
+                              SizedBox(width: 4),
+                              Text('הגדרות מתקדמות',
+                                  style: TextStyle(
+                                      color: Colors.white70, fontSize: 12)),
+                            ],
+                          ),
+                          Row(
+                            children: [
+                              Text('הגדרות תמחור',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15)),
+                              SizedBox(width: 8),
+                              Icon(Icons.price_change_outlined,
+                                  color: Colors.white, size: 20),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
 
                   Text(l10n.profileFieldPrice, style: const TextStyle(fontWeight: FontWeight.bold)),
                   TextField(controller: _priceController, keyboardType: TextInputType.number, textAlign: TextAlign.start, decoration: InputDecoration(hintText: l10n.profileFieldPriceHint)),
@@ -886,6 +1120,98 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       );
                     },
                   ),
+                  const SizedBox(height: 25),
+
+                  // ── Video Verification Upload ───────────────────────────
+                  const Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: Text('סרטון היכרות',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                  const SizedBox(height: 4),
+                  const Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: Text(
+                      'הוסף סרטון קצר (עד 60 שניות) שמציג אותך ואת כישוריך. הסרטון יופיע בפרופיל שלך לאחר אישור מנהל.',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  GestureDetector(
+                    onTap: _videoUploadInProgress ? null : _pickAndUploadVerificationVideo,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
+                      decoration: BoxDecoration(
+                        color: _verificationVideoUrl != null
+                            ? const Color(0xFFECFDF5)
+                            : const Color(0xFFF0F0FF),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: _verificationVideoUrl != null
+                              ? const Color(0xFF10B981)
+                              : const Color(0xFF6366F1),
+                          width: 1.5,
+                        ),
+                      ),
+                      child: _videoUploadInProgress
+                          ? Column(
+                              children: [
+                                LinearProgressIndicator(
+                                  value: _videoUploadProgress,
+                                  backgroundColor: const Color(0xFFE0E0FF),
+                                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF6366F1)),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  'מעלה... ${(_videoUploadProgress * 100).toInt()}%',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(fontSize: 13, color: Color(0xFF6366F1)),
+                                ),
+                              ],
+                            )
+                          : Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  _verificationVideoUrl != null
+                                      ? Icons.videocam_rounded
+                                      : Icons.video_call_rounded,
+                                  color: _verificationVideoUrl != null
+                                      ? const Color(0xFF10B981)
+                                      : const Color(0xFF6366F1),
+                                  size: 24,
+                                ),
+                                const SizedBox(width: 10),
+                                Text(
+                                  _verificationVideoUrl != null
+                                      ? 'סרטון הועלה — לחץ להחלפה'
+                                      : 'העלה סרטון היכרות (עד 60 שניות)',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                    color: _verificationVideoUrl != null
+                                        ? const Color(0xFF10B981)
+                                        : const Color(0xFF6366F1),
+                                  ),
+                                ),
+                              ],
+                            ),
+                    ),
+                  ),
+                  if (_verificationVideoUrl != null) ...[
+                    const SizedBox(height: 6),
+                    const Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: Text(
+                        'ממתין לאישור מנהל — יופיע בפרופיל לאחר האישור',
+                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                      ),
+                    ),
+                  ],
                 ], // end provider-only fields
                 
                 const SizedBox(height: 40),

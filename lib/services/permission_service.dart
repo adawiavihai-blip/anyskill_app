@@ -17,8 +17,9 @@ class PermissionService {
   PermissionService._();
 
   // ── SharedPreferences keys (versioned — bump if schema changes) ────────────
-  static const _kNotif    = 'perm_notif_v1';
-  static const _kLocation = 'perm_location_v1';
+  static const _kNotif              = 'perm_notif_v1';
+  static const _kLocation           = 'perm_location_v1';
+  static const _kHasSeenPermissions = 'has_seen_permissions_v1';
 
   // ── Status constants ───────────────────────────────────────────────────────
   static const granted = 'granted';
@@ -48,6 +49,19 @@ class PermissionService {
     final p = await SharedPreferences.getInstance();
     await p.setString(_kLocation, status);
     debugPrint('PermissionService: location → $status');
+  }
+
+  // ── One-time permission onboarding screen flag ────────────────────────────
+
+  static Future<bool> hasSeenPermissions() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool(_kHasSeenPermissions) ?? false;
+  }
+
+  static Future<void> markPermissionsSeen() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_kHasSeenPermissions, true);
+    debugPrint('PermissionService: hasSeenPermissions → true');
   }
 
   // ── Firestore recovery (called once on login) ──────────────────────────────

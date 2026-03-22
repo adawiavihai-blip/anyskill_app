@@ -13,18 +13,19 @@ import 'utils/web_utils.dart';
 import 'services/permission_service.dart';
 import 'services/locale_provider.dart';
 import 'services/cache_service.dart';
+import 'services/audio_service.dart';
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
-import 'screens/login_screen.dart';
+import 'screens/phone_login_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/pending_verification_screen.dart';
+import 'screens/permission_request_screen.dart';
 import 'l10n/app_localizations.dart';
-import 'widgets/anyskill_logo.dart';
 
 // The running app version — populated from pubspec.yaml via PackageInfo in main().
 // Admins auto-push this value to admin/settings.latestVersion on login,
 // triggering the update banner for all other users.
-String currentAppVersion = '2.1.6'; // fallback; overwritten before runApp()
+String currentAppVersion = '3.7.5'; // fallback; overwritten before runApp()
 
 // ── Global navigator key ──────────────────────────────────────────────────────
 // Used by notification handlers to navigate without a BuildContext.
@@ -93,6 +94,9 @@ void main() async {
 
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
+  // Pre-load brand audio assets — must run after WidgetsFlutterBinding.ensureInitialized()
+  unawaited(AudioService.instance.init());
+
   // ── CacheService housekeeping — purge expired TTL entries every 5 minutes ──
   Timer.periodic(const Duration(minutes: 5), (_) => CacheService.purgeExpired());
 
@@ -127,7 +131,15 @@ class AnySkillApp extends StatelessWidget {
       listenable: LocaleProvider.instance,
       builder: (context, _) {
         final locale = LocaleProvider.instance.locale;
-        return MaterialApp(
+        // Listener wraps the entire app to capture the very first tap.
+        // On iOS Safari, audio is blocked until the user has interacted with
+        // the page. unlockAudioOnGesture() plays a silent clip inside this
+        // gesture handler, which permanently unlocks the Web Audio Context
+        // for the session — all subsequent plays work without any gesture.
+        return Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) => AudioService.instance.unlockAudioOnGesture(),
+          child: MaterialApp(
           navigatorKey: rootNavigatorKey,
           debugShowCheckedModeBanner: false,
           title: 'AnySkill',
@@ -146,7 +158,8 @@ class AnySkillApp extends StatelessWidget {
             ),
           ),
           home: const AuthWrapper(),
-        );
+        ),      // closes MaterialApp
+        );      // closes Listener
       },
     );
   }
@@ -357,13 +370,34 @@ class _AuthWrapperState extends State<AuthWrapper> {
     );
   }
 
-  // ── Web service-worker auto-refresh ───────────────────────────────────────
-  // FIX 3: Removed the duplicate controllerchange → reload listener.
-  // app_init.js already handles this with a proper _isReloading guard.
-  // Having two callers of window.location.reload() on the same event
-  // doubled every SW-triggered reload and could race with the version listener.
+  // ── Web service-worker update bridge ─────────────────────────────────────
+  //
+  // Flow:
+  //   1. app_init.js detects a new SW entering 'installed' state.
+  //   2. It posts 'SKIP_WAITING' to activate the SW immediately.
+  //   3. It writes sessionStorage['sw_update_pending'] = '1'.
+  //   4. This method reads and clears that flag on app startup.
+  //   5. If the flag is present, the glassmorphism update banner is shown.
+  //      The user then taps "Update now" which calls pageReload(), loading
+  //      the fresh assets the newly-active SW now serves.
+  //
+  // This path is independent of the Firestore version check in
+  // _startVersionListener() — either can trigger the banner, _updateNotified
+  // ensures only one banner per session.
   void _handleWebUpdates() {
-    // intentionally left empty — SW reload is handled by app_init.js
+    if (!kIsWeb) return;
+    // sessionGet returns null on native (stub) — safe to call unconditionally.
+    if (sessionGet('sw_update_pending') != '1') return;
+
+    // Consume the flag immediately so a hard-refresh after updating doesn't
+    // re-show the banner.
+    sessionSet('sw_update_pending', '');
+
+    // Defer to the first frame so the widget tree is fully mounted before
+    // setState is called inside _showUpdateBanner.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_bannerVisible) _showUpdateBanner();
+    });
   }
 
   // ── Push Notifications ─────────────────────────────────────────────────────
@@ -512,13 +546,13 @@ class _AuthWrapperState extends State<AuthWrapper> {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Scaffold(
                 backgroundColor: Colors.white,
-                body: Center(child: AnySkillLoadingIndicator(size: 160)),
+                body: Center(child: _SplashLogo()),
               );
             }
             if (snapshot.hasData && snapshot.data != null) {
               return const _OnboardingGate();
             }
-            return const LoginScreen();
+            return const PhoneLoginScreen();
           },
         ),
         // Glassmorphism update banner — floats above all screens, iOS-safe.
@@ -541,31 +575,43 @@ class _OnboardingGate extends StatefulWidget {
 }
 
 class _OnboardingGateState extends State<_OnboardingGate> {
-  late final Future<DocumentSnapshot> _future;
+  late final Future<({Map<String, dynamic> data, bool hasSeenPerms})> _future;
 
   @override
   void initState() {
     super.initState();
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    _future = FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .get()
-        .timeout(
-          const Duration(seconds: 8),
-          onTimeout: () => throw Exception('timeout'),
-        );
+    _future = _load(uid);
+  }
+
+  static Future<({Map<String, dynamic> data, bool hasSeenPerms})> _load(
+      String uid) async {
+    final results = await Future.wait([
+      FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get()
+          .timeout(
+            const Duration(seconds: 8),
+            onTimeout: () => throw Exception('timeout'),
+          ),
+      PermissionService.hasSeenPermissions(),
+    ]);
+    final data =
+        (results[0] as DocumentSnapshot).data() as Map<String, dynamic>? ?? {};
+    final hasSeenPerms = results[1] as bool;
+    return (data: data, hasSeenPerms: hasSeenPerms);
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<DocumentSnapshot>(
+    return FutureBuilder<({Map<String, dynamic> data, bool hasSeenPerms})>(
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             backgroundColor: Colors.white,
-            body: Center(child: AnySkillLoadingIndicator(size: 120)),
+            body: Center(child: _SplashLogo()),
           );
         }
         // On error (Firestore crash, timeout, no network) default to HomeScreen.
@@ -573,18 +619,67 @@ class _OnboardingGateState extends State<_OnboardingGate> {
           debugPrint('_OnboardingGate error: ${snapshot.error}');
           return const HomeScreen();
         }
-        final data = snapshot.data?.data() as Map<String, dynamic>? ?? {};
+        final (:data, :hasSeenPerms) = snapshot.data!;
 
-        // Providers who haven't been verified yet land on the waiting screen
-        final isProvider  = data['isProvider']  == true;
-        final isVerified  = data['isVerified']   == true;
-        if (isProvider && !isVerified) {
+        // Anyone pending admin approval lands on the waiting screen —
+        // covers both new signups (isProvider=false, isPendingExpert=true)
+        // and provider accounts not yet verified (isProvider=true, isVerified=false).
+        final isProvider      = data['isProvider']      == true;
+        final isVerified      = data['isVerified']      == true;
+        final isPendingExpert = data['isPendingExpert'] == true;
+        if ((isProvider && !isVerified) || isPendingExpert) {
           return const PendingVerificationScreen();
         }
 
+        // New users who haven't completed onboarding
         final complete = data['onboardingComplete'] ?? true; // existing users skip
-        return complete ? const HomeScreen() : const OnboardingScreen();
+        if (!complete) return const OnboardingScreen();
+
+        // First launch after sign-up — ask for permissions once
+        if (!hasSeenPerms) return const PermissionRequestScreen();
+
+        return const HomeScreen();
       },
     );
   }
+}
+
+// ── Splash logo — fade-in logo shown during auth/onboarding loading ───────────
+class _SplashLogo extends StatefulWidget {
+  const _SplashLogo();
+
+  @override
+  State<_SplashLogo> createState() => _SplashLogoState();
+}
+
+class _SplashLogoState extends State<_SplashLogo>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    )..forward();
+    _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeIn);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FadeTransition(
+        opacity: _fade,
+        child: Image.asset(
+          'assets/images/NEW_LOGO1.png.png',
+          height: 120,
+          fit: BoxFit.contain,
+        ),
+      );
 }

@@ -15,10 +15,16 @@ import 'opportunities_screen.dart';
 import 'my_requests_screen.dart';
 import '../services/location_service.dart';
 import '../services/ai_analysis_service.dart';
+import '../services/matchmaker_service.dart';
+import '../services/opportunity_hunter_service.dart';
+import '../services/audio_service.dart';
 import '../services/cache_service.dart';
+import '../services/auth_service.dart';
+import 'chat_screen.dart';
 import '../onboarding/app_tour.dart';
 import '../main.dart' show PendingNotification;
 import 'home_tab.dart';
+import '../constants.dart' show resolveCanonicalCategory;
 import '../l10n/app_localizations.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -74,6 +80,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _setOnlineStatus(true);
     final uid = currentUser?.uid;
     if (uid != null) LocationService.init(uid);
+    if (uid != null) OpportunityHunterService.markActive(uid);
     // Load local tour-complete flag so the tour is suppressed even before
     // the Firestore user doc arrives (prevents a flash on slow connections).
     SharedPreferences.getInstance().then((p) {
@@ -302,6 +309,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             child: IndexedStack(index: safeIndex, children: tabs),
           ),
           bottomNavigationBar: _buildEliteBottomNav(isAdmin, isProvider, serviceType, safeIndex, data),
+          // ── Wolt-style floating "Urgent Search" button ────────────────
+          floatingActionButton: safeIndex == 0
+              ? FloatingActionButton.extended(
+                  onPressed: () => _showQuickRequestSheet(context, data),
+                  label: const Text(
+                    'חיפוש דחוף',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                  // Magnifying glass with a bolt inside the lens — stacked Material icons.
+                  icon: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: const [
+                        Icon(Icons.search_rounded, color: Colors.white, size: 19),
+                        Positioned(
+                          top: 1,
+                          left: 1,
+                          child: Icon(Icons.bolt, color: Colors.white, size: 8),
+                        ),
+                      ],
+                    ),
+                  ),
+                  backgroundColor: const Color(0xFF6366F1),
+                  foregroundColor: Colors.white,
+                  elevation: 4,
+                  extendedPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(50),
+                  ),
+                )
+              : null,
+          floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
           ),         // close Scaffold
         );           // close PopScope
       },
@@ -416,168 +461,103 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
         final double bottomPad = MediaQuery.of(context).padding.bottom;
 
+        // ── Flat inline nav bar — FAB is in the Row at the same height ──
         return ClipRect(
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: SizedBox(
-              height: 66 + 20 + bottomPad, // 66 nav bar + 20 for button lift + safe area
-              child: Stack(
+            child: Container(
+              height: 66 + bottomPad,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.88),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 20,
+                    offset: const Offset(0, -4),
+                  ),
+                ],
+              ),
+              padding: EdgeInsets.only(
+                bottom: bottomPad,
+                left: 4,
+                right: 4,
+              ),
+              child: Row(
                 children: [
-                  // ── Nav bar background ──────────────────────────────────
-                  Positioned(
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    child: Container(
-                      height: 66 + bottomPad,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.88),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.06),
-                            blurRadius: 20,
-                            offset: const Offset(0, -4),
-                          ),
-                        ],
-                      ),
-                      padding: EdgeInsets.only(
-                        bottom: bottomPad,
-                        left: 4,
-                        right: 4,
-                      ),
-                      child: Row(
-                        children: [
-                          // Left: Home, Bookings
-                          _navItem(
-                            icon: Icons.home_outlined,
-                            activeIcon: Icons.home,
-                            label: l10n.tabHome,
-                            index: 0,
-                            currentIndex: safeIndex,
-                            onTap: () => onNavTap(0),
-                          ),
-                          _navItem(
-                            icon: Icons.receipt_long_outlined,
-                            activeIcon: Icons.receipt_long,
-                            label: l10n.tabBookings,
-                            index: 1,
-                            currentIndex: safeIndex,
-                            onTap: () => onNavTap(1),
-                            badge: _bookingsVisibleBadge,
-                          ),
-                          // Center gap for the Quick Request anchor button
-                          const SizedBox(width: 72),
-                          // Right: Chat, Wallet
-                          _navItem(
-                            icon: Icons.chat_bubble_outline,
-                            activeIcon: Icons.chat_bubble,
-                            label: l10n.tabChat,
-                            index: 2,
-                            currentIndex: safeIndex,
-                            onTap: () => onNavTap(2),
-                            badge: unreadCount,
-                          ),
-                          _navItem(
-                            icon: Icons.account_balance_wallet_outlined,
-                            activeIcon: Icons.account_balance_wallet,
-                            label: l10n.tabWallet,
-                            index: 3,
-                            currentIndex: safeIndex,
-                            onTap: () => onNavTap(3),
-                            tourKey: tourProviderWalletKey,
-                            tourTitle: 'ארנק שלי 💰',
-                            tourDesc: 'כאן תראה את יתרתך, תוכל למשוך לחשבון בנק ולעקוב אחר כל תשלום',
-                          ),
-                          // Opportunities (providers)
-                          if (isProvider)
-                            _navItem(
-                              icon: Icons.work_outline_rounded,
-                              activeIcon: Icons.work_rounded,
-                              label: 'הזדמנויות',
-                              index: oppTabPos,
-                              currentIndex: safeIndex,
-                              onTap: () => onNavTap(oppTabPos),
-                              badge: _opportunitiesBadge,
-                              tourKey: tourProviderOppKey,
-                              tourTitle: 'הזדמנויות 🚀',
-                              tourDesc: 'לקוחות מחפשים ספקים בתחומך — ראו בקשות חדשות ומצאו הזמנות',
-                            ),
-                          // Admin & System tabs
-                          if (isAdmin) ...[
-                            _navItem(
-                              icon: Icons.admin_panel_settings_outlined,
-                              activeIcon: Icons.admin_panel_settings,
-                              label: 'ניהול',
-                              index: adminTabPos,
-                              currentIndex: safeIndex,
-                              onTap: () => onNavTap(adminTabPos),
-                            ),
-                            _navItem(
-                              icon: Icons.analytics_outlined,
-                              activeIcon: Icons.analytics,
-                              label: 'מערכת',
-                              index: sysTabPos,
-                              currentIndex: safeIndex,
-                              onTap: () => onNavTap(sysTabPos),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
+                  // [Home] [Chat] [תמצא לי ●] [Bookings] [Wallet] ...
+                  _navItem(
+                    icon: Icons.home_outlined,
+                    activeIcon: Icons.home,
+                    label: l10n.tabHome,
+                    index: 0,
+                    currentIndex: safeIndex,
+                    onTap: () => onNavTap(0),
+                  ),
+                  _navItem(
+                    icon: Icons.chat_bubble_outline,
+                    activeIcon: Icons.chat_bubble,
+                    label: l10n.tabChat,
+                    index: 2,
+                    currentIndex: safeIndex,
+                    onTap: () => onNavTap(2),
+                    badge: unreadCount,
                   ),
 
-                  // ── Center anchor: Quick Request button ─────────────────
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: Center(
-                      child: GestureDetector(
-                        onTap: () => _showQuickRequestSheet(context, userData),
-                        child: Container(
-                          width: 62,
-                          height: 62,
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF6366F1).withValues(alpha: 0.45),
-                                blurRadius: 18,
-                                spreadRadius: 1,
-                                offset: const Offset(0, 4),
-                              ),
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.12),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: const Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.campaign_rounded, color: Colors.white, size: 24),
-                              SizedBox(height: 1),
-                              Text(
-                                'בקשה',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 0.4,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
+                  _navItem(
+                    icon: Icons.receipt_long_outlined,
+                    activeIcon: Icons.receipt_long,
+                    label: l10n.tabBookings,
+                    index: 1,
+                    currentIndex: safeIndex,
+                    onTap: () => onNavTap(1),
+                    badge: _bookingsVisibleBadge,
                   ),
+                  _navItem(
+                    icon: Icons.account_balance_wallet_outlined,
+                    activeIcon: Icons.account_balance_wallet,
+                    label: l10n.tabWallet,
+                    index: 3,
+                    currentIndex: safeIndex,
+                    onTap: () => onNavTap(3),
+                    tourKey: tourProviderWalletKey,
+                    tourTitle: 'ארנק שלי 💰',
+                    tourDesc:
+                        'כאן תראה את יתרתך, תוכל למשוך לחשבון בנק ולעקוב אחר כל תשלום',
+                  ),
+                  // Opportunities (providers)
+                  if (isProvider)
+                    _navItem(
+                      icon: Icons.work_outline_rounded,
+                      activeIcon: Icons.work_rounded,
+                      label: 'הזדמנויות',
+                      index: oppTabPos,
+                      currentIndex: safeIndex,
+                      onTap: () => onNavTap(oppTabPos),
+                      badge: _opportunitiesBadge,
+                      tourKey: tourProviderOppKey,
+                      tourTitle: 'הזדמנויות 🚀',
+                      tourDesc:
+                          'לקוחות מחפשים ספקים בתחומך — ראו בקשות חדשות ומצאו הזמנות',
+                    ),
+                  // Admin & System tabs
+                  if (isAdmin) ...[
+                    _navItem(
+                      icon: Icons.admin_panel_settings_outlined,
+                      activeIcon: Icons.admin_panel_settings,
+                      label: 'ניהול',
+                      index: adminTabPos,
+                      currentIndex: safeIndex,
+                      onTap: () => onNavTap(adminTabPos),
+                    ),
+                    _navItem(
+                      icon: Icons.analytics_outlined,
+                      activeIcon: Icons.analytics,
+                      label: 'מערכת',
+                      index: sysTabPos,
+                      currentIndex: safeIndex,
+                      onTap: () => onNavTap(sysTabPos),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -662,11 +642,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildBannedScreen() {
-    return Scaffold(body: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.gpp_bad_outlined, color: Colors.redAccent, size: 100), const SizedBox(height: 20), const Text("החשבון הושעה", style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold)), const SizedBox(height: 40), ElevatedButton(onPressed: () => FirebaseAuth.instance.signOut(), child: const Text("התנתקות"))])));
+    return Scaffold(body: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.gpp_bad_outlined, color: Colors.redAccent, size: 100), const SizedBox(height: 20), const Text("החשבון הושעה", style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold)), const SizedBox(height: 40), ElevatedButton(onPressed: () => performSignOut(context), child: const Text("התנתקות"))])));
   }
 }
 
-// ─── Quick Request Sheet (with AI analysis) ───────────────────────────────────
+// ─── Quick Request Sheet (with AI Matchmaker Agent) ───────────────────────────
+
+enum _SheetPhase { input, thinking, result }
 
 class _QuickRequestSheet extends StatefulWidget {
   final String clientUid;
@@ -681,13 +663,17 @@ class _QuickRequestSheet extends StatefulWidget {
 
 class _QuickRequestSheetState extends State<_QuickRequestSheet> {
   final _descCtrl = TextEditingController();
-  final _locCtrl = TextEditingController();
+  final _locCtrl  = TextEditingController();
 
-  RequestAnalysis _analysis = const RequestAnalysis();
-  bool _isBroadcasting = false;
-  // Confirmed category — set by user tapping the suggestion chip
-  String? _confirmedCategory;
-  int _activeRequestCount = 0;
+  RequestAnalysis  _analysis          = const RequestAnalysis();
+  _SheetPhase      _phase             = _SheetPhase.input;
+  MatchmakerResult? _matchResult;
+  String?          _confirmedCategory;
+  int              _activeRequestCount = 0;
+
+  // Animated dots for thinking phase
+  int    _dotCount  = 1;
+  Timer? _dotsTimer;
 
   @override
   void initState() {
@@ -701,6 +687,7 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
     _descCtrl.removeListener(_onTextChanged);
     _descCtrl.dispose();
     _locCtrl.dispose();
+    _dotsTimer?.cancel();
     super.dispose();
   }
 
@@ -720,6 +707,14 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
     if (mounted) setState(() => _activeRequestCount = snap.docs.length);
   }
 
+  void _startDotsTimer() {
+    _dotsTimer?.cancel();
+    _dotsTimer = Timer.periodic(const Duration(milliseconds: 420), (_) {
+      if (mounted) setState(() => _dotCount = (_dotCount % 3) + 1);
+    });
+  }
+
+  // ── Main broadcast + matchmaker flow ──────────────────────────────────────
   Future<void> _broadcast() async {
     final desc = _descCtrl.text.trim();
     if (desc.isEmpty) {
@@ -729,44 +724,83 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
       ));
       return;
     }
-    setState(() => _isBroadcasting = true);
+
+    // Transition to thinking phase
+    setState(() => _phase = _SheetPhase.thinking);
+    _startDotsTimer();
+
+    // Capture l10n-safe values before any await
+    // resolveCanonicalCategory maps AI-suggested names (e.g. 'כושר ואימון')
+    // and user variants ('מאמן כושר') to the APP_CATEGORIES canonical name
+    // ('אימון כושר') that Sigalit's Opportunities query filters on.
+    final category   = resolveCanonicalCategory(
+        _confirmedCategory ?? (_analysis.suggestedCategory ?? ''));
+    final isUrgent   = _analysis.urgency == 'urgent';
+    final locText    = _locCtrl.text.trim();
+
     try {
-      final pos = await LocationService.getIfGranted();
-      final category = _confirmedCategory ??
-          (_analysis.suggestedCategory ?? '');
-      final isUrgent = _analysis.urgency == 'urgent';
+      // Get location + urgency fee in parallel
+      final results = await Future.wait([
+        LocationService.getIfGranted(),
+        if (isUrgent)
+          CacheService.getDoc('admin/admin/settings', 'settings',
+              ttl: CacheService.kAdminSettings)
+        else
+          Future.value(null),
+      ]);
 
-      // Read urgency fee % from admin settings (only when needed — cached 1 min)
-      double urgencyFeePct = 0;
-      if (isUrgent) {
-        final sd = await CacheService.getDoc(
-          'admin/admin/settings', 'settings',
-          ttl: CacheService.kAdminSettings,
-        );
-        // Admin stores decimal fraction (0.05 = 5%) — multiply ×100 for display
-        urgencyFeePct = (((sd['urgencyFeePercentage'] as num?) ?? 0.05) * 100).toDouble();
-      }
+      final pos          = results[0] as dynamic;
+      final settingsData = isUrgent ? results[1] as Map<String, dynamic>? : null;
+      final urgencyFeePct = isUrgent
+          ? (((settingsData?['urgencyFeePercentage'] as num?) ?? 0.05) * 100).toDouble()
+          : 0.0;
 
-      await FirebaseFirestore.instance.collection('job_requests').add({
-        'clientId': widget.clientUid,
-        'clientName': widget.clientName,
-        'description': desc,
-        'location': _locCtrl.text.trim(),
-        'category': category,
-        'status': 'open',
-        'urgency': _analysis.urgency,
-        if (isUrgent) 'urgencyFeePercentage': urgencyFeePct,
-        'interestedProviders': [],
-        'interestedProviderNames': [],
-        'interestedCount': 0,
-        'createdAt': FieldValue.serverTimestamp(),
-        if (pos != null) 'clientLat': pos.latitude,
-        if (pos != null) 'clientLng': pos.longitude,
-      });
-      if (mounted) {
+      // Write job_request and call matchmakerpitch in parallel
+      final futures = await Future.wait([
+        FirebaseFirestore.instance.collection('job_requests').add({
+          'clientId':               widget.clientUid,
+          'clientName':             widget.clientName,
+          'description':            desc,
+          'location':               locText,
+          'category':               category,
+          'status':                 'open',
+          'urgency':                _analysis.urgency,
+          if (isUrgent) 'urgencyFeePercentage': urgencyFeePct,
+          if (isUrgent) 'surgeMultiplier': 1.2,
+          'interestedProviders':    [],
+          'interestedProviderNames': [],
+          'interestedCount':        0,
+          'createdAt':              FieldValue.serverTimestamp(),
+          if (pos != null) 'clientLat': (pos as dynamic).latitude as double,
+          if (pos != null) 'clientLng': (pos as dynamic).longitude as double,
+        }),
+        MatchmakerService.findMatch(
+          requestText: desc,
+          category:    category,
+          clientName:  widget.clientName,
+          clientLat:   pos != null ? (pos as dynamic).latitude as double? : null,
+          clientLng:   pos != null ? (pos as dynamic).longitude as double? : null,
+        ),
+      ]);
+
+      final matchResult = futures[1] as MatchmakerResult?;
+      _dotsTimer?.cancel();
+
+      if (!mounted) return;
+
+      if (matchResult != null && matchResult.pitch.isNotEmpty) {
+        // 🔒 Solution Snap — the AI locked in a match
+        AudioService.instance.play(AppSound.solutionSnap);
+        // Show AI result
+        setState(() {
+          _matchResult = matchResult;
+          _phase       = _SheetPhase.result;
+        });
+      } else {
+        // No match found — fall back to plain snackbar
         Navigator.pop(context);
-        final msg = isUrgent && urgencyFeePct > 0
-            ? 'הבקשה הדחופה פורסמה! תוספת דחיפות ${urgencyFeePct.toStringAsFixed(0)}% תחול על הסכום הסופי 🔥'
+        final msg = isUrgent
+            ? 'הבקשה הדחופה פורסמה! מחיר x1.2 (surge) • תוספת דחיפות ${urgencyFeePct.toStringAsFixed(0)}% 🔥'
             : 'הבקשה פורסמה! ספקים יפנו אליך בקרוב 🚀';
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           backgroundColor: isUrgent ? const Color(0xFFEA580C) : Colors.green,
@@ -775,148 +809,163 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
         ));
       }
     } catch (e) {
+      _dotsTimer?.cancel();
       if (mounted) {
+        // Revert to input phase so user can try again
+        setState(() => _phase = _SheetPhase.input);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              backgroundColor: Colors.red,
-              content: Text('שגיאה: $e')),
+          SnackBar(backgroundColor: Colors.red, content: Text('שגיאה: $e')),
         );
       }
-    } finally {
-      if (mounted) setState(() => _isBroadcasting = false);
     }
   }
 
+  // ── Broadcast to all (after seeing result) ────────────────────────────────
+  void _broadcastAll() {
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      backgroundColor: Colors.green,
+      content: Text('הבקשה פורסמה לכל הספקים! 🚀'),
+      duration: Duration(seconds: 3),
+    ));
+  }
+
+  // ── Open chat with top match ──────────────────────────────────────────────
+  void _openMatchChat(MatchedProvider provider) {
+    Navigator.pop(context);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          receiverId:       provider.uid,
+          receiverName:     provider.name,
+          currentUserName:  widget.clientName,
+          initialMessage:   _descCtrl.text.trim(),
+        ),
+      ),
+    );
+  }
+
+  // ── Shared sheet wrapper ──────────────────────────────────────────────────
+  Widget _sheetWrap(Widget child) => Padding(
+    padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+    child: Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 36),
+      child: SingleChildScrollView(child: child),
+    ),
+  );
+
+  Widget _dragHandle() => Center(
+    child: Container(
+      width: 40, height: 4,
+      decoration: BoxDecoration(
+        color: Colors.grey[300],
+        borderRadius: BorderRadius.circular(10),
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+    return switch (_phase) {
+      _SheetPhase.input    => _buildInputPhase(),
+      _SheetPhase.thinking => _buildThinkingPhase(),
+      _SheetPhase.result   => _buildResultPhase(_matchResult!),
+    };
+  }
+
+  // ── Phase 1: Input ────────────────────────────────────────────────────────
+  Widget _buildInputPhase() => _sheetWrap(Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.end,
+    children: [
+      _dragHandle(),
+      const SizedBox(height: 16),
+
+      // Active requests banner
+      if (_activeRequestCount > 0)
+        GestureDetector(
+          onTap: () {
+            Navigator.pop(context);
+            Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const MyRequestsScreen()));
+          },
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                  colors: [Color(0xFFF0F0FF), Color(0xFFE8E8FF)]),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                  color: const Color(0xFF6366F1).withValues(alpha: 0.25)),
+            ),
+            child: Row(children: [
+              const Icon(Icons.arrow_forward_ios_rounded,
+                  size: 14, color: Color(0xFF6366F1)),
+              const Spacer(),
+              Text('יש לך $_activeRequestCount בקשות פעילות',
+                  style: const TextStyle(
+                      color: Color(0xFF6366F1),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13)),
+              const SizedBox(width: 6),
+              const Icon(Icons.campaign_rounded,
+                  size: 16, color: Color(0xFF6366F1)),
+            ]),
+          ),
         ),
-        padding: const EdgeInsets.fromLTRB(24, 16, 24, 36),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              // Drag handle
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
 
-              // Active requests banner
-              if (_activeRequestCount > 0)
-                GestureDetector(
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => const MyRequestsScreen()),
-                    );
-                  },
-                  child: Container(
-                    margin: const EdgeInsets.only(bottom: 14),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 10),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFFF0F0FF), Color(0xFFE8E8FF)],
-                      ),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                          color: const Color(0xFF6366F1)
-                              .withValues(alpha: 0.25)),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.arrow_forward_ios_rounded,
-                            size: 14, color: Color(0xFF6366F1)),
-                        const Spacer(),
-                        Text(
-                          'יש לך $_activeRequestCount בקשות פעילות',
-                          style: const TextStyle(
-                            color: Color(0xFF6366F1),
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        const Icon(Icons.campaign_rounded,
-                            size: 16, color: Color(0xFF6366F1)),
-                      ],
-                    ),
-                  ),
-                ),
+      // Sheet header
+      Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+        const Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text('פרסם בקשה מהירה',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+          SizedBox(height: 2),
+          Text('תאר מה אתה צריך — AI ימצא לך את המתאים',
+              style: TextStyle(color: Colors.grey, fontSize: 13)),
+        ]),
+        const SizedBox(width: 12),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+                colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)]),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: const Icon(Icons.auto_awesome_rounded,
+              color: Colors.white, size: 22),
+        ),
+      ]),
+      const SizedBox(height: 20),
 
-              // Sheet header
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  const Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text('פרסם בקשה מהירה',
-                          style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold)),
-                      SizedBox(height: 2),
-                      Text('תאר מה אתה צריך — ספקים יפנו אליך',
-                          style:
-                              TextStyle(color: Colors.grey, fontSize: 13)),
-                    ],
-                  ),
-                  const SizedBox(width: 12),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                          colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)]),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Icon(Icons.campaign_rounded,
-                        color: Colors.white, size: 22),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
+      // Description field
+      Container(
+        decoration: BoxDecoration(
+            color: const Color(0xFFF5F6FA),
+            borderRadius: BorderRadius.circular(16)),
+        child: TextField(
+          controller: _descCtrl,
+          maxLines: 4,
+          textAlign: TextAlign.right,
+          textDirection: TextDirection.rtl,
+          decoration: const InputDecoration(
+            hintText:
+                'תאר מה אתה צריך...\nלמשל: "צריך שרברב מחר ב-10:00 לתיקון ברז דולף"',
+            hintStyle:
+                TextStyle(color: Colors.grey, fontSize: 13, height: 1.5),
+            border: InputBorder.none,
+            contentPadding: EdgeInsets.all(16),
+          ),
+        ),
+      ),
 
-              // Description field
-              Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF5F6FA),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: TextField(
-                  controller: _descCtrl,
-                  maxLines: 4,
-                  textAlign: TextAlign.right,
-                  textDirection: TextDirection.rtl,
-                  decoration: const InputDecoration(
-                    hintText:
-                        'תאר מה אתה צריך...\nלמשל: "צריך שרברב מחר ב-10:00 לתיקון ברז דולף"',
-                    hintStyle: TextStyle(
-                        color: Colors.grey, fontSize: 13, height: 1.5),
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.all(16),
-                  ),
-                ),
-              ),
-
-              // ── AI analysis panel ──────────────────────────────────────
-              AnimatedSize(
+      // ── AI analysis panel ──────────────────────────────────────
+      AnimatedSize(
                 duration: const Duration(milliseconds: 260),
                 curve: Curves.easeInOut,
                 child: _analysis.hasInsights
@@ -950,7 +999,7 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
               ),
               const SizedBox(height: 20),
 
-              // Broadcast button
+              // AI Matchmaker CTA
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 58),
@@ -959,31 +1008,293 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
                       borderRadius: BorderRadius.circular(16)),
                   elevation: 0,
                 ),
-                onPressed: _isBroadcasting ? null : _broadcast,
-                child: _isBroadcasting
-                    ? const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2.5, color: Colors.white),
-                      )
-                    : const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.campaign_rounded,
-                              color: Colors.white, size: 20),
-                          SizedBox(width: 8),
-                          Text('שדר לכל הספקים!',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.bold)),
-                        ],
-                      ),
+                onPressed: _broadcast,
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.auto_awesome_rounded,
+                        color: Colors.white, size: 20),
+                    SizedBox(width: 8),
+                    Text('חיפוש מהיר ✨',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
+            ],
+          ));
+
+  // ── Phase 2: Thinking ─────────────────────────────────────────────────────
+  Widget _buildThinkingPhase() => _sheetWrap(Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      _dragHandle(),
+      const SizedBox(height: 32),
+
+      // AI avatar + pulsing ring
+      Center(
+        child: Container(
+          width: 72, height: 72,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF6366F1), Color(0xFFA855F7)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF6366F1).withValues(alpha: 0.40),
+                blurRadius: 24,
+                spreadRadius: 4,
               ),
             ],
           ),
+          child: const Icon(Icons.auto_awesome_rounded,
+              color: Colors.white, size: 32),
         ),
+      ),
+      const SizedBox(height: 20),
+
+      const Text(
+        'AI Matchmaker',
+        style: TextStyle(
+          fontSize: 18, fontWeight: FontWeight.bold,
+          color: Color(0xFF1E1B4B),
+        ),
+      ),
+      const SizedBox(height: 6),
+      Text(
+        'מחפש את הספק המתאים ביותר${'●' * _dotCount}',
+        style: const TextStyle(fontSize: 14, color: Colors.grey),
+      ),
+      const SizedBox(height: 32),
+    ],
+  ));
+
+  // ── Phase 3: Result ───────────────────────────────────────────────────────
+  Widget _buildResultPhase(MatchmakerResult result) {
+    final provider = result.topProvider;
+    return _sheetWrap(Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _dragHandle(),
+        const SizedBox(height: 20),
+
+        // ── AI Agent header ────────────────────────────────────────────────
+        Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+          const Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text('AI Matchmaker',
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1E1B4B))),
+            SizedBox(height: 2),
+            Text('מצאתי התאמה בשבילך',
+                style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ]),
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                  colors: [Color(0xFF6366F1), Color(0xFFA855F7)]),
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(
+                    color: const Color(0xFF6366F1).withValues(alpha: 0.32),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4)),
+              ],
+            ),
+            child: const Icon(Icons.auto_awesome_rounded,
+                color: Colors.white, size: 22),
+          ),
+        ]),
+        const SizedBox(height: 20),
+
+        // ── AI chat bubble (pitch) ────────────────────────────────────────
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF3F0FF),
+            borderRadius: const BorderRadius.only(
+              topLeft:     Radius.circular(18),
+              bottomLeft:  Radius.circular(18),
+              bottomRight: Radius.circular(18),
+            ),
+            border: Border.all(
+                color: const Color(0xFF6366F1).withValues(alpha: 0.18)),
+          ),
+          child: Text(
+            result.pitch,
+            style: const TextStyle(
+                fontSize: 14, height: 1.6, color: Color(0xFF1E1B4B)),
+            textAlign: TextAlign.right,
+            textDirection: TextDirection.rtl,
+          ),
+        ),
+
+        // ── Top provider card ─────────────────────────────────────────────
+        if (provider != null) ...[
+          const SizedBox(height: 16),
+          _buildProviderCard(provider),
+        ],
+        const SizedBox(height: 20),
+
+        // ── CTAs ──────────────────────────────────────────────────────────
+        if (provider != null)
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 54),
+              backgroundColor: const Color(0xFF059669),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              elevation: 0,
+            ),
+            onPressed: () => _openMatchChat(provider),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.send_rounded,
+                    color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                Text('שלח בקשה ל${provider.name}',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+        const SizedBox(height: 10),
+        TextButton(
+          onPressed: _broadcastAll,
+          child: Text(
+            'שדר לכל הספקים במקום',
+            style: TextStyle(
+                color: Colors.grey[500], fontSize: 13),
+          ),
+        ),
+      ],
+    ));
+  }
+
+  Widget _buildProviderCard(MatchedProvider provider) {
+    final stars = provider.rating.clamp(0.0, 5.0);
+    final distStr = provider.distKm != null
+        ? '${provider.distKm!.toStringAsFixed(1)} ק"מ'
+        : null;
+    final priceStr = provider.pricePerHour > 0
+        ? '₪${provider.pricePerHour.toStringAsFixed(0)}/שעה'
+        : null;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF059669).withValues(alpha: 0.22)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Action arrow (RTL: on left)
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF059669).withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.arrow_forward_ios_rounded,
+                size: 14, color: Color(0xFF059669)),
+          ),
+          const Spacer(),
+          // Info column
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Row(children: [
+              if (provider.isOnline)
+                Container(
+                  margin: const EdgeInsets.only(left: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF059669),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text('מחובר',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold)),
+                ),
+              Text(provider.name,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 15)),
+            ]),
+            const SizedBox(height: 4),
+            Row(children: [
+              for (int i = 0; i < 5; i++)
+                Icon(
+                  i < stars.floor()
+                      ? Icons.star_rounded
+                      : (i < stars ? Icons.star_half_rounded : Icons.star_border_rounded),
+                  color: const Color(0xFFFBBF24),
+                  size: 14,
+                ),
+              const SizedBox(width: 4),
+              Text(stars.toStringAsFixed(1),
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600)),
+            ]),
+            const SizedBox(height: 4),
+            Row(children: [
+              if (priceStr != null) ...[
+                Text(priceStr,
+                    style: const TextStyle(
+                        fontSize: 12, color: Color(0xFF059669),
+                        fontWeight: FontWeight.w600)),
+                if (distStr != null) const Text(' · ',
+                    style: TextStyle(color: Colors.grey)),
+              ],
+              if (distStr != null)
+                Row(children: [
+                  const Icon(Icons.location_on_rounded,
+                      size: 12, color: Colors.grey),
+                  Text(distStr,
+                      style: const TextStyle(
+                          fontSize: 12, color: Colors.grey)),
+                ]),
+            ]),
+          ]),
+          const SizedBox(width: 14),
+          // Avatar
+          CircleAvatar(
+            radius: 26,
+            backgroundColor: const Color(0xFF6366F1).withValues(alpha: 0.12),
+            backgroundImage: provider.profileImage.isNotEmpty
+                ? NetworkImage(provider.profileImage)
+                : null,
+            child: provider.profileImage.isEmpty
+                ? Text(
+                    provider.name.isNotEmpty ? provider.name[0] : '?',
+                    style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF6366F1)),
+                  )
+                : null,
+          ),
+        ],
       ),
     );
   }

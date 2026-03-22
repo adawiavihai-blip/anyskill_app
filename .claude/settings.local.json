@@ -130,7 +130,15 @@
       "Bash(find /c/Users/aviha/Desktop/anyskill_app/lib/screens -name \"opportunities_screen.dart\" -exec grep -n \"build\\\\|AppBar\" {} +)",
       "Bash(find /c/Users/aviha/Desktop/anyskill_app/lib/screens -name \"my_bookings_screen.dart\" -exec grep -n \"build\\\\|AppBar\\\\|_isProvider\\\\|Client\\\\|Expert\" {} +)",
       "Bash(find /c/Users/aviha/Desktop/anyskill_app/lib/screens -name \"finance_screen.dart\" -exec grep -n \"build\\\\|AppBar\" {} +)",
-      "Bash(find /c/Users/aviha/Desktop/anyskill_app -type f -name *payment*)"
+      "Bash(find /c/Users/aviha/Desktop/anyskill_app -type f -name *payment*)",
+      "Bash(grep -n '\\\\${' \"/c/Users/aviha/Desktop/anyskill_app/lib/screens/otp_screen.dart\" \"/c/Users/aviha/Desktop/anyskill_app/lib/screens/phone_login_screen.dart\")",
+      "Bash(do echo:*)",
+      "Read(//c/Users/aviha/Desktop/anyskill_app/**)",
+      "Bash(done)",
+      "Bash(grep -n \"^import ''dart:async''\" c:/Users/aviha/Desktop/anyskill_app/lib/main.dart)",
+      "Bash(find c:/Users/aviha/Desktop/anyskill_app -name *admin*users* -type f)",
+      "Bash(find c:/Users/aviha/Desktop/anyskill_app -name *admin* -type f)",
+      "Bash(grep -E \"\\\\.dart$\")"
     ]
   }
 }

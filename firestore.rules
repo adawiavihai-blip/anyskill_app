@@ -24,18 +24,42 @@ service cloud.firestore {
                         //    isVerifiedProvider, isVerified      — compliance & identity
                         //    isAdmin                              — privilege escalation prevention
                         //    compliance                           — tax doc object (written during onboarding, cleared by admin)
-                        //    balance                              — all mutations via FieldValue.increment in Cloud Functions
+                        //    balance                              — kept here; payment decrements use the branch below
                         && !request.resource.data.diff(resource.data)
                             .affectedKeys().hasAny([
                               'xp', 'current_xp', 'level', 'isPromoted',
                               'isVerifiedProvider', 'isVerified', 'isAdmin',
-                              'balance'
+                              'balance',
                             ]))
+                    // 💳 Owner may ONLY decrement their own balance (client-side escrow payment).
+                    //    balance must already exist (is number) and new value ≤ old value.
+                    //    Increments (payouts) are handled by Cloud Functions (Admin SDK).
+                    || (isOwner(uid)
+                        && request.resource.data.diff(resource.data)
+                            .affectedKeys().hasOnly(['balance'])
+                        && resource.data.balance is number
+                        && request.resource.data.balance is number
+                        && request.resource.data.balance <= resource.data.balance)
                     || isAdmin()
                     // כל משתמש מחובר יכול לעדכן רק rating + reviewsCount (לאחר ביקורת)
                     || (isAuth()
                         && request.resource.data.diff(resource.data)
                             .affectedKeys().hasOnly(['rating', 'reviewsCount']));
+    }
+
+    // ── Booking Slots (double-booking lock documents) ─────────────
+    // One doc per expert+date+time slot. Created by the customer during booking
+    // to prevent duplicate bookings. Released (deleted) by Cloud Function on
+    // cancellation. Doc ID format: {expertId}_{YYYYMMDD}_{HHmm}
+    match /bookingSlots/{slotId} {
+      // Any authenticated user can read (pre-flight existence check in Phase 1)
+      allow read:   if isAuth();
+      // Customer creates the lock when booking; no customer field on the doc
+      // so we simply require authentication (Phase 1 read already guards business logic).
+      allow create: if isAuth();
+      // Only admin or Cloud Functions may delete (cancellation cleanup)
+      allow delete: if isAdmin();
+      allow update: if false;
     }
 
     // ── Jobs (bookings) ───────────────────────────────────────────
@@ -46,10 +70,15 @@ service cloud.firestore {
                     || (isAuth()
                         && (resource.data.customerId == request.auth.uid
                             || resource.data.expertId  == request.auth.uid));
+      // Both parties may update their own job.
+      // Provider (expertId) uses this to mark status → 'expert_completed'.
+      // Customer (customerId) uses this to release escrow → 'completed'.
+      // No field restriction here; business-logic guards live in PaymentModule.
       allow update: if isAdmin()
                     || (isAuth()
-                        && (resource.data.customerId == request.auth.uid
-                            || resource.data.expertId  == request.auth.uid));
+                        && resource.data.expertId   == request.auth.uid)
+                    || (isAuth()
+                        && resource.data.customerId == request.auth.uid);
     }
 
     // ── Transactions (wallet history) ─────────────────────────────
@@ -123,9 +152,8 @@ service cloud.firestore {
                     && resource.data.userId == request.auth.uid
                     && request.resource.data.diff(resource.data)
                         .affectedKeys().hasOnly(['isRead']);
-      // create: Cloud Functions / Admin SDK only
-      // delete: owner may delete their own notifications (Clear All)
-      allow create: if false;
+      // create: Admin may write directly (emergency); normal path = Admin SDK in CF
+      allow create: if isAdmin();
       allow delete: if isAuth() && resource.data.userId == request.auth.uid;
     }
 

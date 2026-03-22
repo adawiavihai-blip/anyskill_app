@@ -8,7 +8,6 @@ import 'sign_up_screen.dart';
 import '../services/credentials_service.dart';
 import '../l10n/app_localizations.dart';
 import '../constants.dart' show appVersion;
-import '../widgets/anyskill_logo.dart';
 
 // ── Brand tokens ──────────────────────────────────────────────────────────────
 const _kPurple      = Color(0xFF6366F1);
@@ -98,7 +97,13 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         await CredentialsService.clear();
       }
-      // Auth state change → AuthWrapper handles navigation automatically.
+      // LoginScreen is pushed on top of PhoneLoginScreen via Navigator.push.
+      // Auth state already changed above — pop everything back to root so
+      // AuthWrapper's StreamBuilder (now sees authenticated user) renders
+      // _OnboardingGate → HomeScreen.
+      if (mounted) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
     } on FirebaseAuthException catch (e) {
       if (mounted) _snack(_mapError(e.code, AppLocalizations.of(context)), _kRed);
     } finally {
@@ -546,18 +551,12 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // Logo — centered, dynamic size from admin branding control
+                // Logo — centered, static high-res asset
                 Center(
-                  child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                    stream: FirebaseFirestore.instance
-                        .collection('system_settings')
-                        .doc('global')
-                        .snapshots(),
-                    builder: (context, snap) {
-                      final data = snap.data?.data() ?? {};
-                      final size = (data['authLogoSize'] as num? ?? 110).toDouble();
-                      return AnySkillBrandIcon(size: size);
-                    },
+                  child: Image.asset(
+                    'assets/images/NEW_LOGO1.png.png',
+                    height: 80,
+                    fit: BoxFit.contain,
                   ),
                 ),
                 const SizedBox(height: 8),

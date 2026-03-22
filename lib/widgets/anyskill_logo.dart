@@ -75,7 +75,7 @@ class _AnySkillLoadingIndicatorState extends State<AnySkillLoadingIndicator>
   }
 
   Widget _localGif() => Image.asset(
-        'assets/images/NEW LOGO GIF.gif',
+        'assets/images/NEW_LOGO1.png.png',
         width:  widget.size,
         height: widget.size,
         fit:    BoxFit.contain,
@@ -90,7 +90,7 @@ class AnySkillBrandIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Image.asset(
-        'assets/images/NEW LOGO1.png',
+        'assets/images/NEW_LOGO1.png.png',
         width:  size,
         height: size,
         fit:    BoxFit.contain,

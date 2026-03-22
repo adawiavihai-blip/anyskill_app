@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shimmer/shimmer.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../services/category_service.dart';
 import '../services/settings_service.dart';
-import '../widgets/category_image_card.dart';
 import '../widgets/category_edit_sheet.dart';
 import 'category_results_screen.dart';
 import '../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
@@ -87,34 +87,26 @@ class SubCategoryScreen extends StatelessWidget {
           return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
             stream: SettingsService.stream,
             builder: (context, settingsSnap) {
-              final globalScale = SettingsService.cardScaleFrom(settingsSnap.data);
-
               return Padding(
-                padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+                padding: const EdgeInsets.fromLTRB(8, 12, 8, 12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text(
-                      "בחר התמחות ספציפית",
-                      style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                    ),
-                    const SizedBox(height: 16),
                     Expanded(
                       child: LayoutBuilder(
                         builder: (context, constraints) {
-                          final w         = constraints.maxWidth;
-                          final cols      = w >= 900 ? 4 : w >= 600 ? 3 : 2;
-                          final baseRatio = w >= 900 ? 1.0 : w >= 600 ? 0.90 : 0.85;
-                          final adjustedRatio =
-                              (baseRatio / globalScale).clamp(0.35, 2.0);
+                          const cols       = 4;
+                          const spacing    = 6.0;
+                          // Fixed ratio — uniform across all items.
+                          const childRatio = 0.75;
 
                           return GridView.builder(
                             gridDelegate:
                                 SliverGridDelegateWithFixedCrossAxisCount(
                               crossAxisCount:   cols,
-                              crossAxisSpacing: 14,
-                              mainAxisSpacing:  14,
-                              childAspectRatio: adjustedRatio,
+                              crossAxisSpacing: spacing,
+                              mainAxisSpacing:  spacing,
+                              childAspectRatio: childRatio,
                             ),
                             itemCount: subs.length,
                             itemBuilder: (context, index) {
@@ -206,12 +198,13 @@ class _SubCategoryCardState extends State<_SubCategoryCard> {
 
   @override
   Widget build(BuildContext context) {
+    // Card-level press-down scale.
     final double cardScale  = _pressed ? 0.97 : 1.0;
+    // Image zoom on hover / press.
     final double imageScale = _hovered ? 1.06 : (_pressed ? 1.02 : 1.0);
 
-    return Transform.scale(
-      scale: widget.perCardScale,
-      child: MouseRegion(
+    // perCardScale is intentionally NOT applied — all cells must be identical.
+    return MouseRegion(
       cursor:  SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit:  (_) => setState(() => _hovered = false),
@@ -229,84 +222,119 @@ class _SubCategoryCardState extends State<_SubCategoryCard> {
         transform: Matrix4.identity()
           ..scaleByDouble(cardScale, cardScale, 1.0, 1.0),
         transformAlignment: Alignment.center,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(22),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(
-                  alpha: _hovered ? 0.24 : (_pressed ? 0.18 : 0.10)),
-              blurRadius:   _hovered ? 28 : (_pressed ? 14 : 10),
-              spreadRadius: _hovered ? 0  : -1,
-              offset: Offset(0, _hovered ? 12 : (_pressed ? 5 : 4)),
-            ),
-            if (_hovered)
-              BoxShadow(
-                color: const Color(0xFF6366F1).withValues(alpha: 0.14),
-                blurRadius: 22,
-                offset: const Offset(0, 8),
-              ),
-          ],
-        ),
-        child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: Stack(
-          fit: StackFit.expand,
+        // ── White-square card layout: image on top, label below ──────
+        child: Column(
+          mainAxisSize: MainAxisSize.max,
           children: [
-            // Background image with shimmer + branded gradient fallback
-            CategoryImageBackground(
-                imageUrl: widget.imageUrl, imageScale: imageScale),
-
-            // Name + icon at bottom
-            Positioned(
-              bottom: 16,
-              left: 14,
-              right: 14,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+            // ── Fixed-ratio square image — uniform across all items ───
+            AspectRatio(
+              aspectRatio: 1.0,
+              child: Stack(
+                fit: StackFit.expand,
                 children: [
-                  Icon(widget.icon, color: Colors.white, size: 22),
-                  const SizedBox(height: 6),
-                  Text(
-                    widget.name,
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(
+                  // White container with soft shadow
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    decoration: BoxDecoration(
                       color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(
+                              alpha: _hovered ? 0.14 : 0.07),
+                          blurRadius:   _hovered ? 18 : 8,
+                          spreadRadius: 0,
+                          offset: Offset(0, _hovered ? 6 : 3),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: widget.imageUrl.isNotEmpty
+                          ? AnimatedScale(
+                              scale:    imageScale,
+                              duration: const Duration(milliseconds: 320),
+                              curve:    Curves.easeOutCubic,
+                              child: CachedNetworkImage(
+                                imageUrl:       widget.imageUrl,
+                                fit:            BoxFit.cover,
+                                memCacheWidth:  300,
+                                memCacheHeight: 300,
+                                fadeInDuration: const Duration(
+                                    milliseconds: 260),
+                                placeholder: (_, __) => Container(
+                                  color: const Color(0xFFF5F5F5),
+                                ),
+                                errorWidget: (_, __, ___) => Container(
+                                  color: const Color(0xFFF0F0FF),
+                                  child: Center(
+                                    child: Icon(widget.icon,
+                                        size: 32,
+                                        color: const Color(0xFF6366F1)),
+                                  ),
+                                ),
+                              ),
+                            )
+                          : Container(
+                              color: const Color(0xFFF0F0FF),
+                              child: Center(
+                                child: Icon(widget.icon,
+                                    size: 32,
+                                    color: const Color(0xFF6366F1)),
+                              ),
+                            ),
                     ),
                   ),
+
+                  // ── ✏️ Admin edit button — top-right ─────────────────
+                  if (widget.isAdmin)
+                    Positioned(
+                      top:   8,
+                      right: 8,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _openEditSheet,
+                        child: Container(
+                          padding: const EdgeInsets.all(7),
+                          decoration: BoxDecoration(
+                            color:  Colors.black.withValues(alpha: 0.55),
+                            shape:  BoxShape.circle,
+                            border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.30)),
+                          ),
+                          child: const Icon(Icons.edit_rounded,
+                              size: 14, color: Colors.white),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
 
-            // ── ✏️ Admin edit button — top-right ─────────────────────────
-            if (widget.isAdmin)
-              Positioned(
-                top:   10,
-                right: 10,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _openEditSheet,
-                  child: Container(
-                    padding: const EdgeInsets.all(7),
-                    decoration: BoxDecoration(
-                      color:  Colors.black.withValues(alpha: 0.55),
-                      shape:  BoxShape.circle,
-                      border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.30)),
-                    ),
-                    child: const Icon(Icons.edit_rounded,
-                        size: 14, color: Colors.white),
-                  ),
+            // ── Sub-category name below the square ────────────────────
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Text(
+                widget.name,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color:      Colors.black,
+                  fontSize:   13,
+                  fontWeight: FontWeight.w600,
+                  height:     1.2,
                 ),
               ),
+            ),
+            const SizedBox(height: 4),
           ],
-        ),       // closes Stack
-        ),       // closes inner ClipRRect
+        ),
       ),         // closes AnimatedContainer
       ),         // closes GestureDetector
-      ),         // closes MouseRegion (child of Transform.scale)
-    );           // closes Transform.scale
+    );           // closes MouseRegion
   }
 }
 

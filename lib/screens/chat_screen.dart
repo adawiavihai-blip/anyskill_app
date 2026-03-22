@@ -19,6 +19,7 @@ import 'expert_profile_screen.dart';
 import '../l10n/app_localizations.dart';
 import '../services/chat_guard_service.dart';
 import '../widgets/anyskill_logo.dart';
+import '../services/audio_service.dart';
 
 class ChatScreen extends StatefulWidget {
   final String receiverId;
@@ -51,6 +52,10 @@ class _ChatScreenState extends State<ChatScreen> {
   bool   _isUploading        = false;
   bool   _isReceiverTyping   = false;
 
+  // ── Avatar URLs (loaded once for message bubble display) ──────────────────
+  String _receiverImageUrl     = '';
+  String _currentUserImageUrl  = '';
+
   // ── Chat Guard state ──────────────────────────────────────────────────────
   bool      _guardFlagged      = false;   // true while current input is flagged
   bool      _showGuardBanner   = true;    // dismissible anti-bypass info banner
@@ -80,8 +85,33 @@ class _ChatScreenState extends State<ChatScreen> {
     _handleMarkAsRead();
     _listenToTyping();
     _checkDemoExpert();
+    _loadAvatarImages();
     if (widget.initialMessage?.isNotEmpty == true) {
       _msgCtrl.text = widget.initialMessage!;
+    }
+  }
+
+  /// Load both parties' profile images once so message bubbles can show avatars.
+  Future<void> _loadAvatarImages() async {
+    if (widget.receiverId.isNotEmpty) {
+      try {
+        final d = await CacheService.getDoc(
+            'users', widget.receiverId, ttl: CacheService.kUserProfile);
+        if (mounted) {
+          setState(() =>
+              _receiverImageUrl = d['profileImage'] as String? ?? '');
+        }
+      } catch (_) {}
+    }
+    if (currentUserId.isNotEmpty) {
+      try {
+        final d = await CacheService.getDoc(
+            'users', currentUserId, ttl: CacheService.kUserProfile);
+        if (mounted) {
+          setState(() =>
+              _currentUserImageUrl = d['profileImage'] as String? ?? '');
+        }
+      } catch (_) {}
     }
   }
 
@@ -593,10 +623,42 @@ class _ChatScreenState extends State<ChatScreen> {
         }
 
         final jobDoc  = snapshot.data!.docs.first;
-        final jobData = jobDoc.data() as Map<String, dynamic>;
+        final jobData = jobDoc.data() as Map<String, dynamic>? ?? {};
         final status  = jobData['status'] as String? ?? '';
 
-        if (status == 'completed') return const SizedBox.shrink();
+        // Hide banner for all terminal states — no action possible.
+        const terminalStatuses = {
+          'completed', 'cancelled', 'cancelled_with_penalty',
+          'refunded', 'split_resolved', 'disputed',
+        };
+        if (terminalStatuses.contains(status)) {
+          // For cancelled/refunded jobs, show a soft info strip instead of
+          // the escrow banner so the provider doesn't think payment is locked.
+          if (status == 'cancelled' || status == 'cancelled_with_penalty') {
+            return Container(
+              margin: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF5F5),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.3)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.cancel_outlined, size: 16,
+                      color: Color(0xFFEF4444)),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text('ההזמנה בוטלה ואינה פעילה עוד.',
+                        style: TextStyle(
+                            fontSize: 13, color: Color(0xFFDC2626))),
+                  ),
+                ],
+              ),
+            );
+          }
+          return const SizedBox.shrink();
+        }
 
         final isExpert = jobData['expertId'] == currentUserId;
 
@@ -610,23 +672,33 @@ class _ChatScreenState extends State<ChatScreen> {
             buttonText:  'סיימתי ✅',
             buttonColor: Colors.green,
             onTap: () async {
-              await FirebaseFirestore.instance
-                  .collection('jobs')
-                  .doc(jobDoc.id)
-                  .update({
-                'status':            'expert_completed',
-                'expertCompletedAt': FieldValue.serverTimestamp(),
-              });
-              await FirebaseFirestore.instance
-                  .collection('chats')
-                  .doc(chatRoomId)
-                  .collection('messages')
-                  .add({
-                'senderId':  'system',
-                'message':   '✅ המומחה סיים את העבודה! לחץ על "אשר ושחרר" כדי לשחרר את התשלום.',
-                'type':      'text',
-                'timestamp': FieldValue.serverTimestamp(),
-              });
+              final msgr = ScaffoldMessenger.of(context);
+              try {
+                await FirebaseFirestore.instance
+                    .collection('jobs')
+                    .doc(jobDoc.id)
+                    .update({
+                  'status':            'expert_completed',
+                  'expertCompletedAt': FieldValue.serverTimestamp(),
+                });
+                // 💎 Wealth Crystal — escrow unlocked, money en route
+                AudioService.instance.play(AppSound.wealthCrystal);
+                await FirebaseFirestore.instance
+                    .collection('chats')
+                    .doc(chatRoomId)
+                    .collection('messages')
+                    .add({
+                  'senderId':  'system',
+                  'message':   '✅ המומחה סיים את העבודה! לחץ על "אשר ושחרר" כדי לשחרר את התשלום.',
+                  'type':      'text',
+                  'timestamp': FieldValue.serverTimestamp(),
+                });
+              } catch (e) {
+                msgr.showSnackBar(SnackBar(
+                  backgroundColor: Colors.red,
+                  content: Text('שגיאה בעדכון הסטטוס: $e'),
+                ));
+              }
             },
           );
         }
@@ -807,19 +879,25 @@ class _ChatScreenState extends State<ChatScreen> {
           padding: const EdgeInsets.fromLTRB(0, 12, 0, 8),
           itemCount: docs.length,
           itemBuilder: (context, i) {
-            final d     = docs[i].data() as Map<String, dynamic>;
+            final d     = docs[i].data() as Map<String, dynamic>? ?? {};
             final isMe  = d['senderId'] == currentUserId;
             final isSys = d['senderId'] == 'system' ||
                 d['type'] == 'system_alert';
 
             if (isSys) {
-              return ChatUIHelper.buildSystemAlert(d['message'] ?? '');
+              return ChatUIHelper.buildSystemAlert(d['message']?.toString() ?? '');
             }
 
             return ChatUIHelper.buildMessageBubble(
               context: context,
               data:    d,
               isMe:    isMe,
+              senderName:     isMe
+                  ? (widget.currentUserName ?? '')
+                  : widget.receiverName,
+              senderImageUrl: isMe
+                  ? _currentUserImageUrl
+                  : _receiverImageUrl,
               onPaymentTap: isMe
                   ? null
                   : () => Navigator.push(

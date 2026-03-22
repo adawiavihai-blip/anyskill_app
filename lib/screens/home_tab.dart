@@ -6,19 +6,20 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../services/category_service.dart';
 import '../l10n/app_localizations.dart';
 import '../services/visual_fetcher_service.dart';
-import '../widgets/category_image_card.dart';
 import 'category_results_screen.dart';
 import 'notifications_screen.dart';
 import 'help_center_screen.dart';
 import 'sub_category_screen.dart';
 import 'search_screen/search_page.dart';
 import 'search_screen/widgets/stories_row.dart';
+import 'community_screen.dart';
 import '../widgets/skeleton_loader.dart';
-import '../widgets/category_edit_sheet.dart';
-import '../services/settings_service.dart';
-import 'academy_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../widgets/anyskill_logo.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../services/opportunity_hunter_service.dart';
+import '../services/auth_service.dart';
+import '../main.dart' show currentAppVersion;
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
@@ -56,8 +57,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   late final Stream<QuerySnapshot>                          _categoriesStream;
   late final Stream<QuerySnapshot>                          _urgentStream;
   late final Stream<QuerySnapshot>                          _notificationsStream;
-  late final Stream<DocumentSnapshot<Map<String, dynamic>>> _settingsStream;
   late final Stream<QuerySnapshot>                          _remindersStream;
+  late final Stream<DailyOpportunity?>                      _dealStream;
+
+  // ── Deal-of-day dismissal ─────────────────────────────────────────────────
+  bool _dealDismissed = false;
 
   // ── Avatar press feedback ─────────────────────────────────────────────────
   bool _avatarTapped = false;
@@ -72,27 +76,32 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   // route's builder is NOT re-invoked — _isOnline stays frozen at the
   // value from first render. We fix this by owning a Firestore subscription
   // here, making the toggle button always reactive regardless of the prop.
-  late bool _isOnline;
+  late bool   _isOnline;
+  String      _profileImageUrl = '';   // live-synced from Firestore
   late final StreamSubscription<DocumentSnapshot> _onlineSub;
 
   @override
   void initState() {
     super.initState();
 
-    // Initialise from the prop so the button shows the correct state
-    // immediately on first paint (before Firestore fires).
-    _isOnline = widget.isOnline;
+    // Seed from prop immediately — correct state on first paint.
+    _isOnline        = widget.isOnline;
+    _profileImageUrl = (widget.userData['profileImage'] as String? ?? '');
 
-    // Subscribe to the live isOnline field from Firestore.
+    // Subscribe to the live user doc — updates both online status AND avatar.
     _onlineSub = FirebaseFirestore.instance
         .collection('users')
         .doc(widget.currentUserId)
         .snapshots()
         .listen((snap) {
-      final live = snap.data()?['isOnline'] == true;
-      if (mounted && live != _isOnline) {
-        setState(() => _isOnline = live);
-      }
+      if (!mounted) return;
+      final data = snap.data() ?? {};
+      final live = data['isOnline'] == true;
+      final img  = data['profileImage'] as String? ?? '';
+      setState(() {
+        _isOnline        = live;
+        _profileImageUrl = img;
+      });
     });
 
     _pulseCtrl = AnimationController(
@@ -140,9 +149,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             .limit(20)
             .snapshots();
 
-    // Global card-size settings stream
-    _settingsStream = SettingsService.stream;
-
     // AI Re-Engagement reminders — active, non-dismissed reminders for this user
     _remindersStream = uid.isEmpty
         ? const Stream.empty()
@@ -153,6 +159,17 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             .where('isActive',    isEqualTo: true)
             .limit(3)
             .snapshots();
+
+    // AI Deal of the Day — today's opportunity from generateDailyOpportunity CF
+    _dealStream = OpportunityHunterService.streamToday();
+
+    // Restore today's dismissal preference from SharedPreferences
+    SharedPreferences.getInstance().then((p) {
+      final key = 'dismissed_deal_${OpportunityHunterService.todayKey()}';
+      if (p.getBool(key) == true && mounted) {
+        setState(() => _dealDismissed = true);
+      }
+    });
 
     // Back-fill missing category images once per app session
     VisualFetcherService.backfillAll();
@@ -255,24 +272,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     return name.contains(q);
                   }).toList();
 
-            final catIdsWithSubs = allDocs
-                .where((d) =>
-                    ((d.data() as Map)['parentId'] as String? ?? '').isNotEmpty)
-                .map((d) => (d.data() as Map)['parentId'] as String)
-                .toSet();
-
-            // Top-3 by bookingCount earn the 🔥 trending badge
-            final trendingIds = (List.of(mainDocs)
-                  ..sort((a, b) {
-                    final bA = ((a.data() as Map)['bookingCount'] as num? ?? 0);
-                    final bB = ((b.data() as Map)['bookingCount'] as num? ?? 0);
-                    return bB.compareTo(bA);
-                  }))
-                .where((d) =>
-                    (((d.data() as Map)['bookingCount'] as num?) ?? 0) > 0)
-                .take(3)
-                .map((d) => d.id)
-                .toSet();
 
             return RefreshIndicator(
               onRefresh:   _handleRefresh,
@@ -358,78 +357,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
                 // ── Full visual category grid ──────────────────────────────
                 else ...[
-                  // ── AnySkill Community banner ──────────────────────────
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
-                      child: GestureDetector(
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const CategoryResultsScreen(
-                              categoryName: 'volunteer',
-                              volunteerOnly: true,
-                            ),
-                          ),
-                        ),
-                        child: Container(
-                          height: 60, // was 80 — 25% reduction
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [Color(0xFF10B981), Color(0xFFF59E0B)],
-                              begin: Alignment.centerRight,
-                              end: Alignment.centerLeft,
-                            ),
-                            borderRadius: BorderRadius.circular(14),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF10B981)
-                                    .withValues(alpha: 0.25),
-                                blurRadius: 8,
-                                offset: const Offset(0, 3),
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            children: [
-                              const SizedBox(width: 12),
-                              const Icon(Icons.volunteer_activism,
-                                  color: Colors.white, size: 24), // was 32
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      'AnySkill למען הקהילה',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 14, // was 16
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    Text(
-                                      'מומחים שמתנדבים מרצונם – ללא עלות',
-                                      style: TextStyle(
-                                        color: Colors.white
-                                            .withValues(alpha: 0.88),
-                                        fontSize: 11, // was 12
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const Icon(Icons.chevron_left,
-                                  color: Colors.white, size: 18),
-                              const SizedBox(width: 8),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-
                   // ── AI Re-Engagement offer card ────────────────────────
                   SliverToBoxAdapter(
                     child: StreamBuilder<QuerySnapshot>(
@@ -444,64 +371,22 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     ),
                   ),
 
-                  // ── Stylized Story Carousel strip ─────────────────────
-                  SliverToBoxAdapter(
-                    child: Container(
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFF8F8F8),
-                        border: Border.symmetric(
-                          horizontal: BorderSide(
-                            color: Color(0xFFE5E7EB),
-                            width: 0.8,
-                          ),
-                        ),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // "Live" header label
-                          Padding(
-                            padding: const EdgeInsetsDirectional.only(
-                                start: 14, bottom: 6),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 7, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFEF4444),
-                                    borderRadius: BorderRadius.circular(5),
-                                  ),
-                                  child: const Text(
-                                    'לייב',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 0.5,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                const Text(
-                                  'עדכונים חיים מהמומחים',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: Color(0xFF6B7280),
-                                    letterSpacing: 0.1,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          StoriesRow(isProvider: isProvider),
-                        ],
+                  // ── AI Deal of the Day banner ──────────────────────────
+                  if (!_dealDismissed)
+                    SliverToBoxAdapter(
+                      child: StreamBuilder<DailyOpportunity?>(
+                        stream: _dealStream,
+                        builder: (context, dealSnap) {
+                          final deal = dealSnap.data;
+                          if (deal == null) return const SizedBox.shrink();
+                          return _buildDealBanner(deal);
+                        },
                       ),
                     ),
+
+                  // ── Story Carousel strip ───────────────────────────────
+                  SliverToBoxAdapter(
+                    child: StoriesRow(isProvider: isProvider),
                   ),
 
                   // ── Search results count (only when filtering) ─────────
@@ -519,93 +404,48 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                       ),
                     ),
 
-                  // ── Responsive category grid — driven by global card scale ──
-                  StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                    stream: _settingsStream,
-                    builder: (context, settingsSnap) {
-                      final globalScale =
-                          SettingsService.cardScaleFrom(settingsSnap.data);
-                      final w    = MediaQuery.sizeOf(context).width;
-                      // Mobile: 3 cols — compact tiles so 4+ rows fit above
-                      // the fold without scrolling.
-                      // Tablet: 3 cols — same comfortable density as before.
-                      // Desktop: 4 cols — unchanged.
-                      final cols    = w >= 900 ? 4 : 3;
-                      final spacing = w >= 600 ? 8.0 : 6.0;
-                      // Aspect ratio: wider-than-tall for compact mobile tiles.
-                      // Scale UP (globalScale > 1) → cards taller → ratio lower.
-                      final baseRatio = w >= 900 ? 1.0 : w >= 600 ? 1.0 : 1.05;
-                      final adjustedRatio =
-                          (baseRatio / globalScale).clamp(0.35, 2.0);
-
-                      return SliverPadding(
-                        padding: EdgeInsets.fromLTRB(spacing, 0, spacing, 0),
-                        sliver: SliverGrid(
-                          delegate: SliverChildBuilderDelegate(
-                            (context, index) {
-                              final doc      = filteredDocs[index];
-                              final data     = doc.data() as Map<String, dynamic>;
-                              final name     = data['name']      as String? ?? '';
-                              final imageUrl = data['img']       as String? ?? '';
-                              final iconName = data['iconName']  as String? ?? '';
-                              final icon     = CategoryService.getIcon(iconName);
-                              final hasSubs  = catIdsWithSubs.contains(doc.id);
-                              final isTrend  = trendingIds.contains(doc.id);
-                              // Per-card scale — visual zoom within fixed grid cell
-                              final perCardScale =
-                                  (data['cardScale'] as num? ?? 1.0).toDouble();
-
-                              return RepaintBoundary(
-                               child: _HomeCategoryCard(
-                                docId:        doc.id,
-                                name:         name,
-                                iconName:     iconName,
-                                imageUrl:     imageUrl,
-                                icon:         icon,
-                                hasSubs:      hasSubs,
-                                isTrending:   isTrend,
-                                isAdmin:      isAdmin,
-                                perCardScale: perCardScale,
-                                onTap: () {
-                                  if (hasSubs) {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => SubCategoryScreen(
-                                          parentId:   doc.id,
-                                          parentName: name,
-                                        ),
-                                      ),
-                                    );
-                                  } else {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => CategoryResultsScreen(
-                                            categoryName: name),
-                                      ),
-                                    );
-                                  }
-                                },
-                              )); // RepaintBoundary
-                            },
-                            childCount: filteredDocs.length,
-                          ),
-                          gridDelegate:
-                              SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount:   cols,
-                            crossAxisSpacing: 10,
-                            mainAxisSpacing:  10,
-                            childAspectRatio: adjustedRatio,
-                          ),
-                        ),
-                      );
-                    },
+                  // ── Airbnb-style horizontal category rows ──────────────
+                  ..._buildAirbnbRows(
+                    context: context,
+                    filteredDocs: filteredDocs,
+                    allDocs: allDocs,
+                    isAdmin: isAdmin,
                   ),
                 ], // end else [...] community + grid
 
-                // ── Bottom padding (clear the FAB) ─────────────────────────
-                const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
+                // ── Footer: logout + version ────────────────────────────────
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+                    child: Column(
+                      children: [
+                        TextButton.icon(
+                          onPressed: () => performSignOut(context),
+                          icon: const Icon(Icons.logout, size: 18),
+                          label: Text(
+                            AppLocalizations.of(context).logoutButton,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.redAccent,
+                            minimumSize: const Size(double.infinity, 48),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'AnySkill v$currentAppVersion',
+                          style: TextStyle(
+                            color: Colors.grey[400],
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w500,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                        const SizedBox(height: 100),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ), // CustomScrollView
             ); // RefreshIndicator
@@ -622,47 +462,37 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
   Widget _buildHeader(bool isProvider) {
     final l10n         = AppLocalizations.of(context);
-    final profileImage = (widget.userData['profileImage'] ?? '') as String;
+    // Use the live-synced URL — not the static widget.userData snapshot.
+    final profileImage = _profileImageUrl;
     final isAdmin      =
         FirebaseAuth.instance.currentUser?.email == 'adawiavihai@gmail.com';
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // ── Left: Bell · AI · Admin ────────────────────────────────────
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+      child: SizedBox(
+        height: 44,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // ── Dead-center logo — always at screen midpoint ────────────
+            Center(
+              child: Image.asset(
+                'assets/images/NEW_LOGO1.png.png',
+                height: 42,
+                fit: BoxFit.contain,
+              ),
+            ),
+
+            // ── Left: Logout · Bell · AI · School · [Admin] ────────────
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+              // Notification bell
               _buildNotificationBell(),
 
-              const SizedBox(width: 8),
-
-              // Academy shortcut
-              GestureDetector(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => const AcademyScreen()),
-                ),
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEEF2FF),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                        color:
-                            const Color(0xFF6366F1).withValues(alpha: 0.3)),
-                  ),
-                  child: const Icon(Icons.school_rounded,
-                      size: 18, color: Color(0xFF6366F1)),
-                ),
-              ),
-
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
 
               // AI Support Assistant
               GestureDetector(
@@ -686,7 +516,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
               // Admin: test-email shortcut
               if (isAdmin) ...[
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 GestureDetector(
                   onTap: _sendTestEmail,
                   child: Container(
@@ -705,26 +535,14 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
               ],
             ],
           ),
-
-          // ── Center: Static brand logo — size driven by admin slider ────
-          Expanded(
-            child: Center(
-              child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                stream: _settingsStream,
-                builder: (context, snap) {
-                  final size = ((snap.data?.data() ?? {})['headerLogoSize']
-                          as num? ?? 32)
-                      .toDouble();
-                  return AnySkillBrandIcon(size: size);
-                },
-              ),
             ),
-          ),
 
-          // ── Right: Online toggle (providers) + Avatar ──────────────────
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+            // ── Right: Online toggle (providers) + Profile avatar (far right) ──
+            Align(
+              alignment: Alignment.centerRight,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
               // Online / Offline toggle — only visible for providers
               if (isProvider) ...[
                 GestureDetector(
@@ -775,10 +593,10 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
               ],
 
-              // Profile avatar — tap navigates to Profile tab
+              // Profile avatar — far right, tap navigates to Profile tab
               GestureDetector(
                 onTap: () {
                   setState(() => _avatarTapped = false);
@@ -793,12 +611,10 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   child: CircleAvatar(
                     radius: 22,
                     backgroundColor: const Color(0xFFEEF2FF),
-                    // CachedNetworkImageProvider: disk-cached, no re-download
-                    // on every build, and gracefully falls back on error.
                     backgroundImage: profileImage.isNotEmpty
                         ? CachedNetworkImageProvider(
                             profileImage,
-                            maxWidth:  88, // 44px radius × 2× DPR
+                            maxWidth:  88,
                             maxHeight: 88,
                           )
                         : null,
@@ -819,9 +635,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   ),
                 ),
               ),
-            ],
-          ),
-        ],
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -860,6 +678,307 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
         );
       }
     }
+  }
+
+  // ── Sandwich grid: top 2 rows → carousel → remaining rows ───────────────────
+  //
+  // Returns a list of Sliver widgets so it can be spread directly into the
+  // ── Airbnb-style: one horizontal scroll row per parent category ──────────
+  // Parent categories with sub-categories get a header + scrollable row of
+  // sub-cat cards.  Categories without sub-categories get a full-width tile.
+  // The promo carousel is injected after the 2nd section.
+
+  List<Widget> _buildAirbnbRows({
+    required BuildContext context,
+    required List<QueryDocumentSnapshot> filteredDocs,
+    required List<QueryDocumentSnapshot> allDocs,
+    required bool isAdmin,
+  }) {
+    // Build parentId → [sub-category docs] lookup map.
+    final Map<String, List<QueryDocumentSnapshot>> subsByParent = {};
+    for (final doc in allDocs) {
+      final d        = doc.data() as Map<String, dynamic>;
+      final parentId = d['parentId'] as String? ?? '';
+      if (parentId.isNotEmpty) {
+        subsByParent.putIfAbsent(parentId, () => []).add(doc);
+      }
+    }
+
+    final slivers       = <Widget>[];
+    bool promoInserted  = false;
+
+    for (int i = 0; i < filteredDocs.length; i++) {
+      // Inject promo carousel between 2nd and 3rd parent sections.
+      if (!promoInserted && i == 2) {
+        slivers.add(const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: _PromoCarousel(),
+          ),
+        ));
+        promoInserted = true;
+      }
+
+      final parentDoc  = filteredDocs[i];
+      final parentData = parentDoc.data() as Map<String, dynamic>;
+      final parentName = parentData['name']     as String? ?? '';
+      final parentImg  = parentData['img']      as String? ?? '';
+      final parentIcon = CategoryService.getIcon(
+          parentData['iconName'] as String? ?? '');
+      final subs       = subsByParent[parentDoc.id] ?? [];
+      final hasSubs    = subs.isNotEmpty;
+
+      // ── Section header with "הצג הכל" link ──────────────────────────
+      slivers.add(SliverToBoxAdapter(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(16, i == 0 ? 4 : 10, 16, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  parentName,
+                  textDirection: TextDirection.rtl,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  OpportunityHunterService.recordCategoryTap(
+                      widget.currentUserId, parentName);
+                  if (hasSubs) {
+                    Navigator.push(context, MaterialPageRoute(
+                      builder: (_) => SubCategoryScreen(
+                          parentId: parentDoc.id, parentName: parentName),
+                    ));
+                  } else {
+                    Navigator.push(context, MaterialPageRoute(
+                      builder: (_) =>
+                          CategoryResultsScreen(categoryName: parentName),
+                    ));
+                  }
+                },
+                child: const Text(
+                  'הצג הכל',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF6366F1),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ));
+
+      if (hasSubs) {
+        // ── Horizontal sub-category card strip ──────────────────────────
+        slivers.add(SliverToBoxAdapter(
+          child: SizedBox(
+            height: 126,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: subs.length,
+              itemBuilder: (context, si) {
+                final sub     = subs[si].data() as Map<String, dynamic>;
+                final subName = sub['name'] as String? ?? '';
+                final subImg  = sub['img']  as String? ?? '';
+                return _buildSubCatCard(
+                  name:         subName,
+                  imageUrl:     subImg,
+                  fallbackIcon: parentIcon,
+                  onTap: () {
+                    OpportunityHunterService.recordCategoryTap(
+                        widget.currentUserId, subName);
+                    Navigator.push(context, MaterialPageRoute(
+                      builder: (_) =>
+                          CategoryResultsScreen(categoryName: subName),
+                    ));
+                  },
+                );
+              },
+            ),
+          ),
+        ));
+      } else {
+        // ── Full-width tile for top-level categories without sub-cats ───
+        slivers.add(SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: GestureDetector(
+              onTap: () {
+                OpportunityHunterService.recordCategoryTap(
+                    widget.currentUserId, parentName);
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) =>
+                      CategoryResultsScreen(categoryName: parentName),
+                ));
+              },
+              child: Container(
+                height: 72,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8F9FA),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: parentImg.isNotEmpty
+                          ? CachedNetworkImage(
+                              imageUrl: parentImg,
+                              width: 48,
+                              height: 48,
+                              fit: BoxFit.cover,
+                              errorWidget: (_, __, ___) => Container(
+                                width: 48, height: 48,
+                                color: const Color(0xFFEEF2FF),
+                                child: Icon(parentIcon, size: 22,
+                                    color: const Color(0xFF6366F1)),
+                              ),
+                            )
+                          : Container(
+                              width: 48, height: 48,
+                              color: const Color(0xFFEEF2FF),
+                              child: Icon(parentIcon, size: 22,
+                                  color: const Color(0xFF6366F1)),
+                            ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        parentName,
+                        textDirection: TextDirection.rtl,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF111827),
+                        ),
+                      ),
+                    ),
+                    const Icon(Icons.chevron_left,
+                        size: 18, color: Color(0xFF9CA3AF)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ));
+      }
+    }
+
+    // Promo carousel: inject here if fewer than 2 sections existed.
+    if (!promoInserted) {
+      slivers.add(const SliverToBoxAdapter(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: _PromoCarousel(),
+        ),
+      ));
+    }
+
+    // ── Community tile ────────────────────────────────────────────────
+    slivers.add(SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+        child: GestureDetector(
+          onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const CommunityScreen())),
+          child: Container(
+            height: 64,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF10B981), Color(0xFF6366F1)],
+                begin: Alignment.centerRight,
+                end: Alignment.centerLeft,
+              ),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.volunteer_activism,
+                    color: Colors.white, size: 22),
+                SizedBox(width: 10),
+                Text(
+                  'למען הקהילה',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ));
+
+    return slivers;
+  }
+
+  // ── Sub-category card (used in horizontal rows) ───────────────────────────
+  Widget _buildSubCatCard({
+    required String name,
+    required String imageUrl,
+    required IconData fallbackIcon,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 100,
+        margin: const EdgeInsets.symmetric(horizontal: 5),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: imageUrl.isNotEmpty
+                  ? CachedNetworkImage(
+                      imageUrl: imageUrl,
+                      width: 100,
+                      height: 90,
+                      fit: BoxFit.cover,
+                      errorWidget: (_, __, ___) => Container(
+                        width: 100, height: 90,
+                        color: const Color(0xFFEEF2FF),
+                        child: Icon(fallbackIcon, size: 30,
+                            color: const Color(0xFF6366F1)),
+                      ),
+                    )
+                  : Container(
+                      width: 100, height: 90,
+                      color: const Color(0xFFEEF2FF),
+                      child: Icon(fallbackIcon, size: 30,
+                          color: const Color(0xFF6366F1)),
+                    ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF111827),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ── Notification bell with live unread badge ───────────────────────────────
@@ -924,7 +1043,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
   Widget _buildSearchBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 0),
       child: Row(
         children: [
           // ── Inline category filter ─────────────────────────────────────
@@ -1120,6 +1239,106 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     );
   }
 
+  // ── AI Deal of the Day banner ──────────────────────────────────────────────
+
+  Widget _buildDealBanner(DailyOpportunity deal) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
+      child: GestureDetector(
+        onTap: () => _openSearch(preselectedCategory: deal.category),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFFB45309), Color(0xFFF59E0B)],
+              begin: Alignment.centerRight,
+              end: Alignment.centerLeft,
+            ),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFF59E0B).withValues(alpha: 0.30),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // Dismiss button (left in RTL)
+                GestureDetector(
+                  onTap: () async {
+                    setState(() => _dealDismissed = true);
+                    final p = await SharedPreferences.getInstance();
+                    await p.setBool(
+                        'dismissed_deal_${OpportunityHunterService.todayKey()}',
+                        true);
+                  },
+                  child: Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.close_rounded,
+                        color: Colors.white, size: 14),
+                  ),
+                ),
+                const SizedBox(width: 8),
+
+                // Headline text
+                Expanded(
+                  child: Text(
+                    '${deal.emoji}  ${deal.headline}',
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+
+                // "AI Deal" badge (right in RTL = leading side)
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.22),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text(
+                        'AI Deal',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text('🤖',
+                        style: TextStyle(fontSize: 18)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   // ── Urgent / Pulse banner ──────────────────────────────────────────────────
 
   Widget _buildUrgentBanner(List<QueryDocumentSnapshot> docs, bool isProvider) {
@@ -1227,210 +1446,308 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   }
 }
 
-// ─── Home category card ───────────────────────────────────────────────────────
+// ── Wolt-style Promotional Carousel ──────────────────────────────────────────
 //
-// Mirrors _CategoryCard from search_page.dart — same press-down animation,
-// same CategoryImageBackground, same label / sub-category / trending badge.
-// Admin edit is intentionally omitted; editing lives in the Search tab.
+// Auto-plays every 5 seconds. Swipeable. Dot indicators at the bottom.
+// Banners are defined inline as gradient cards — no network dependency.
 
-class _HomeCategoryCard extends StatefulWidget {
-  final String      docId;        // Firestore document ID — needed by edit sheet
-  final String      name;
-  final String      iconName;     // Raw icon key — needed by edit sheet
-  final String      imageUrl;
-  final IconData    icon;
-  final bool        hasSubs;
-  final bool        isTrending;
-  final bool        isAdmin;      // When true the edit pencil overlay is shown
-  final double      perCardScale; // Visual zoom within fixed grid cell (default 1.0)
-  final VoidCallback onTap;
+// ── Promo banner data model ───────────────────────────────────────────────────
+//
+// [imageUrl] — if non-empty, renders a network image as background.
+//              If empty, falls back to the gradient + icon layout.
 
-  const _HomeCategoryCard({
-    required this.docId,
-    required this.name,
-    required this.iconName,
-    required this.imageUrl,
+class _PromoBanner {
+  final List<Color> gradient;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final String imageUrl;
+  const _PromoBanner({
+    required this.gradient,
+    required this.title,
+    required this.subtitle,
     required this.icon,
-    required this.onTap,
-    this.hasSubs      = false,
-    this.isTrending   = false,
-    this.isAdmin      = false,
-    this.perCardScale = 1.0,
+    this.imageUrl = '',
   });
-
-  @override
-  State<_HomeCategoryCard> createState() => _HomeCategoryCardState();
 }
 
-class _HomeCategoryCardState extends State<_HomeCategoryCard> {
-  bool _pressed = false;
-  bool _hovered = false;
+// ── Carousel ──────────────────────────────────────────────────────────────────
+//
+// Listens to Firestore 'banners' where placement == 'home_carousel'.
+// Falls back to 3 hardcoded gradient banners when Firestore returns 0 items.
 
-  void _openEditSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,    // lets the sheet resize with the keyboard
-      backgroundColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (_) => CategoryEditSheet(
-        docId:             widget.docId,
-        initialName:       widget.name,
-        initialIconName:   widget.iconName,
-        initialImageUrl:   widget.imageUrl,
-        initialCardScale:  widget.perCardScale,
-      ),
-    );
+class _PromoCarousel extends StatefulWidget {
+  const _PromoCarousel();
+
+  @override
+  State<_PromoCarousel> createState() => _PromoCarouselState();
+}
+
+class _PromoCarouselState extends State<_PromoCarousel> {
+  final PageController _ctrl = PageController();
+  int _currentPage = 0;
+  Timer? _timer;
+
+  StreamSubscription<QuerySnapshot>? _bannerSub;
+  List<_PromoBanner> _liveBanners = const [];
+  bool _firestoreLoaded = false;
+
+  // Icon name → IconData (mirrors the admin _iconLabels map)
+  static const _icons = <String, IconData>{
+    'stars':             Icons.stars_rounded,
+    'school':            Icons.school_rounded,
+    'emoji_events':      Icons.emoji_events_rounded,
+    'favorite':          Icons.favorite_rounded,
+    'bolt':              Icons.bolt_rounded,
+    'local_offer':       Icons.local_offer_rounded,
+    'rocket_launch':     Icons.rocket_launch_rounded,
+    'workspace_premium': Icons.workspace_premium_rounded,
+    'celebration':       Icons.celebration_rounded,
+    'trending_up':       Icons.trending_up_rounded,
+    'handshake':         Icons.handshake_outlined,
+    'monetization_on':   Icons.monetization_on_outlined,
+  };
+
+  // Hardcoded fallback — shown while Firestore loads or when collection is empty
+  static const _fallback = [
+    _PromoBanner(
+      gradient: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+      title: 'ברוכים הבאים ל-AnySkill',
+      subtitle: 'מצא מומחים מהשכונה שלך',
+      icon: Icons.handshake_outlined,
+    ),
+    _PromoBanner(
+      gradient: [Color(0xFF0EA5E9), Color(0xFF6366F1)],
+      title: 'שירות מקצועי בלחיצה אחת',
+      subtitle: 'שיפוצים • ניקיון • צילום ועוד',
+      icon: Icons.bolt_outlined,
+    ),
+    _PromoBanner(
+      gradient: [Color(0xFFF97316), Color(0xFFEC4899)],
+      title: 'הפוך למומחה היום',
+      subtitle: 'פרסם את השירות שלך והתחל להרוויח',
+      icon: Icons.trending_up_rounded,
+    ),
+  ];
+
+  List<_PromoBanner> get _banners =>
+      (_firestoreLoaded && _liveBanners.isNotEmpty) ? _liveBanners : _fallback;
+
+  @override
+  void initState() {
+    super.initState();
+    _startTimer();
+    _bannerSub = FirebaseFirestore.instance
+        .collection('banners')
+        .where('placement', isEqualTo: 'home_carousel')
+        .snapshots()
+        .listen(_onBannerSnapshot);
+  }
+
+  void _onBannerSnapshot(QuerySnapshot snap) {
+    if (!mounted) return;
+    final now = DateTime.now();
+    final docs = snap.docs.where((d) {
+      final m = d.data() as Map<String, dynamic>;
+      final active    = m['isActive']  as bool?      ?? true;
+      final expiresAt = (m['expiresAt'] as Timestamp?)?.toDate();
+      return active && (expiresAt == null || expiresAt.isAfter(now));
+    }).toList()
+      ..sort((a, b) {
+        final oa = (a.data() as Map<String, dynamic>)['order'] as int? ?? 999;
+        final ob = (b.data() as Map<String, dynamic>)['order'] as int? ?? 999;
+        return oa.compareTo(ob);
+      });
+
+    final parsed = docs.map((d) {
+      final m = d.data() as Map<String, dynamic>;
+      return _PromoBanner(
+        gradient: [
+          _hexToColor(m['color1'] as String? ?? '6366F1'),
+          _hexToColor(m['color2'] as String? ?? '8B5CF6'),
+        ],
+        title:    m['title']    as String? ?? '',
+        subtitle: m['subtitle'] as String? ?? '',
+        icon:     _icons[m['iconName'] as String? ?? 'stars'] ?? Icons.stars_rounded,
+        imageUrl: m['imageUrl'] as String? ?? '',
+      );
+    }).toList();
+
+    setState(() {
+      _firestoreLoaded = true;
+      _liveBanners = parsed;
+      if (_currentPage >= _banners.length) {
+        _currentPage = 0;
+        if (_ctrl.hasClients) _ctrl.jumpToPage(0);
+      }
+    });
+  }
+
+  static Color _hexToColor(String hex) {
+    final clean = hex.replaceAll('#', '').padLeft(6, '0');
+    return Color(int.parse('FF$clean', radix: 16));
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted || _banners.isEmpty) return;
+      final next = (_currentPage + 1) % _banners.length;
+      _ctrl.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _bannerSub?.cancel();
+    _ctrl.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Card-level transform: subtle press-down only (no hover card-scale).
-    // The premium "zoom" lives inside the image layer via AnimatedScale.
-    final double cardScale  = _pressed ? 0.97 : 1.0;
-    // Image zoom: hover → 1.06 (desktop preview),  press → slight warm-up.
-    final double imageScale = _hovered ? 1.06 : (_pressed ? 1.02 : 1.0);
+    final banners = _banners;
+    return SizedBox(
+      height: 190,
+      child: Stack(
+        children: [
+          PageView.builder(
+            controller: _ctrl,
+            itemCount: banners.length,
+            onPageChanged: (i) => setState(() => _currentPage = i),
+            itemBuilder: (_, i) => _BannerCard(banner: banners[i]),
+          ),
 
-    return Transform.scale(
-      scale: widget.perCardScale,
-      child: MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit:  (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-      onTap: () {
-        // Fire-and-forget — FieldValue.increment is atomic, catchError
-        // inside the service means a network error never blocks navigation.
-        CategoryService.incrementClickCount(widget.docId);
-        widget.onTap();
-      },
-      onTapDown:   (_) => setState(() => _pressed = true),
-      onTapUp:     (_) => setState(() => _pressed = false),
-      onTapCancel: () => setState(() => _pressed = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-        transform: Matrix4.identity()
-          ..scaleByDouble(cardScale, cardScale, 1.0, 1.0),
-        transformAlignment: Alignment.center,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            // Primary shadow — lifts more on hover
-            BoxShadow(
-              color: Colors.black.withValues(
-                  alpha: _hovered ? 0.24 : (_pressed ? 0.18 : 0.10)),
-              blurRadius:   _hovered ? 24 : (_pressed ? 14 : 8),
-              spreadRadius: _hovered ? 0  : -1,
-              offset: Offset(0, _hovered ? 10 : (_pressed ? 5 : 4)),
+          // ── Dot indicators ──────────────────────────────────────────────
+          Positioned(
+            bottom: 12,
+            left: 0,
+            right: 0,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(banners.length, (i) {
+                final active = i == _currentPage;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  width: active ? 20 : 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: active
+                        ? Colors.white
+                        : Colors.white.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                );
+              }),
             ),
-            // Subtle indigo tint shadow for the premium glow feel
-            if (_hovered)
-              BoxShadow(
-                color: const Color(0xFF6366F1).withValues(alpha: 0.14),
-                blurRadius: 20,
-                offset: const Offset(0, 8),
-              ),
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BannerCard extends StatelessWidget {
+  final _PromoBanner banner;
+  const _BannerCard({required this.banner});
+
+  @override
+  Widget build(BuildContext context) {
+    // ── Network image banner (Admin-controlled) ──────────────────────────
+    if (banner.imageUrl.isNotEmpty) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          color: const Color(0xFFEEEBFF),
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // ── Rich background image with indigo overlay ──────────────
-              CategoryImageBackground(
-                  imageUrl: widget.imageUrl, imageScale: imageScale),
-
-              // ── Label block ────────────────────────────────────────────
-              Positioned(
-                bottom: 8,
-                left:   8,
-                right:  8,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Icon(widget.icon, color: Colors.white, size: 15),
-                    const SizedBox(height: 3),
-                    Text(
-                      widget.name,
-                      textAlign: TextAlign.right,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color:      Colors.white,
-                        fontSize:   12,
-                        fontWeight: FontWeight.bold,
-                        height:     1.2,
-                      ),
-                    ),
-                    if (widget.hasSubs) ...[
-                      const SizedBox(height: 2),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          const Icon(Icons.keyboard_arrow_left,
-                              color: Colors.white70, size: 11),
-                          Text(AppLocalizations.of(context).subCategoryPrompt,
-                              style: const TextStyle(
-                                  color: Colors.white70, fontSize: 9)),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-
-              // ── 🔥 Trending badge — top-left ───────────────────────────
-              if (widget.isTrending)
-                Positioned(
-                  top:  10,
-                  left: 10,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 3),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFFFF6B35), Color(0xFFE8134E)],
-                        begin: Alignment.topLeft,
-                        end:   Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Text('🔥', style: TextStyle(fontSize: 11)),
-                  ),
-                ),
-
-              // ── ✏️ Admin edit button — top-right ───────────────────────
-              // Completely invisible to regular users and providers.
-              // Inner GestureDetector absorbs the tap before it reaches the
-              // outer card GestureDetector, so the card does NOT navigate.
-              if (widget.isAdmin)
-                Positioned(
-                  top:   10,
-                  right: 10,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: _openEditSheet,
-                    child: Container(
-                      padding: const EdgeInsets.all(7),
-                      decoration: BoxDecoration(
-                        color:  Colors.black.withValues(alpha: 0.55),
-                        shape:  BoxShape.circle,
-                        border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.30)),
-                      ),
-                      child: const Icon(Icons.edit_rounded,
-                          size: 14, color: Colors.white),
-                    ),
-                  ),
-                ),
-            ],
+          borderRadius: BorderRadius.circular(20),
+          child: Image.network(
+            banner.imageUrl,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            errorBuilder: (_, __, ___) => _GradientBannerContent(banner: banner),
           ),
         ),
-      ),    // close AnimatedContainer
-      ),    // close GestureDetector (child: of MouseRegion)
-      ),    // close MouseRegion (child: of Transform.scale)
-    );      // close Transform.scale + return
+      );
+    }
+
+    // ── Gradient fallback banner ─────────────────────────────────────────
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 2),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: banner.gradient,
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+        ),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: _GradientBannerContent(banner: banner),
+    );
+  }
+}
+
+class _GradientBannerContent extends StatelessWidget {
+  final _PromoBanner banner;
+  const _GradientBannerContent({required this.banner});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // ── Text block ──────────────────────────────────────────────
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  banner.title,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    height: 1.25,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  banner.subtitle,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.85),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 20),
+          // ── Icon ────────────────────────────────────────────────────
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.18),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(banner.icon, size: 32, color: Colors.white),
+          ),
+        ],
+      ),
+    );
   }
 }

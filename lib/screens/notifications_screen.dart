@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../l10n/app_localizations.dart';
+import 'provider_ai_insights_screen.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
@@ -87,6 +88,34 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
+  /// Marks the notification as read, then navigates to the relevant screen
+  /// based on [type] or keywords in [title].
+  void _handleTap(String docId, String type, String title) {
+    _markRead(docId);
+    _navigate(type, title);
+  }
+
+  void _navigate(String type, String title) {
+    final titleLower = title.toLowerCase();
+    final isAiNotif  = type == 'ai_insight' ||
+        type == 'ai_suggestion' ||
+        type == 'pro_granted'   ||
+        titleLower.contains('ai') ||
+        title.contains('בינה') ||
+        title.contains('מצא דרך') ||
+        title.contains('Pro');
+
+    if (isAiNotif) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const ProviderAiInsightsScreen(),
+        ),
+      );
+    }
+    // Future routing hooks: 'new_booking' → MyBookingsScreen, etc.
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -137,7 +166,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               final ts = (n['createdAt'] as Timestamp?)?.toDate();
 
               return InkWell(
-                onTap: () => _markRead(doc.id),
+                onTap: () => _handleTap(doc.id, type, title),
                 child: Container(
                   color: isRead ? Colors.white : Colors.blue.shade50,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -239,15 +268,18 @@ class _NotifIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (icon, color) = switch (type) {
-      'new_booking'  => (Icons.calendar_today_rounded,    Colors.purple),
-      'job_status'   => (Icons.check_circle_outline,      Colors.green),
-      'chat'         => (Icons.chat_bubble_outline,       Colors.blue),
-      'interest'     => (Icons.flash_on_rounded,          Colors.orange),
-      'verified'     => (Icons.verified_rounded,          Colors.blue),
-      'review'       => (Icons.star_rounded,              const Color(0xFFF59E0B)),
-      'vip_expiry'   => (Icons.workspace_premium_rounded, const Color(0xFFD97706)),
-      'payment'      => (Icons.account_balance_wallet,    Colors.green),
-      _              => (Icons.notifications_outlined,    Colors.grey),
+      'new_booking'   => (Icons.calendar_today_rounded,    Colors.purple),
+      'job_status'    => (Icons.check_circle_outline,      Colors.green),
+      'chat'          => (Icons.chat_bubble_outline,       Colors.blue),
+      'interest'      => (Icons.flash_on_rounded,          Colors.orange),
+      'verified'      => (Icons.verified_rounded,          Colors.blue),
+      'review'        => (Icons.star_rounded,              const Color(0xFFF59E0B)),
+      'vip_expiry'    => (Icons.workspace_premium_rounded, const Color(0xFFD97706)),
+      'payment'       => (Icons.account_balance_wallet,    Colors.green),
+      'ai_insight'    => (Icons.auto_awesome_rounded,        const Color(0xFF6366F1)),
+      'ai_suggestion' => (Icons.auto_awesome_rounded,        const Color(0xFF6366F1)),
+      'pro_granted'   => (Icons.workspace_premium_rounded,   const Color(0xFFFBBF24)),
+      _               => (Icons.notifications_outlined,      Colors.grey),
     };
     return Container(
       padding: const EdgeInsets.all(10),

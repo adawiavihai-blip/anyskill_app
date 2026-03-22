@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(firebase firestore:indexes)",
+      "Bash(echo $env:FLUTTER_ROOT)",
+      "Bash(command -v flutter)",
+      "Read(//c/src/flutter/packages/flutter_tools/lib/src/windows/**)",
+      "Bash(identify c:/Users/aviha/Desktop/anyskill_app/assets/images/NEW_LOGO1.png.png)",
+      "Bash(head -20 grep -rn \"cancelWithPolicy\\\\|_cancelBook\\\\|cancelBook\" c:/Users/aviha/Desktop/anyskill_app/lib --include=*.dart -l)",
+      "Bash(grep -v \"l10n\\\\|test\\\\|//.*\\\\.first\")",
+      "Bash(find c:/Users/aviha/Desktop/anyskill_app/lib -name provider_job* -o -name *job_details*)",
+      "Bash(ls \"c:\\\\Users\\\\aviha\\\\Desktop\\\\anyskill_app\\\\assets\\\\audio\"\" 2>/dev/null && cat \"c:UsersavihaDesktopanyskill_appwebmanifest.json \")",
+      "Bash(python3:*)",
+      "Bash(grep -l \"^class\\\\|^Future\\\\|^Stream\" /c/Users/aviha/Desktop/anyskill_app/lib/services/*.dart)"
+    ]
+  }
+}

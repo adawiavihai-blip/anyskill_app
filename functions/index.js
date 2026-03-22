@@ -18,6 +18,70 @@ admin.initializeApp();
 // מספר ה-shards לכל מונה unreadCount — מפיץ כתיבות ומונע write contention
 const NUM_SHARDS = 5;
 
+// ── Financial Health: Claude Haiku cost tracking ──────────────────────────────
+// claude-haiku-4-5-20251001 pricing (as of 2025):
+//   Input:  $0.80  per million tokens → $0.0000008  / token
+//   Output: $4.00  per million tokens → $0.000004   / token
+const _COST_PER_INPUT_TOKEN  = 0.0000008;
+const _COST_PER_OUTPUT_TOKEN = 0.000004;
+const _KILL_SWITCH_DEFAULT   = 100; // $100 hard monthly limit
+
+/** Increments system_stats/billing with the cost of one Claude call.
+ *  Auto-resets on month change. Activates kill-switch if limit exceeded.
+ *  Fire-and-forget: call as  _trackApiCost(db, i, o).catch(()=>{}) */
+async function _trackApiCost(db, inputTokens, outputTokens) {
+    const cost     = (inputTokens  * _COST_PER_INPUT_TOKEN)
+                   + (outputTokens * _COST_PER_OUTPUT_TOKEN);
+    const monthKey = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+    const ref      = db.collection("system_stats").doc("billing");
+    try {
+        await db.runTransaction(async (tx) => {
+            const snap  = await tx.get(ref);
+            const data  = snap.exists ? snap.data() : {};
+            const isNew = !data.month_key || data.month_key !== monthKey;
+            if (isNew) {
+                tx.set(ref, {
+                    month_key:                monthKey,
+                    current_month_api_cost:   cost,
+                    current_month_infra_cost: 0,
+                    total_input_tokens:       inputTokens,
+                    total_output_tokens:      outputTokens,
+                    api_call_count:           1,
+                    ai_kill_switch_active:    false,
+                    budget_limit:             data.budget_limit    || 50,
+                    kill_switch_limit:        data.kill_switch_limit || _KILL_SWITCH_DEFAULT,
+                    last_updated:             admin.firestore.FieldValue.serverTimestamp(),
+                });
+            } else {
+                const newCost   = (data.current_month_api_cost || 0) + cost;
+                const killLimit = data.kill_switch_limit || _KILL_SWITCH_DEFAULT;
+                tx.set(ref, {
+                    current_month_api_cost: newCost,
+                    total_input_tokens:     admin.firestore.FieldValue.increment(inputTokens),
+                    total_output_tokens:    admin.firestore.FieldValue.increment(outputTokens),
+                    api_call_count:         admin.firestore.FieldValue.increment(1),
+                    ai_kill_switch_active:  newCost >= killLimit,
+                    last_updated:           admin.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+            }
+        });
+    } catch (e) {
+        console.warn("_trackApiCost: silent fail", e.message);
+    }
+}
+
+/** Returns true if the AI kill-switch is NOT active.
+ *  Fails open (returns true) on any read error so users are never blocked. */
+async function _isAiEnabled(db) {
+    try {
+        const snap = await db.collection("system_stats").doc("billing").get();
+        if (!snap.exists) return true;
+        return snap.data().ai_kill_switch_active !== true;
+    } catch (_) {
+        return true;
+    }
+}
+
 // QA: הפונקציה מאזינה ליצירת הודעה חדשה בתוך הצא'טים
 // maxInstances + concurrency מאפשרים עד 100 * 500 = 50,000 בקשות במקביל ללא cold starts
 exports.sendchatnotification = onDocumentCreated(
@@ -373,19 +437,37 @@ exports.processPaymentRelease = onCall(async (request) => {
             const netToExpert = totalAmount - feeAmount;
             console.log(`[PPR] STEP6 TX: feePercentage=${feePercentage} (${customCommission != null ? 'custom' : 'global'}), feeAmount=${feeAmount}, netToExpert=${netToExpert}`);
 
+            // ── Edge case: provider deleted their account mid-transaction ──────
+            // Firestore tx.update() throws DOCUMENT_NOT_FOUND on a missing doc.
+            // We still complete the job and record earnings, but credit a
+            // 'deleted_expert_funds' holding doc instead of a missing user doc.
+            const expertExists = expertDataSnap.exists;
+            if (!expertExists) {
+                console.warn(`[PPR] STEP6 TX: expert ${expertId} not found — crediting holding account`);
+                tx.set(db.collection('deleted_expert_funds').doc(expertId), {
+                    expertId,
+                    pendingBalance: admin.firestore.FieldValue.increment(netToExpert),
+                    lastJobId:      jobId,
+                    updatedAt:      admin.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+            }
+
             console.log('[PPR] STEP6 TX: updating job...');
             tx.update(jobRef, {
                 status: 'completed',
                 completedAt: admin.firestore.FieldValue.serverTimestamp(),
                 feeAmount,
                 netAmountForExpert: netToExpert,
+                ...(expertExists ? {} : { expertAccountDeleted: true }),
             });
 
-            console.log('[PPR] STEP6 TX: updating expert balance + orderCount...');
-            tx.update(expertRef, {
-                balance:     admin.firestore.FieldValue.increment(netToExpert),
-                orderCount:  admin.firestore.FieldValue.increment(1),
-            });
+            if (expertExists) {
+                console.log('[PPR] STEP6 TX: updating expert balance + orderCount...');
+                tx.update(expertRef, {
+                    balance:     admin.firestore.FieldValue.increment(netToExpert),
+                    orderCount:  admin.firestore.FieldValue.increment(1),
+                });
+            }
 
             // Increment category bookingCount (powers Trending badges on Discover)
             if (categoryRef) {
@@ -795,6 +877,15 @@ exports.sendReceiptEmail = onDocumentUpdated(
         const db    = admin.firestore();
         const jobId = event.params.jobId;
 
+        // Sanitise all user-supplied strings before interpolating into HTML.
+        // Prevents XSS payloads in names from appearing in email clients.
+        const _esc = (s) => (s || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+
         // ── Resolve email addresses ──────────────────────────────────────
         const [customerSnap, expertSnap] = await Promise.all([
             db.collection('users').doc(after.customerId).get(),
@@ -854,10 +945,10 @@ exports.sendReceiptEmail = onDocumentUpdated(
     </div>
   </div>
   <div class="body">
-    <div class="row"><span class="label">לקוח</span><span><strong>${after.customerName || '—'}</strong></span></div>
-    <div class="row"><span class="label">נותן שירות</span><span><strong>${after.expertName || '—'}</strong></span></div>
-    <div class="row"><span class="label">תאריך שירות</span><span>${dateLabel}</span></div>
-    ${expertTaxId ? `<div class="row"><span class="label">ח.פ / ת.ז ספק</span><span>${expertTaxId}</span></div>` : ''}
+    <div class="row"><span class="label">לקוח</span><span><strong>${_esc(after.customerName) || '—'}</strong></span></div>
+    <div class="row"><span class="label">נותן שירות</span><span><strong>${_esc(after.expertName) || '—'}</strong></span></div>
+    <div class="row"><span class="label">תאריך שירות</span><span>${_esc(dateLabel)}</span></div>
+    ${expertTaxId ? `<div class="row"><span class="label">ח.פ / ת.ז ספק</span><span>${_esc(expertTaxId)}</span></div>` : ''}
     <hr class="divider"/>
     <div class="row"><span class="label">מחיר שירות</span><span>₪${net.toFixed(2)}</span></div>
     <div class="row" style="color:#aaa"><span class="label">עמלת פלטפורמה (${feePct}%)</span><span>₪${commission.toFixed(2)}</span></div>
@@ -879,7 +970,7 @@ exports.sendReceiptEmail = onDocumentUpdated(
             batch.set(db.collection('mail').doc(), {
                 to:      [customerEmail],
                 message: {
-                    subject: `קבלה על שירות מ-${after.expertName} — AnySkill #${receiptNum}`,
+                    subject: `קבלה על שירות מ-${_esc(after.expertName)} — AnySkill #${receiptNum}`,
                     html:    receiptHtml('customer'),
                 },
             });
@@ -890,7 +981,7 @@ exports.sendReceiptEmail = onDocumentUpdated(
             batch.set(db.collection('mail').doc(), {
                 to:      [expertEmail],
                 message: {
-                    subject: `סיכום עסקה עם ${after.customerName} — AnySkill #${receiptNum}`,
+                    subject: `סיכום עסקה עם ${_esc(after.customerName)} — AnySkill #${receiptNum}`,
                     html:    receiptHtml('expert'),
                 },
             });
@@ -1753,6 +1844,7 @@ exports.categorizeprovider = onCall(
                 messages:   [{ role: "user", content: userMessage }],
             });
 
+            _trackApiCost(admin.firestore(), msg.usage?.input_tokens || 0, msg.usage?.output_tokens || 0).catch(() => {});
             const raw = (msg.content[0]?.text ?? "{}").replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
             parsed = JSON.parse(raw);
         } catch (err) {
@@ -3542,5 +3634,981 @@ exports.reengagementEngine = onSchedule(
 
     console.log(`[reengagementEngine] created=${created} skipped=${skipped} userFetches=${idsToFetch.length}`);
     return null;
+  }
+);
+
+// =============================================================================
+// ─── AI Matchmaker Agent ─────────────────────────────────────────────────────
+// =============================================================================
+// Triggered by Flutter immediately after a Quick Request is submitted.
+//
+// Flow:
+//   1. Query verified providers in the requested category (limit 30)
+//   2. Rank them — mirrors Flutter SearchRankingService formula:
+//        score = (xp/2000)*100 × 0.6  +  distance_score × 0.2  +  story_bonus × 0.2
+//              + 100 (if online) + 200 (if promoted)
+//   3. Call Claude Haiku with the top-3 summary → generate a personalised
+//      Hebrew pitch that recommends the #1 match and invites the client to connect
+//   4. Falls back to a template pitch if ANTHROPIC_API_KEY is absent (dev mode)
+//
+// Returns: { pitch, topProvider: { uid, name, rating, distKm, profileImage,
+//            category, aboutMe, pricePerHour, isOnline }, totalMatches }
+// =============================================================================
+
+const _MATCHMAKER_SYSTEM_PROMPT =
+  "אתה סוכן AI של AnySkill — הפלטפורמה הישראלית הגדולה למציאת ספקי שירות. " +
+  "תפקידך: לייצר מסר קצר, חם ואישי בעברית שמחבר בין לקוח לספק המתאים ביותר. " +
+  "הסגנון: ישיר, אנושי, מקצועי — כמו חבר שמכיר את השוק. " +
+  "כתוב 2-3 משפטים בלבד. ללא כוכביות. ללא רשימות. ללא פתיח כמו 'בהחלט' או 'כמובן'. " +
+  "פשוט המלצה אישית וחמה.";
+
+exports.matchmakerpitch = onCall(
+  {
+    secrets:      [ANTHROPIC_API_KEY],
+    maxInstances: 10,
+    region:       "us-central1",
+    memory:       "512MiB",
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Login required.");
+    }
+
+    const { requestText, category, clientName, clientLat, clientLng } =
+      request.data;
+
+    if (!requestText || requestText.trim().length < 3) {
+      throw new HttpsError("invalid-argument", "requestText is required.");
+    }
+
+    const db = admin.firestore();
+
+    // ── 1. Query providers ─────────────────────────────────────────────────
+    let snap;
+    if (category && category.trim().length > 0) {
+      snap = await db.collection("users")
+        .where("isProvider",  "==", true)
+        .where("isVerified",  "==", true)
+        .where("serviceType", "==", category.trim())
+        .limit(30)
+        .get();
+    } else {
+      snap = await db.collection("users")
+        .where("isProvider", "==", true)
+        .where("isVerified", "==", true)
+        .limit(30)
+        .get();
+    }
+
+    if (snap.empty) {
+      console.log(`matchmakerpitch: no providers found for category="${category}"`);
+      return { pitch: null, topProvider: null, totalMatches: 0 };
+    }
+
+    // ── 2. Rank — mirrors Flutter SearchRankingService ─────────────────────
+    const GOLD_THRESHOLD = 2000;
+    const MAX_DIST_KM    = 50;
+    const now            = Date.now();
+
+    function haversineKm(lat1, lng1, lat2, lng2) {
+      if (lat1 == null || lng1 == null || lat2 == null || lng2 == null) return null;
+      const R    = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a    = Math.sin(dLat / 2) ** 2
+                 + Math.cos(lat1 * Math.PI / 180)
+                 * Math.cos(lat2 * Math.PI / 180)
+                 * Math.sin(dLng / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    const scored = snap.docs
+      .map(doc => ({ _uid: doc.id, ...doc.data() }))
+      .filter(p => !p.isHidden && !p.isBanned)
+      .map(p => {
+        const xpScore    = Math.min((p.xp || 0) / GOLD_THRESHOLD, 1.0) * 100;
+        const distKm     = haversineKm(clientLat, clientLng, p.latitude, p.longitude);
+        const distScore  = distKm === null
+          ? 50
+          : Math.max(0, (MAX_DIST_KM - Math.min(distKm, MAX_DIST_KM)) / MAX_DIST_KM * 100);
+        const storyMs    = p.lastStoryAt
+          ? (typeof p.lastStoryAt.toMillis === "function" ? p.lastStoryAt.toMillis() : 0)
+          : 0;
+        const storyBonus  = (storyMs > 0 && (now - storyMs) < 86400000) ? 100 : 0;
+        const finalScore  = xpScore * 0.6 + distScore * 0.2 + storyBonus * 0.2
+                          + (p.isOnline   ? 100 : 0)
+                          + (p.isPromoted ? 200 : 0);
+        return { ...p, _score: finalScore, _distKm: distKm };
+      })
+      .sort((a, b) => b._score - a._score)
+      .slice(0, 3);
+
+    if (scored.length === 0) {
+      return { pitch: null, topProvider: null, totalMatches: 0 };
+    }
+
+    const top       = scored[0];
+    const topName   = top.name || "ספק";
+    const topRating = ((top.rating || 4.5)).toFixed(1);
+    const topDistKm = top._distKm;
+    const topDist   = topDistKm !== null ? `${topDistKm.toFixed(1)} ק"מ` : null;
+    const topPrice  = top.pricePerHour ? `₪${top.pricePerHour} לשעה` : null;
+
+    const topProvider = {
+      uid:          top._uid,
+      name:         topName,
+      rating:       top.rating  || 4.5,
+      distKm:       topDistKm,
+      profileImage: top.profileImage || "",
+      category:     top.serviceType  || category || "",
+      aboutMe:      (top.aboutMe || "").substring(0, 80),
+      pricePerHour: top.pricePerHour || 0,
+      isOnline:     top.isOnline     || false,
+    };
+
+    // ── 3. Template fallback (no API key in dev) ───────────────────────────
+    function templatePitch() {
+      const distPart  = topDist  ? `נמצא/ת רק ${topDist} ממך`  : "זמין/ה באזורך";
+      const pricePart = topPrice ? ` ב-${topPrice}` : "";
+      const morePart  = scored.length > 1
+        ? ` ויש עוד ${scored.length - 1} ספקים מתאימים.`
+        : ".";
+      return `מצאתי בשבילך! ${topName} ${distPart} עם דירוג ${topRating}⭐${pricePart}${morePart} רוצה שאשלח לו/ה את הבקשה שלך?`;
+    }
+
+    // ── 4. Claude Haiku pitch ──────────────────────────────────────────────
+    const apiKey = ANTHROPIC_API_KEY.value() || process.env.ANTHROPIC_API_KEY || "";
+    if (!apiKey) {
+      console.warn("matchmakerpitch: ANTHROPIC_API_KEY missing — using template");
+      return { pitch: templatePitch(), topProvider, totalMatches: scored.length };
+    }
+    if (!await _isAiEnabled(admin.firestore())) {
+      console.warn("matchmakerpitch: kill-switch active — basic mode");
+      return { pitch: templatePitch(), topProvider, totalMatches: scored.length, basicMode: true };
+    }
+
+    const providerLines = scored.map((p, i) => {
+      const d     = p._distKm !== null ? `${p._distKm.toFixed(1)} ק"מ` : "מרחק לא ידוע";
+      const price = p.pricePerHour ? `₪${p.pricePerHour}/שעה` : "";
+      const bio   = (p.aboutMe || "").substring(0, 60);
+      return `${i + 1}. ${p.name || "ספק"} | ${(p.rating || 4.5).toFixed(1)}⭐ | ${d}${price ? " | " + price : ""}${bio ? " | " + bio : ""}`;
+    }).join("\n");
+
+    const moreCount = scored.length - 1;
+    const userMsg = [
+      `לקוח בשם ${clientName || "לקוח"} ביקש: "${requestText.trim()}"`,
+      ``,
+      `מצאתי ${scored.length} ספקים מתאימים:`,
+      providerLines,
+      ``,
+      `כתוב מסר קצר ואישי (2-3 משפטים) שממליץ על הספק הראשון כהמלצה הטובה ביותר.`,
+      moreCount > 0 ? `ציין שיש עוד ${moreCount} ספקים מתאימים.` : "",
+      topDist  ? `ציין שהספק נמצא ${topDist} מהלקוח.`  : "",
+      topPrice ? `ציין את המחיר: ${topPrice}.` : "",
+      `סיים עם שאלה ישירה: האם הלקוח רוצה לשלוח לו/ה את הבקשה.`,
+    ].filter(Boolean).join("\n");
+
+    try {
+      const anthropic = new Anthropic({ apiKey });
+      const msg = await anthropic.messages.create({
+        model:      "claude-haiku-4-5-20251001",
+        max_tokens: 200,
+        system:     _MATCHMAKER_SYSTEM_PROMPT,
+        messages:   [{ role: "user", content: userMsg }],
+      });
+      const pitch = (msg.content[0]?.text || "").trim();
+      _trackApiCost(admin.firestore(), msg.usage?.input_tokens || 0, msg.usage?.output_tokens || 0).catch(() => {});
+      console.log(`matchmakerpitch: uid=${request.auth.uid} cat="${category}" matches=${scored.length} pitch_len=${pitch.length}`);
+      return { pitch: pitch || templatePitch(), topProvider, totalMatches: scored.length };
+    } catch (err) {
+      console.error("matchmakerpitch: Claude call failed:", err);
+      // Graceful fallback — never throw so the user still gets a response
+      return { pitch: templatePitch(), topProvider, totalMatches: scored.length };
+    }
+  }
+);
+
+// =============================================================================
+// ─── AI Business Coach ───────────────────────────────────────────────────────
+// =============================================================================
+// Reads a verified provider's full profile from Firestore, computes the
+// category-average pricePerHour, and asks Claude Haiku to produce a 3-point
+// Hebrew coaching plan stored as:
+//   users/{uid}.aiCoachingTips: { summary, scorePct, tips[], updatedAt }
+//
+// 24-hour server-side TTL: if cached data is fresh, the function returns it
+// immediately without calling Claude again.
+//
+// Graceful fallback: if ANTHROPIC_API_KEY is absent, a deterministic template-
+// based coaching plan is generated from the profile audit instead.
+// =============================================================================
+
+// ── Template fallback (no API key or Claude failure) ─────────────────────────
+function _buildTemplateCoaching(
+  name, aboutMeLen, price, categoryAvgPrice, galleryLen, certifiedCats, hasPhoto
+) {
+  const tips = [];
+
+  if (!hasPhoto) {
+    tips.push({ icon: "📸", text: "הוסף תמונת פרופיל מקצועית — פרופילים עם תמונה מקבלים 3× יותר פניות", priority: "high" });
+  } else if (galleryLen < 3) {
+    tips.push({ icon: "🖼️", text: `הגלריה שלך ריקה כמעט (${galleryLen} תמונות). הוסף לפחות 3 תמונות של עבודות אמיתיות`, priority: "high" });
+  }
+
+  if (aboutMeLen < 100) {
+    tips.push({ icon: "📝", text: `התיאור שלך קצר (${aboutMeLen} תווים). כתוב לפחות 150 תווים שכוללים ניסיון, התמחות ומה מייחד אותך`, priority: "high" });
+  }
+
+  if (categoryAvgPrice && Math.abs(price - categoryAvgPrice) / categoryAvgPrice > 0.2) {
+    const pct = Math.abs(Math.round((price - categoryAvgPrice) / categoryAvgPrice * 100));
+    const dir = price > categoryAvgPrice ? "גבוה" : "נמוך";
+    tips.push({ icon: "💰", text: `המחיר שלך ₪${price} ${dir} ב-${pct}% מממוצע הקטגוריה (₪${Math.round(categoryAvgPrice)}). שקול להתאים להגדיל פניות`, priority: "medium" });
+  }
+
+  if (certifiedCats === 0) {
+    tips.push({ icon: "🎓", text: "השלם קורס באקדמיית AnySkill וקבל תג 'מומחה מאומת' — מדרג אותך גבוה יותר בחיפוש", priority: "medium" });
+  }
+
+  while (tips.length < 3) {
+    tips.push({ icon: "⭐", text: "בקש מ-3 לקוחות מרוצים להשאיר ביקורת — ביקורות מכפילות את שיעור הפניות", priority: "low" });
+  }
+
+  let score = 30;
+  if (hasPhoto)                                         score += 15;
+  if (aboutMeLen >= 150)                               score += 15;
+  if (galleryLen >= 3)                                 score += 10;
+  if (certifiedCats > 0)                               score += 10;
+  if (categoryAvgPrice && Math.abs(price - categoryAvgPrice) / categoryAvgPrice < 0.15) score += 10;
+  score = Math.min(score, 95);
+
+  return {
+    summary:  score >= 70
+      ? "פרופיל חזק! כמה שיפורים קטנים יכפילו את הפניות"
+      : "פרופיל עם פוטנציאל גבוה — 3 שיפורים יקפיצו אותך",
+    scorePct: score,
+    tips:     tips.slice(0, 3),
+  };
+}
+
+exports.analyzeProviderProfile = onCall(
+  {
+    secrets:      [ANTHROPIC_API_KEY],
+    maxInstances: 5,
+    region:       "us-central1",
+    memory:       "512MiB",
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Login required.");
+    }
+    const uid = request.auth.uid;
+    const db  = admin.firestore();
+
+    // ── 1. Read provider profile ───────────────────────────────────────────
+    const userDoc = await db.collection("users").doc(uid).get();
+    if (!userDoc.exists) throw new HttpsError("not-found", "User not found.");
+    const profile = userDoc.data();
+
+    if (!profile.isProvider || !profile.isVerified) {
+      throw new HttpsError("permission-denied", "Only verified providers can use this feature.");
+    }
+
+    // ── 2. 24-hour server-side cache check ────────────────────────────────
+    const cached = profile.aiCoachingTips;
+    if (cached && cached.updatedAt) {
+      const ageH = (Date.now() - cached.updatedAt.toMillis()) / 3600000;
+      if (ageH < 24) {
+        console.log(`analyzeProviderProfile: cache hit uid=${uid} ageH=${ageH.toFixed(1)}`);
+        return cached;
+      }
+    }
+
+    // ── 3. Category-average price ─────────────────────────────────────────
+    const category = profile.serviceType || "";
+    let categoryAvgPrice = null;
+    if (category) {
+      const peersSnap = await db.collection("users")
+        .where("isProvider",  "==", true)
+        .where("isVerified",  "==", true)
+        .where("serviceType", "==", category)
+        .limit(50)
+        .get();
+      const prices = peersSnap.docs
+        .map(d => d.data().pricePerHour)
+        .filter(p => p && p > 0);
+      if (prices.length > 1) {
+        categoryAvgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
+      }
+    }
+
+    // ── 4. Build audit snapshot ───────────────────────────────────────────
+    const name           = profile.name           || "ספק";
+    const aboutMeLen     = (profile.aboutMe || "").trim().length;
+    const price          = profile.pricePerHour   || 0;
+    const rating         = ((profile.rating || 0)).toFixed(1);
+    const reviewsCount   = profile.reviewsCount   || 0;
+    const hasPhoto       = !!(profile.profileImage);
+    const galleryLen     = (profile.gallery        || []).length;
+    const certifiedCats  = (profile.certifiedCategories || []).length;
+    const xp             = profile.xp             || 0;
+    const isOnline       = profile.isOnline        || false;
+    const updatedAt      = profile.updatedAt;
+    const daysSinceUpdate = updatedAt
+      ? Math.floor((Date.now() - updatedAt.toMillis()) / 86400000)
+      : 60;
+    const priceVsAvg = categoryAvgPrice
+      ? ((price - categoryAvgPrice) / categoryAvgPrice * 100).toFixed(0)
+      : null;
+
+    const audit = [
+      `שם: ${name}`,
+      `קטגוריה: ${category || "לא מוגדר"}`,
+      `תיאור (aboutMe): ${aboutMeLen} תווים${aboutMeLen < 80 ? " — קצר מאוד" : aboutMeLen < 200 ? " — בינוני" : " — טוב"}`,
+      `מחיר לשעה: ₪${price}${categoryAvgPrice ? ` (ממוצע קטגוריה ₪${Math.round(categoryAvgPrice)}, ${priceVsAvg > 0 ? "+" : ""}${priceVsAvg}%)` : ""}`,
+      `דירוג: ${rating}⭐ מתוך ${reviewsCount} ביקורות`,
+      `תמונת פרופיל: ${hasPhoto ? "יש" : "חסרה"}`,
+      `גלריה: ${galleryLen} תמונות${galleryLen === 0 ? " — ריקה!" : galleryLen < 3 ? " — מעטות" : " — טוב"}`,
+      `קורסים מוסמכים: ${certifiedCats}`,
+      `XP: ${xp}`,
+      `מחובר: ${isOnline ? "כן" : "לא"}`,
+      `עדכון פרופיל: לפני ${daysSinceUpdate} ימים`,
+    ].join("\n");
+
+    // ── 5. Claude Haiku ───────────────────────────────────────────────────
+    const systemPrompt =
+      "אתה יועץ עסקי של AnySkill — פלטפורמת שירותים ישראלית. " +
+      "תפקידך: לנתח פרופיל ספק ולתת 3 עצות ספציפיות ומעשיות להגדלת הכנסות. " +
+      "הסגנון: ישיר, חם, מעשי — כמו מנטור שמכיר את השוק. " +
+      "פלט JSON בלבד, ללא כוכביות, ללא הסברים.";
+
+    const userMsg =
+      `נתוני פרופיל:\n${audit}\n\n` +
+      `החזר JSON בפורמט הבא בלבד:\n` +
+      `{\n` +
+      `  "summary": "משפט אחד שמסכם מצב הפרופיל",\n` +
+      `  "scorePct": <ציון 0-100>,\n` +
+      `  "tips": [\n` +
+      `    { "icon": "<אמוג'י>", "text": "<עצה ספציפית עם מספרים מהנתונים>", "priority": "high" },\n` +
+      `    { "icon": "<אמוג'י>", "text": "<עצה ספציפית עם מספרים מהנתונים>", "priority": "medium" },\n` +
+      `    { "icon": "<אמוג'י>", "text": "<עצה ספציפית עם מספרים מהנתונים>", "priority": "low" }\n` +
+      `  ]\n` +
+      `}\n` +
+      `כל tip חייב לכלול פעולה ספציפית ומדידה.`;
+
+    const apiKey = ANTHROPIC_API_KEY.value() || process.env.ANTHROPIC_API_KEY || "";
+    let result;
+
+    const _coachAiEnabled = await _isAiEnabled(admin.firestore());
+    if (!apiKey || !_coachAiEnabled) {
+      console.warn("analyzeProviderProfile: using template (no key or kill-switch active)");
+      result = _buildTemplateCoaching(name, aboutMeLen, price, categoryAvgPrice, galleryLen, certifiedCats, hasPhoto);
+    } else {
+      try {
+        const anthropic = new Anthropic({ apiKey });
+        const msg = await anthropic.messages.create({
+          model:      "claude-haiku-4-5-20251001",
+          max_tokens: 512,
+          system:     systemPrompt,
+          messages:   [{ role: "user", content: userMsg }],
+        });
+        _trackApiCost(admin.firestore(), msg.usage?.input_tokens || 0, msg.usage?.output_tokens || 0).catch(() => {});
+        const raw = (msg.content[0]?.text || "{}")
+          .replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
+        result = JSON.parse(raw);
+      } catch (err) {
+        console.error("analyzeProviderProfile: Claude failed:", err);
+        result = _buildTemplateCoaching(name, aboutMeLen, price, categoryAvgPrice, galleryLen, certifiedCats, hasPhoto);
+      }
+    }
+
+    // ── 6. Cache in Firestore ─────────────────────────────────────────────
+    result.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+    await db.collection("users").doc(uid).update({ aiCoachingTips: result });
+
+    console.log(`analyzeProviderProfile: uid=${uid} score=${result.scorePct} tips=${result.tips?.length}`);
+    return result;
+  }
+);
+
+// =============================================================================
+// ─── Smart Nudge: notify stale providers ─────────────────────────────────────
+// =============================================================================
+// Runs daily at 10:00 Israel time.
+// Sends an in-app notification to providers whose profile hasn't been updated
+// in 30+ days, at most once every 7 days per provider.
+// =============================================================================
+
+exports.notifyStaleProviders = onSchedule(
+  { schedule: "0 10 * * *", timeZone: "Asia/Jerusalem", region: "us-central1" },
+  async () => {
+    const db          = admin.firestore();
+    const staleCutoff = new Date(Date.now() - 30 * 86400000); // 30 days ago
+    const nudgeCutoff = new Date(Date.now() -  7 * 86400000); //  7 days ago
+
+    const snap = await db.collection("users")
+      .where("isProvider", "==", true)
+      .where("isVerified", "==", true)
+      .limit(300)
+      .get();
+
+    const notifBatch  = db.batch();
+    const updateBatch = db.batch();
+    let sent = 0;
+
+    for (const doc of snap.docs) {
+      if (sent >= 100) break; // safety cap
+
+      const d           = doc.data();
+      const updatedAt   = d.updatedAt?.toDate()          || new Date(0);
+      const lastNudge   = d.lastCoachingNudge?.toDate()  || new Date(0);
+
+      if (updatedAt >= staleCutoff || lastNudge >= nudgeCutoff) continue;
+
+      notifBatch.set(db.collection("notifications").doc(), {
+        userId:    doc.id,
+        title:     "💡 ה-AI שלנו מצא דרך לשפר אותך!",
+        body:      "ה-AI שלנו מצא דרך לשפר את החשיפה שלך! כנס לבדוק.",
+        type:      "ai_coaching",
+        isRead:    false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      updateBatch.update(doc.ref, {
+        lastCoachingNudge: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      sent++;
+    }
+
+    if (sent > 0) {
+      await Promise.all([notifBatch.commit(), updateBatch.commit()]);
+    }
+    console.log(`notifyStaleProviders: sent=${sent}`);
+    return null;
+  }
+);
+
+// =============================================================================
+// ─── AI Opportunity Hunter — daily deal + dormant-client nudges ───────────────
+// =============================================================================
+// Runs every morning at 08:00 IST.
+// 1. Reads optional market_alerts and the current season.
+// 2. Calls Claude Haiku to craft a Hebrew "Deal of the Day" headline.
+// 3. Stores it in daily_opportunities/{YYYY-MM-DD} for the in-app banner.
+// 4. Finds dormant clients (lastActiveAt < 14 days, throttled 3 days/user).
+// 5. Sends personalised FCM push + in-app notification to each dormant user.
+//
+// Firestore written:
+//   daily_opportunities/{dateKey} — headline, emoji, category, validDate
+//   notifications/{id}            — per dormant user
+//   users/{uid}.lastDealNotifyAt  — throttle stamp
+// =============================================================================
+
+exports.generateDailyOpportunity = onSchedule(
+  {
+    schedule:    "0 8 * * *",
+    timeZone:    "Asia/Jerusalem",
+    region:      "us-central1",
+    secrets:     [ANTHROPIC_API_KEY],
+    maxInstances: 1,
+  },
+  async () => {
+    const db  = admin.firestore();
+    const now = new Date();
+
+    // Date key in Israel time (UTC+3)
+    const dateKey = new Date(now.getTime() + 3 * 3600000)
+      .toISOString().slice(0, 10); // YYYY-MM-DD
+
+    // ── 1. Check if already generated today ──────────────────────────────
+    const dealRef  = db.collection("daily_opportunities").doc(dateKey);
+    const existing = await dealRef.get();
+
+    let headline = "";
+    let emoji    = "✨";
+    let category = "";
+
+    if (!existing.exists) {
+      // ── 2. Read optional market alerts ─────────────────────────────────
+      let marketContext = "";
+      try {
+        const alertsSnap = await db.collection("market_alerts")
+          .where("isActive", "==", true)
+          .limit(3)
+          .get();
+        if (!alertsSnap.empty) {
+          marketContext = alertsSnap.docs
+            .map(d => (d.data().text || "")).join(" | ");
+        }
+      } catch (_) { /* market_alerts is optional */ }
+
+      // ── 3. Season context ───────────────────────────────────────────────
+      const month = now.getMonth() + 1; // 1–12
+      const seasonMap = {
+        12: "חורף — גשמים וקור, מניעת נזקי מים ואיטום",
+        1:  "חורף — גשמים וקור, מניעת נזקי מים ואיטום",
+        2:  "סוף חורף — תיקוני נזקי חורף ורענון",
+        3:  "אביב — ניקיון כללי, גינון, רענון הבית",
+        4:  "פסח מתקרב — ניקיון, סדר ועיצוב",
+        5:  "קיץ מתקרב — מזגנים, בריכות, שיפוצים",
+        6:  "קיץ — גל חום, מזגנים, ריצוף קריר",
+        7:  "שיא הקיץ — מזגנים, מים, שיפוצים מהירים",
+        8:  "סוף קיץ — תיקונים, צביעה, גינון",
+        9:  "ראש השנה — ניקיון כבד, עיצוב הבית לחג",
+        10: "סתיו — חימום, אינסטלציה, חשמל",
+        11: "לפני חורף — בידוד, ניקוי גגות, הכנות",
+      };
+      const seasonContext = seasonMap[month] || "עונה שוטפת";
+
+      // ── 4. Call Claude Haiku ────────────────────────────────────────────
+      const apiKey = ANTHROPIC_API_KEY.value() || process.env.ANTHROPIC_API_KEY || "";
+      const prompt =
+        `אתה מנהל שיווק של פלטפורמת שירותים ביתיים בישראל.\n` +
+        `כתוב הודעת "הזדמנות היום" קצרה ומשכנעת בעברית (עד 80 תווים).\n` +
+        `עונה: ${seasonContext}.\n` +
+        (marketContext ? `התראות שוק: ${marketContext}.\n` : "") +
+        `ההודעה צריכה להניע לקוחות להזמין שירות עכשיו.\n` +
+        `ענה ב-JSON בלבד:\n` +
+        `{"headline":"...","emoji":"...","category":"שם קטגוריה"}\n` +
+        `קטגוריות: אינסטלציה, חשמלאי, מזגנים, ניקיון, גינון, שיפוצים, צביעה, ריצוף, מנעולן`;
+
+      const _dealAiEnabled = await _isAiEnabled(db);
+      if (apiKey && _dealAiEnabled) {
+        try {
+          const anthropic = new Anthropic({ apiKey });
+          const msg = await anthropic.messages.create({
+            model:      "claude-haiku-4-5-20251001",
+            max_tokens: 150,
+            messages:   [{ role: "user", content: prompt }],
+          });
+          _trackApiCost(db, msg.usage?.input_tokens || 0, msg.usage?.output_tokens || 0).catch(() => {});
+          const raw = (msg.content[0]?.text || "{}")
+            .replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
+          const parsed = JSON.parse(raw);
+          headline = parsed.headline || "";
+          emoji    = parsed.emoji    || "✨";
+          category = parsed.category || "";
+        } catch (err) {
+          console.error("generateDailyOpportunity: Claude error:", err);
+        }
+      } else if (!_dealAiEnabled) {
+        console.warn("generateDailyOpportunity: kill-switch active — skipping Claude");
+      }
+
+      // Fallback templates if Claude unavailable or parse fails
+      if (!headline) {
+        const templates = [
+          { headline: "הגשם בדרך! בדוק את הגג שלך לפני שיהיה מאוחר מדי.", emoji: "🌧️", category: "אינסטלציה" },
+          { headline: "החג מתקרב! הזמן ניקיון מקצועי לפני שהיומנים מתמלאים.", emoji: "✨", category: "ניקיון" },
+          { headline: "המזגן שלך מוכן לקיץ? קבל בדיקה עוד היום.", emoji: "❄️", category: "מזגנים" },
+          { headline: "3 מומחי שיפוצים זמינים השבוע — מחירים מיוחדים!", emoji: "🔨", category: "שיפוצים" },
+        ];
+        const t = templates[month % templates.length];
+        headline = t.headline;
+        emoji    = t.emoji;
+        category = t.category;
+      }
+
+      await dealRef.set({
+        headline, emoji, category,
+        seasonContext,
+        validDate: dateKey,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      console.log(`generateDailyOpportunity: stored deal for ${dateKey}: ${headline}`);
+    } else {
+      const d  = existing.data();
+      headline = d.headline || "";
+      emoji    = d.emoji    || "✨";
+      category = d.category || "";
+    }
+
+    // ── 5. Notify dormant clients ─────────────────────────────────────────
+    const dormantCutoff  = new Date(now.getTime() - 14 * 86400000); // 14d ago
+    const throttleCutoff = new Date(now.getTime() -  3 * 86400000); //  3d ago
+
+    const dormantSnap = await db.collection("users")
+      .where("isProvider", "==", false)
+      .where("lastActiveAt", "<", admin.firestore.Timestamp.fromDate(dormantCutoff))
+      .limit(150)
+      .get();
+
+    if (dormantSnap.empty) {
+      console.log("generateDailyOpportunity: no dormant clients");
+      return null;
+    }
+
+    const notifBatch  = db.batch();
+    const updateBatch = db.batch();
+    let sent = 0;
+
+    for (const doc of dormantSnap.docs) {
+      if (sent >= 100) break; // safety cap
+
+      const d = doc.data();
+      const lastDealNotify = d.lastDealNotifyAt?.toDate() || new Date(0);
+      if (lastDealNotify >= throttleCutoff) continue;
+
+      const name    = d.name || "יקר/ה";
+      const lastCat = d.lastSearchedCategory || category;
+      const title   = `${emoji} ${name}, הזדמנות ב${lastCat} ממתינה לך!`;
+      const body    = headline;
+      const token   = d.fcmToken || d.deviceToken;
+
+      if (token) {
+        try {
+          await admin.messaging().send({
+            token,
+            notification: { title, body },
+            android: {
+              priority: "high",
+              notification: { channelId: "anyskill_default" },
+            },
+            apns: {
+              headers: { "apns-priority": "10" },
+              payload: { aps: { sound: "default", contentAvailable: 1 } },
+            },
+            webpush: {
+              notification: { icon: "/icons/Icon-192.png" },
+              fcm_options: { link: "https://anyskill-6fdf3.web.app" },
+            },
+            data: { type: "daily_deal", category: lastCat, dateKey },
+          });
+        } catch (e) {
+          console.error(`DailyDeal FCM error for ${doc.id}:`, e.message);
+        }
+      }
+
+      notifBatch.set(db.collection("notifications").doc(), {
+        userId: doc.id,
+        title,
+        body,
+        type:      "daily_deal",
+        data:      { category: lastCat, dateKey },
+        isRead:    false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      updateBatch.update(doc.ref, {
+        lastDealNotifyAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      sent++;
+    }
+
+    if (sent > 0) {
+      await Promise.all([notifBatch.commit(), updateBatch.commit()]);
+    }
+    console.log(`generateDailyOpportunity: nudged ${sent} dormant client(s)`);
+    return null;
+  }
+);
+
+// =============================================================================
+// ─── Financial Health: daily infra cost snapshot ─────────────────────────────
+// =============================================================================
+// Runs daily at 03:00 Israel time.
+// Estimates Firestore usage cost for the past 24 hours and increments
+// system_stats/billing.current_month_infra_cost.
+//
+// Pricing approximations (Firebase Spark → Blaze):
+//   Reads:   $0.06  / 100,000 reads
+//   Writes:  $0.18  / 100,000 writes
+//   Storage: $0.108 / GiB / month  (amortised ~$0.0036/GiB/day)
+// =============================================================================
+exports.calculateInfraCosts = onSchedule(
+  { schedule: "0 3 * * *", timeZone: "Asia/Jerusalem", region: "us-central1" },
+  async () => {
+    const db       = admin.firestore();
+    const today    = new Date().toISOString().slice(0, 10);   // "YYYY-MM-DD"
+    const monthKey = today.slice(0, 7);                       // "YYYY-MM"
+
+    // ── 1. Count recent activity as a proxy for daily read/write volume ──
+    const since24h = admin.firestore.Timestamp.fromDate(
+      new Date(Date.now() - 86400 * 1000)
+    );
+    const [activitySnap, chatSnap] = await Promise.all([
+      db.collection("activity_log")
+        .where("timestamp", ">=", since24h)
+        .count().get(),
+      db.collection("notifications")
+        .where("createdAt", ">=", since24h)
+        .count().get(),
+    ]);
+    const activityCount = activitySnap.data().count || 0;
+    const notifCount    = chatSnap.data().count     || 0;
+
+    // Each activity event ≈ 30 reads + 5 writes; each notification ≈ 5 reads
+    const estReads  = activityCount * 30 + notifCount * 5 + 5000;  // 5K baseline
+    const estWrites = activityCount *  5 + notifCount * 1 + 1000;  // 1K baseline
+    const dailyCost = (estReads  / 100000 * 0.06)
+                    + (estWrites / 100000 * 0.18);
+
+    // ── 2. Write to system_stats/billing ─────────────────────────────────
+    const ref = db.collection("system_stats").doc("billing");
+    await ref.set({
+      month_key:                monthKey,
+      current_month_infra_cost: admin.firestore.FieldValue.increment(dailyCost),
+      last_updated:             admin.firestore.FieldValue.serverTimestamp(),
+      [`daily_snapshots.${today}`]: {
+        infra_cost:   dailyCost,
+        est_reads:    estReads,
+        est_writes:   estWrites,
+        recorded_at:  admin.firestore.FieldValue.serverTimestamp(),
+      },
+    }, { merge: true });
+
+    console.log(`calculateInfraCosts: ${today} estReads=${estReads} estWrites=${estWrites} cost=$${dailyCost.toFixed(6)}`);
+    return null;
+  }
+);
+
+// =============================================================================
+// ─── Financial Health: admin budget settings ─────────────────────────────────
+// =============================================================================
+// Callable by admin only — updates budget_limit, kill_switch_limit,
+// and can manually toggle ai_kill_switch_active.
+// =============================================================================
+exports.setBillingSettings = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required");
+
+    // Admin guard — only adawiavihai@gmail.com
+    const callerSnap = await admin.firestore()
+      .collection("users").doc(request.auth.uid).get();
+    if (!callerSnap.exists || !callerSnap.data().isAdmin) {
+      throw new HttpsError("permission-denied", "Admins only");
+    }
+
+    const { budgetLimit, killSwitchLimit, killSwitchActive } = request.data;
+    const update = { last_updated: admin.firestore.FieldValue.serverTimestamp() };
+
+    if (typeof budgetLimit      === "number") update.budget_limit       = budgetLimit;
+    if (typeof killSwitchLimit  === "number") update.kill_switch_limit  = killSwitchLimit;
+    if (typeof killSwitchActive === "boolean") update.ai_kill_switch_active = killSwitchActive;
+
+    await admin.firestore()
+      .collection("system_stats").doc("billing")
+      .set(update, { merge: true });
+
+    console.log(`setBillingSettings: uid=${request.auth.uid}`, update);
+    return { success: true };
+  }
+);
+
+// =============================================================================
+// ─── Account Deletion ─────────────────────────────────────────────────────────
+// =============================================================================
+// Deletes the user's data across Firestore + Firebase Auth.
+//
+// Security:
+//   - Caller must be the same UID being deleted, OR an admin.
+//
+// Steps:
+//   1. Validate caller identity.
+//   2. Flag any in-progress jobs (paid_escrow / expert_completed) so the
+//      admin can handle pending funds.
+//   3. Batch-delete users/{uid} + userPrivateData/{uid}.
+//   4. Write an activity_log entry for admin audit trail.
+//   5. Delete the Firebase Auth user (must be last — irreversible).
+// =============================================================================
+exports.deleteUserAccount = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Login required");
+    }
+
+    const callerUid = request.auth.uid;
+    const targetUid = (request.data.uid || "").trim();
+
+    if (!targetUid) {
+      throw new HttpsError("invalid-argument", "uid is required");
+    }
+
+    // ── 1. Authorisation: self-deletion or admin ────────────────────────
+    if (callerUid !== targetUid) {
+      const callerSnap = await admin.firestore()
+          .collection("users").doc(callerUid).get();
+      if (!callerSnap.exists || !callerSnap.data().isAdmin) {
+        throw new HttpsError("permission-denied",
+            "You can only delete your own account");
+      }
+    }
+
+    const db = admin.firestore();
+
+    // ── 2. Flag in-progress jobs ────────────────────────────────────────
+    const activeStatuses = ["paid_escrow", "expert_completed"];
+    const [asCustomer, asProvider] = await Promise.all([
+      db.collection("jobs")
+        .where("customerId", "==", targetUid)
+        .where("status", "in", activeStatuses)
+        .limit(50).get(),
+      db.collection("jobs")
+        .where("expertId", "==", targetUid)
+        .where("status", "in", activeStatuses)
+        .limit(50).get(),
+    ]);
+
+    if (!asCustomer.empty || !asProvider.empty) {
+      const jobBatch = db.batch();
+      for (const doc of [...asCustomer.docs, ...asProvider.docs]) {
+        jobBatch.update(doc.ref, {
+          status:            "account_deleted",
+          deletedAccountUid: targetUid,
+          deletedAt:         admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      await jobBatch.commit();
+      console.log(`deleteUserAccount: flagged ${asCustomer.size + asProvider.size} active jobs`);
+    }
+
+    // ── 3. Delete Firestore docs ────────────────────────────────────────
+    const cleanupBatch = db.batch();
+    cleanupBatch.delete(db.collection("users").doc(targetUid));
+    cleanupBatch.delete(db.collection("userPrivateData").doc(targetUid));
+
+    // ── 4. Activity log ─────────────────────────────────────────────────
+    cleanupBatch.set(db.collection("activity_log").doc(), {
+      type:      "account_deleted",
+      userId:    targetUid,
+      deletedBy: callerUid,
+      priority:  "medium",
+      message:   `חשבון נמחק: ${targetUid}`,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    await cleanupBatch.commit();
+
+    // ── 5. Delete Firebase Auth user (irreversible — must be last) ──────
+    await admin.auth().deleteUser(targetUid);
+
+    console.log(`deleteUserAccount: uid=${targetUid} deleted by uid=${callerUid}`);
+    return { success: true };
+  }
+);
+
+// =============================================================================
+// ─── Phone Number Sync (admin one-time backfill) ──────────────────────────────
+// =============================================================================
+// Reads Firebase Auth users in pages of 100, and for any user whose Firestore
+// doc is missing the 'phone' field, writes it from auth.phoneNumber.
+// Admin-only callable — run once from the admin panel.
+// =============================================================================
+exports.syncUserPhones = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required");
+
+    const callerSnap = await admin.firestore()
+        .collection("users").doc(request.auth.uid).get();
+    if (!callerSnap.exists || !callerSnap.data().isAdmin) {
+      throw new HttpsError("permission-denied", "Admins only");
+    }
+
+    const db = admin.firestore();
+    let updated = 0;
+    let pageToken;
+
+    do {
+      const listResult = await admin.auth().listUsers(100, pageToken);
+      const batch = db.batch();
+      let writes = 0;
+
+      for (const authUser of listResult.users) {
+        const phone = authUser.phoneNumber;
+        if (!phone) continue;
+
+        const userSnap = await db.collection("users").doc(authUser.uid).get();
+        if (!userSnap.exists) continue;
+
+        const d = userSnap.data();
+        const stored = ((d.phone || d.phoneNumber || "")).trim();
+        if (!stored) {
+          batch.update(db.collection("users").doc(authUser.uid), {
+            phone:       phone,
+            phoneNumber: phone,
+          });
+          writes++;
+        }
+      }
+
+      if (writes > 0) {
+        await batch.commit();
+        updated += writes;
+      }
+
+      pageToken = listResult.pageToken;
+    } while (pageToken);
+
+    console.log(`syncUserPhones: updated ${updated} user docs`);
+    return { updated };
+  }
+);
+
+// =============================================================================
+// adminApproveProvider — Admin-only callable.
+// Approves a provider application using Admin SDK (bypasses all security rules).
+// Writes:
+//   1. users/{uid}: isProvider, isApprovedProvider, isPendingExpert, isVerified, etc.
+//   2. notifications/{id}: push notification to the approved user
+//   3. activity_log/{id}: admin audit entry
+// =============================================================================
+exports.adminApproveProvider = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required");
+
+    // Verify caller is admin (email shortcut OR Firestore flag)
+    const callerEmail = request.auth.token.email || "";
+    const callerSnap  = await admin.firestore()
+        .collection("users").doc(request.auth.uid).get();
+    const isAdmin =
+        callerEmail === "adawiavihai@gmail.com" ||
+        (callerSnap.exists && callerSnap.data().isAdmin === true);
+
+    if (!isAdmin) throw new HttpsError("permission-denied", "Admins only");
+
+    const { uid, name, category } = request.data;
+    if (!uid) throw new HttpsError("invalid-argument", "uid is required");
+
+    const db    = admin.firestore();
+    const batch = db.batch();
+
+    // 1. Approve the provider
+    batch.update(db.collection("users").doc(uid), {
+      isProvider:              true,
+      isPendingExpert:         false,
+      isApprovedProvider:      true,
+      isVerifiedProvider:      true,
+      isVerified:              true,
+      categoryReviewedByAdmin: true,
+      ...(category ? { serviceType: category } : {}),
+      approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // 2. Push notification
+    batch.set(db.collection("notifications").doc(), {
+      userId:    uid,
+      title:     "מזל טוב! 🎉",
+      body:      "הפרופיל שלך אושר ואתה מופיע עכשיו בחיפוש.",
+      type:      "provider_approved",
+      isRead:    false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // 3. Activity log
+    batch.set(db.collection("activity_log").doc(), {
+      type:      "provider_approved",
+      userId:    uid,
+      name:      name || "ספק",
+      category:  category || "",
+      priority:  "normal",
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      message:   `${name || "ספק"} אושר/ה כספק מומחה ב${category || ""}`,
+    });
+
+    await batch.commit();
+
+    console.log(`adminApproveProvider: approved uid=${uid}, name=${name}`);
+    return { success: true };
   }
 );

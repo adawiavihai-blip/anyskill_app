@@ -7,6 +7,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'chat_screen.dart';
 import 'my_bookings_screen.dart';
 import '../l10n/app_localizations.dart'; // ignore: unused_import — will be used in future i18n pass
+import '../models/pricing_model.dart';
 
 class PublicProfileScreen extends StatefulWidget {
   final String userId;
@@ -32,45 +33,170 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   final List<String> _availableSlots = ["08:00", "09:00", "10:00", "11:00", "16:00", "17:00", "18:00", "19:00"];
 
   Future<void> _processEscrowOrder(BuildContext context, Map<String, dynamic> expertData) async {
-    final double price = (expertData['pricePerHour'] ?? 100).toDouble();
-    
+    final pricing = PricingModel.fromFirestore(expertData);
+    // Tracks which add-ons the client picked inside the modal's StatefulBuilder.
+    final Set<int> selectedAddOns = {};
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) => Container(
-          decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(30))),
-          padding: const EdgeInsets.fromLTRB(25, 15, 25, 40),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
-              const SizedBox(height: 25),
-              const Text("סיכום הזמנה מאובטחת", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              Text("אימון עם ${expertData['name']} בתאריך ${_selectedDay?.day}/${_selectedDay?.month} בשעה $_selectedTimeSlot", 
-                   textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey)),
-              const Divider(height: 40),
-              _summaryRow("מחיר השירות", "₪$price"),
-              _summaryRow("הגנת AnySkill", "כלול", isGreen: true),
-              const Divider(height: 30),
-              _summaryRow("סה\"כ לתשלום", "₪$price", isBold: true),
-              const SizedBox(height: 30),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.black, minimumSize: const Size(double.infinity, 60), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
-                onPressed: _isProcessing ? null : () async {
-                  setModalState(() => _isProcessing = true);
-                  await _executeEscrow(context, price, expertData['name'] ?? "מומחה");
-                  if (mounted) setModalState(() => _isProcessing = false);
-                },
-                child: _isProcessing 
-                  ? const CircularProgressIndicator(color: Colors.white) 
-                  : const Text("אשר תשלום ושריין מועד", style: TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
-        ),
+        builder: (context, setModalState) {
+          // Recompute total whenever selectedAddOns changes.
+          final addOnTotal = selectedAddOns.fold<double>(
+              0.0, (s, i) => s + (i < pricing.addOns.length ? pricing.addOns[i].price : 0.0));
+          final total = pricing.basePrice + addOnTotal;
+
+          return Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+            ),
+            padding: const EdgeInsets.fromLTRB(25, 15, 25, 40),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text("סיכום הזמנה מאובטחת",
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text(
+                  "${expertData['name']} • ${_selectedDay?.day}/${_selectedDay?.month} בשעה $_selectedTimeSlot",
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.grey, fontSize: 13),
+                ),
+                const Divider(height: 32),
+
+                // ── Base price row ──────────────────────────────────────────
+                _summaryRow(
+                  "מחיר בסיס (${pricing.unitLabel})",
+                  "₪${pricing.basePrice.toStringAsFixed(0)}",
+                ),
+
+                // ── Add-ons checkboxes ───────────────────────────────────────
+                if (pricing.addOns.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  const Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: Text("תוספות אופציונליות",
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 13)),
+                  ),
+                  const SizedBox(height: 6),
+                  ...pricing.addOns.asMap().entries.map((entry) {
+                    final i  = entry.key;
+                    final ao = entry.value;
+                    final checked = selectedAddOns.contains(i);
+                    return GestureDetector(
+                      onTap: () => setModalState(() {
+                        if (checked) {
+                          selectedAddOns.remove(i);
+                        } else {
+                          selectedAddOns.add(i);
+                        }
+                      }),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 140),
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: checked
+                              ? const Color(0xFFF0F0FF)
+                              : Colors.grey[50],
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: checked
+                                ? const Color(0xFF6366F1)
+                                : Colors.grey.shade200,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              checked
+                                  ? Icons.check_box_rounded
+                                  : Icons.check_box_outline_blank_rounded,
+                              color: checked
+                                  ? const Color(0xFF6366F1)
+                                  : Colors.grey,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              '+₪${ao.price.toStringAsFixed(0)}',
+                              style: const TextStyle(
+                                color: Color(0xFF6366F1),
+                                fontWeight: FontWeight.w900,
+                                fontSize: 14,
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              ao.title,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w600, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                ],
+
+                const SizedBox(height: 6),
+                _summaryRow("הגנת AnySkill", "כלול", isGreen: true),
+                const Divider(height: 24),
+
+                // ── Running total — updates with every checkbox tap ──────────
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: KeyedSubtree(
+                    key: ValueKey(total),
+                    child: _summaryRow(
+                      "סה\"כ לתשלום",
+                      "₪${total.toStringAsFixed(0)}",
+                      isBold: true,
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    minimumSize: const Size(double.infinity, 60),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(15)),
+                  ),
+                  onPressed: _isProcessing
+                      ? null
+                      : () async {
+                          setModalState(() => _isProcessing = true);
+                          await _executeEscrow(
+                              context, total, expertData['name'] ?? "מומחה");
+                          if (mounted) setModalState(() => _isProcessing = false);
+                        },
+                  child: _isProcessing
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : const Text("אשר תשלום ושריין מועד",
+                          style: TextStyle(
+                              fontSize: 18,
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -161,6 +287,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
 
         return Scaffold(
           backgroundColor: Colors.white,
+          appBar: AppBar(
+            backgroundColor: Colors.white,
+            elevation: 0,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back, color: Colors.black),
+              onPressed: () => Navigator.pop(context),
+            ),
+          ),
           body: Stack(
             children: [
               RefreshIndicator(
@@ -168,10 +302,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                 child: CustomScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 slivers: [
-                  _buildSliverAppBar(context, data), // תיקון: הוספת context
                   SliverList(
                     delegate: SliverChildListDelegate([
-                      const SizedBox(height: 20),
+                      _buildProfileAvatar(data),
+                      const SizedBox(height: 16),
                       _buildMainInfo(data),
                       const Padding(padding: EdgeInsets.symmetric(horizontal: 25, vertical: 10), child: Divider()),
                       const Padding(padding: EdgeInsets.symmetric(horizontal: 25, vertical: 10), child: Text("בחר מועד לאימון", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
@@ -298,11 +432,36 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     );
   }
 
-  Widget _buildSliverAppBar(BuildContext context, Map<String, dynamic> data) {
-    return SliverAppBar(
-      expandedHeight: 350, pinned: true, backgroundColor: Colors.white, elevation: 0,
-      leading: Padding(padding: const EdgeInsets.all(10), child: CircleAvatar(backgroundColor: Colors.white.withValues(alpha: 0.8), child: IconButton(icon: const Icon(Icons.arrow_back, color: Colors.black), onPressed: () => Navigator.pop(context)))),
-      flexibleSpace: FlexibleSpaceBar(background: Hero(tag: widget.userId, child: CachedNetworkImage(imageUrl: data['profileImage'] ?? "", fit: BoxFit.cover, errorWidget: (c, e, s) => Container(color: Colors.blueGrey)))),
+  Widget _buildProfileAvatar(Map<String, dynamic> data) {
+    final profileImg = data['profileImage'] as String? ?? '';
+    final hasImg = profileImg.isNotEmpty;
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.only(top: 8),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF6366F1).withValues(alpha: 0.22),
+              blurRadius: 24,
+              spreadRadius: 2,
+              offset: const Offset(0, 6),
+            ),
+          ],
+          border: Border.all(
+            color: const Color(0xFF6366F1).withValues(alpha: 0.35),
+            width: 3,
+          ),
+        ),
+        child: CircleAvatar(
+          radius: 60,
+          backgroundColor: const Color(0xFFEEEBFF),
+          backgroundImage: hasImg ? NetworkImage(profileImg) : null,
+          child: hasImg
+              ? null
+              : const Icon(Icons.person, size: 56, color: Color(0xFF6366F1)),
+        ),
+      ),
     );
   }
 

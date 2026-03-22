@@ -109,21 +109,8 @@ class _StoriesRowState extends State<StoriesRow> {
 
         final itemCount = (widget.isProvider ? 1 : 0) + otherDocs.length;
 
-        // ── No stories + not a provider → show empty placeholder row ─────
-        if (itemCount == 0) {
-          return _StoriesShell(
-            activeCount: 0,
-            child: SizedBox(
-              height: 98,
-              child: Center(
-                child: Text(
-                  'עדיין אין סטוריז פעילים',
-                  style: TextStyle(color: Colors.grey[400], fontSize: 13),
-                ),
-              ),
-            ),
-          );
-        }
+        // ── No stories + not a provider → collapse entirely (no dead space) ─
+        if (itemCount == 0) return const SizedBox.shrink();
 
         return _StoriesShell(
           activeCount: allDocs.length,
@@ -171,13 +158,11 @@ class _StoriesShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
             child: Row(
               children: [
                 Container(
@@ -211,9 +196,7 @@ class _StoriesShell extends StatelessWidget {
             ),
           ),
           child,
-          const SizedBox(height: 4),
         ],
-      ),
     );
   }
 }
@@ -291,7 +274,7 @@ class _MyStorySlotState extends State<_MyStorySlot>
   void _onTap(BuildContext context) {
     if (_hasStory) {
       // View own story
-      _openViewer(context, widget.uid,
+      openStoryViewer(context, widget.uid,
           widget.ownDoc!.data() as Map<String, dynamic>);
     } else {
       // Upload new story
@@ -430,7 +413,7 @@ class _StoryCircle extends StatelessWidget {
     final videoUrl  = data['videoUrl'] as String? ?? '';
 
     return GestureDetector(
-      onTap: () => _openViewer(context, uid, data),
+      onTap: () => openStoryViewer(context, uid, data),
       onLongPress: canDelete
           ? () => _confirmAndDeleteStory(context, uid, videoUrl)
           : null,
@@ -651,7 +634,7 @@ Future<void> _confirmAndDeleteStory(
 // 5.  Story Viewer — full-screen overlay
 // ─────────────────────────────────────────────────────────────────────────────
 
-void _openViewer(
+void openStoryViewer(
     BuildContext context, String uid, Map<String, dynamic> data) {
   final videoUrl   = data['videoUrl']       as String? ?? '';
   final name       = data['providerName']   as String? ?? 'ספק';
@@ -713,7 +696,6 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen>
   // ── Provider profile (loaded on open) ────────────────────────────────────
   double _rating       = 0.0;
   int    _reviewsCount = 0;
-  String _aboutMe      = '';
 
   // ── Like system ───────────────────────────────────────────────────────────
   bool _isLiked          = false;
@@ -826,7 +808,6 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen>
         setState(() {
           _rating       = (d['rating']       as num?)?.toDouble() ?? 0.0;
           _reviewsCount = (d['reviewsCount'] as num?)?.toInt()    ?? 0;
-          _aboutMe      = (d['aboutMe']      as String?)          ?? '';
         });
       }
     } catch (_) {}
@@ -1079,36 +1060,6 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen>
                 ),
               ),
             ),
-
-            // ── Floating expert caption (semi-transparent, mid-bottom) ──
-            if (_aboutMe.isNotEmpty)
-              Positioned(
-                bottom: 260,
-                left: 20,
-                right: 20,
-                child: IgnorePointer(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.55),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      _aboutMe,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          height: 1.4,
-                          fontWeight: FontWeight.w500,
-                          shadows: [Shadow(color: Colors.black, blurRadius: 6)]),
-                    ),
-                  ),
-                ),
-              ),
 
             // ── "Money Zone" — sticky bottom action bar ───────────────
             Positioned(

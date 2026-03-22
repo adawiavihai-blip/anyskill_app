@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 import '../services/academy_service.dart';
+import '../services/audio_service.dart';
 
 class CoursePlayerScreen extends StatefulWidget {
   final AcademyCourse   course;
@@ -132,6 +133,9 @@ class _CoursePlayerScreenState extends State<CoursePlayerScreen> {
       _completing      = true;
       _showCelebration = true;
     });
+
+    // 🚀 Growth Ascend — XP earned, level up!
+    AudioService.instance.play(AppSound.growthAscend);
 
     await AcademyService.completeCourse(
       uid:         widget.uid,

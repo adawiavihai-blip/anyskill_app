@@ -10,12 +10,14 @@ class ChatUIHelper {
     required BuildContext context,
     required Map<String, dynamic> data,
     required bool isMe,
+    String senderName     = '',
+    String senderImageUrl = '',
     VoidCallback? onPaymentTap,
   }) {
-    final String type  = data['type'] ?? 'text';
-    final String msg   = data['message'] ?? '';
+    final String type  = (data['type']?.toString())    ?? 'text';
+    final String msg   = (data['message']?.toString()) ?? '';
     final dynamic ts   = data['timestamp'];
-    final bool isRead  = data['isRead'] ?? false;
+    final bool isRead  = data['isRead'] == true;
 
     // Full-width transaction cards
     if (type == 'payment_request') {
@@ -25,70 +27,77 @@ class ChatUIHelper {
       return _PaymentCompleteCard(data: data);
     }
 
-    // Standard message bubble
+    // ── Bubble container ────────────────────────────────────────────────────
+    final bubble = Container(
+      padding: type == 'image'
+          ? const EdgeInsets.all(4)
+          : const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: isMe ? const Color(0xFF6366F1) : Colors.white,
+        borderRadius: BorderRadius.only(
+          topLeft:     const Radius.circular(18),
+          topRight:    const Radius.circular(18),
+          bottomLeft:  Radius.circular(isMe ? 18 : 4),
+          bottomRight: Radius.circular(isMe ? 4 : 18),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isMe
+                ? const Color(0xFF6366F1).withValues(alpha: 0.22)
+                : Colors.black.withValues(alpha: 0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+        border: isMe ? null : Border.all(color: Colors.grey.shade100),
+      ),
+      child: Column(
+        crossAxisAlignment:
+            isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildContent(type, msg, isMe),
+          const SizedBox(height: 2),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _Timestamp(ts: ts, isMe: isMe),
+              if (isMe) ...[
+                const SizedBox(width: 3),
+                Icon(
+                  Icons.done_all_rounded,
+                  size: 12,
+                  color: isRead
+                      ? Colors.lightBlueAccent
+                      : Colors.white.withValues(alpha: 0.45),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+
     return Padding(
       padding: EdgeInsets.only(
         top: 2,
         bottom: 2,
-        left:  isMe ? 60 : 10,
-        right: isMe ? 10 : 60,
+        left:  isMe ? 60 : 8,
+        right: isMe ? 8 : 60,
       ),
       child: Align(
         alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          padding: EdgeInsets.fromLTRB(
-            type == 'image' ? 4 : 13,
-            type == 'image' ? 4 : 10,
-            type == 'image' ? 4 : 13,
-            type == 'image' ? 4 : 6,
-          ),
-          decoration: BoxDecoration(
-            color: isMe ? const Color(0xFF6366F1) : Colors.white,
-            borderRadius: BorderRadius.only(
-              topLeft:     const Radius.circular(18),
-              topRight:    const Radius.circular(18),
-              bottomLeft:  Radius.circular(isMe ? 18 : 4),
-              bottomRight: Radius.circular(isMe ? 4 : 18),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: isMe
-                    ? const Color(0xFF6366F1).withValues(alpha: 0.22)
-                    : Colors.black.withValues(alpha: 0.06),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ],
-            border: isMe
-                ? null
-                : Border.all(color: Colors.grey.shade100),
-          ),
-          child: Column(
-            crossAxisAlignment:
-                isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildContent(type, msg, isMe),
-              const SizedBox(height: 3),
-              Row(
+        child: isMe
+            ? bubble
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _Timestamp(ts: ts, isMe: isMe),
-                  if (isMe) ...[
-                    const SizedBox(width: 3),
-                    Icon(
-                      Icons.done_all_rounded,
-                      size: 13,
-                      color: isRead
-                          ? Colors.lightBlueAccent
-                          : Colors.white.withValues(alpha: 0.45),
-                    ),
-                  ],
+                  _SenderAvatar(name: senderName, imageUrl: senderImageUrl),
+                  const SizedBox(width: 6),
+                  Flexible(child: bubble),
                 ],
               ),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -97,6 +106,13 @@ class ChatUIHelper {
   static Widget _buildContent(String type, String msg, bool isMe) {
     switch (type) {
       case 'image':
+        if (msg.isEmpty || !msg.startsWith('http')) {
+          return const SizedBox(
+            width: 220,
+            height: 60,
+            child: Center(child: Icon(Icons.broken_image, color: Colors.grey)),
+          );
+        }
         return ClipRRect(
           borderRadius: BorderRadius.circular(14),
           child: CachedNetworkImage(
@@ -108,7 +124,11 @@ class ChatUIHelper {
                 height: 140,
                 child: Center(child: CircularProgressIndicator(strokeWidth: 2))),
             errorWidget: (_, __, ___) =>
-                const Icon(Icons.broken_image, color: Colors.grey),
+                const SizedBox(
+                  width: 220,
+                  height: 60,
+                  child: Center(child: Icon(Icons.broken_image, color: Colors.grey)),
+                ),
           ),
         );
 
@@ -151,8 +171,8 @@ class ChatUIHelper {
           textAlign: TextAlign.right,
           style: TextStyle(
             color: isMe ? Colors.white : const Color(0xFF1A1A2E),
-            fontSize: 15,
-            height: 1.4,
+            fontSize: 14,
+            height: 1.35,
           ),
         );
     }
@@ -216,6 +236,35 @@ class ChatUIHelper {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ── Sender avatar (shown on left side for !isMe messages) ────────────────────
+
+class _SenderAvatar extends StatelessWidget {
+  final String name;
+  final String imageUrl;
+  const _SenderAvatar({required this.name, required this.imageUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasImage = imageUrl.isNotEmpty && imageUrl.startsWith('http');
+    return CircleAvatar(
+      radius: 16,
+      backgroundColor: const Color(0xFFEDE9FE),
+      backgroundImage: hasImage
+          ? CachedNetworkImageProvider(imageUrl, maxWidth: 64, maxHeight: 64)
+          : null,
+      child: hasImage
+          ? null
+          : Text(
+              name.isNotEmpty ? name[0].toUpperCase() : '?',
+              style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF6366F1)),
+            ),
     );
   }
 }

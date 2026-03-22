@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -60,9 +59,9 @@ class LocationService {
           perm == LocationPermission.always) {
         return _fetchPosition();
       }
-      // OS permission was revoked — update local record and fall through.
+      // OS permission was revoked — update local record and fail silently.
       await PermissionService.saveLocationStatus(PermissionService.denied);
-      if (context.mounted) _showDeniedSnack(context);
+      debugPrint('LocationService: OS revoked location permission — failing silently');
       return null;
     }
 
@@ -71,7 +70,7 @@ class LocationService {
 
     if (perm == LocationPermission.deniedForever) {
       await PermissionService.saveLocationStatus(PermissionService.denied);
-      if (context.mounted) _showDeniedSnack(context);
+      debugPrint('LocationService: location permanently denied — failing silently');
       return null;
     }
 
@@ -101,11 +100,9 @@ class LocationService {
       return _fetchPosition();
     }
 
-    // OS denied (or permanently denied)
+    // OS denied (or permanently denied) — fail silently
     await PermissionService.saveLocationStatus(PermissionService.denied);
-    if (granted == LocationPermission.deniedForever && context.mounted) {
-      _showDeniedSnack(context);
-    }
+    debugPrint('LocationService: OS denied location (deniedForever=${ granted == LocationPermission.deniedForever}) — failing silently');
     return null;
   }
 
@@ -238,21 +235,4 @@ class LocationService {
     return result ?? false;
   }
 
-  static void _showDeniedSnack(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text(
-            'הגישה למיקום נחסמה. ניתן לשנות זאת בהגדרות המכשיר.'),
-        action: SnackBarAction(
-          label: 'הגדרות',
-          textColor: Colors.white,
-          onPressed: () { if (!kIsWeb) Geolocator.openAppSettings(); },
-        ),
-        backgroundColor: Colors.grey[850],
-        behavior: SnackBarBehavior.floating,
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
-  }
 }

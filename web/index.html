@@ -5,18 +5,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>AnySkill Elite</title>
+  <!-- app version — bump this string on every release to bust browser cache -->
+  <meta name="app-version" content="8.6.0">
+  <meta name="build-id" content="20260322-860">
 
   <!-- ── PWA / installability ───────────────────────────────────────────── -->
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#6366F1">
   <meta name="mobile-web-app-capable" content="yes">
 
-  <!-- iOS Safari install support -->
+  <!-- iOS Safari install & PWA support -->
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-touch-fullscreen" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="AnySkill">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
   <link rel="apple-touch-icon" sizes="512x512" href="icons/Icon-512.png">
+  <!-- Startup image prevents white flash on launch from iOS home screen -->
+  <link rel="apple-touch-startup-image" href="icons/Icon-512.png">
 
   <!-- Splash / tile colours for Windows / Android -->
   <meta name="msapplication-TileColor" content="#1E1B4B">
@@ -29,7 +35,7 @@
   <script src="flutter.js" defer></script>
 
   <!-- אתחול Flutter + רישום Service Worker -->
-  <script src="app_init.js" defer></script>
+  <script src="app_init.js?v=3.7.5" defer></script>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f4f7f9;">
 </body>

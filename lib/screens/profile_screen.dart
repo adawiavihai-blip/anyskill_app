@@ -4,12 +4,18 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:video_player/video_player.dart';
 import 'dart:convert';
 import 'edit_profile_screen.dart';
+import 'provider_registration_screen.dart';
 import '../widgets/vip_confetti.dart';
 import '../l10n/app_localizations.dart';
 import '../services/locale_provider.dart';
 import '../widgets/xp_progress_bar.dart';
+import '../widgets/anyskill_logo.dart';
+import '../main.dart' show currentAppVersion;
+import 'favorites_screen.dart';
+import 'phone_login_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -20,6 +26,21 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final user = FirebaseAuth.instance.currentUser;
+
+  @override
+  void initState() {
+    super.initState();
+  }
+
+  // ── Logout ────────────────────────────────────────────────────────────────
+  Future<void> _logout() async {
+    await FirebaseAuth.instance.signOut();
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const PhoneLoginScreen()),
+      (route) => false,
+    );
+  }
 
   // ── Share profile ─────────────────────────────────────────────────────────
   void _shareProfile(String name, String uid, AppLocalizations l10n) async {
@@ -131,146 +152,356 @@ class _ProfileScreenState extends State<ProfileScreen> {
       backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
         title: Text(l10n.profileTitle, style: const TextStyle(fontWeight: FontWeight.bold)),
-        centerTitle: true,
+        centerTitle: false,
         elevation: 0,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
-        leading: StreamBuilder<DocumentSnapshot>(
-          stream: FirebaseFirestore.instance.collection('users').doc(user?.uid).snapshots(),
-          builder: (context, snapshot) {
-            if (!snapshot.hasData) return const SizedBox();
-            var data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
-            return IconButton(
-              icon: const Icon(Icons.share_outlined, color: Colors.green),
-              onPressed: () => _shareProfile(data['name'] ?? l10n.defaultUserName, user?.uid ?? "", l10n),
-              tooltip: l10n.shareProfileTooltip,
-            );
-          }
-        ),
+        automaticallyImplyLeading: false,
         actions: [
           StreamBuilder<DocumentSnapshot>(
             stream: FirebaseFirestore.instance.collection('users').doc(user?.uid).snapshots(),
             builder: (context, snapshot) {
-              var data = snapshot.data?.data() as Map<String, dynamic>? ?? {};
-              return IconButton(
-                icon: const Icon(Icons.edit_outlined, color: Color(0xFF0047AB)),
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => EditProfileScreen(userData: data)),
-                ),
-              );
-            }
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.redAccent),
-            tooltip: l10n.logoutTooltip,
-            onPressed: () => showDialog(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                title: Text(l10n.logoutTitle),
-                content: Text(l10n.logoutContent),
-                actions: [
-                  TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      FirebaseAuth.instance.signOut();
-                    },
-                    child: Text(l10n.logoutConfirm, style: const TextStyle(color: Colors.redAccent)),
+              final data = snapshot.data?.data() as Map<String, dynamic>? ?? {};
+              final isProviderUser = (data['isProvider'] as bool? ?? false) ||
+                                     (data['isSpecialist'] as bool? ?? false);
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isProviderUser)
+                    IconButton(
+                      icon: const Icon(Icons.share_outlined, color: Colors.green),
+                      onPressed: () => _shareProfile(data['name'] ?? l10n.defaultUserName, user?.uid ?? '', l10n),
+                      tooltip: l10n.shareProfileTooltip,
+                    ),
+                  IconButton(
+                    icon: const Icon(Icons.edit_outlined, color: Color(0xFF0047AB)),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => EditProfileScreen(userData: data)),
+                    ),
                   ),
                 ],
-              ),
-            ),
+              );
+            },
           ),
         ],
       ),
       body: StreamBuilder<DocumentSnapshot>(
         stream: FirebaseFirestore.instance.collection('users').doc(user?.uid).snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          // Guard: auth state changed before AuthWrapper has redirected.
+          if (FirebaseAuth.instance.currentUser == null) {
+            return const SizedBox.shrink();
+          }
+          if (snapshot.hasError) return const SizedBox.shrink();
+          if (!snapshot.hasData || snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+          }
           var data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
+          // Accept both field names — legacy docs may use 'isSpecialist'
+          final isProvider = (data['isProvider'] as bool? ?? false) ||
+                             (data['isSpecialist'] as bool? ?? false);
+
+          // ── Customer gets the Airbnb-style redesigned screen ─────────────
+          if (!isProvider) return _buildCustomerView(data, l10n);
 
           return SingleChildScrollView(
             child: Column(
               children: [
-                const SizedBox(height: 30),
-                Center(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.blue.shade100, width: 4),
-                      boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 10)],
-                    ),
-                    child: CircleAvatar(
-                      radius: 65,
-                      backgroundColor: Colors.grey[200],
-                      backgroundImage: (data['profileImage'] != null && data['profileImage'] != "")
-                          ? NetworkImage(data['profileImage']) : null,
-                      child: (data['profileImage'] == null || data['profileImage'] == "")
-                          ? const Icon(Icons.person, size: 65, color: Colors.grey) : null,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 15),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    if (data['isVerified'] ?? false)
-                      const Padding(padding: EdgeInsets.only(left: 8), child: Icon(Icons.verified, color: Colors.blue, size: 22)),
-                    Text(data['name'] ?? l10n.defaultUserName, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-                Text(data['email'] ?? "", style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+                // ── Airbnb-style specialist header ──────────────────────────────
+              Builder(builder: (_) {
+                final profileImg  = data['profileImage'] as String? ?? '';
+                final hasImg      = profileImg.isNotEmpty;
+                final name        = data['name'] as String? ?? l10n.defaultUserName;
+                final isVerified  = data['isVerified'] as bool? ?? false;
+                final serviceType = data['serviceType'] as String? ?? '';
+                final aboutMe     = data['aboutMe'] as String? ?? '';
+                final isPromoted  = data['isPromoted'] as bool? ?? false;
+                final expiryTs    = data['promotionExpiryDate'] as Timestamp?;
+                final expiryDate  = expiryTs?.toDate();
+                final now         = DateTime.now();
+                final isVipActive = isPromoted && expiryDate != null && expiryDate.isAfter(now);
+                final videoUrl    = data['verificationVideoUrl'] as String?;
+                final videoApproved = data['videoVerifiedByAdmin'] as bool? ?? false;
+                final hasVerifiedVideo = videoUrl != null && videoUrl.isNotEmpty && videoApproved;
 
-                const SizedBox(height: 30),
-                Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 25),
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(25),
-                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 15)],
-                  ),
-                  child: Column(
-                    children: [
-                      _buildProfileStats(data, l10n),
-                      const SizedBox(height: 16),
-                      // ── XP Progress Bar ──────────────────────────────────
-                      XpProgressBar(
-                        xp: (data['xp'] as num? ?? 0).toInt(),
+                return Column(
+                  children: [
+                    // ── Unified card: photo RIGHT / name+stats LEFT ──────
+                    Container(
+                      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(24),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.07),
+                            blurRadius: 20,
+                            spreadRadius: 0,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // ── LEFT: name, badge, title, bio, stats ──
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        if (isVerified) ...[
+                                          const Icon(Icons.verified, color: Colors.blue, size: 18),
+                                          const SizedBox(width: 5),
+                                        ],
+                                        Flexible(
+                                          child: Text(
+                                            name,
+                                            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold, color: Colors.black),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 2),
+                                    // Role label — always visible for specialists
+                                    const Text(
+                                      'נותן שירות',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Color(0xFF9CA3AF),
+                                        fontWeight: FontWeight.w400,
+                                      ),
+                                    ),
+                                    if (serviceType.isNotEmpty) ...[
+                                      const SizedBox(height: 3),
+                                      Text(serviceType,
+                                          style: const TextStyle(color: Color(0xFF6366F1), fontSize: 13, fontWeight: FontWeight.w600)),
+                                    ],
+                                    if (aboutMe.isNotEmpty) ...[
+                                      const SizedBox(height: 5),
+                                      Text(aboutMe,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(color: Colors.grey[600], fontSize: 12.5, height: 1.4)),
+                                    ],
+                                    const SizedBox(height: 14),
+                                    _specialistStat(
+                                      label: 'עבודות',
+                                      value: '${(data['completedJobsCount'] as num? ?? data['reviewsCount'] as num? ?? 0).toInt()}',
+                                      icon: Icons.shield_outlined,
+                                      iconColor: const Color(0xFF6366F1),
+                                    ),
+                                    const Divider(height: 20, color: Color(0xFFF3F4F6), thickness: 1),
+                                    _specialistStat(
+                                      label: 'דירוג',
+                                      value: '${data['rating'] ?? '5.0'}',
+                                      icon: Icons.star_rounded,
+                                      iconColor: Colors.amber,
+                                    ),
+                                    const Divider(height: 20, color: Color(0xFFF3F4F6), thickness: 1),
+                                    _specialistStat(
+                                      label: 'ביקורות',
+                                      value: '${(data['reviewsCount'] as num? ?? 0).toInt()}',
+                                      icon: Icons.chat_bubble_outline_rounded,
+                                      iconColor: Colors.teal,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              // ── RIGHT: profile photo ──────────────────
+                              Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  CircleAvatar(
+                                    radius: 52,
+                                    backgroundColor: const Color(0xFFEEEBFF),
+                                    backgroundImage: hasImg ? NetworkImage(profileImg) : null,
+                                    child: hasImg
+                                        ? null
+                                        : Icon(Icons.person, size: 44,
+                                            color: const Color(0xFF6366F1).withValues(alpha: 0.5)),
+                                  ),
+                                  Positioned(
+                                    bottom: 2,
+                                    right: 2,
+                                    child: Container(
+                                      width: 28,
+                                      height: 28,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                        boxShadow: [
+                                          BoxShadow(color: Colors.black.withValues(alpha: 0.14), blurRadius: 5),
+                                        ],
+                                      ),
+                                      padding: const EdgeInsets.all(4),
+                                      child: const AnySkillBrandIcon(size: 20),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          // ── XP Progress Bar ───────────────────────────
+                          XpProgressBar(xp: (data['xp'] as num? ?? 0).toInt()),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // ── Action squares: Gallery + VIP (+ Video if approved) ─────
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          // Right square: גלריית עבודות
+                          Expanded(
+                            child: InkWell(
+                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => _SpecialistGalleryScreen(uid: user?.uid ?? ''))),
+                              borderRadius: BorderRadius.circular(24),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(24),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.07),
+                                      blurRadius: 20,
+                                      spreadRadius: 0,
+                                      offset: const Offset(0, 6),
+                                    ),
+                                  ],
+                                ),
+                                padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+                                child: const Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.photo_library_outlined, size: 32, color: Colors.black),
+                                    SizedBox(height: 10),
+                                    Text(
+                                      'גלריית עבודות',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.black),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          // Left square: VIP
+                          Expanded(
+                            child: InkWell(
+                              onTap: () => _showVipSheet(context, data, l10n),
+                              borderRadius: BorderRadius.circular(24),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: isVipActive ? const Color(0xFFFBBF24) : Colors.white,
+                                  borderRadius: BorderRadius.circular(24),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.07),
+                                      blurRadius: 20,
+                                      spreadRadius: 0,
+                                      offset: const Offset(0, 6),
+                                    ),
+                                  ],
+                                  border: isVipActive ? null : Border.all(color: Colors.grey.shade200),
+                                ),
+                                padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.workspace_premium_rounded,
+                                      size: 32,
+                                      color: isVipActive ? Colors.white : Colors.amber[700],
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      isVipActive ? 'VIP פעיל' : 'הצטרף ל-VIP',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: isVipActive ? Colors.white : Colors.black,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // ── Video Intro square (only when approved) ────────────
+                    if (hasVerifiedVideo) ...[
+                      const SizedBox(height: 14),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: InkWell(
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => _VideoIntroScreen(videoUrl: videoUrl),
+                            ),
+                          ),
+                          borderRadius: BorderRadius.circular(24),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                                begin: Alignment.centerRight,
+                                end: Alignment.centerLeft,
+                              ),
+                              borderRadius: BorderRadius.circular(24),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFF6366F1).withValues(alpha: 0.25),
+                                  blurRadius: 16,
+                                  offset: const Offset(0, 6),
+                                ),
+                              ],
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.play_circle_fill_rounded, size: 28, color: Colors.white),
+                                SizedBox(width: 10),
+                                Text(
+                                  'היכרות בווידאו',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                SizedBox(width: 8),
+                                Icon(Icons.verified_rounded, size: 16, color: Colors.white70),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                     ],
-                  ),
-                ),
 
-                const SizedBox(height: 25),
-
-                // ── VIP Section (providers only) ──────────────────────────
-                if (data['isProvider'] == true) ...[
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 25),
-                    child: _buildVipSection(context, data, l10n),
-                  ),
-                  const SizedBox(height: 20),
-                ],
-
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 25),
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(l10n.bookingsTrackerSnackbar)));
-                    },
-                    icon: const Icon(Icons.list_alt_rounded),
-                    label: Text(l10n.bookingsTrackerButton),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.black87,
-                      minimumSize: const Size(double.infinity, 55),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15), side: BorderSide(color: Colors.grey.shade200))
-                    ),
-                  ),
-                ),
+                    const SizedBox(height: 20),
+                  ],
+                );
+              }),
 
                 // ── Language Selector ─────────────────────────────────────
                 const SizedBox(height: 16),
@@ -294,16 +525,161 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 30),
-                _buildAboutMe(data['aboutMe'], l10n),
-                const SizedBox(height: 30),
-                _buildGallery(data['gallery'], l10n),
-                const SizedBox(height: 40),
-                TextButton.icon(
-                  onPressed: () => FirebaseAuth.instance.signOut(),
-                  icon: const Icon(Icons.logout, size: 18),
-                  label: Text(l10n.logoutButton, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+                // ── Earn money CTA (clients only — hidden for providers/pending) ──
+                if (data['isProvider'] != true && data['isPendingExpert'] != true) ...[
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 25),
+                    child: GestureDetector(
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ProviderRegistrationScreen(
+                            isExistingUser: true,
+                            prefillData: {
+                              'uid':         user?.uid ?? '',
+                              'name':        data['name'] ?? '',
+                              'phone':       data['phone'] ?? '',
+                              'email':       data['email'] ?? '',
+                              'profileImage': data['profileImage'] ?? '',
+                              'aboutMe':     data['aboutMe'] ?? '',
+                              'serviceType': data['serviceType'] ?? '',
+                              'pricePerHour': data['pricePerHour'] ?? 0,
+                            },
+                          ),
+                        ),
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 16),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF059669), Color(0xFF10B981)],
+                            begin: Alignment.centerRight,
+                            end: Alignment.centerLeft,
+                          ),
+                          borderRadius: BorderRadius.circular(18),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF059669).withValues(alpha: 0.28),
+                              blurRadius: 14,
+                              offset: const Offset(0, 5),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          textDirection: TextDirection.rtl,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(Icons.attach_money_rounded,
+                                  color: Colors.white, size: 22),
+                            ),
+                            const SizedBox(width: 12),
+                            const Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('רוצה להרוויח כסף?',
+                                      style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.bold)),
+                                  Text('הצטרף כנותן שירות ותתחיל להרוויח',
+                                      style: TextStyle(
+                                          color: Colors.white70, fontSize: 12)),
+                                ],
+                              ),
+                            ),
+                            const Icon(Icons.arrow_forward_ios_rounded,
+                                color: Colors.white70, size: 14),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                if (data['isPendingExpert'] == true) ...[
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 25),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF7ED),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                            color: const Color(0xFFFBBF24), width: 1.2),
+                      ),
+                      child: const Row(
+                        textDirection: TextDirection.rtl,
+                        children: [
+                          Icon(Icons.hourglass_top_rounded,
+                              color: Color(0xFFF59E0B), size: 20),
+                          SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'הבקשה שלך בבדיקה — נעדכן בהקדם',
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                  color: Color(0xFF92400E),
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                // ── Logout ────────────────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 25),
+                  child: OutlinedButton.icon(
+                    onPressed: _logout,
+                    icon: const Icon(Icons.logout_rounded, size: 18, color: Color(0xFF6366F1)),
+                    label: const Text('התנתקות',
+                        style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF6366F1))),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                      side: const BorderSide(color: Color(0xFF6366F1), width: 1.5),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // ── Delete Account ────────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 25),
+                  child: OutlinedButton.icon(
+                    onPressed: () => _showDeleteAccountDialog(context),
+                    icon: const Icon(Icons.delete_forever_rounded, size: 18, color: Colors.red),
+                    label: const Text('מחיקת חשבון',
+                        style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                      side: const BorderSide(color: Colors.red, width: 1.5),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'AnySkill v$currentAppVersion',
+                  style: TextStyle(
+                    color: Colors.grey[400],
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.3,
+                  ),
                 ),
                 const SizedBox(height: 100),
               ],
@@ -322,197 +698,388 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Widget _buildAboutMe(String? about, AppLocalizations l10n) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 25),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Align(
-            alignment: AlignmentDirectional.centerEnd,
-            child: Text(l10n.aboutMeTitle, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          ),
-          const SizedBox(height: 10),
-          Container(
-            width: double.infinity, padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey.shade100)),
-            child: Text(
-              about ?? l10n.aboutMePlaceholder,
-              style: const TextStyle(fontSize: 15, color: Colors.black87, height: 1.5),
-              textAlign: TextAlign.start,
-            ),
-          ),
-        ],
-      ),
-    );
+  // ── Customer Profile Screen (Airbnb-style) ──────────────────────────────
+
+  /// Fetches the count of jobs completed by this customer.
+  /// TODO: replace with AggregateQuery once cloud_firestore supports it
+  ///       cleanly on web (currently falls back to document read).
+  Future<int> _fetchCompletedBookingsCount(String uid) async {
+    if (uid.isEmpty) return 0;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('jobs')
+          .where('customerId', isEqualTo: uid)
+          .where('status', isEqualTo: 'completed')
+          .limit(999)
+          .get();
+      return snap.docs.length;
+    } catch (_) {
+      return 0;
+    }
   }
 
-  Widget _buildGallery(List<dynamic>? gallery, AppLocalizations l10n) {
+  /// A single vertical stat cell — bold black number, black label.
+  Widget _customerStat(String label, String value) {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Padding(
-          padding: const EdgeInsetsDirectional.only(end: 25, bottom: 15),
-          child: Text(l10n.galleryTitle, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold), textAlign: TextAlign.end),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+            color: Colors.black,
+            height: 1.1,
+          ),
         ),
-        if (gallery == null || gallery.isEmpty)
-          Center(child: Padding(padding: const EdgeInsets.all(20.0), child: Text(l10n.galleryEmpty, style: const TextStyle(color: Colors.grey))))
-        else SizedBox(height: 160, child: ListView.builder(scrollDirection: Axis.horizontal, reverse: true, padding: const EdgeInsets.symmetric(horizontal: 20), itemCount: gallery.length, itemBuilder: (context, index) {
-          String imgData = gallery[index].toString();
-          return Container(width: 150, margin: const EdgeInsets.only(left: 12), decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 8)], image: DecorationImage(image: imgData.startsWith('http') ? NetworkImage(imgData) : MemoryImage(base64Decode(imgData.contains(',') ? imgData.split(',').last : imgData)) as ImageProvider, fit: BoxFit.cover)));
-        })),
+        const SizedBox(height: 3),
+        Text(
+          label,
+          textAlign: TextAlign.start,
+          style: const TextStyle(
+            fontSize: 11.5,
+            color: Colors.black,
+            fontWeight: FontWeight.w400,
+          ),
+        ),
       ],
     );
   }
 
-  Widget _buildProfileStats(Map<String, dynamic> data, AppLocalizations l10n) {
-    return IntrinsicHeight(
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _statItem(l10n.statRating, "${data['rating'] ?? '5.0'}", Icons.star, Colors.amber),
-          VerticalDivider(color: Colors.grey.shade200, thickness: 1),
-          _statItem(l10n.statBalance, "₪${(data['balance'] ?? 0).toStringAsFixed(0)}", Icons.account_balance_wallet, Colors.green),
-          VerticalDivider(color: Colors.grey.shade200, thickness: 1),
-          _statItem(l10n.statWorks, "${data['reviewsCount'] ?? '0'}", Icons.check_circle, Colors.blue),
-        ],
-      ),
-    );
-  }
+  Widget _buildCustomerView(Map<String, dynamic> data, AppLocalizations l10n) {
+    final uid        = user?.uid ?? '';
+    final profileImg = data['profileImage'] as String? ?? '';
+    final hasImg     = profileImg.isNotEmpty;
+    final name       = data['name'] as String? ?? l10n.defaultUserName;
 
-  // ── VIP / Promoted Section ─────────────────────────────────────────────────
+    // Years in AnySkill — derived from the createdAt timestamp on the user doc.
+    // TODO: fall back to registration date once reliably written for all users.
+    final createdAt  = data['createdAt'] as Timestamp?;
+    final yearsInApp = createdAt != null
+        ? ((DateTime.now().difference(createdAt.toDate()).inDays) / 365.25)
+            .floor()
+        : 0;
 
-  Widget _buildVipSection(BuildContext context, Map<String, dynamic> data, AppLocalizations l10n) {
-    final isPromoted  = data['isPromoted'] as bool? ?? false;
-    final expiryTs    = data['promotionExpiryDate'] as Timestamp?;
-    final expiryDate  = expiryTs?.toDate();
-    final now         = DateTime.now();
-    final isActive    = isPromoted && expiryDate != null && expiryDate.isAfter(now);
-    final isExpired   = isPromoted && expiryDate != null && !expiryDate.isAfter(now);
-    final daysLeft    = isActive ? expiryDate.difference(now).inDays + 1 : 0;
-
-    if (isActive) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFFFFB347), Color(0xFFFFCC02)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [BoxShadow(color: Colors.amber.withValues(alpha: 0.4), blurRadius: 18, offset: const Offset(0, 6))],
+    // Avatar Stack — extracted so it's used as first child of the RTL Row.
+    final avatarStack = Stack(
+      clipBehavior: Clip.none,
+      children: [
+        CircleAvatar(
+          radius: 52,
+          backgroundColor: const Color(0xFFEEEBFF),
+          backgroundImage: hasImg ? NetworkImage(profileImg) : null,
+          child: hasImg
+              ? null
+              : Icon(Icons.person,
+                  size: 44,
+                  color: const Color(0xFF6366F1).withValues(alpha: 0.5)),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                  decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.3), borderRadius: BorderRadius.circular(20)),
-                  child: Text("$daysLeft ${l10n.vipActiveLabel.contains('VIP') ? 'days left' : 'ימים נותרו'}",
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
-                ),
-                Row(
-                  children: [
-                    const Icon(Icons.star_rounded, color: Colors.white, size: 22),
-                    const SizedBox(width: 6),
-                    Text(l10n.vipActiveLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18)),
-                  ],
+        // AnySkill brand badge — bottom-right of avatar circle
+        Positioned(
+          bottom: 2,
+          right: 2,
+          child: Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.14),
+                  blurRadius: 5,
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(l10n.vipHighlight, textAlign: TextAlign.end,
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 13)),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Colors.white, width: 1.5),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                ),
-                icon: const Icon(Icons.autorenew_rounded, size: 18),
-                label: Text("$daysLeft+ ${l10n.vipPriceMonthly}"),
-                onPressed: () => _showVipSheet(context, data, l10n),
-              ),
-            ),
-          ],
+            padding: const EdgeInsets.all(4),
+            child: const AnySkillBrandIcon(size: 20),
+          ),
         ),
-      );
-    }
+      ],
+    );
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.amber.shade200, width: 1.5),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 12, offset: const Offset(0, 4))],
-      ),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 28, 20, 0),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
+        // CrossAxisAlignment.start = physical RIGHT in the app's RTL Directionality.
+        // This pins the "פרופיל" heading and all children to the far-right edge.
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Large heading — far right ───────────────────────────────────
+          const Text(
+            'פרופיל',
+            style: TextStyle(
+              fontSize: 30,
+              fontWeight: FontWeight.bold,
+              color: Colors.black,
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // ── Airbnb-style floating stats card ────────────────────────────
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.07),
+                  blurRadius: 20,
+                  spreadRadius: 0,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.all(24),
+            child: Row(
+              // LTR Row: first child → LEFT (photo), second child → RIGHT (stats).
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // ── LEFT: avatar · name · לקוח/ה ────────────────────────
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    avatarStack,
+                    const SizedBox(height: 12),
+                    Text(
+                      name,
+                      textDirection: TextDirection.rtl,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    const Text(
+                      'לקוח/ה',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF9CA3AF),
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ),
+
+                // ── RIGHT: 3 vertical stats ──────────────────────────────
+                FutureBuilder<int>(
+                  future: _fetchCompletedBookingsCount(uid),
+                  builder: (ctx, snap) {
+                    final services = snap.data ?? 0;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _customerStat('שירותים שנלקחו', services.toString()),
+                        const Divider(height: 24, color: Color(0xFFF3F4F6), thickness: 1),
+                        _customerStat('ביקורות', '0'), // TODO: reviews count
+                        const Divider(height: 24, color: Color(0xFFF3F4F6), thickness: 1),
+                        _customerStat('שנים ב-AnySkill', yearsInApp.toString()),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // ── Two-card row: Services + Favorites ──────────────────────────
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              if (isExpired)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(color: Colors.red[50], borderRadius: BorderRadius.circular(8)),
-                  child: Text(l10n.vipExpiredLabel, style: TextStyle(color: Colors.red[700], fontSize: 11, fontWeight: FontWeight.bold)),
-                )
-              else
-                const SizedBox(),
-              Row(
-                children: [
-                  const Icon(Icons.star_outline_rounded, color: Colors.amber, size: 20),
-                  const SizedBox(width: 6),
-                  Text(l10n.vipUpsellTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                ],
+              // Right card: שירות שהתקבל
+              Expanded(
+                child: InkWell(
+                  onTap: () {},
+                  borderRadius: BorderRadius.circular(24),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.07),
+                          blurRadius: 20,
+                          spreadRadius: 0,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+                    child: const Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.assignment_turned_in_outlined, size: 32, color: Colors.black),
+                        SizedBox(height: 10),
+                        Text(
+                          'שירות שהתקבל',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              // Left card: מועדפים
+              Expanded(
+                child: InkWell(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const FavoritesScreen(),
+                    ),
+                  ),
+                  borderRadius: BorderRadius.circular(24),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.07),
+                          blurRadius: 20,
+                          spreadRadius: 0,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+                    child: const Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.favorite_border, size: 32, color: Colors.black),
+                        SizedBox(height: 10),
+                        Text(
+                          'מועדפים',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          ...[
-            ("🏆", l10n.vipBenefit1),
-            ("✨", l10n.vipBenefit2),
-            ("📈", l10n.vipBenefit3),
-            ("🔥", l10n.vipBenefit4),
-          ].map((b) => Padding(
-                padding: const EdgeInsets.only(bottom: 5),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Text(b.$2, style: const TextStyle(fontSize: 13, color: Colors.black87)),
-                    const SizedBox(width: 8),
-                    Text(b.$1, style: const TextStyle(fontSize: 13)),
-                  ],
+
+          const SizedBox(height: 16),
+
+          // ── Monetization banner ──────────────────────────────────────────
+          InkWell(
+            onTap: () {},
+            borderRadius: BorderRadius.circular(24),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                  begin: Alignment.centerRight,
+                  end: Alignment.centerLeft,
                 ),
-              )),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFFFC300),
-                foregroundColor: Colors.black87,
-                minimumSize: const Size(double.infinity, 52),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                elevation: 0,
+                borderRadius: BorderRadius.circular(24),
               ),
-              icon: const Icon(Icons.star_rounded, size: 20),
-              label: Text(l10n.vipCtaButton, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-              onPressed: () => _showVipSheet(context, data, l10n),
+              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+              child: const Row(
+                children: [
+                  Icon(Icons.monetization_on_outlined, color: Colors.white, size: 26),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'רוצה להרויח כסף? לחץ כאן',
+                      textAlign: TextAlign.start,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
+
+          const SizedBox(height: 24),
+
+          // ── Language Selector ─────────────────────────────────────────────
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(15),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: ListTile(
+              leading: const Icon(Icons.language_rounded, color: Color(0xFF6366F1)),
+              title: Text(l10n.languageTitle,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text(_currentLangName(l10n),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+              trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 15, color: Colors.grey),
+              onTap: () => _showLanguageSheet(context, l10n),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // ── Logout ───────────────────────────────────────────────────────
+          OutlinedButton.icon(
+            onPressed: _logout,
+            icon: const Icon(Icons.logout_rounded, size: 18, color: Color(0xFF6366F1)),
+            label: const Text(
+              'התנתקות',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF6366F1)),
+            ),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+              side: const BorderSide(color: Color(0xFF6366F1), width: 1.5),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          // ── Delete Account ───────────────────────────────────────────────
+          OutlinedButton.icon(
+            onPressed: () => _showDeleteAccountDialog(context),
+            icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+            label: const Text(
+              'מחיקת חשבון',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
+            ),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+              side: const BorderSide(color: Colors.red, width: 1.5),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+          Text(
+            'AnySkill v$currentAppVersion',
+            style: TextStyle(
+              color: Colors.grey[400],
+              fontSize: 11.5,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(height: 40),
         ],
       ),
     );
@@ -653,16 +1220,358 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _statItem(String label, String value, IconData icon, Color color) {
-    return Expanded(
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 22),
-          const SizedBox(height: 8),
-          Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center),
-          const SizedBox(height: 2),
-          Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center),
+  // ── Account Deletion ──────────────────────────────────────────────────────
+
+  /// Single-step deletion dialog — used by the AppBar trash-can icon.
+  /// Visible to ALL user types. Calls _deleteAccount directly on confirm.
+  /// First warning dialog.
+  void _showDeleteAccountDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            const Text('מחיקת חשבון',
+                style: TextStyle(
+                    color: Colors.red, fontWeight: FontWeight.bold)),
+            const SizedBox(width: 8),
+            Icon(Icons.warning_amber_rounded, color: Colors.red[700]),
+          ],
+        ),
+        content: const Text(
+          'האם אתה בטוח שברצונך למחוק את חשבונך?\n\n'
+          'כל הנתונים — ההיסטוריה, הארנק, הצ׳אטים — ימחקו לצמיתות.\n\n'
+          'פעולה זו אינה הפיכה.',
+          textAlign: TextAlign.right,
+          style: TextStyle(height: 1.5, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('ביטול')),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _showFinalDeleteConfirmation(context);
+            },
+            child: Text('המשך',
+                style: TextStyle(
+                    color: Colors.red[700], fontWeight: FontWeight.bold)),
+          ),
         ],
+      ),
+    );
+  }
+
+  /// Second (final) confirmation dialog with loading state.
+  void _showFinalDeleteConfirmation(BuildContext context) {
+    bool isDeleting = false;   // hoisted so StatefulBuilder sees mutations
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) {
+          return AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Text('אישור סופי',
+                    style: TextStyle(
+                        color: Colors.red, fontWeight: FontWeight.bold)),
+                SizedBox(width: 8),
+                Icon(Icons.delete_forever_rounded, color: Colors.red),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                const Text(
+                  'לאחר האישור, חשבונך ימחק לצמיתות ולא ניתן יהיה לשחזרו.',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(height: 1.5, fontSize: 13),
+                ),
+                if (isDeleting) ...[
+                  const SizedBox(height: 20),
+                  const Center(
+                      child: CircularProgressIndicator(color: Colors.red)),
+                ],
+              ],
+            ),
+            actions: isDeleting
+                ? []
+                : [
+                    TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text('ביטול')),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: () async {
+                        setDialog(() => isDeleting = true);
+                        await _deleteAccount(ctx);
+                      },
+                      child: const Text('מחק לצמיתות',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Calls the Cloud Function, then signs out.
+  Future<void> _deleteAccount(BuildContext dialogContext) async {
+    final uid       = user?.uid ?? '';
+    final messenger = ScaffoldMessenger.of(context);
+    if (uid.isEmpty) return;
+
+    try {
+      await FirebaseFunctions.instance
+          .httpsCallable('deleteUserAccount')
+          .call({'uid': uid});
+
+      if (dialogContext.mounted) Navigator.pop(dialogContext);
+      // Auth state change via AuthWrapper will redirect to LoginScreen
+      await FirebaseAuth.instance.signOut();
+    } catch (e) {
+      if (dialogContext.mounted) Navigator.pop(dialogContext);
+      messenger.showSnackBar(SnackBar(
+        content: Text('שגיאה במחיקת החשבון: $e'),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
+  }
+  /// Stat row used in the specialist Airbnb card:
+  /// bold number + small coloured icon to its right + grey label below.
+  Widget _specialistStat({
+    required String label,
+    required String value,
+    required IconData icon,
+    required Color iconColor,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                    height: 1.1,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(icon, size: 16, color: iconColor),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 11.5,
+                color: Colors.black54,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// _SpecialistGalleryScreen — live gallery backed by the user's Firestore doc
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _SpecialistGalleryScreen extends StatelessWidget {
+  const _SpecialistGalleryScreen({required this.uid});
+
+  final String uid;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F7F9),
+      appBar: AppBar(
+        title: const Text(
+          'גלריית עבודות',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+        ),
+        centerTitle: true,
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+      ),
+      body: StreamBuilder<DocumentSnapshot>(
+        stream: FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
+          final gallery = (data['gallery'] as List<dynamic>?) ?? [];
+
+          if (gallery.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.photo_library_outlined, size: 64, color: Colors.grey[350]),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'עדיין לא העלית עבודות.\nלחץ על העיפרון כדי לעדכן!',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 15, color: Colors.grey, height: 1.6),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          return Padding(
+            padding: const EdgeInsets.all(12),
+            child: GridView.builder(
+              itemCount: gallery.length,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+                childAspectRatio: 1.0,
+              ),
+              itemBuilder: (context, index) {
+                final imgData = gallery[index].toString();
+                final isUrl = imgData.startsWith('http');
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: isUrl
+                      ? Image.network(
+                          imgData,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (_, child, progress) => progress == null
+                              ? child
+                              : Container(
+                                  color: Colors.grey[200],
+                                  child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                                ),
+                          errorBuilder: (_, __, ___) => Container(
+                            color: Colors.grey[200],
+                            child: const Icon(Icons.broken_image_outlined, color: Colors.grey, size: 40),
+                          ),
+                        )
+                      : Image.memory(
+                          base64Decode(imgData.contains(',') ? imgData.split(',').last : imgData),
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            color: Colors.grey[200],
+                            child: const Icon(Icons.broken_image_outlined, color: Colors.grey, size: 40),
+                          ),
+                        ),
+                );
+              },
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ── Full-screen video intro player ───────────────────────────────────────────
+class _VideoIntroScreen extends StatefulWidget {
+  final String videoUrl;
+  const _VideoIntroScreen({required this.videoUrl});
+
+  @override
+  State<_VideoIntroScreen> createState() => _VideoIntroScreenState();
+}
+
+class _VideoIntroScreenState extends State<_VideoIntroScreen> {
+  late VideoPlayerController _ctrl;
+  bool _initialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl))
+      ..initialize().then((_) {
+        if (mounted) {
+          setState(() => _initialized = true);
+          _ctrl.play();
+        }
+      });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: const Text('היכרות בווידאו',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        centerTitle: true,
+      ),
+      body: Center(
+        child: _initialized
+            ? GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _ctrl.value.isPlaying ? _ctrl.pause() : _ctrl.play();
+                  });
+                },
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    AspectRatio(
+                      aspectRatio: _ctrl.value.aspectRatio,
+                      child: VideoPlayer(_ctrl),
+                    ),
+                    if (!_ctrl.value.isPlaying)
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.4),
+                          shape: BoxShape.circle,
+                        ),
+                        padding: const EdgeInsets.all(16),
+                        child: const Icon(Icons.play_arrow_rounded,
+                            color: Colors.white, size: 48),
+                      ),
+                  ],
+                ),
+              )
+            : const CircularProgressIndicator(color: Colors.white),
       ),
     );
   }

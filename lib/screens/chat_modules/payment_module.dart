@@ -14,16 +14,31 @@ class PaymentModule {
     final firestore = db ?? FirebaseFirestore.instance;
     try {
       await firestore.runTransaction((tx) async {
+        // Read job first to validate status and amount — prevents double-refund
+        // and guards against arbitrary amount injection if the caller is tampered.
+        final jobSnap = await tx.get(firestore.collection('jobs').doc(jobId));
+        if (!jobSnap.exists) throw Exception('Job $jobId not found');
+        final jobData = jobSnap.data() as Map<String, dynamic>;
+        final currentStatus = jobData['status'] as String? ?? '';
+        // Idempotency: already cancelled means the refund was already issued.
+        if (currentStatus == 'cancelled') return;
+        if (currentStatus != 'paid_escrow') {
+          throw Exception('Cannot cancel job in status "$currentStatus"');
+        }
+        // Use the authoritative amount from Firestore, not the caller-supplied value.
+        final authorisedAmount =
+            (jobData['totalAmount'] as num? ?? totalAmount).toDouble();
+
         tx.update(firestore.collection('jobs').doc(jobId), {
           'status': 'cancelled',
           'cancelledAt': FieldValue.serverTimestamp(),
         });
         tx.update(firestore.collection('users').doc(customerId), {
-          'balance': FieldValue.increment(totalAmount),
+          'balance': FieldValue.increment(authorisedAmount),
         });
         tx.set(firestore.collection('transactions').doc(), {
           'userId': customerId,
-          'amount': totalAmount,
+          'amount': authorisedAmount,
           'title': 'ביטול הזמנה — החזר כספי',
           'timestamp': FieldValue.serverTimestamp(),
           'type': 'refund',
@@ -60,6 +75,16 @@ class PaymentModule {
     final firestore = db ?? FirebaseFirestore.instance;
     try {
       await firestore.runTransaction((tx) async {
+        // Read job first — idempotency guard and amount validation.
+        final jobSnap = await tx.get(firestore.collection('jobs').doc(jobId));
+        if (!jobSnap.exists) throw Exception('Job $jobId not found');
+        final jobData = jobSnap.data() as Map<String, dynamic>;
+        final currentStatus = jobData['status'] as String? ?? '';
+        // Already resolved — don't issue a second refund.
+        if (currentStatus == 'refunded') return;
+        final authorisedAmount =
+            (jobData['totalAmount'] as num? ?? totalAmount).toDouble();
+
         tx.update(firestore.collection('jobs').doc(jobId), {
           'status': 'refunded',
           'resolvedAt': FieldValue.serverTimestamp(),
@@ -67,11 +92,11 @@ class PaymentModule {
           'resolution': 'refund',
         });
         tx.update(firestore.collection('users').doc(customerId), {
-          'balance': FieldValue.increment(totalAmount),
+          'balance': FieldValue.increment(authorisedAmount),
         });
         tx.set(firestore.collection('transactions').doc(), {
           'userId': customerId,
-          'amount': totalAmount,
+          'amount': authorisedAmount,
           'title': 'החזר כספי — מחלוקת נפתרה לטובתך',
           'timestamp': FieldValue.serverTimestamp(),
           'type': 'refund',

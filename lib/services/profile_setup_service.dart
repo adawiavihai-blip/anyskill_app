@@ -1,4 +1,5 @@
 // ignore_for_file: avoid_print
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'ai_analysis_service.dart';
 import 'visual_fetcher_service.dart';
@@ -78,7 +79,7 @@ class ProfileSetupService {
           .where((n) => n.isNotEmpty)
           .toList();
     } catch (e) {
-      print('ProfileSetupService: failed to fetch categories: $e');
+      debugPrint('ProfileSetupService: failed to fetch categories: $e');
       return [];
     }
   }
@@ -119,9 +120,9 @@ class ProfileSetupService {
         'autoCreated':  true,            // flag for admin review
       });
 
-      print('ProfileSetupService: created new category "$name" (order=$nextOrder)');
+      debugPrint('ProfileSetupService: created new category "$name" (order=$nextOrder)');
     } catch (e) {
-      print('ProfileSetupService: failed to create category "$name": $e');
+      debugPrint('ProfileSetupService: failed to create category "$name": $e');
     }
   }
 }
