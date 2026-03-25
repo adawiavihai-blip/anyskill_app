@@ -1,8 +1,10 @@
+// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/escrow_service.dart';
 
 class ChatUIHelper {
   // ── Main entry point ──────────────────────────────────────────────────────
@@ -12,6 +14,8 @@ class ChatUIHelper {
     required bool isMe,
     String senderName     = '',
     String senderImageUrl = '',
+    String currentUserId  = '',
+    String chatRoomId     = '',
     VoidCallback? onPaymentTap,
   }) {
     final String type  = (data['type']?.toString())    ?? 'text';
@@ -25,6 +29,14 @@ class ChatUIHelper {
     }
     if (type == 'payment_complete') {
       return _PaymentCompleteCard(data: data);
+    }
+    if (type == 'official_quote') {
+      return _OfficialQuoteCard(
+        data:          data,
+        isMe:          isMe,
+        currentUserId: currentUserId,
+        chatRoomId:    chatRoomId,
+      );
     }
 
     // ── Bubble container ────────────────────────────────────────────────────
@@ -508,6 +520,277 @@ class _PaymentCompleteCard extends StatelessWidget {
             const SizedBox(height: 6),
             _Timestamp(ts: ts, isMe: false),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Official Quote Card ───────────────────────────────────────────────────────
+// Receipt-style card shown in chat when a provider sends an Official Quote.
+// The client sees a "Pay & Secure in Escrow" button; the provider sees the
+// waiting state. Both see the status badge once the quote is paid/rejected.
+
+class _OfficialQuoteCard extends StatefulWidget {
+  final Map<String, dynamic> data;
+  final bool   isMe;
+  final String currentUserId;
+  final String chatRoomId;
+
+  const _OfficialQuoteCard({
+    required this.data,
+    required this.isMe,
+    required this.currentUserId,
+    required this.chatRoomId,
+  });
+
+  @override
+  State<_OfficialQuoteCard> createState() => _OfficialQuoteCardState();
+}
+
+class _OfficialQuoteCardState extends State<_OfficialQuoteCard> {
+  bool _paying = false;
+
+  Future<void> _pay() async {
+    if (_paying) return;
+    setState(() => _paying = true);
+
+    final d           = widget.data;
+    final quoteId     = d['quoteId']?.toString()      ?? '';
+    final msgId       = d['messageId']?.toString()    ?? '';
+    final providerId  = d['senderId']?.toString()     ?? '';
+    final providerName= d['senderName']?.toString()   ?? 'מומחה';
+    final amount      = (d['amount'] as num? ?? 0).toDouble();
+    final description = d['message']?.toString()      ?? '';
+
+    // Fetch current user's name
+    String clientName = 'לקוח';
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.currentUserId)
+          .get();
+      clientName = (snap.data() ?? {})['name']?.toString() ?? 'לקוח';
+    } catch (_) {}
+
+    final error = await EscrowService.payQuote(
+      quoteId:       quoteId,
+      chatMessageId: msgId,
+      chatRoomId:    widget.chatRoomId,
+      providerId:    providerId,
+      providerName:  providerName,
+      clientId:      widget.currentUserId,
+      clientName:    clientName,
+      amount:        amount,
+      description:   description,
+    );
+
+    if (!mounted) return;
+    setState(() => _paying = false);
+
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(error),
+        backgroundColor: Colors.red,
+      ));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final d           = widget.data;
+    final amount      = (d['amount'] as num? ?? 0).toDouble();
+    final description = d['message']?.toString()       ?? '';
+    final quoteStatus = d['quoteStatus']?.toString()   ?? 'pending';
+    final ts          = d['timestamp'];
+
+    final amountStr = amount % 1 == 0
+        ? '₪${amount.toInt()}'
+        : '₪${amount.toStringAsFixed(2)}';
+
+    final isPaid      = quoteStatus == 'paid';
+    final isRejected  = quoteStatus == 'rejected';
+    final isPending   = !isPaid && !isRejected;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF1A0E3C), Color(0xFF2D1A6B)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+            color: isPaid
+                ? const Color(0xFF22C55E).withValues(alpha: 0.5)
+                : const Color(0xFF6366F1).withValues(alpha: 0.4),
+            width: 1.2,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF6366F1).withValues(alpha: 0.25),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // ── Header ────────────────────────────────────────────────
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Status badge
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: isPaid
+                          ? const Color(0xFF22C55E).withValues(alpha: 0.18)
+                          : isRejected
+                              ? Colors.red.withValues(alpha: 0.18)
+                              : const Color(0xFF6366F1).withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: isPaid
+                            ? const Color(0xFF22C55E).withValues(alpha: 0.5)
+                            : isRejected
+                                ? Colors.red.withValues(alpha: 0.4)
+                                : const Color(0xFF6366F1).withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: Text(
+                      isPaid
+                          ? '✅ שולם לאסקרו'
+                          : isRejected
+                              ? '❌ נדחה'
+                              : '📋 הצעת מחיר רשמית',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: isPaid
+                            ? const Color(0xFF22C55E)
+                            : isRejected
+                                ? Colors.redAccent
+                                : const Color(0xFFA5B4FC),
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.receipt_long_rounded,
+                      color: Colors.white30, size: 20),
+                ],
+              ),
+
+              const SizedBox(height: 16),
+
+              // ── Amount ────────────────────────────────────────────────
+              Text(
+                amountStr,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 38,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: -1.5,
+                ),
+              ),
+
+              // ── Description ───────────────────────────────────────────
+              if (description.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  description,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.65),
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 16),
+              Divider(
+                  color: Colors.white.withValues(alpha: 0.10), height: 1),
+              const SizedBox(height: 16),
+
+              // ── Action area ───────────────────────────────────────────
+              if (isPending && !widget.isMe) ...[
+                // Client: Pay button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF6366F1),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    icon: _paying
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.lock_rounded, size: 16),
+                    label: Text(
+                      _paying ? 'מעבד...' : 'אשר ושלם',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                    onPressed: _paying ? null : _pay,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(Icons.shield_rounded,
+                      size: 11,
+                      color: Colors.white.withValues(alpha: 0.35)),
+                  const SizedBox(width: 4),
+                  Text('הסכום נעול בנאמנות AnySkill עד השלמת העבודה',
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.white.withValues(alpha: 0.35))),
+                ]),
+              ] else if (isPending && widget.isMe) ...[
+                // Provider: waiting state
+                Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  const Icon(Icons.hourglass_top_rounded,
+                      size: 13, color: Colors.white38),
+                  const SizedBox(width: 5),
+                  Text(
+                    'ממתין לאישור הלקוח',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.5)),
+                  ),
+                ]),
+              ] else if (isPaid) ...[
+                Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  const Icon(Icons.verified_rounded,
+                      size: 14, color: Color(0xFF22C55E)),
+                  const SizedBox(width: 5),
+                  const Text('תשלום נעול באסקרו — העבודה יכולה להתחיל!',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF22C55E),
+                          fontWeight: FontWeight.w600)),
+                ]),
+              ],
+
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: _Timestamp(ts: ts, isMe: true),
+              ),
+            ],
+          ),
         ),
       ),
     );

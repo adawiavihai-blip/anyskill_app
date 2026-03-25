@@ -26,7 +26,7 @@ final Map<String, Map<String, String>> _translations = {
     // Navigation
     'tabHome':                'בית',
     'tabBookings':            'הזמנות',
-    'tabChat':                "צ'אט",
+    'tabChat':                'הודעות',
     'tabWallet':              'ארנק',
     'tabProfile':             'פרופיל',
 
@@ -100,6 +100,12 @@ final Map<String, Map<String, String>> _translations = {
     'validationCategoryRequired': 'נא לבחור תחום התמחות',
     'validationPriceInvalid': 'המחיר חייב להיות מספר תקין',
     'validationPricePositive':'המחיר חייב להיות גדול מ-0',
+    'validationNameForbidden':    'השם מכיל תווים אסורים (HTML/סקריפט)',
+    'validationNameTooLong':      'השם ארוך מדי (מקסימום 50 תווים)',
+    'validationAboutForbidden':   'התיאור מכיל תווים אסורים (HTML/סקריפט)',
+    'validationAboutTooLong':     'התיאור ארוך מדי (מקסימום 500 תווים)',
+    'validationUrlHttps':         'הכתובת חייבת להתחיל ב-https://',
+    'validationFieldForbidden':   'השדה מכיל תווים אסורים',
 
     // ── Profile ────────────────────────────────────────────────────────────
     'profileTitle':           'הפרופיל שלי',
@@ -406,6 +412,7 @@ final Map<String, Map<String, String>> _translations = {
     'onlineToggleOff':            'לחץ להיות לא זמין',
 
     // ── Shared actions ────────────────────────────────────────────────────────
+    'profileLoadError':           'שגיאה בטעינת הפרופיל. אנא נסה שוב.',
     'retryButton':                'נסה שוב',
 
     // ── Business AI screen ────────────────────────────────────────────────────
@@ -932,6 +939,12 @@ final Map<String, Map<String, String>> _translations = {
     'validationCategoryRequired': 'Please select a service category',
     'validationPriceInvalid': 'Price must be a valid number',
     'validationPricePositive':'Price must be greater than 0',
+    'validationNameForbidden':    'Name contains forbidden characters (HTML/script)',
+    'validationNameTooLong':      'Name is too long (maximum 50 characters)',
+    'validationAboutForbidden':   'Description contains forbidden characters (HTML/script)',
+    'validationAboutTooLong':     'Description is too long (maximum 500 characters)',
+    'validationUrlHttps':         'URL must start with https://',
+    'validationFieldForbidden':   'Field contains forbidden characters',
 
     // Profile
     'profileTitle':           'My Profile',
@@ -1238,6 +1251,7 @@ final Map<String, Map<String, String>> _translations = {
     'onlineToggleOff':            'Tap to go offline',
 
     // ── Shared actions ────────────────────────────────────────────────────────
+    'profileLoadError':           'Error loading profile. Please try again.',
     'retryButton':                'Try Again',
 
     // ── Business AI screen ────────────────────────────────────────────────────
@@ -1764,6 +1778,12 @@ final Map<String, Map<String, String>> _translations = {
     'validationCategoryRequired': 'Por favor selecciona una categoría',
     'validationPriceInvalid': 'El precio debe ser un número válido',
     'validationPricePositive':'El precio debe ser mayor que 0',
+    'validationNameForbidden':    'El nombre contiene caracteres prohibidos (HTML/script)',
+    'validationNameTooLong':      'El nombre es demasiado largo (máximo 50 caracteres)',
+    'validationAboutForbidden':   'La descripción contiene caracteres prohibidos (HTML/script)',
+    'validationAboutTooLong':     'La descripción es demasiado larga (máximo 500 caracteres)',
+    'validationUrlHttps':         'La URL debe comenzar con https://',
+    'validationFieldForbidden':   'El campo contiene caracteres prohibidos',
 
     // Profile
     'profileTitle':           'Mi Perfil',
@@ -2070,6 +2090,7 @@ final Map<String, Map<String, String>> _translations = {
     'onlineToggleOff':            'Toca para estar no disponible',
 
     // ── Shared actions ────────────────────────────────────────────────────────
+    'profileLoadError':           'Error al cargar el perfil. Inténtalo de nuevo.',
     'retryButton':                'Reintentar',
 
     // ── Business AI screen ────────────────────────────────────────────────────
@@ -2620,6 +2641,12 @@ class AppLocalizations {
   String get validationCategoryRequired => _t('validationCategoryRequired');
   String get validationPriceInvalid   => _t('validationPriceInvalid');
   String get validationPricePositive  => _t('validationPricePositive');
+  String get validationNameForbidden  => _t('validationNameForbidden');
+  String get validationNameTooLong    => _t('validationNameTooLong');
+  String get validationAboutForbidden => _t('validationAboutForbidden');
+  String get validationAboutTooLong   => _t('validationAboutTooLong');
+  String get validationUrlHttps       => _t('validationUrlHttps');
+  String get validationFieldForbidden => _t('validationFieldForbidden');
 
   // ── Profile ──────────────────────────────────────────────────────────────────
   String get profileTitle             => _t('profileTitle');
@@ -3008,6 +3035,7 @@ class AppLocalizations {
   String get expertSectionSchedule        => _t('expertSectionSchedule');
 
   // ── Shared actions ────────────────────────────────────────────────────────────
+  String get profileLoadError           => _t('profileLoadError');
   String get retryButton                => _t('retryButton');
 
   // ── Business AI screen ────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'chat_screen.dart';
 import '../constants/quick_tags.dart';
 import '../services/cancellation_policy_service.dart';
@@ -15,42 +16,15 @@ import '../services/cache_service.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/anyskill_logo.dart';
 import '../widgets/favorite_button.dart';
-import '../widgets/pro_badge.dart';
 import '../services/service_architect.dart';
 import '../models/pricing_model.dart';
+import '../widgets/xp_progress_bar.dart';
 
 // Brand tokens
 const _kPurple     = Color(0xFF6366F1);
 const _kPurpleSoft = Color(0xFFF0F0FF);
 const _kGold       = Color(0xFFFBBF24);
 
-// Trait tag catalog — keys stored in reviews/{id}.traitTags
-// Labels are resolved at runtime via _traitLabel() for i18n.
-const _kTraitTags = [
-  {'key': 'punctual',      'emoji': '⏰'},
-  {'key': 'professional',  'emoji': '💼'},
-  {'key': 'communicative', 'emoji': '💬'},
-  {'key': 'patient',       'emoji': '🤗'},
-  {'key': 'knowledgeable', 'emoji': '🎓'},
-  {'key': 'friendly',      'emoji': '😊'},
-  {'key': 'creative',      'emoji': '🎨'},
-  {'key': 'flexible',      'emoji': '🔄'},
-];
-
-/// Returns the i18n label for a trait key. Falls back to the key itself.
-String _traitLabel(String key, AppLocalizations l10n) {
-  switch (key) {
-    case 'punctual':      return l10n.traitPunctual;
-    case 'professional':  return l10n.traitProfessional;
-    case 'communicative': return l10n.traitCommunicative;
-    case 'patient':       return l10n.traitPatient;
-    case 'knowledgeable': return l10n.traitKnowledgeable;
-    case 'friendly':      return l10n.traitFriendly;
-    case 'creative':      return l10n.traitCreative;
-    case 'flexible':      return l10n.traitFlexible;
-    default:              return key;
-  }
-}
 
 class ExpertProfileScreen extends StatefulWidget {
   final String expertId;
@@ -72,9 +46,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   int _refreshTrigger = 0;
   int _selectedServiceIndex = 0;
 
-  // ── Hero carousel state ────────────────────────────────────────────────────
+  // ── Portfolio image viewer state ───────────────────────────────────────────
   final PageController _pageController = PageController();
-  int _heroPage = 0;
 
   // ── Bio expand state ───────────────────────────────────────────────────────
   bool _bioExpanded = false;
@@ -315,10 +288,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       // synchronous gesture, with zero async-chain coupling.
       return true;
     } catch (e) {
-      // Debug: print full error to console so the exact Firestore error code
-      // (e.g. PERMISSION_DENIED, NOT_FOUND) is visible in browser DevTools.
-      // ignore: avoid_print
-      print('[AnySkill] Booking error: ${e.toString()}');
+      debugPrint('[AnySkill] Booking error: ${e.toString()}');
       if (mounted) {
         if (e == kSlotConflict) {
           showDialog<void>(
@@ -419,265 +389,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     });
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // UI: Hero gallery carousel
-  // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildHeroBackground(Map<String, dynamic> data, AppLocalizations l10n) {
-    final gallery      = (data['gallery'] as List? ?? []).cast<String>();
-    final profileImage = data['profileImage'] as String? ?? '';
-    final images       = [...gallery];
-    if (images.isEmpty && profileImage.isNotEmpty) images.add(profileImage);
-
-    final isVerified = data['isVerified'] as bool? ?? false;
-    final isPromoted = data['isPromoted'] as bool? ?? false;
-    final isPro      = data['isAnySkillPro'] == true;
-
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // ── Image / carousel ─────────────────────────────────────────────
-        images.isEmpty
-            ? Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [_kPurple, _kPurple.withValues(alpha: 0.6)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                ),
-                child: Icon(Icons.person_outlined,
-                    size: 100, color: Colors.white.withValues(alpha: 0.3)),
-              )
-            : PageView.builder(
-                controller: _pageController,
-                itemCount: images.length,
-                onPageChanged: (i) => setState(() => _heroPage = i),
-                itemBuilder: (_, i) =>
-                    _buildGalleryImage(images[i], fit: BoxFit.cover),
-              ),
-
-        // ── Bottom gradient ───────────────────────────────────────────────
-        Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.transparent,
-                  Colors.black.withValues(alpha: 0.72),
-                ],
-                stops: const [0.45, 1.0],
-              ),
-            ),
-          ),
-        ),
-
-        // ── Name + badges overlay (bottom) ────────────────────────────────
-        Positioned(
-          bottom: 50,
-          left: 16,
-          right: 16,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisAlignment: MainAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        if (isPromoted)
-                          Container(
-                            margin: const EdgeInsets.only(right: 6),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: _kGold,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(Icons.star_rounded,
-                                    size: 11, color: Colors.white),
-                                const SizedBox(width: 3),
-                                Text(l10n.expertRecommendedBadge,
-                                    style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold)),
-                              ],
-                            ),
-                          ),
-                        if (isVerified)
-                          const Icon(Icons.verified_rounded,
-                              color: Color(0xFF60A5FA), size: 20),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      widget.expertName,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w900,
-                        shadows: [Shadow(blurRadius: 8, color: Colors.black54)],
-                      ),
-                    ),
-                    if (isPro) ...[
-                      const SizedBox(height: 6),
-                      const ProBadge(large: true),
-                    ],
-                    if ((data['serviceType'] as String? ?? '').isNotEmpty)
-                      Text(
-                        data['serviceType'] as String,
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.85),
-                            fontSize: 14),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        // ── Page indicator dots ────────────────────────────────────────────
-        if ((data['gallery'] as List? ?? []).length > 1)
-          Positioned(
-            bottom: 14,
-            left: 0,
-            right: 0,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(
-                (data['gallery'] as List).length,
-                (i) => AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  width:  _heroPage == i ? 18 : 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: _heroPage == i
-                        ? Colors.white
-                        : Colors.white.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // UI: Power Row (trust stats horizontal scroll)
-  // ─────────────────────────────────────────────────────────────────────────
-
-  Widget _buildPowerRow(Map<String, dynamic> data, AppLocalizations l10n) {
-    final rating       = (data['rating']       as num? ?? 5.0).toDouble();
-    final reviewsCount = (data['reviewsCount'] as num? ?? 0).toInt();
-    final orderCount   = (data['orderCount']   as num? ?? 0).toInt();
-    final respTime     = (data['responseTimeMinutes'] as num? ?? 0).toInt();
-    final xp           = (data['xp']           as num? ?? 0).toInt();
-
-    // Repeat rate: shown when orderCount > 3 (approximated — no real data)
-    final repeatRate   = orderCount > 3 ? 75 : null;
-
-    final stats = <Map<String, dynamic>>[
-      {
-        'value': rating.toStringAsFixed(1),
-        'label': l10n.expertStatRating,
-        'icon':  Icons.star_rounded,
-        'color': _kGold,
-      },
-      if (reviewsCount > 0)
-        {
-          'value': '$reviewsCount',
-          'label': l10n.expertStatReviews,
-          'icon':  Icons.chat_bubble_outline_rounded,
-          'color': Colors.blue,
-        },
-      if (repeatRate != null)
-        {
-          'value': '$repeatRate%',
-          'label': l10n.expertStatRepeatClients,
-          'icon':  Icons.repeat_rounded,
-          'color': Colors.green,
-        },
-      if (respTime > 0)
-        {
-          'value': l10n.expertResponseTimeFormat(respTime),
-          'label': l10n.expertStatResponseTime,
-          'icon':  Icons.bolt_rounded,
-          'color': _kPurple,
-        },
-      if (orderCount > 0)
-        {
-          'value': '$orderCount',
-          'label': l10n.expertStatOrders,
-          'icon':  Icons.local_fire_department_rounded,
-          'color': Colors.orange,
-        },
-      if (xp > 0)
-        {
-          'value': '$xp XP',
-          'label': l10n.expertStatXp,
-          'icon':  Icons.emoji_events_rounded,
-          'color': const Color(0xFF8B5CF6),
-        },
-    ];
-
-    return SizedBox(
-      height: 80,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        reverse: true,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        itemCount: stats.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemBuilder: (_, i) {
-          final s = stats[i];
-          final color = s['color'] as Color;
-          return Container(
-            width: 88,
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: color.withValues(alpha: 0.2)),
-              boxShadow: [
-                BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.04),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2)),
-              ],
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(s['icon'] as IconData, color: color, size: 20),
-                const SizedBox(height: 3),
-                Text(s['value'] as String,
-                    style: TextStyle(
-                        color: color,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 15)),
-                Text(s['label'] as String,
-                    style: TextStyle(
-                        color: Colors.grey[500], fontSize: 10)),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // UI: Quick Tags
@@ -771,34 +483,22 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
           onTap: () => setState(() => _selectedServiceIndex = i),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(14),
+            margin: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
               color:        selected ? _kPurpleSoft : Colors.white,
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color:  selected ? _kPurple : Colors.grey.shade200,
                 width:  selected ? 1.5 : 1,
               ),
-              boxShadow: selected
-                  ? [
-                      BoxShadow(
-                          color: _kPurple.withValues(alpha: 0.12),
-                          blurRadius: 10,
-                          offset: const Offset(0, 3))
-                    ]
-                  : [
-                      BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.03),
-                          blurRadius: 6)
-                    ],
             ),
             child: Row(
               children: [
                 // ── Selection indicator ────────────────────────────────
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 150),
-                  width: 22, height: 22,
+                  width: 18, height: 18,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color:  selected ? _kPurple : Colors.transparent,
@@ -808,75 +508,47 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   ),
                   child: selected
                       ? const Icon(Icons.check_rounded,
-                          color: Colors.white, size: 14)
+                          color: Colors.white, size: 12)
                       : null,
                 ),
-                const SizedBox(width: 14),
-                // ── Details ────────────────────────────────────────────
+                const SizedBox(width: 10),
+                // ── Title + pill ───────────────────────────────────────
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          // Duration pill
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: selected
-                                  ? _kPurple.withValues(alpha: 0.1)
-                                  : Colors.grey[100],
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(svc['unitIcon'] as IconData,
-                                    size: 12,
-                                    color: selected
-                                        ? _kPurple
-                                        : Colors.grey[600]),
-                                const SizedBox(width: 3),
-                                Text(svc['unitLabel'] as String,
-                                    style: TextStyle(
-                                        fontSize: 11,
-                                        color: selected
-                                            ? _kPurple
-                                            : Colors.grey[700],
-                                        fontWeight: FontWeight.w600)),
-                              ],
-                            ),
-                          ),
-                          // Title
-                          Text(svc['title'] as String,
-                              style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 15,
-                                  color: selected
-                                      ? _kPurple
-                                      : Colors.black87)),
-                        ],
+                      // Duration pill
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? _kPurple.withValues(alpha: 0.1)
+                              : Colors.grey[100],
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(svc['unitLabel'] as String,
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: selected ? _kPurple : Colors.grey[600],
+                                fontWeight: FontWeight.w600)),
                       ),
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('₪${svcPrice.toStringAsFixed(0)}',
-                              style: const TextStyle(
-                                  color: _kPurple,
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 18)),
-                          Text(svc['subtitle'] as String,
-                              style: TextStyle(
-                                  color: Colors.grey[500],
-                                  fontSize: 12)),
-                        ],
-                      ),
+                      const SizedBox(width: 6),
+                      Text(svc['title'] as String,
+                          style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                              color: selected ? _kPurple : Colors.black87)),
                     ],
                   ),
                 ),
+                const SizedBox(width: 10),
+                // ── Price ──────────────────────────────────────────────
+                Text('₪${svcPrice.toStringAsFixed(0)}',
+                    style: const TextStyle(
+                        color: _kPurple,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15)),
               ],
             ),
           ),
@@ -1002,7 +674,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     showDialog(
       context: context,
       barrierColor: Colors.black87,
-      builder: (_) => Dialog(
+      // dialogCtx is the dialog's own context — required for correct Navigator.pop
+      builder: (dialogCtx) => Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: EdgeInsets.zero,
         child: Stack(
@@ -1020,10 +693,11 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
               top: 40,
               right: 16,
               child: GestureDetector(
-                onTap: () => Navigator.pop(context),
+                // Use dialogCtx so only the dialog is popped, not the whole page
+                onTap: () => Navigator.pop(dialogCtx),
                 child: Container(
                   padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
+                  decoration: const BoxDecoration(
                     color: Colors.black54,
                     shape: BoxShape.circle,
                   ),
@@ -1034,47 +708,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildPortfolioGrid(Map<String, dynamic> data) {
-    final gallery = (data['gallery'] as List? ?? []).cast<String>();
-    if (gallery.isEmpty) return const SizedBox.shrink();
-
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount:  3,
-        crossAxisSpacing: 4,
-        mainAxisSpacing:  4,
-      ),
-      itemCount: gallery.length,
-      itemBuilder: (context, i) => GestureDetector(
-        onTap: () => _expandPortfolioImage(context, gallery, i),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              _buildGalleryImage(gallery[i]),
-              // Hover-hint overlay
-              Positioned(
-                bottom: 4,
-                right: 4,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                      color: Colors.black38, shape: BoxShape.circle),
-                  child: const Icon(Icons.zoom_in_rounded,
-                      color: Colors.white, size: 12),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    ).then((_) => ctrl.dispose());
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1221,8 +855,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       future: FirebaseFirestore.instance
           .collection('reviews')
           .where('expertId', isEqualTo: widget.expertId)
-          .orderBy('timestamp', descending: true)
-          .limit(20)
+          .limit(40)
           .get(),
       builder: (context, snapshot) {
         // Show spinner while Firestore is loading
@@ -1233,434 +866,220 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
           );
         }
 
-        final docs    = snapshot.data?.docs ?? [];
-        final reviews = docs.map((d) => d.data() as Map<String, dynamic>).toList();
-
-        // ── Rating distribution ─────────────────────────────────────────────
-        final dist = <int, int>{1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
-        for (final r in reviews) {
-          final star = (r['rating'] as num? ?? 5).round().clamp(1, 5);
-          dist[star] = (dist[star] ?? 0) + 1;
-        }
-        final maxCount = dist.values.fold(0, (a, b) => a > b ? a : b);
-
-        // ── Trait tag aggregation ───────────────────────────────────────────
-        final traitCounts = <String, int>{};
-        for (final r in reviews) {
-          for (final t in (r['traitTags'] as List? ?? []).cast<String>()) {
-            traitCounts[t] = (traitCounts[t] ?? 0) + 1;
-          }
-        }
-        final sortedTraits = traitCounts.entries.toList()
-          ..sort((a, b) => b.value.compareTo(a.value));
+        final allDocs = snapshot.data?.docs ?? [];
+        // Filter: show review if isPublished == true OR field is absent (legacy)
+        final publishedDocs = allDocs.where((doc) {
+          final d = doc.data() as Map<String, dynamic>? ?? {};
+          final published = d['isPublished'];
+          return published == null || published == true;
+        }).toList();
+        // Sort client-side by timestamp desc (avoids composite index)
+        publishedDocs.sort((a, b) {
+          final aData = a.data() as Map<String, dynamic>? ?? {};
+          final bData = b.data() as Map<String, dynamic>? ?? {};
+          final aTs = (aData['timestamp'] ?? aData['createdAt']) as Timestamp?;
+          final bTs = (bData['timestamp'] ?? bData['createdAt']) as Timestamp?;
+          if (aTs == null || bTs == null) return 0;
+          return bTs.compareTo(aTs);
+        });
+        final docs = publishedDocs;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            // ── Header ───────────────────────────────────────────────────────
+            // ── Header ────────────────────────────────────────────────────────
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 if (docs.isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: _kPurpleSoft,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      l10n.expertReviewsCount(docs.length),
-                      style: const TextStyle(
-                          color: _kPurple,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700),
-                    ),
+                  Text(
+                    '(${docs.length})',
+                    style: const TextStyle(
+                        color: Color(0xFF9CA3AF),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500),
                   ),
-                Text(l10n.expertReviewsHeader,
-                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const Text(
+                  'ביקורות',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 4),
 
-            // ── Empty state ──────────────────────────────────────────────────
+            // ── Empty state ───────────────────────────────────────────────────
             if (docs.isEmpty)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 32),
-                decoration: BoxDecoration(
-                  color: Colors.grey[50],
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.grey.shade200),
-                ),
-                child: Column(
-                  children: [
-                    const Icon(Icons.star_border_rounded, size: 40, color: Colors.grey),
-                    const SizedBox(height: 8),
-                    Text(l10n.expertNoReviews,
-                        style: const TextStyle(color: Colors.grey, fontSize: 14)),
-                  ],
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                child: Center(
+                  child: Text(l10n.expertNoReviews,
+                      style: const TextStyle(
+                          color: Color(0xFF9CA3AF), fontSize: 14)),
                 ),
               )
-            else ...[
-              // ── Rating Distribution bar chart ─────────────────────────────
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey.shade100),
-                  boxShadow: [
-                    BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.03),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2)),
-                  ],
-                ),
-                child: Column(
-                  children: List.generate(5, (i) {
-                    final star  = 5 - i;
-                    final count = dist[star] ?? 0;
-                    final frac  = maxCount > 0 ? count / maxCount : 0.0;
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 20,
-                            child: Text('$count',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: count > 0
-                                        ? Colors.grey[700]
-                                        : Colors.grey[300])),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(4),
-                              child: LinearProgressIndicator(
-                                value: frac,
-                                minHeight: 8,
-                                backgroundColor: Colors.grey[100],
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  star >= 4
-                                      ? _kGold
-                                      : star == 3
-                                          ? Colors.orange.shade300
-                                          : Colors.red.shade300,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text('$star',
-                                  style: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600)),
-                              const Icon(Icons.star_rounded,
-                                  size: 12, color: _kGold),
-                            ],
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // ── Trait Tags (AI-style highlights) ─────────────────────────
-              if (sortedTraits.isNotEmpty) ...[
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.end,
-                  children: sortedTraits.take(6).map((entry) {
-                    final meta = _kTraitTags.firstWhere(
-                        (t) => t['key'] == entry.key,
-                        orElse: () => {'emoji': '✓'});
-                    final metaLabel = _traitLabel(entry.key, l10n);
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: _kPurpleSoft,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                            color: _kPurple.withValues(alpha: 0.2)),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 5, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: _kPurple,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text('${entry.value}',
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.bold)),
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            '${meta['emoji']} $metaLabel',
-                            style: const TextStyle(
-                                color: _kPurple,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 16),
-              ],
-
-              // ── Review cards ──────────────────────────────────────────────
+            else
+              // ── Flat Airbnb-style review list ─────────────────────────────
               ...List.generate(docs.length, (idx) {
                 final doc      = docs[idx];
                 final r        = doc.data() as Map<String, dynamic>;
                 final rating   = (r['rating'] as num? ?? 5).toDouble();
-                final name     = r['reviewerName'] as String? ?? l10n.expertDefaultReviewer;
+                final name     = r['reviewerName'] as String?
+                    ?? l10n.expertDefaultReviewer;
                 final comment  = (r['comment'] ?? '').toString().trim();
                 final ts       = r['timestamp'] as Timestamp?;
                 final date     = ts != null
                     ? DateFormat('dd/MM/yy').format(ts.toDate())
                     : '';
-                final photos   = (r['photos']    as List? ?? []).cast<String>();
-                final tags     = (r['traitTags'] as List? ?? []).cast<String>();
                 final response = r['providerResponse'] as String?;
 
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey.shade100),
-                    boxShadow: [
-                      BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.04),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2)),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      // ── Card header ────────────────────────────────────
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Left: stars + verified + date
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: List.generate(
-                                      5,
-                                      (i) => Icon(
-                                            i < rating
-                                                ? Icons.star_rounded
-                                                : Icons.star_border_rounded,
-                                            color: _kGold,
-                                            size: 16,
-                                          )),
-                                ),
-                                const SizedBox(height: 5),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.verified_rounded,
-                                        color: Colors.green, size: 12),
-                                    const SizedBox(width: 3),
-                                    Text(l10n.expertVerifiedBooking,
-                                        style: TextStyle(
-                                            color: Colors.green[700],
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.w600)),
-                                    if (date.isNotEmpty)
-                                      Text('  ·  $date',
-                                          style: const TextStyle(
-                                              color: Colors.grey,
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    // ── Row: avatar + name / stars + date ──────────────────
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Left: indigo stars + date
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: List.generate(5, (i) => Icon(
+                                  i < rating
+                                      ? Icons.star_rounded
+                                      : Icons.star_border_rounded,
+                                  color: _kPurple,
+                                  size: 14,
+                                )),
+                              ),
+                              if (date.isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Text(date,
+                                    style: const TextStyle(
+                                        color: Color(0xFF9CA3AF),
+                                        fontSize: 11)),
+                              ],
+                            ],
+                          ),
+                          // Right: grey initial avatar + name + verified badge
+                          Row(
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(name,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 13,
+                                          color: Colors.black87)),
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.verified_rounded,
+                                          color: Colors.green, size: 10),
+                                      const SizedBox(width: 2),
+                                      Text(l10n.expertVerifiedBooking,
+                                          style: TextStyle(
+                                              color: Colors.green[700],
                                               fontSize: 10)),
-                                  ],
-                                ),
-                              ],
-                            ),
-                            // Right: name + avatar
-                            Row(
-                              children: [
-                                Text(name,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 14)),
-                                const SizedBox(width: 8),
-                                CircleAvatar(
-                                  radius: 17,
-                                  backgroundColor: _kPurpleSoft,
-                                  child: Text(
-                                    name.isNotEmpty
-                                        ? name[0].toUpperCase()
-                                        : '?',
-                                    style: const TextStyle(
-                                        fontSize: 13,
-                                        color: _kPurple,
-                                        fontWeight: FontWeight.bold),
+                                    ],
                                   ),
+                                ],
+                              ),
+                              const SizedBox(width: 10),
+                              CircleAvatar(
+                                radius: 20,
+                                backgroundColor: const Color(0xFFE5E7EB),
+                                child: Text(
+                                  name.isNotEmpty
+                                      ? name[0].toUpperCase()
+                                      : '?',
+                                  style: const TextStyle(
+                                      fontSize: 14,
+                                      color: Color(0xFF374151),
+                                      fontWeight: FontWeight.bold),
                                 ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // ── Comment ─────────────────────────────────────────────
+                    if (comment.isNotEmpty) ...[
+                      Text(comment,
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                              fontSize: 13.5,
+                              height: 1.55,
+                              color: Colors.grey[700])),
+                      const SizedBox(height: 10),
+                    ],
+
+                    // ── Provider response ────────────────────────────────────
+                    if (response != null && response.isNotEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: _kPurpleSoft,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                              color: _kPurple.withValues(alpha: 0.15)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Icon(Icons.verified_user_rounded,
+                                    color: _kPurple, size: 14),
+                                Text(l10n.expertProviderResponse,
+                                    style: const TextStyle(
+                                        color: _kPurple,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700)),
                               ],
                             ),
+                            const SizedBox(height: 5),
+                            Text(response,
+                                textAlign: TextAlign.right,
+                                style: TextStyle(
+                                    fontSize: 12.5,
+                                    height: 1.5,
+                                    color: Colors.grey[700])),
                           ],
                         ),
                       ),
-
-                      // ── Comment ────────────────────────────────────────
-                      if (comment.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                          child: Text(comment,
-                              textAlign: TextAlign.right,
-                              style: TextStyle(
-                                  fontSize: 14,
-                                  height: 1.55,
-                                  color: Colors.grey[800])),
+                      const SizedBox(height: 10),
+                    ] else if (isProvider) ...[
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          style: TextButton.styleFrom(
+                              foregroundColor: _kPurple,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2)),
+                          icon: const Icon(Icons.reply_rounded, size: 15),
+                          label: Text(l10n.expertAddReply,
+                              style: const TextStyle(fontSize: 12)),
+                          onPressed: () =>
+                              _showProviderReplyDialog(context, doc.id),
                         ),
-
-                      // ── Trait chips ────────────────────────────────────
-                      if (tags.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                          child: Wrap(
-                            spacing: 6,
-                            runSpacing: 4,
-                            alignment: WrapAlignment.end,
-                            children: tags.map((key) {
-                              final meta = _kTraitTags.firstWhere(
-                                  (t) => t['key'] == key,
-                                  orElse: () => {'emoji': '✓'});
-                              final tagLabel = _traitLabel(key, l10n);
-                              return Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF0FDF4),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                      color: Colors.green.shade200),
-                                ),
-                                child: Text(
-                                  '${meta['emoji']} $tagLabel',
-                                  style: TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.green[800],
-                                      fontWeight: FontWeight.w600),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-
-                      // ── Review photos ──────────────────────────────────
-                      if (photos.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                          child: SizedBox(
-                            height: 76,
-                            child: ListView.separated(
-                              scrollDirection: Axis.horizontal,
-                              reverse: true,
-                              itemCount: photos.length,
-                              separatorBuilder: (_, __) =>
-                                  const SizedBox(width: 6),
-                              itemBuilder: (_, i) => GestureDetector(
-                                onTap: () =>
-                                    _expandPortfolioImage(context, photos, i),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: SizedBox(
-                                    width: 76,
-                                    height: 76,
-                                    child: _buildGalleryImage(photos[i]),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-
-                      // ── Provider response ──────────────────────────────
-                      if (response != null && response.isNotEmpty)
-                        Container(
-                          margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: _kPurpleSoft,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                                color: _kPurple.withValues(alpha: 0.15)),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Icon(Icons.verified_user_rounded,
-                                      color: _kPurple, size: 14),
-                                  Text(l10n.expertProviderResponse,
-                                      style: const TextStyle(
-                                          color: _kPurple,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w700)),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              Text(response,
-                                  textAlign: TextAlign.right,
-                                  style: TextStyle(
-                                      fontSize: 13,
-                                      height: 1.5,
-                                      color: Colors.grey[700])),
-                            ],
-                          ),
-                        )
-                      else if (isProvider)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: TextButton.icon(
-                              style: TextButton.styleFrom(
-                                  foregroundColor: _kPurple,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 2)),
-                              icon: const Icon(Icons.reply_rounded, size: 15),
-                              label: Text(l10n.expertAddReply,
-                                  style: const TextStyle(fontSize: 12)),
-                              onPressed: () =>
-                                  _showProviderReplyDialog(context, doc.id),
-                            ),
-                          ),
-                        ),
-
-                      const SizedBox(height: 12),
+                      ),
+                      const SizedBox(height: 6),
                     ],
-                  ),
+
+                    // ── 1px separator ────────────────────────────────────────
+                    const Divider(height: 1, thickness: 1,
+                        color: Color(0xFFF3F4F6)),
+                  ],
                 );
               }),
-            ],
           ],
         );
       },
@@ -2249,16 +1668,427 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // Build
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // UI: Specialist card — mirrors ProfileScreen specialist header exactly
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Extracts YouTube video ID from a full URL or bare ID string.
+  String? _extractYouTubeId(String url) {
+    if (url.isEmpty) return null;
+    // youtu.be/<id>
+    final short = RegExp(r'youtu\.be/([^?&\s]+)').firstMatch(url);
+    if (short != null) return short.group(1);
+    // ?v=<id>
+    final long = RegExp(r'[?&]v=([^&\s]+)').firstMatch(url);
+    if (long != null) return long.group(1);
+    // bare 11-char ID
+    if (url.length == 11 && !url.contains('/')) return url;
+    return null;
+  }
+
+  Widget _buildSpecialistCard(Map<String, dynamic> data) {
+    final profileImg   = data['profileImage'] as String?
+                      ?? data['photoUrl']    as String?
+                      ?? data['photoURL']    as String?  // Firebase Auth field name
+                      ?? '';
+    final hasImg       = profileImg.isNotEmpty && profileImg.startsWith('http');
+    final name         = data['name'] as String? ?? widget.expertName;
+    final isVerified   = data['isVerified'] == true;
+    final isVolunteer  = data['isVolunteer'] == true;
+    final serviceType  = data['serviceType'] as String? ?? '';
+    final bio          = data['aboutMe'] as String? ?? data['bio'] as String? ?? '';
+    final xp           = (data['xp'] as num? ?? 0).toInt();
+    final rating       = data['rating'] ?? '5.0';
+    final reviewsCount = (data['reviewsCount'] as num? ?? 0).toInt();
+    final jobsCount    =
+        (data['completedJobsCount'] as num? ?? data['orderCount'] as num? ?? reviewsCount).toInt();
+    // YouTube intro URL (provider pastes in Edit Profile → videoUrl field)
+    final youtubeUrl   = data['videoUrl'] as String? ?? '';
+    final videoId      = _extractYouTubeId(youtubeUrl);
+    // Verified uploaded video (provider uploads raw file → admin approves)
+    final verifiedVideoUrl  = data['verificationVideoUrl'] as String? ?? '';
+    final videoVerifiedByAdmin = data['videoVerifiedByAdmin'] as bool? ?? false;
+    final hasVerifiedVideo  = videoVerifiedByAdmin && verifiedVideoUrl.isNotEmpty;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.07),
+            blurRadius: 20,
+            spreadRadius: 0,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── LEFT: name, role label, specialty, bio, stats ───────────
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        if (isVerified) ...[
+                          const Icon(Icons.verified, color: Colors.blue, size: 18),
+                          const SizedBox(width: 5),
+                        ],
+                        if (isVolunteer) ...[
+                          const Icon(Icons.favorite, color: Colors.red, size: 16),
+                          const SizedBox(width: 5),
+                        ],
+                        Flexible(
+                          child: Text(
+                            name,
+                            style: const TextStyle(
+                                fontSize: 19,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    const Text(
+                      'נותן שירות',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF9CA3AF),
+                          fontWeight: FontWeight.w400),
+                    ),
+                    if (serviceType.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(serviceType,
+                          style: const TextStyle(
+                              color: _kPurple,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                    if (bio.isNotEmpty) ...[
+                      const SizedBox(height: 5),
+                      Text(bio,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 12.5,
+                              height: 1.4)),
+                    ],
+                    const SizedBox(height: 14),
+                    _expertStatRow(
+                        label: 'עבודות',
+                        value: '$jobsCount',
+                        icon: Icons.shield_outlined,
+                        iconColor: _kPurple),
+                    const Divider(height: 20, color: Color(0xFFF3F4F6), thickness: 1),
+                    _expertStatRow(
+                        label: 'דירוג',
+                        value: '$rating',
+                        icon: Icons.star_rounded,
+                        iconColor: _kGold),
+                    const Divider(height: 20, color: Color(0xFFF3F4F6), thickness: 1),
+                    _expertStatRow(
+                        label: 'ביקורות',
+                        value: '$reviewsCount',
+                        icon: Icons.chat_bubble_outline_rounded,
+                        iconColor: Colors.teal),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+              // ── RIGHT: profile photo ─────────────────────────────────────
+              CircleAvatar(
+                radius: 52,
+                backgroundColor: hasImg
+                    ? _kPurpleSoft
+                    : const Color(0xFFE5E7EB),
+                backgroundImage: hasImg ? CachedNetworkImageProvider(profileImg) : null,
+                child: hasImg
+                    ? null
+                    : Text(
+                        name.isNotEmpty ? name[0].toUpperCase() : '?',
+                        style: const TextStyle(
+                            fontSize: 34,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF374151)),
+                      ),
+              ),
+            ],
+          ),
+          // ── Video section ────────────────────────────────────────────────
+          // Priority 1: admin-approved uploaded video (verificationVideoUrl)
+          // Priority 2: YouTube URL (videoUrl field)
+          if (hasVerifiedVideo) ...[
+            const SizedBox(height: 14),
+            GestureDetector(
+              onTap: () async {
+                final uri = Uri.parse(verifiedVideoUrl);
+                if (await canLaunchUrl(uri)) launchUrl(uri);
+              },
+              child: Container(
+                width: double.infinity,
+                height: 120,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF1A0E3C), Color(0xFF2D1A6B)],
+                    begin: Alignment.centerRight,
+                    end: Alignment.centerLeft,
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.play_arrow_rounded,
+                          size: 32, color: Colors.white),
+                    ),
+                    const SizedBox(width: 16),
+                    const Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('וידאו היכרות',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold)),
+                        SizedBox(height: 4),
+                        Row(children: [
+                          Icon(Icons.verified_rounded,
+                              color: Color(0xFF22C55E), size: 13),
+                          SizedBox(width: 4),
+                          Text('מאומת על ידי AnySkill',
+                              style: TextStyle(
+                                  color: Color(0xFF22C55E),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600)),
+                        ]),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ] else if (videoId != null) ...[
+            const SizedBox(height: 14),
+            GestureDetector(
+              onTap: () async {
+                final uri = Uri.parse(youtubeUrl.startsWith('http')
+                    ? youtubeUrl
+                    : 'https://www.youtube.com/watch?v=$videoId');
+                if (await canLaunchUrl(uri)) launchUrl(uri);
+              },
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    CachedNetworkImage(
+                      imageUrl:
+                          'https://img.youtube.com/vi/$videoId/hqdefault.jpg',
+                      width: double.infinity,
+                      height: 160,
+                      fit: BoxFit.cover,
+                      errorWidget: (_, __, ___) => Container(
+                        height: 160,
+                        color: _kPurpleSoft,
+                        child: const Icon(Icons.videocam_outlined,
+                            size: 48, color: _kPurple),
+                      ),
+                    ),
+                    Container(
+                      width: double.infinity,
+                      height: 160,
+                      color: Colors.black.withValues(alpha: 0.28),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.92),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.play_arrow_rounded,
+                          size: 32, color: _kPurple),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          // ── XP Progress Bar ─────────────────────────────────────────────
+          XpProgressBar(xp: xp),
+        ],
+      ),
+    );
+  }
+
+  Widget _expertStatRow({
+    required String label,
+    required String value,
+    required IconData icon,
+    required Color iconColor,
+  }) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: iconColor),
+        const SizedBox(width: 6),
+        Text(value,
+            style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87)),
+        const SizedBox(width: 5),
+        Text(label,
+            style: const TextStyle(
+                fontSize: 12, color: Color(0xFF9CA3AF))),
+      ],
+    );
+  }
+
+  Widget _buildActionSquares(BuildContext context, Map<String, dynamic> data) {
+    final gallery    = (data['gallery'] as List? ?? []).cast<String>();
+    final isPromoted = data['isPromoted'] == true;
+    DateTime? expiryDate;
+    try {
+      final ts = data['promotionExpiryDate'];
+      if (ts != null) expiryDate = (ts as dynamic).toDate() as DateTime;
+    } catch (_) {}
+    final isVipActive = isPromoted &&
+        expiryDate != null &&
+        expiryDate.isAfter(DateTime.now());
+
+    return Row(
+      children: [
+        // Gallery square
+        Expanded(
+          child: InkWell(
+            onTap: gallery.isEmpty
+                ? null
+                : () => _expandPortfolioImage(context, gallery, 0),
+            borderRadius: BorderRadius.circular(24),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.07),
+                    blurRadius: 20,
+                    spreadRadius: 0,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.photo_library_outlined,
+                      size: 32,
+                      color: gallery.isEmpty ? Colors.grey[300] : Colors.black),
+                  const SizedBox(height: 10),
+                  Text(
+                    'גלריית עבודות',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: gallery.isEmpty ? Colors.grey[300] : Colors.black,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 14),
+        // VIP square
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+              color: isVipActive ? _kGold : Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.07),
+                  blurRadius: 20,
+                  spreadRadius: 0,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+              border: isVipActive ? null : Border.all(color: Colors.grey.shade200),
+            ),
+            padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.workspace_premium_rounded,
+                    size: 32,
+                    color: isVipActive ? Colors.white : Colors.amber[700]),
+                const SizedBox(height: 10),
+                Text(
+                  isVipActive ? 'מומחה VIP' : 'מומחה',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: isVipActive ? Colors.white : Colors.black,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Build
+  // ─────────────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        foregroundColor: Colors.black,
+        titleSpacing: 0,
+        title: Text(widget.expertName,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+        actions: [
+          FavoriteButton(providerId: widget.expertId, size: 24),
+          const Padding(
+            padding: EdgeInsets.only(right: 14),
+            child: Center(child: AnySkillBrandIcon(size: 22)),
+          ),
+        ],
+      ),
       body: FutureBuilder<Map<String, dynamic>>(
         key: ValueKey(_refreshTrigger),
         future: CacheService.getDoc(
           'users', widget.expertId,
           ttl: CacheService.kExpertProfile,
-          forceRefresh: _refreshTrigger > 0,
+          forceRefresh: true,
         ),
         builder: (context, snapshot) {
           if (!snapshot.hasData) {
@@ -2276,48 +2106,20 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                 child: CustomScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
                   slivers: [
-                    // ── Hero ────────────────────────────────────────────────
-                    SliverAppBar(
-                      expandedHeight: 320,
-                      pinned: true,
-                      stretch: true,
-                      backgroundColor: _kPurple,
-                      foregroundColor: Colors.white,
-                      actions: [
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: Center(
-                            child: FavoriteButton(
-                              providerId: widget.expertId,
-                              size: 26,
-                            ),
-                          ),
-                        ),
-                        const Padding(
-                          padding: EdgeInsets.only(right: 12),
-                          child: Center(child: AnySkillBrandIcon(size: 26)),
-                        ),
-                      ],
-                      title: Text(widget.expertName,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, shadows: [
-                            Shadow(blurRadius: 10, color: Colors.black45)
-                          ])),
-                      flexibleSpace: FlexibleSpaceBar(
-                        stretchModes: const [
-                          StretchMode.zoomBackground,
-                          StretchMode.blurBackground,
-                        ],
-                        background: _buildHeroBackground(data, l10n),
+                    // ── Specialist card (mirrors ProfileScreen) ─────────────
+                    SliverToBoxAdapter(
+                      child: _buildSpecialistCard(data),
+                    ),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                        child: _buildActionSquares(context, data),
                       ),
                     ),
 
                     SliverToBoxAdapter(
                       child: Column(
                         children: [
-                          // ── Power Row ──────────────────────────────────────
-                          const SizedBox(height: 16),
-                          _buildPowerRow(data, l10n),
                           const SizedBox(height: 24),
 
                           Padding(
@@ -2340,13 +2142,6 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                 _sectionHeader(l10n.expertSectionService),
                                 _buildServiceMenu(data, l10n),
                                 const SizedBox(height: 24),
-
-                                // ── Portfolio ──────────────────────────────
-                                if ((data['gallery'] as List? ?? []).isNotEmpty) ...[
-                                  _sectionHeader(l10n.expertSectionGallery),
-                                  _buildPortfolioGrid(data),
-                                  const SizedBox(height: 24),
-                                ],
 
                                 // ── Booking calendar ──────────────────────
                                 const Divider(height: 1),

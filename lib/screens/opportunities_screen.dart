@@ -14,6 +14,7 @@ import '../widgets/level_badge.dart';
 import '../l10n/app_localizations.dart';
 import '../constants.dart' show resolveCanonicalCategory;
 import '../widgets/hint_icon.dart';
+import '../widgets/customer_profile_sheet.dart';
 
 // ── Sort modes (user-selectable filter chips) ─────────────────────────────────
 enum _SortMode { nearest, profitable, urgent }
@@ -907,6 +908,7 @@ class _RequestCardState extends State<_RequestCard>
     final category          = (d['category']    ?? '') as String;
     final description       = (d['description'] ?? '') as String;
     final clientName        = (d['clientName']  ?? l10n.oppDefaultClient) as String;
+    final clientId          = (d['clientId']    ?? '') as String;
     final clientLat         = (d['clientLat'] as num?)?.toDouble();
     final clientLng         = (d['clientLng'] as num?)?.toDouble();
 
@@ -971,8 +973,11 @@ class _RequestCardState extends State<_RequestCard>
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        // Client avatar + name
-                        Row(children: [
+                        // Client avatar + name — tappable to view customer profile
+                        GestureDetector(
+                          onTap: () => showCustomerProfileSheet(
+                              context, clientId, clientName),
+                          child: Row(children: [
                           CircleAvatar(
                             radius: 20,
                             backgroundColor:
@@ -1028,6 +1033,7 @@ class _RequestCardState extends State<_RequestCard>
                             ],
                           ),
                         ]),
+                        ),
 
                         // Right: interest counter + urgent badge
                         Column(

@@ -17,12 +17,16 @@ class PaymentService {
 
     return db.runTransaction((transaction) async {
       DocumentSnapshot adminDoc = await transaction.get(adminSettingsRef);
-      double feePercent = (adminDoc.get('feePercentage') ?? 0.10).toDouble();
+      // Use safe map access — DocumentSnapshot.get() throws StateError when
+      // the field is absent, so the ?? fallback would never execute.
+      final adminData = adminDoc.data() as Map<String, dynamic>? ?? {};
+      double feePercent = (adminData['feePercentage'] as num? ?? 0.10).toDouble();
       double adminFee = amount * feePercent;
       double providerAmount = amount - adminFee;
 
       DocumentSnapshot senderDoc = await transaction.get(db.collection('users').doc(senderId));
-      double currentBalance = (senderDoc.get('balance') ?? 0.0).toDouble();
+      final senderData = senderDoc.data() as Map<String, dynamic>? ?? {};
+      double currentBalance = (senderData['balance'] as num? ?? 0.0).toDouble();
       if (currentBalance < amount) throw Exception("אין מספיק יתרה");
 
       transaction.update(db.collection('users').doc(senderId), {'balance': FieldValue.increment(-amount)});
@@ -35,6 +39,7 @@ class PaymentService {
         'receiverId': receiverId,
         'receiverName': receiverName,
         'amount': amount,
+        'payoutStatus': 'pending',
         'timestamp': FieldValue.serverTimestamp(),
       });
     });

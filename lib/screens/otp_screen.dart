@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'provider_registration_screen.dart';
+import '../main.dart' show OnboardingGate;
 
 // ── Brand tokens ──────────────────────────────────────────────────────────────
 const _kPurple      = Color(0xFF6366F1);
@@ -108,15 +109,18 @@ class _OtpScreenState extends State<OtpScreen> {
 
       if (isNew) {
         // First time — show role selection.
-        // _RoleSelectionSheet calls popUntil(isFirst) on success, so
-        // no navigation needed here after the sheet closes.
+        // _RoleSelectionSheet calls pushAndRemoveUntil(OnboardingGate) on success,
+        // so no navigation needed here after the sheet closes.
         if (mounted) await _showRoleSelection(user);
       } else {
-        // Existing user — OtpScreen is still on the stack above AuthWrapper.
-        // Pop everything back to root so AuthWrapper's StreamBuilder
-        // (which now sees an authenticated user) renders _OnboardingGate → HomeScreen.
+        // Existing user — navigate directly to OnboardingGate and remove all
+        // previous routes, avoiding the race condition where popUntil() returns
+        // to AuthWrapper before its StreamBuilder rebuilds with the new auth state.
         if (mounted) {
-          Navigator.of(context).popUntil((route) => route.isFirst);
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const OnboardingGate()),
+            (_) => false,
+          );
         }
       }
 
@@ -164,7 +168,7 @@ class _OtpScreenState extends State<OtpScreen> {
       );
     }
     // Client path: _RoleSelectionSheet already created the profile + called
-    // popUntil(isFirst), so nothing more to do here.
+    // pushAndRemoveUntil(OnboardingGate), so nothing more to do here.
   }
 
   // ── Resend OTP ────────────────────────────────────────────────────────────
@@ -511,7 +515,10 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
       });
 
       if (mounted) {
-        Navigator.of(context).popUntil((route) => route.isFirst);
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const OnboardingGate()),
+          (_) => false,
+        );
       }
     } catch (e) {
       if (mounted) {

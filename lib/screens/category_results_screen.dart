@@ -566,203 +566,215 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
+      // mainAxisAlignment.spaceBetween pushes the CTA buttons to the card
+      // bottom without using Spacer(). Spacer inside IntrinsicHeight has
+      // zero intrinsic height, causing 1 px overflows on some text sizes.
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // ── Price (top-right, most prominent) ───────────────────────────
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          // ── Top content group ────────────────────────────────────────────
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              // Level badge on the left
-              if ((data['xp'] as num? ?? 0) > 0)
-                LevelBadge(xp: (data['xp'] as num).toInt(), size: 16),
+              // ── Price (top-right, most prominent) ─────────────────────
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Level badge on the left
+                  if ((data['xp'] as num? ?? 0) > 0)
+                    LevelBadge(xp: (data['xp'] as num).toInt(), size: 16),
 
-              // Price
-              RichText(
-                text: TextSpan(
-                  style: const TextStyle(fontFamily: 'Heebo'),
-                  children: [
-                    TextSpan(
-                      text: '₪$price',
-                      style: const TextStyle(
-                          color: _kPurple,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 18),
+                  // Price
+                  RichText(
+                    text: TextSpan(
+                      style: const TextStyle(fontFamily: 'Heebo'),
+                      children: [
+                        TextSpan(
+                          text: '₪$price',
+                          style: const TextStyle(
+                              color: _kPurple,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 18),
+                        ),
+                        TextSpan(
+                          text: l10n.catResultsPerHour,
+                          style: const TextStyle(
+                              color: Colors.grey,
+                              fontSize: 11,
+                              fontWeight: FontWeight.normal),
+                        ),
+                      ],
                     ),
-                    TextSpan(
-                      text: l10n.catResultsPerHour,
-                      style: const TextStyle(
-                          color: Colors.grey,
-                          fontSize: 11,
-                          fontWeight: FontWeight.normal),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+
+              // ── Name + verification + promoted ───────────────────────
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (isPromoted)
+                    Container(
+                      margin: const EdgeInsets.only(left: 5),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.amber[50],
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.amber.shade300),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.star_rounded,
+                              color: Colors.amber[700], size: 10),
+                          const SizedBox(width: 3),
+                          Text(l10n.catResultsRecommended,
+                              style: TextStyle(
+                                  fontSize: 9,
+                                  color: Colors.amber[800],
+                                  fontWeight: FontWeight.w700)),
+                        ],
+                      ),
                     ),
+                  if (isVerified) ...[
+                    const SizedBox(width: 4),
+                    const Icon(Icons.verified,
+                        color: Color(0xFF1877F2), size: 15),
                   ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-
-          // ── Name + verification + promoted ──────────────────────────────
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              if (isPromoted)
-                Container(
-                  margin: const EdgeInsets.only(left: 5),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.amber[50],
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.amber.shade300),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.star_rounded,
-                          color: Colors.amber[700], size: 10),
-                      const SizedBox(width: 3),
-                      Text(l10n.catResultsRecommended,
-                          style: TextStyle(
-                              fontSize: 9,
-                              color: Colors.amber[800],
-                              fontWeight: FontWeight.w700)),
-                    ],
-                  ),
-                ),
-              if (isVerified) ...[
-                const SizedBox(width: 4),
-                const Icon(Icons.verified,
-                    color: Color(0xFF1877F2), size: 15),
-              ],
-              if (data['isVolunteer'] == true) ...[
-                const SizedBox(width: 4),
-                const Icon(Icons.favorite, color: Colors.red, size: 15),
-              ],
-              const SizedBox(width: 4),
-              Flexible(
-                child: Text(
-                  name,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 15),
-                ),
-              ),
-            ],
-          ),
-          if (isPro) ...[
-            const SizedBox(height: 5),
-            const Align(
-              alignment: Alignment.centerRight,
-              child: ProBadge(),
-            ),
-          ],
-          const SizedBox(height: 4),
-
-          // ── Bio (1 line) ─────────────────────────────────────────────────
-          if (bio.isNotEmpty)
-            Text(
-              bio,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.right,
-              style: TextStyle(color: Colors.grey[600], fontSize: 12),
-            ),
-          if (bio.isNotEmpty) const SizedBox(height: 4),
-
-          // ── Quick Tags ───────────────────────────────────────────────────
-          _buildQuickTagsRow(tagKeys),
-          if (tagKeys.isNotEmpty) const SizedBox(height: 4),
-
-          // ── Rating + location ────────────────────────────────────────────
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              // Distance (leftmost — least important)
-              if (_currentPosition != null) ...() {
-                final lat = (data['latitude']  as num?)?.toDouble();
-                final lng = (data['longitude'] as num?)?.toDouble();
-                if (lat == null || lng == null) return <Widget>[];
-                final label = LocationService.distanceLabel(
-                    _currentPosition!.latitude,
-                    _currentPosition!.longitude,
-                    lat, lng);
-                return [
-                  const Icon(Icons.location_on_rounded,
-                      size: 11, color: Colors.grey),
-                  const SizedBox(width: 2),
-                  Text(label,
+                  if (data['isVolunteer'] == true) ...[
+                    const SizedBox(width: 4),
+                    const Icon(Icons.favorite, color: Colors.red, size: 15),
+                  ],
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      name,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                          fontSize: 11, color: Colors.grey)),
-                  const SizedBox(width: 8),
-                ];
-              }(),
-              // Stars
-              Icon(Icons.star_rounded, color: _kGold, size: 14),
-              const SizedBox(width: 2),
-              Text(
-                rating.toStringAsFixed(1),
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 12),
+                          fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 3),
-              Text(
-                '($reviewsCount)',
-                style: TextStyle(color: Colors.grey[500], fontSize: 11),
+              if (isPro) ...[
+                const SizedBox(height: 5),
+                const Align(
+                  alignment: Alignment.centerRight,
+                  child: ProBadge(),
+                ),
+              ],
+              const SizedBox(height: 4),
+
+              // ── Bio (1 line) ───────────────────────────────────────────
+              if (bio.isNotEmpty)
+                Text(
+                  bio,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                ),
+              if (bio.isNotEmpty) const SizedBox(height: 4),
+
+              // ── Quick Tags ─────────────────────────────────────────────
+              _buildQuickTagsRow(tagKeys),
+              if (tagKeys.isNotEmpty) const SizedBox(height: 4),
+
+              // ── Rating + location ──────────────────────────────────────
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (_currentPosition != null) ...() {
+                    final lat = (data['latitude']  as num?)?.toDouble();
+                    final lng = (data['longitude'] as num?)?.toDouble();
+                    if (lat == null || lng == null) return <Widget>[];
+                    final label = LocationService.distanceLabel(
+                        _currentPosition!.latitude,
+                        _currentPosition!.longitude,
+                        lat, lng);
+                    return [
+                      const Icon(Icons.location_on_rounded,
+                          size: 11, color: Colors.grey),
+                      const SizedBox(width: 2),
+                      Text(label,
+                          style: const TextStyle(
+                              fontSize: 11, color: Colors.grey)),
+                      const SizedBox(width: 8),
+                    ];
+                  }(),
+                  Icon(Icons.star_rounded, color: _kGold, size: 14),
+                  const SizedBox(width: 2),
+                  Text(
+                    rating.toStringAsFixed(1),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 12),
+                  ),
+                  const SizedBox(width: 3),
+                  Text(
+                    '($reviewsCount)',
+                    style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                  ),
+                ],
               ),
             ],
           ),
 
-          const Spacer(),
-
-          // ── "When are they free?" ghost button ──────────────────────────
-          SizedBox(
-            width: double.infinity,
-            height: 32,
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                side: BorderSide(color: _kPurple.withValues(alpha: 0.45)),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
-                foregroundColor: _kPurple,
-              ),
-              icon: const Icon(Icons.calendar_today_rounded, size: 13),
-              label: Text(l10n.catResultsWhenFree,
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-              onPressed: () =>
-                  _showAvailabilitySheet(context, data, expertId),
-            ),
-          ),
-          const SizedBox(height: 6),
-
-          // ── Book Now — primary CTA ───────────────────────────────────────
-          SizedBox(
-            width: double.infinity,
-            height: 36,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _kPurple,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
-                padding: EdgeInsets.zero,
-              ),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => ExpertProfileScreen(
-                    expertId: expertId,
-                    expertName: name,
+          // ── Bottom CTA group (pinned to card bottom by spaceBetween) ─────
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // ── "When are they free?" ghost button ───────────────────
+              SizedBox(
+                height: 32,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    side: BorderSide(color: _kPurple.withValues(alpha: 0.45)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                    foregroundColor: _kPurple,
                   ),
+                  icon: const Icon(Icons.calendar_today_rounded, size: 13),
+                  label: Text(l10n.catResultsWhenFree,
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                  onPressed: () =>
+                      _showAvailabilitySheet(context, data, expertId),
                 ),
               ),
-              child: Text(l10n.bookNow,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 13)),
-            ),
+              const SizedBox(height: 6),
+
+              // ── Book Now — primary CTA ─────────────────────────────
+              SizedBox(
+                height: 36,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _kPurple,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                    padding: EdgeInsets.zero,
+                  ),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ExpertProfileScreen(
+                        expertId: expertId,
+                        expertName: name,
+                      ),
+                    ),
+                  ),
+                  child: Text(l10n.bookNow,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 13)),
+                ),
+              ),
+            ],
           ),
         ],
       ),

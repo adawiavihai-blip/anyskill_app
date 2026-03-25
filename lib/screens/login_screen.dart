@@ -7,7 +7,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'sign_up_screen.dart';
 import '../services/credentials_service.dart';
 import '../l10n/app_localizations.dart';
-import '../constants.dart' show appVersion;
+import '../main.dart' show currentAppVersion, OnboardingGate;
 
 // ── Brand tokens ──────────────────────────────────────────────────────────────
 const _kPurple      = Color(0xFF6366F1);
@@ -97,12 +97,15 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         await CredentialsService.clear();
       }
-      // LoginScreen is pushed on top of PhoneLoginScreen via Navigator.push.
-      // Auth state already changed above — pop everything back to root so
-      // AuthWrapper's StreamBuilder (now sees authenticated user) renders
-      // _OnboardingGate → HomeScreen.
+      // Navigate directly to OnboardingGate and remove all previous routes.
+      // This avoids the race condition where popUntil() returns to AuthWrapper
+      // before its StreamBuilder has rebuilt with the new auth state, leaving
+      // the user stuck on PhoneLoginScreen.
       if (mounted) {
-        Navigator.of(context).popUntil((route) => route.isFirst);
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const OnboardingGate()),
+          (_) => false,
+        );
       }
     } on FirebaseAuthException catch (e) {
       if (mounted) _snack(_mapError(e.code, AppLocalizations.of(context)), _kRed);
@@ -481,7 +484,7 @@ class _LoginScreenState extends State<LoginScreen> {
               padding: const EdgeInsets.only(bottom: 36, top: 4),
               child: Center(
                 child: Text(
-                  'v$appVersion',
+                  'v$currentAppVersion',
                   style: const TextStyle(
                     fontSize: 11,
                     color: Color(0xFFBDBDBD),

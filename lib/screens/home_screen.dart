@@ -310,8 +310,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           bottomNavigationBar: _buildEliteBottomNav(isAdmin, isProvider, serviceType, safeIndex, data),
           // ── Wolt-style floating "Urgent Search" button ────────────────
-          floatingActionButton: safeIndex == 0
-              ? FloatingActionButton.extended(
+          // AnimatedScale + AnimatedOpacity give a smooth shrink-fade when
+          // switching tabs. IgnorePointer blocks hit-tests while invisible so
+          // the hidden button can never be accidentally tapped.
+          floatingActionButton: AnimatedScale(
+            scale: safeIndex == 0 ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 200),
+            curve: safeIndex == 0 ? Curves.easeOutBack : Curves.easeIn,
+            child: AnimatedOpacity(
+              opacity: safeIndex == 0 ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 150),
+              child: IgnorePointer(
+                ignoring: safeIndex != 0,
+                child: FloatingActionButton.extended(
                   onPressed: () => _showQuickRequestSheet(context, data),
                   label: const Text(
                     'חיפוש דחוף',
@@ -344,8 +355,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(50),
                   ),
-                )
-              : null,
+                ),
+              ),
+            ),
+          ),
           floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
           ),         // close Scaffold
         );           // close PopScope

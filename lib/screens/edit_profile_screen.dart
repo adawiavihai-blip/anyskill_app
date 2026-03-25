@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import '../l10n/app_localizations.dart';
+import '../utils/input_sanitizer.dart';
 import 'price_settings_screen.dart';
 
 import 'dart:async';
@@ -26,6 +27,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late TextEditingController _aboutController;
   late TextEditingController _priceController;
   late TextEditingController _taxIdController;
+  late TextEditingController _videoUrlController;
+  late TextEditingController _bankAccountHolderCtrl;
+  late TextEditingController _bankBranchCtrl;
+  late TextEditingController _bankNameCtrl;
+  late TextEditingController _bankIbanCtrl;
   
   String? _selectedMainCatId;       // doc ID of selected main category
   String? _selectedSubCatId;        // doc ID of selected sub-category (nullable)
@@ -59,7 +65,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _nameController  = TextEditingController(text: widget.userData['name']);
     _aboutController = TextEditingController(text: widget.userData['aboutMe'] ?? widget.userData['bio'] ?? "");
     _priceController = TextEditingController(text: (widget.userData['pricePerHour'] ?? "0").toString());
-    _taxIdController = TextEditingController(text: widget.userData['taxId'] as String? ?? '');
+    _taxIdController   = TextEditingController(text: widget.userData['taxId']     as String? ?? '');
+    _videoUrlController = TextEditingController(text: widget.userData['videoUrl'] as String? ?? '');
+    final bd = widget.userData['bankDetails'] as Map<String, dynamic>? ?? {};
+    _bankAccountHolderCtrl = TextEditingController(text: bd['accountHolder'] as String? ?? '');
+    _bankNameCtrl          = TextEditingController(text: bd['bankName']       as String? ?? '');
+    _bankBranchCtrl        = TextEditingController(text: bd['branch']         as String? ?? '');
+    _bankIbanCtrl          = TextEditingController(text: bd['accountNumber']  as String? ?? '');
     _galleryImages = List.from(widget.userData['gallery'] ?? []);
     _selectedQuickTags = Set<String>.from(
         (widget.userData['quickTags'] as List? ?? []).cast<String>());
@@ -125,6 +137,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _aboutController.dispose();
     _priceController.dispose();
     _taxIdController.dispose();
+    _videoUrlController.dispose();
+    _bankAccountHolderCtrl.dispose();
+    _bankNameCtrl.dispose();
+    _bankBranchCtrl.dispose();
+    _bankIbanCtrl.dispose();
     super.dispose();
   }
 
@@ -231,39 +248,76 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  /// Shows an orange error snackbar and returns false; call `return` after.
+  bool _validationError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.orange),
+    );
+    return false;
+  }
+
   Future<void> _saveProfile() async {
     final l10n = AppLocalizations.of(context);
-    final name = _nameController.text.trim();
-    if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.validationNameRequired), backgroundColor: Colors.orange));
-      return;
-    }
-    if (name.length < 2) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.validationNameLength), backgroundColor: Colors.orange));
-      return;
+
+    // ── Sanitize & validate Name ─────────────────────────────────────────────
+    final nameResult = InputSanitizer.sanitizeName(
+      _nameController.text,
+      errForbidden: l10n.validationNameForbidden,
+      errTooLong:   l10n.validationNameTooLong,
+    );
+    if (!nameResult.isOk) { _validationError(nameResult.error!); return; }
+    final safeName = nameResult.value;
+    if (safeName.isEmpty) { _validationError(l10n.validationNameRequired); return; }
+    if (safeName.length < 2) { _validationError(l10n.validationNameLength); return; }
+
+    // ── Sanitize & validate About/Bio (provider only) ────────────────────────
+    SanitizeResult? aboutResult;
+    if (_isProvider) {
+      aboutResult = InputSanitizer.sanitizeAbout(
+        _aboutController.text,
+        errForbidden: l10n.validationAboutForbidden,
+        errTooLong:   l10n.validationAboutTooLong,
+      );
+      if (!aboutResult.isOk) { _validationError(aboutResult.error!); return; }
     }
 
+    // ── Sanitize & validate Video URL (provider only) ────────────────────────
+    SanitizeResult? videoUrlResult;
+    if (_isProvider && _videoUrlController.text.trim().isNotEmpty) {
+      videoUrlResult = InputSanitizer.sanitizeUrl(
+        _videoUrlController.text,
+        errScheme: l10n.validationUrlHttps,
+      );
+      if (!videoUrlResult.isOk) { _validationError(videoUrlResult.error!); return; }
+    }
+
+    // ── Sanitize bank / tax fields (provider only) ───────────────────────────
+    SanitizeResult? holderResult, bankNameResult, branchResult, ibanResult, taxResult;
+    if (_isProvider) {
+      holderResult   = InputSanitizer.sanitizeShortText(_bankAccountHolderCtrl.text, kMaxBankFieldLength, errForbidden: l10n.validationFieldForbidden);
+      bankNameResult = InputSanitizer.sanitizeShortText(_bankNameCtrl.text,          kMaxBankFieldLength, errForbidden: l10n.validationFieldForbidden);
+      branchResult   = InputSanitizer.sanitizeShortText(_bankBranchCtrl.text,        kMaxBranchLength,    errForbidden: l10n.validationFieldForbidden);
+      ibanResult     = InputSanitizer.sanitizeShortText(_bankIbanCtrl.text,          kMaxBankFieldLength, errForbidden: l10n.validationFieldForbidden);
+      taxResult      = InputSanitizer.sanitizeShortText(_taxIdController.text,       kMaxTaxIdLength,     errForbidden: l10n.validationFieldForbidden);
+
+      for (final r in [holderResult, bankNameResult, branchResult, ibanResult, taxResult]) {
+        if (!r.isOk) { _validationError(r.error!); return; }
+      }
+    }
+
+    // ── Role & provider-specific checks ─────────────────────────────────────
     if (!_isCustomer && !_isProvider) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.validationRoleRequired)));
       return;
     }
 
     if (_isProvider) {
-      // Validate against the dropdown's own state (_selectedMainCatId), not the
-      // stale _selectedCategory field loaded from userData.
       if (_selectedMainCatId == null) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.validationCategoryRequired), backgroundColor: Colors.orange));
-        return;
+        _validationError(l10n.validationCategoryRequired); return;
       }
       final price = double.tryParse(_priceController.text.trim());
-      if (price == null) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.validationPriceInvalid), backgroundColor: Colors.orange));
-        return;
-      }
-      if (price <= 0) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.validationPricePositive), backgroundColor: Colors.orange));
-        return;
-      }
+      if (price == null) { _validationError(l10n.validationPriceInvalid); return; }
+      if (price <= 0)    { _validationError(l10n.validationPricePositive); return; }
     }
 
     setState(() => _isLoading = true);
@@ -290,39 +344,43 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         serviceTypeName = main.isNotEmpty ? main['name'] as String? : null;
       }
 
-      // Build payload — only include keys with non-null values.
+      // Build payload with sanitized values — only include keys with non-null values.
       // The Firestore Web SDK throws INTERNAL ASSERTION FAILED: Unexpected state
       // when update() receives a null value.  Omitting the key is the correct
       // approach for optional fields; use FieldValue.delete() only when you
       // explicitly want to remove an existing field.
       final Map<String, dynamic> payload = {
-        'name':       _nameController.text.trim(),
+        'name':       safeName,           // ← sanitized
         'isCustomer': _isCustomer,
         'isProvider': _isProvider,
-        // Always persist verified phone so it survives future profile edits
         if (_phoneDisplay.isNotEmpty) 'phone': _phoneDisplay,
         if (_profileImageUrl != null) 'profileImage': _profileImageUrl,
         if (_isProvider && serviceTypeName != null)
           'serviceType': serviceTypeName
         else if (!_isProvider)
           'serviceType': 'לקוח',
-        // subCategoryId: write the value when set, delete the field when cleared
         if (_isProvider && _selectedSubCatId != null)
           'subCategoryId': _selectedSubCatId
         else if (_isProvider && _selectedSubCatId == null)
           'subCategoryId': FieldValue.delete(),
       };
 
-      // Provider-only fields — never written for pure customers
+      // Provider-only fields — all values are sanitized results from above
       if (_isProvider) {
         payload['isVolunteer']       = _isVolunteer;
         payload['pricePerHour']      = double.tryParse(_priceController.text) ?? 0.0;
-        payload['aboutMe']           = _aboutController.text.trim();
+        payload['aboutMe']           = aboutResult!.value;        // ← sanitized
         payload['gallery']           = _galleryImages;
-        payload['taxId']             = _taxIdController.text.trim();
+        payload['taxId']             = taxResult!.value;          // ← sanitized
+        payload['bankDetails'] = {
+          'accountHolder': holderResult!.value,                   // ← sanitized
+          'bankName':      bankNameResult!.value,                  // ← sanitized
+          'branch':        branchResult!.value,                    // ← sanitized
+          'accountNumber': ibanResult!.value,                      // ← sanitized
+        };
         payload['quickTags']         = _selectedQuickTags.toList();
         payload['cancellationPolicy']= _cancellationPolicy;
-        // responseTimeMinutes is optional — omit rather than write null
+        payload['videoUrl']          = videoUrlResult?.value ?? ''; // ← sanitized
         if (_responseTimeMinutes != null) {
           payload['responseTimeMinutes'] = _responseTimeMinutes;
         }
@@ -765,6 +823,89 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ),
                   const SizedBox(height: 20),
 
+                  // ── Bank Details ──────────────────────────────────────────────────────
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF5F3FF),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFF6366F1).withValues(alpha: 0.2)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.account_balance_rounded, color: Color(0xFF6366F1), size: 20),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text('פרטי חשבון בנק לתשלום',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF1A1A2E))),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        const Text('הפרטים ישמשו להעברה הבנקאית האוטומטית',
+                            style: TextStyle(fontSize: 11, color: Colors.grey)),
+                        const SizedBox(height: 14),
+                        // Account holder
+                        TextField(
+                          controller: _bankAccountHolderCtrl,
+                          textAlign: TextAlign.right,
+                          decoration: InputDecoration(
+                            labelText: 'שם בעל החשבון',
+                            prefixIcon: const Icon(Icons.person_outline_rounded, size: 18),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            filled: true, fillColor: Colors.white,
+                            isDense: true,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        // Bank name
+                        TextField(
+                          controller: _bankNameCtrl,
+                          textAlign: TextAlign.right,
+                          decoration: InputDecoration(
+                            labelText: 'שם הבנק',
+                            prefixIcon: const Icon(Icons.business_outlined, size: 18),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            filled: true, fillColor: Colors.white,
+                            isDense: true,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        // Branch number
+                        TextField(
+                          controller: _bankBranchCtrl,
+                          textAlign: TextAlign.right,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: 'מספר סניף',
+                            prefixIcon: const Icon(Icons.pin_outlined, size: 18),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            filled: true, fillColor: Colors.white,
+                            isDense: true,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        // Account number / IBAN
+                        TextField(
+                          controller: _bankIbanCtrl,
+                          textAlign: TextAlign.right,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: 'מספר חשבון / IBAN',
+                            prefixIcon: const Icon(Icons.credit_card_outlined, size: 18),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            filled: true, fillColor: Colors.white,
+                            isDense: true,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
                   // ── Price Settings shortcut ────────────────────────────
                   GestureDetector(
                     onTap: () => Navigator.push(
@@ -1054,6 +1195,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       border: const OutlineInputBorder(),
                       hintText: l10n.editProfileAboutHint,
                     ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // ── Intro Video (YouTube URL) ───────────────────────────
+                  const Text('וידאו היכרות (YouTube)',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _videoUrlController,
+                    textAlign: TextAlign.start,
+                    keyboardType: TextInputType.url,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      hintText: 'https://youtu.be/xxxxx  או  https://youtube.com/watch?v=xxxxx',
+                      prefixIcon: Icon(Icons.play_circle_outline_rounded,
+                          color: Color(0xFF6366F1)),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'הוסף קישור YouTube לסרטון הצגה עצמית. הוא יוצג ללקוחות בפרופיל שלך.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey),
+                    textAlign: TextAlign.start,
                   ),
 
                   const SizedBox(height: 30),

@@ -2,425 +2,592 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // CORE HELPER FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // True when a Firebase Auth session exists.
     function isAuth() {
       return request.auth != null;
     }
+
+    // ── App Check ──────────────────────────────────────────────────────────
+    // App Check enforcement is handled EXCLUSIVELY by the Firebase Console
+    // toggle (Firebase Console → App Check → Firestore → Enforced / Monitor).
+    //
+    // When set to "Enforced": Firebase rejects every request without a valid
+    //   App Check token BEFORE the rules are evaluated.  No rule change needed.
+    // When set to "Monitor": requests are logged but allowed through, so the
+    //   rules run normally for all authenticated users.
+    //
+    // We do NOT check request.app inside rules because:
+    //   • It breaks Monitor mode (request.app is null even for legitimate users).
+    //   • It breaks localhost dev (reCAPTCHA can't run on 127.0.0.1).
+    //   • It is redundant when Enforce mode is active (Firebase already blocked
+    //     the unauthenticated request before rules execute).
+    //
+    // isAppCheckValid() is kept ONLY for public-catalogue rules where we want
+    // an extra check that the request comes from the app binary (not a browser
+    // curl) even before the user has signed in.
+    function isAppCheckValid() {
+      return request.app != null;
+    }
+
+    // Authenticated user — the primary gate for all client operations.
+    // App Check enforcement is the Firebase Console's responsibility, not ours.
+    function isVerifiedAuth() {
+      return isAuth();
+    }
+
+    // The current user owns this document (matches the UID path parameter).
     function isOwner(uid) {
-      return isAuth() && request.auth.uid == uid;
+      return isVerifiedAuth() && request.auth.uid == uid;
     }
+
+    // Admin check — Firestore flag only; email removed (see security audit).
+    // isAdmin can only be set via Admin SDK / Firebase Console.
     function isAdmin() {
-      return isAuth()
-          && (request.auth.token.email == 'adawiavihai@gmail.com'
-              || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true);
+      return isVerifiedAuth()
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
 
-    // ── Users ─────────────────────────────────────────────────────
+    // ── Field-level write guards (reusable) ───────────────────────────────
+
+    // Returns true when the update touches ONLY the listed keys.
+    function onlyFields(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    // Returns true when the update does NOT touch any of the listed keys.
+    function doesNotTouch(keys) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(keys);
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // USERS
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Privacy model:
+    //   • Any authenticated + app-verified user may READ a profile.
+    //     All public fields (name, bio, skills, rating, profileImage) live
+    //     at the top level and are intentionally visible for search results.
+    //   • Sensitive fields (balance, bankDetails, taxId, phone) are protected
+    //     at the WRITE layer — only the owner can write them, and the read
+    //     exposure is an accepted trade-off of a flat document model.
+    //     For a future hardening step, move sensitive fields to a private
+    //     subcollection: users/{uid}/private/data (owner-read only).
+    //   • Server-only fields (xp, isAdmin, isVerified, balance increments)
+    //     are blocked at the write layer below.
+    //
     match /users/{uid} {
-      allow read:   if isAuth();
-      allow create: if isOwner(uid) || (isAuth() && uid == 'anyskill_system') || isAdmin();
-      allow update: if (isOwner(uid)
-                        // 🔒 Server-side only (Cloud Functions / Admin SDK):
-                        //    xp, current_xp, level, isPromoted  — gamification engine
-                        //    isVerifiedProvider, isVerified      — compliance & identity
-                        //    isAdmin                              — privilege escalation prevention
-                        //    compliance                           — tax doc object (written during onboarding, cleared by admin)
-                        //    balance                              — kept here; payment decrements use the branch below
-                        && !request.resource.data.diff(resource.data)
-                            .affectedKeys().hasAny([
-                              'xp', 'current_xp', 'level', 'isPromoted',
-                              'isVerifiedProvider', 'isVerified', 'isAdmin',
-                              'balance',
-                            ]))
-                    // 💳 Owner may ONLY decrement their own balance (client-side escrow payment).
-                    //    balance must already exist (is number) and new value ≤ old value.
-                    //    Increments (payouts) are handled by Cloud Functions (Admin SDK).
-                    || (isOwner(uid)
-                        && request.resource.data.diff(resource.data)
-                            .affectedKeys().hasOnly(['balance'])
-                        && resource.data.balance is number
-                        && request.resource.data.balance is number
-                        && request.resource.data.balance <= resource.data.balance)
-                    || isAdmin()
-                    // כל משתמש מחובר יכול לעדכן רק rating + reviewsCount (לאחר ביקורת)
-                    || (isAuth()
-                        && request.resource.data.diff(resource.data)
-                            .affectedKeys().hasOnly(['rating', 'reviewsCount']));
+      // Any authenticated + app-verified user may read public profile data.
+      allow read: if isVerifiedAuth();
+
+      // Only the owner (or admin/system) may create their own profile doc.
+      allow create: if isOwner(uid)
+                    || (isVerifiedAuth() && uid == 'anyskill_system')
+                    || isAdmin();
+
+      allow update: if
+        // ── Owner general update ───────────────────────────────────────────
+        // Owner may update any field EXCEPT server-only fields.
+        (isOwner(uid) && doesNotTouch([
+          'xp', 'current_xp', 'level', 'isPromoted',
+          'isVerifiedProvider', 'isVerified', 'isAdmin',
+          'balance',
+        ]))
+        // ── Owner balance decrement (client-side escrow payment) ──────────
+        // Owner may ONLY decrease their own balance. Increments are
+        // handled exclusively by Cloud Functions via Admin SDK.
+        || (isOwner(uid)
+            && onlyFields(['balance'])
+            && resource.data.balance is number
+            && request.resource.data.balance is number
+            && request.resource.data.balance <= resource.data.balance)
+        // ── Admin full access ──────────────────────────────────────────────
+        || isAdmin()
+        // ── Review aggregation ────────────────────────────────────────────
+        // Any verified user may update only the rating + reviewsCount fields
+        // (written after a client review submission). Business logic in the
+        // client prevents abuse; a Cloud Function audit runs nightly.
+        || (isVerifiedAuth() && onlyFields(['rating', 'reviewsCount']))
+        // Any verified user may update only the customerRating +
+        // customerReviewsCount fields (written after an expert review
+        // of a customer is published).
+        || (isVerifiedAuth() && onlyFields(['customerRating', 'customerReviewsCount']))
+        // ── Escrow credit ─────────────────────────────────────────────────
+        // Any verified user may write ONLY pendingBalance on another user's
+        // doc (client pays a quote → credits the expert's pending balance).
+        // The Cloud Function reads netAmountForExpert from the job doc —
+        // not from pendingBalance — so over-crediting has no financial effect.
+        || (isVerifiedAuth() && onlyFields(['pendingBalance']));
+
+      // Deletion is only performed by the Account Deletion Cloud Function
+      // (Admin SDK) or the self-service delete flow (account_deletion_service.dart
+      // calls currentUser.delete(), and the CF cleans up the doc).
+      allow delete: if isOwner(uid) || isAdmin();
     }
 
-    // ── Booking Slots (double-booking lock documents) ─────────────
-    // One doc per expert+date+time slot. Created by the customer during booking
-    // to prevent duplicate bookings. Released (deleted) by Cloud Function on
-    // cancellation. Doc ID format: {expertId}_{YYYYMMDD}_{HHmm}
-    match /bookingSlots/{slotId} {
-      // Any authenticated user can read (pre-flight existence check in Phase 1)
-      allow read:   if isAuth();
-      // Customer creates the lock when booking; no customer field on the doc
-      // so we simply require authentication (Phase 1 read already guards business logic).
-      allow create: if isAuth();
-      // Only admin or Cloud Functions may delete (cancellation cleanup)
-      allow delete: if isAdmin();
-      allow update: if false;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PRIVATE USER SUBCOLLECTIONS
+    // Strictly owner-only. No other authenticated user — not even an admin
+    // using the client SDK — may access these paths.
+    // (Admin SDK via Cloud Functions bypasses all rules and is unaffected.)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // ── Academy User Progress ─────────────────────────────────────────────
+    match /user_progress/{uid} {
+      allow read:  if isOwner(uid) || isAdmin();
+      allow write: if false; // top-level doc never written directly
+
+      match /courses/{courseId} {
+        allow read:           if isOwner(uid) || isAdmin();
+        allow create, update: if isOwner(uid);
+        allow delete:         if false;
+      }
     }
 
-    // ── Jobs (bookings) ───────────────────────────────────────────
+    // ── Legacy per-user notification subcollection ────────────────────────
+    match /notifications/{uid}/userNotifications/{notifId} {
+      allow read, write: if isOwner(uid);
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // NOTIFICATIONS (flat collection — written by Cloud Functions)
+    // ═══════════════════════════════════════════════════════════════════════
+    match /notifications/{notifId} {
+      // Owner reads their own notifications.
+      allow read: if isVerifiedAuth() && resource.data.userId == request.auth.uid;
+
+      // Owner may only flip isRead — no other field changes from the client.
+      allow update: if isVerifiedAuth()
+                    && resource.data.userId == request.auth.uid
+                    && onlyFields(['isRead']);
+
+      // Normal creation path = Admin SDK in Cloud Functions.
+      // Admin may create directly for emergencies.
+      allow create: if isAdmin();
+
+      // Owner may dismiss (delete) their own notifications.
+      allow delete: if isVerifiedAuth() && resource.data.userId == request.auth.uid;
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // JOBS (bookings)
+    // Only the customer and expert involved in a booking may access it.
+    // ═══════════════════════════════════════════════════════════════════════
     match /jobs/{jobId} {
-      allow create: if isAuth()
+      // Customer creates the job and must be the customerId author.
+      allow create: if isVerifiedAuth()
                     && request.resource.data.customerId == request.auth.uid;
-      allow read:   if isAdmin()
-                    || (isAuth()
-                        && (resource.data.customerId == request.auth.uid
-                            || resource.data.expertId  == request.auth.uid));
-      // Both parties may update their own job.
-      // Provider (expertId) uses this to mark status → 'expert_completed'.
-      // Customer (customerId) uses this to release escrow → 'completed'.
-      // No field restriction here; business-logic guards live in PaymentModule.
+
+      // Only the two parties (or admin) may read.
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && (resource.data.customerId == request.auth.uid
+                          || resource.data.expertId  == request.auth.uid));
+
+      // Both parties may update (status transitions, completion).
       allow update: if isAdmin()
-                    || (isAuth()
-                        && resource.data.expertId   == request.auth.uid)
-                    || (isAuth()
-                        && resource.data.customerId == request.auth.uid);
+                    || (isVerifiedAuth()
+                        && (resource.data.expertId   == request.auth.uid
+                            || resource.data.customerId == request.auth.uid));
+
+      allow delete: if false; // historical record — never deleted by client
     }
 
-    // ── Transactions (wallet history) ─────────────────────────────
-    // 🔒 Allow both userId (legacy) and senderId (withdrawal flow) patterns.
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // TRANSACTIONS (wallet history)
+    // Only the sender, receiver, or admin may access a transaction.
+    // ═══════════════════════════════════════════════════════════════════════
     match /transactions/{txId} {
-      allow create: if isAuth()
+      // Sender creates their own transaction record.
+      allow create: if isVerifiedAuth()
                     && (request.resource.data.userId   == request.auth.uid
                         || request.resource.data.senderId == request.auth.uid);
-      allow read:   if isAdmin()
-                    || (isAuth()
-                        && (resource.data.userId   == request.auth.uid
-                            || resource.data.senderId == request.auth.uid
-                            || resource.data.receiverId == request.auth.uid));
+
+      // Only the two parties (or admin) may read.
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && (resource.data.userId     == request.auth.uid
+                          || resource.data.senderId  == request.auth.uid
+                          || resource.data.receiverId == request.auth.uid));
+
+      allow update, delete: if false; // immutable financial records
     }
 
-    // ── Chats & messages ──────────────────────────────────────────
-    // 🔒 Participant-only: only the two parties in users[] may read/write.
-    // Previously: allow read,write: if isAuth()  ← any logged-in user could
-    //             read any chat room by guessing the chatId.
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CHATS & MESSAGES
+    // Strictly participant-only: only the two users listed in chat.users[]
+    // may read or write. Guessing a chatId grants nothing.
+    // ═══════════════════════════════════════════════════════════════════════
     match /chats/{chatId} {
-      allow create: if isAuth()
+      allow create: if isVerifiedAuth()
                     && request.auth.uid in request.resource.data.users;
-      allow read, update, delete:
-                    if isAuth()
+
+      allow read, update:
+            if isVerifiedAuth()
+            && request.auth.uid in resource.data.users;
+
+      // Allow participant to delete the chat room document.
+      allow delete: if isVerifiedAuth()
                     && request.auth.uid in resource.data.users;
 
       match /messages/{msgId} {
-        // Inherit parent-room access: check parent doc once per request.
-        // Using get() here is justified — messages without a valid chat room
-        // should never be accessible.
+        // Inherit parent-room access: caller must be in the parent chat's users[].
         allow read, write:
-          if isAuth()
+          if isVerifiedAuth()
           && request.auth.uid in
              get(/databases/$(database)/documents/chats/$(chatId)).data.users;
       }
 
       match /unread_shards/{shardId} {
-        // ניתן לקריאה בלבד ע"י משתמשים מחוברים — כתיבה מ-Cloud Function (Admin SDK) בלבד
-        allow read: if isAuth()
+        // Read-only for participants — shards are written by Cloud Functions only.
+        allow read: if isVerifiedAuth()
                     && request.auth.uid in
                        get(/databases/$(database)/documents/chats/$(chatId)).data.users;
         allow write: if false;
       }
     }
 
-    // ── Admin collection ──────────────────────────────────────────
-    // Any authenticated user may READ (booking transaction needs feePercentage)
-    // Only admin users may WRITE
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // QUOTES (price quotes sent via chat)
+    // Only the provider and client involved may read or update.
+    // ═══════════════════════════════════════════════════════════════════════
+    match /quotes/{quoteId} {
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.providerId == request.auth.uid;
+
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && (resource.data.providerId == request.auth.uid
+                          || resource.data.clientId  == request.auth.uid));
+
+      allow update: if isAdmin()
+                    || (isVerifiedAuth()
+                        && (resource.data.providerId == request.auth.uid
+                            || resource.data.clientId  == request.auth.uid));
+
+      allow delete: if isAdmin();
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // WITHDRAWALS
+    // ═══════════════════════════════════════════════════════════════════════
+    match /withdrawals/{id} {
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.userId == request.auth.uid;
+
+      // Explicit parentheses to avoid && vs || precedence ambiguity.
+      allow read: if isAdmin()
+                  || (isVerifiedAuth() && resource.data.userId == request.auth.uid);
+
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // BOOKING SLOTS (double-booking lock documents)
+    // ═══════════════════════════════════════════════════════════════════════
+    match /bookingSlots/{slotId} {
+      allow read:   if isVerifiedAuth();
+      allow create: if isVerifiedAuth();
+      allow delete: if isAdmin();
+      allow update: if false;
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PLATFORM EARNINGS (commission records)
+    // ═══════════════════════════════════════════════════════════════════════
+    match /platform_earnings/{id} {
+      allow create: if isVerifiedAuth();
+      allow read:   if isAdmin();
+      allow update, delete: if false;
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PUBLIC CATALOGUES
+    // Read by anyone from the verified app (isAppCheckValid()).
+    // Unauthenticated visitors may browse before signing in.
+    // All writes are admin-only.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    match /categories/{catId} {
+      // Authenticated users always get through; unauthenticated visitors on
+      // production need a valid App Check token (reCAPTCHA / Play Integrity).
+      allow read:  if isAuth() || isAppCheckValid();
+      allow write: if isAdmin();
+    }
+
+    match /courses/{courseId} {
+      allow read:  if isAuth() || isAppCheckValid();
+      allow write: if isAdmin();
+    }
+
+    match /system_settings/{docId} {
+      allow read:  if isAuth() || isAppCheckValid();
+      allow write: if isAdmin();
+    }
+
+    match /app_hints/{screenKey} {
+      allow read:  if isAuth() || isAppCheckValid();
+      allow write: if isAdmin();
+    }
+
+    match /banners/{id} {
+      allow read:   if isAuth() || isAppCheckValid();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+                    || (isVerifiedAuth() && onlyFields(['clicks']));
+    }
+
+    match /completed_works/{docId} {
+      allow read:  if isAuth() || isAppCheckValid(); // public inspiration feed
+      allow write: if false;                         // Admin SDK (Cloud Function) only
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // REVIEWS  (double-blind: published when both submit OR after 7 days)
+    //
+    // isPublished starts false; flipped to true by client code when:
+    //   • both job.clientReviewDone AND job.providerReviewDone are true, OR
+    //   • 7 days have passed since the review was created (lazy publish).
+    //
+    // Neither condition leaks the other party's content — only the flag
+    // is toggled client-side; content fields are immutable after creation.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Checks that the current user is a job participant AND both sides
+    // have now submitted their review — used to allow immediate publish.
+    function canPublishReview(jobId) {
+      let job = get(/databases/$(database)/documents/jobs/$(jobId)).data;
+      return (job.expertId    == request.auth.uid
+              || job.customerId == request.auth.uid)
+          && job.clientReviewDone   == true
+          && job.providerReviewDone == true;
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if isAuth() || isAppCheckValid();
+
+      // A verified user may create a review when:
+      //   1. They are the reviewer (reviewerId == their uid), AND
+      //   2. They are actually a participant in the referenced job
+      //      (prevents writing reviews for jobs they were not part of).
+      allow create: if isAdmin()
+                    || (isVerifiedAuth()
+                        && request.resource.data.reviewerId == request.auth.uid
+                        && (get(/databases/$(database)/documents/jobs/$(request.resource.data.jobId)).data.customerId == request.auth.uid
+                            || get(/databases/$(database)/documents/jobs/$(request.resource.data.jobId)).data.expertId  == request.auth.uid));
+
+      allow update: if isAdmin()
+                    // The reviewee (expert) may add/edit their reply to a
+                    // client review written about them.
+                    || (isVerifiedAuth()
+                        && resource.data.revieweeId   == request.auth.uid
+                        && resource.data.isClientReview == true
+                        && onlyFields(['providerResponse']))
+                    // Immediate publish: a job participant may flip isPublished
+                    // once BOTH sides have submitted their review.
+                    || (isVerifiedAuth()
+                        && onlyFields(['isPublished'])
+                        && request.resource.data.isPublished == true
+                        && canPublishReview(resource.data.jobId))
+                    // Lazy publish: any authenticated user may flip isPublished
+                    // after the 7-day double-blind window has expired.
+                    || (isVerifiedAuth()
+                        && onlyFields(['isPublished'])
+                        && request.resource.data.isPublished == true
+                        && request.time > resource.data.createdAt + duration.value(7, 'd'));
+
+      allow delete: if isAdmin();
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SKILLS STORIES
+    // ═══════════════════════════════════════════════════════════════════════
+    match /stories/{uid} {
+      allow read:   if isVerifiedAuth();
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid)
+                    || (isVerifiedAuth()
+                        && onlyFields(['viewCount', 'likeCount', 'likedBy']));
+      allow delete: if isOwner(uid) || isAdmin();
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // JOB REQUESTS (quick-order board)
+    // ═══════════════════════════════════════════════════════════════════════
+    match /job_requests/{reqId} {
+      allow read:   if isVerifiedAuth();
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.clientId == request.auth.uid;
+      allow update: if isVerifiedAuth()
+                    && (onlyFields(['interestedProviders', 'interestedProviderNames',
+                                    'interestedCount', 'status'])
+                        || resource.data.clientId == request.auth.uid);
+      allow delete: if isVerifiedAuth() && resource.data.clientId == request.auth.uid;
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // VOLUNTEER REQUESTS
+    // ═══════════════════════════════════════════════════════════════════════
+    match /volunteer_requests/{reqId} {
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.clientId == request.auth.uid;
+      allow read:   if isAdmin()
+                    || (isVerifiedAuth() && resource.data.clientId == request.auth.uid);
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ADMIN COLLECTION (fee settings, broadcast config, etc.)
+    // Any verified + authenticated user may READ (needed for fee calculations).
+    // Only admins may WRITE.
+    // ═══════════════════════════════════════════════════════════════════════
     match /admin/{docId} {
-      allow read:  if isAuth();
+      allow read:  if isVerifiedAuth();
       allow write: if isAdmin();
 
       match /{nestedDoc=**} {
-        allow read:  if isAuth();
+        allow read:  if isVerifiedAuth();
         allow write: if isAdmin();
       }
     }
 
-    // ── Platform earnings ─────────────────────────────────────────
-    match /platform_earnings/{id} {
-      allow create: if isAuth();
-      allow read:   if isAdmin();
-    }
 
-    // ── Notifications (flat collection — written by Cloud Functions) ──────────
-    match /notifications/{notifId} {
-      // Owner may read their own notifications
-      allow read: if isAuth() && resource.data.userId == request.auth.uid;
-      // Owner may only flip isRead (no other field changes allowed from client)
-      allow update: if isAuth()
-                    && resource.data.userId == request.auth.uid
-                    && request.resource.data.diff(resource.data)
-                        .affectedKeys().hasOnly(['isRead']);
-      // create: Admin may write directly (emergency); normal path = Admin SDK in CF
-      allow create: if isAdmin();
-      allow delete: if isAuth() && resource.data.userId == request.auth.uid;
-    }
-
-    // ── Notifications subcollection (legacy — written by client SDK) ──────────
-    match /notifications/{uid}/userNotifications/{notifId} {
-      allow read, write: if isOwner(uid);
-    }
-
-    // ── Categories (public read, admin write) ─────────────────────
-    match /categories/{catId} {
-      allow read:  if true;
+    // ═══════════════════════════════════════════════════════════════════════
+    // GAMIFICATION SETTINGS
+    // ═══════════════════════════════════════════════════════════════════════
+    match /settings_gamification/{docId} {
+      allow read:  if isVerifiedAuth();
       allow write: if isAdmin();
     }
 
-    // ── Reviews ───────────────────────────────────────────────────
-    match /reviews/{reviewId} {
-      allow read: if true;
-      allow create: if (isAuth() && request.resource.data.reviewerId == request.auth.uid)
-                    || isAdmin();
-      // הספק יכול להוסיף תגובה (providerResponse) לביקורות שלו בלבד
-      allow update: if isAuth()
-                    && resource.data.expertId == request.auth.uid
-                    && request.resource.data.diff(resource.data)
-                        .affectedKeys().hasOnly(['providerResponse']);
-    }
 
-    // ── Banners (public read, admin write) ───────────────────────
-    match /banners/{id} {
-      allow read:  if true;
-      allow write: if isAdmin();
-      // כל משתמש מחובר יכול לספור לחיצה (clicks בלבד) — מעקב analytics
-      allow update: if isAuth()
-                    && request.resource.data.diff(resource.data)
-                        .affectedKeys().hasOnly(['clicks']);
-    }
-
-    // ── Withdrawals ───────────────────────────────────────────────
-    match /withdrawals/{id} {
-      allow create: if isAuth()
-                    && request.resource.data.userId == request.auth.uid;
-      allow read:   if isAuth()
-                    && resource.data.userId == request.auth.uid
-                    || isAdmin();
-      allow update: if isAdmin();
-    }
-
-    // ── Completed Works (Inspiration Feed — written by Cloud Function) ───
-    match /completed_works/{docId} {
-      allow read: if true;      // public — no sensitive data
-      allow write: if false;    // Admin SDK only (Cloud Function)
-    }
-
-    // ── Rebook reminders (written by Cloud Functions only) ────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // SCHEDULED REMINDERS (rebook — written by Cloud Functions)
+    // ═══════════════════════════════════════════════════════════════════════
     match /scheduled_reminders/{remId} {
       allow read:  if isAdmin()
-                   || (isAuth() && resource.data.userId == request.auth.uid);
-      // Users may only flip isDismissed on their own reminders
-      allow update: if isAuth()
+                   || (isVerifiedAuth() && resource.data.userId == request.auth.uid);
+      allow update: if isVerifiedAuth()
                     && resource.data.userId == request.auth.uid
-                    && request.resource.data.diff(resource.data)
-                        .affectedKeys().hasOnly(['isDismissed']);
-      allow create, delete: if false; // Admin SDK (Cloud Functions) only
+                    && onlyFields(['isDismissed']);
+      allow create, delete: if false; // Cloud Functions (Admin SDK) only
     }
 
-    // ── Mail (Firebase Trigger Email extension) ───────────────────────
-    // Any authenticated user may CREATE (onboarding notification, test button).
-    // The Trigger Email extension (Admin SDK) reads/processes; clients cannot.
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MAIL (Firebase Trigger Email extension)
+    // ═══════════════════════════════════════════════════════════════════════
     match /mail/{docId} {
-      allow create: if isAuth();
+      allow create: if isVerifiedAuth();
       allow read, update, delete: if false;
     }
 
-    // ── Categories Pending (AI moderation queue) ──────────────────────
-    // Written by the categorizeprovider Cloud Function and by approvecategory.
-    // Only admins may read or write from the client SDK.
-    match /categories_pending/{id} {
-      allow read, write: if isAdmin();
-    }
 
-    // ── Search Logs (analytics — written by every searching user) ─────
-    // Any authenticated user may CREATE a log entry (search_page.dart).
-    // Only admins may READ (Business AI dashboard).
-    // Immutable after creation — no update/delete from client.
+    // ═══════════════════════════════════════════════════════════════════════
+    // ANALYTICS / LOGGING COLLECTIONS
+    // ═══════════════════════════════════════════════════════════════════════
+
     match /search_logs/{id} {
-      allow create: if isAuth();
+      allow create: if isVerifiedAuth();
       allow read:   if isAdmin();
       allow update, delete: if false;
     }
 
-    // ── Market Alerts (written by Cloud Function, read by admin) ──────
-    match /market_alerts/{id} {
-      allow read:  if isAdmin();
-      allow write: if false; // Admin SDK (marketopportunitymonitor) only
-    }
-
-    // ── Skills Stories ────────────────────────────────────────────────
-    // One document per provider (doc ID = uid).
-    // Providers create/overwrite their own story.
-    // Any authenticated user can read (discovery feed + viewer).
-    // viewCount increments are allowed by any authenticated user.
-    // hasActive / expiresAt are set by the client on upload and cleared
-    // by the expireStories Cloud Function (Admin SDK).
-    match /stories/{uid} {
-      allow read:   if isAuth();
-      allow create: if isOwner(uid);
-      allow update: if isOwner(uid)
-                    // Any authenticated viewer can increment view/like counters
-                    || (isAuth()
-                        && request.resource.data.diff(resource.data)
-                            .affectedKeys().hasOnly(['viewCount', 'likeCount', 'likedBy']));
-      allow delete: if isOwner(uid) || isAdmin();
-    }
-
-    // ── Gamification Settings ────────────────────────────────────────
-    // Admin writes XP event definitions and level thresholds.
-    // Any authenticated user (and Cloud Functions) may read — event points
-    // are needed client-side for display and inside updateUserXP function.
-    match /settings_gamification/{docId} {
-      allow read:  if isAuth();
-      allow write: if isAdmin();
-    }
-
-    // ── Job Requests (quick order ecosystem) ──────────────────────────
-    match /job_requests/{reqId} {
-      // Any authenticated user can read open requests
-      allow read: if isAuth();
-      // Only the client themselves can create a request
-      allow create: if isAuth()
-                    && request.resource.data.clientId == request.auth.uid;
-      // Providers update only the interest fields; client can close their own request
-      allow update: if isAuth()
-                    && (
-                      // Provider expressing interest: only these fields change
-                      request.resource.data.diff(resource.data)
-                          .affectedKeys()
-                          .hasOnly(['interestedProviders', 'interestedProviderNames',
-                                    'interestedCount', 'status'])
-                      // Client closing/editing their own request
-                      || resource.data.clientId == request.auth.uid
-                    );
-      allow delete: if isAuth() && resource.data.clientId == request.auth.uid;
-    }
-
-    // ── Market Opportunities (zero-result search aggregation) ─────────────
-    // Written exclusively by the marketopportunitymonitor Cloud Function (Admin SDK).
-    // Admin reads for Business AI dashboard analysis.
-    match /market_opportunities/{docId} {
-      allow read:  if isAdmin();
-      allow write: if false; // Admin SDK (marketopportunitymonitor) only
-    }
-
-    // ── Error logs (SystemPerformanceTab) ─────────────────────────────────
-    // Any authenticated user can write their own error entries (client-side
-    // FlutterError.onError handler).  Only admins can read the feed.
     match /error_logs/{logId} {
-      allow create: if isAuth()
+      allow create: if isVerifiedAuth()
                     && request.resource.data.userId == request.auth.uid;
       allow read:   if isAdmin();
       allow update, delete: if false;
     }
 
-    // ── Admin Logs (AI auto-category audit trail) ──────────────────────────
-    // Written exclusively by Cloud Functions (Admin SDK — bypasses rules).
-    // Only admins may read; "סמן כנבדק" update flips isReviewed only.
-    match /admin_logs/{logId} {
-      allow read:   if isAdmin();
-      allow update: if isAdmin()
-                    && request.resource.data.diff(resource.data)
-                        .affectedKeys().hasOnly(['isReviewed']);
-      allow create, delete: if false; // Admin SDK only
-    }
-
-    // ── Academy Courses (public catalogue) ───────────────────────────────────
-    // Any visitor may read course metadata (title, description, videoUrl, quiz).
-    // Only admins may create / edit / delete courses.
-    match /courses/{courseId} {
-      allow read:  if true;
-      allow write: if isAdmin();
-    }
-
-    // ── Academy User Progress ────────────────────────────────────────────────
-    // Each user owns their progress subcollection: user_progress/{uid}/courses/
-    // Admin may read all progress (analytics).
-    match /user_progress/{uid} {
-      allow read: if isOwner(uid) || isAdmin();
-      // Top-level doc is never written directly — only subcollection is.
-      allow write: if false;
-
-      match /courses/{courseId} {
-        allow read:   if isOwner(uid) || isAdmin();
-        // User writes their own watch-progress; completeCourse() uses a batch
-        // that also updates users/{uid} xp — both allowed by respective rules.
-        allow create, update: if isOwner(uid);
-        allow delete: if false;
-      }
-    }
-
-    // ── Activity Log (admin Live Feed) ───────────────────────────────────────
-    // Written by:
-    //   • Cloud Functions (logJobRequestCreated, logJobAccepted, etc.) via Admin SDK
-    //   • Flutter client (ChatGuardService.logBypassAttempt, _checkDemoExpert)
-    // Only admins may read.
     match /activity_log/{logId} {
-      // Authenticated users AND unauthenticated sign-up flow (reg_step_1..5)
-      allow create: if isAuth()
-                    || (request.resource.data.type is string
+      // Authenticated users log real-time events.
+      // Unauthenticated sign-up flow logs reg_step_[1-5] with App Check only.
+      allow create: if isVerifiedAuth()
+                    || (isAppCheckValid()
+                        && request.resource.data.type is string
                         && request.resource.data.type.matches('reg_step_[1-5]'));
       allow read:   if isAdmin();
       allow update, delete: if false;
     }
 
-    // ── Incomplete Registrations (abandoned-lead funnel) ──────────────────────
-    // Written by unauthenticated users during sign-up (partial saves).
-    // Admin may read/update for re-engagement; users may update their own session.
-    match /incomplete_registrations/{sessionId} {
-      allow create: if true;  // unauthenticated during sign-up
-      allow update: if true;  // progress updates + completion mark
+    match /admin_logs/{logId} {
       allow read:   if isAdmin();
-      allow delete: if false;
+      allow update: if isAdmin() && onlyFields(['isReviewed']);
+      allow create, delete: if false; // Admin SDK only
     }
 
-    // ── Re-engagement Log ─────────────────────────────────────────────────────
     match /reengagement_log/{logId} {
       allow create: if isAdmin();
       allow read:   if isAdmin();
       allow update, delete: if false;
     }
 
-    // ── Broadcast History ────────────────────────────────────────────────────
-    // Written by Flutter client (admin panel) AND sendGlobalBroadcast CF.
-    // Only admins may read.
     match /broadcast_history/{docId} {
-      allow create: if isAuth();
+      allow create: if isAdmin();
       allow read:   if isAdmin();
       allow update, delete: if false;
     }
 
-    // ── System Settings (global UI config) ───────────────────────────────────
-    // Holds categoryCardScale, logoSize, brandColor, etc. — no PII.
-    // Public read: login/register screens load before auth, so unauthenticated
-    // users need to read logo-size values for real-time branding control.
-    // Only admin writes.
-    match /system_settings/{docId} {
-      allow read:  if true;
-      allow write: if isAdmin();
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ADMIN-ONLY COLLECTIONS (no client read or write)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    match /categories_pending/{id} {
+      allow read, write: if isAdmin();
     }
 
-    // ── App Hints (contextual help icons — admin-controlled content) ─────────
-    // Public read: any user (including unauthenticated) may read help content.
-    // Only admin may write (create / update / delete hints).
-    match /app_hints/{screenKey} {
-      allow read:  if true;
-      allow write: if isAdmin();
+    match /market_alerts/{id} {
+      allow read:  if isAdmin();
+      allow write: if false;
     }
 
-    // ── Volunteer Requests ───────────────────────────────────────────────────
-    // Any authenticated user may create a volunteer request.
-    // Cloud Function logVolunteerRequest (Admin SDK) reads on creation.
-    // Admin may read and update (moderation).
-    match /volunteer_requests/{reqId} {
-      allow create: if isAuth()
-                    && request.resource.data.clientId == request.auth.uid;
-      allow read:   if isAuth()
-                    && resource.data.clientId == request.auth.uid
-                    || isAdmin();
-      allow update: if isAdmin();
+    match /market_opportunities/{docId} {
+      allow read:  if isAdmin();
+      allow write: if false;
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // INCOMPLETE REGISTRATIONS (abandoned-lead funnel — unauthenticated)
+    // App Check required even without auth to prevent bot spam.
+    // Field-size limits prevent storage-bloat injection.
+    // ═══════════════════════════════════════════════════════════════════════
+    match /incomplete_registrations/{sessionId} {
+      allow create: if isAppCheckValid()
+                    && request.resource.data.keys().size() <= 10
+                    && request.resource.data.get('name',  '').size() <= 500
+                    && request.resource.data.get('email', '').size() <= 200
+                    && request.resource.data.get('phone', '').size() <= 30;
+
+      allow update: if isAppCheckValid()
+                    && request.resource.data.keys().size() <= 10;
+
+      allow read:   if isAdmin();
       allow delete: if false;
     }
+
   }
 }

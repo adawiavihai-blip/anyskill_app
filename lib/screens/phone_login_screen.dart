@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../constants.dart' show appVersion;
+import '../main.dart' show currentAppVersion;
 import '../widgets/anyskill_logo.dart';
 import 'otp_screen.dart';
 import 'login_screen.dart'; // email fallback for migrating users
@@ -270,7 +270,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
               padding: const EdgeInsets.only(bottom: 36, top: 4),
               child: Center(
                 child: Text(
-                  'v$appVersion',
+                  'v$currentAppVersion',
                   style: const TextStyle(fontSize: 11, color: Color(0xFFBDBDBD)),
                 ),
               ),

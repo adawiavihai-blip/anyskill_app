@@ -34,6 +34,9 @@ class _FinanceScreenState extends State<FinanceScreen>
   // ── 7-day earnings chart ──────────────────────────────────────────────────
   List<double> _dailyEarnings = List.filled(7, 0); // index 0 = 6 days ago
   bool _chartLoaded = false;
+  double _pendingWeekly  = 0; // this week's earnings (< 7 days)
+  double _finalizedTotal = 0; // older than 7 days, not yet paid
+  DateTime? _nextPayoutDate;  // next Monday
 
   @override
   void initState() {
@@ -89,10 +92,35 @@ class _FinanceScreenState extends State<FinanceScreen>
         }
       }
 
+      double pendingW  = 0;
+      double finalized = 0;
+      for (final doc in snap.docs) {
+        final d   = doc.data();
+        final ts  = d['timestamp'] as Timestamp?;
+        final amt = (d['amount'] as num?)?.toDouble() ?? 0;
+        final paidStatus = d['payoutStatus']?.toString() ?? '';
+        if (ts == null || amt <= 0) continue;
+        final daysAgo = now.difference(ts.toDate()).inDays;
+        if (daysAgo < 7) {
+          pendingW += amt;
+        } else if (paidStatus != 'paid') {
+          finalized += amt;
+        }
+      }
+      // Next Monday
+      final today = DateTime.now();
+      final daysUntilMonday = (DateTime.monday - today.weekday + 7) % 7;
+      final nextMonday = daysUntilMonday == 0
+          ? today.add(const Duration(days: 7))
+          : today.add(Duration(days: daysUntilMonday));
+
       if (mounted) {
         setState(() {
-          _dailyEarnings = earnings;
-          _chartLoaded   = true;
+          _dailyEarnings  = earnings;
+          _pendingWeekly  = pendingW;
+          _finalizedTotal = finalized;
+          _nextPayoutDate = nextMonday;
+          _chartLoaded    = true;
         });
       }
     } catch (_) {
@@ -154,6 +182,16 @@ class _FinanceScreenState extends State<FinanceScreen>
                         context, uid, balance, pending, isProvider),
                   ),
                 ),
+
+                // ── Payout cycle card (providers only) ────────────────
+                if (isProvider && _chartLoaded) ...[
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: _buildPayoutCycleCard(),
+                    ),
+                  ),
+                ],
 
                 // ── 7-day earnings chart (providers only) ─────────────
                 if (_chartLoaded && isProvider) ...[
@@ -383,70 +421,27 @@ class _FinanceScreenState extends State<FinanceScreen>
 
                   // ── Action buttons ───────────────────────────────────
                   if (isProvider)
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              foregroundColor: _kCardMid,
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14)),
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 13),
-                            ),
-                            icon: const Icon(Icons.add_rounded, size: 17),
-                            label: Text(l10n.financeAddFunds,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13)),
-                            onPressed: () => _showAddFundsInfo(context),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.white,
-                              side: BorderSide(
-                                  color: Colors.white.withValues(alpha: 0.50),
-                                  width: 1.5),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14)),
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 13),
-                              backgroundColor:
-                                  Colors.white.withValues(alpha: 0.10),
-                            ),
-                            icon: const Icon(Icons.savings_rounded, size: 17),
-                            label: Text(l10n.financeWithdrawButton,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13)),
-                            onPressed: () =>
-                                showWithdrawalModal(context, uid, balance),
-                          ),
-                        ),
-                      ],
-                    )
-                  else
                     SizedBox(
                       width: double.infinity,
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: _kCardMid,
-                          elevation: 0,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: BorderSide(
+                              color: Colors.white.withValues(alpha: 0.50),
+                              width: 1.5),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14)),
                           padding: const EdgeInsets.symmetric(vertical: 13),
+                          backgroundColor:
+                              Colors.white.withValues(alpha: 0.10),
                         ),
-                        icon: const Icon(Icons.add_rounded, size: 17),
-                        label: Text(l10n.financeAddFunds,
+                        icon: const Icon(Icons.savings_rounded, size: 17),
+                        label: Text(l10n.financeWithdrawButton,
                             style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 13)),
-                        onPressed: () => _showAddFundsInfo(context),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13)),
+                        onPressed: () =>
+                            showWithdrawalModal(context, uid, balance),
                       ),
                     ),
                 ],
@@ -514,6 +509,98 @@ class _FinanceScreenState extends State<FinanceScreen>
           ),
         ],
       ),
+    );
+  }
+
+  // ── Payout cycle mini-card ─────────────────────────────────────────────────
+
+  Widget _buildPayoutCycleCard() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [_kCardStart, _kCardMid],
+          begin:  Alignment.topLeft,
+          end:    Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.15),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        children: [
+          // ── מחזור השבוע ──────────────────────────────────────────────
+          Expanded(
+            child: _payoutCycleItem(
+              emoji: '🟡',
+              label: 'מחזור השבוע',
+              value: '₪${_pendingWeekly.toStringAsFixed(0)}',
+              valueColor: const Color(0xFFFCD34D),
+            ),
+          ),
+          Container(
+              width: 1,
+              height: 44,
+              color: Colors.white.withValues(alpha: 0.15)),
+          // ── העברה הבאה ───────────────────────────────────────────────
+          Expanded(
+            child: _payoutCycleItem(
+              emoji: '🟢',
+              label: 'העברה הבאה',
+              value: '₪${_finalizedTotal.toStringAsFixed(0)}',
+              valueColor: const Color(0xFF6EE7B7),
+            ),
+          ),
+          Container(
+              width: 1,
+              height: 44,
+              color: Colors.white.withValues(alpha: 0.15)),
+          // ── תאריך העברה ──────────────────────────────────────────────
+          Expanded(
+            child: _payoutCycleItem(
+              emoji: '📅',
+              label: 'תאריך העברה',
+              value: _nextPayoutDate != null
+                  ? DateFormat('dd/MM').format(_nextPayoutDate!)
+                  : '—',
+              valueColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _payoutCycleItem({
+    required String emoji,
+    required String label,
+    required String value,
+    required Color  valueColor,
+  }) {
+    return Column(
+      children: [
+        Text(emoji, style: const TextStyle(fontSize: 18)),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            color:      valueColor,
+            fontSize:   15,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: TextStyle(
+            color:    Colors.white.withValues(alpha: 0.60),
+            fontSize: 10,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ],
     );
   }
 
@@ -802,54 +889,4 @@ class _FinanceScreenState extends State<FinanceScreen>
     );
   }
 
-  // ── Add Funds info sheet ───────────────────────────────────────────────────
-
-  void _showAddFundsInfo(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEEF2FF),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.account_balance_wallet_rounded,
-                  size: 32, color: _kChartLine),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              l10n.financeAddFunds,
-              style: const TextStyle(
-                  fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              l10n.financeAddFundsInfo,
-              textAlign: TextAlign.center,
-              style:
-                  TextStyle(fontSize: 14, color: Colors.grey[600], height: 1.6),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

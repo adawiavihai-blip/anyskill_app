@@ -1,10 +1,13 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Securely stores "Remember Me" credentials using each platform's
 /// native encrypted storage:
 ///   • iOS     → Keychain  (AES-256 encrypted by the OS)
 ///   • Android → EncryptedSharedPreferences / Keystore
-///   • Web     → localStorage (best-effort; no OS keychain on browsers)
+///   • Web     → 🔒 PASSWORD IS NOT STORED — flutter_secure_storage falls
+///               back to plain localStorage on web which is accessible to
+///               any JS on the page (XSS risk). Only the email is saved.
 ///
 /// Usage:
 ///   await CredentialsService.save(email: e, password: p);
@@ -22,16 +25,28 @@ class CredentialsService {
   static const _kPassword = 'anyskill_rm_password';
   static const _kEnabled  = 'anyskill_rm_enabled';
 
-  /// Persists [email] and [password] in encrypted storage.
+  /// Persists [email] and, on native platforms only, [password] in
+  /// encrypted storage. On web only the email is saved to avoid
+  /// storing passwords in plain localStorage.
   static Future<void> save({
     required String email,
     required String password,
   }) async {
-    await Future.wait([
-      _storage.write(key: _kEmail,    value: email),
-      _storage.write(key: _kPassword, value: password),
-      _storage.write(key: _kEnabled,  value: 'true'),
-    ]);
+    if (kIsWeb) {
+      // Web: store only the email so the field is pre-filled.
+      // Never store the password — localStorage is readable by any JS.
+      await Future.wait([
+        _storage.write(key: _kEmail,   value: email),
+        _storage.write(key: _kEnabled, value: 'true'),
+        _storage.delete(key: _kPassword), // ensure no stale value
+      ]);
+    } else {
+      await Future.wait([
+        _storage.write(key: _kEmail,    value: email),
+        _storage.write(key: _kPassword, value: password),
+        _storage.write(key: _kEnabled,  value: 'true'),
+      ]);
+    }
   }
 
   /// Wipes all stored credentials. Call on explicit logout or when the
@@ -46,15 +61,16 @@ class CredentialsService {
 
   /// Reads stored credentials. [enabled] is false if the user never
   /// ticked "Remember Me" or previously cleared the data.
+  /// On web, [password] is always empty.
   static Future<SavedCredentials> load() async {
     final results = await Future.wait([
       _storage.read(key: _kEmail),
-      _storage.read(key: _kPassword),
+      kIsWeb ? Future.value(null) : _storage.read(key: _kPassword),
       _storage.read(key: _kEnabled),
     ]);
     return SavedCredentials(
       email:    results[0] ?? '',
-      password: results[1] ?? '',
+      password: results[1] ?? '',  // empty string on web
       enabled:  results[2] == 'true',
     );
   }

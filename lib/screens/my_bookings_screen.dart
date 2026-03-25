@@ -7,13 +7,14 @@ import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'chat_modules/payment_module.dart';
-import '../services/payment_service.dart';
 import '../services/cancellation_policy_service.dart';
+import '../widgets/customer_profile_sheet.dart';
 import '../widgets/receipt_sheet.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/hint_icon.dart';
 import 'expert_profile_screen.dart';
 import 'chat_screen.dart';
+import 'review_screen.dart';
 
 class MyBookingsScreen extends StatefulWidget {
   final VoidCallback? onGoToSearch;
@@ -236,6 +237,20 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         debugPrint('QA: Firestore job status after release = $confirmedStatus');
         if (confirmedStatus != 'completed') {
           error = 'הסטטוס לא עודכן — נסה שוב (status: $confirmedStatus)';
+        } else {
+          // Stamp completedAt so the 7-day review window can be calculated
+          // for both parties. Use merge:true so any CF-written fields survive.
+          // Awaited (not fire-and-forget) — a silent failure would shift the
+          // window to createdAt, giving both parties unintended extra time.
+          try {
+            await FirebaseFirestore.instance
+                .collection('jobs')
+                .doc(jobId)
+                .set({'completedAt': FieldValue.serverTimestamp()},
+                    SetOptions(merge: true));
+          } catch (e) {
+            debugPrint('completedAt stamp failed: $e');
+          }
         }
       }
     } catch (e) {
@@ -253,7 +268,19 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
             backgroundColor: Colors.green,
             content: Text(l10n.bookingCompleted)),
       );
-      _showRatingDialog(context, jobData['expertId'] ?? '', jobId);
+      // Open new double-blind ReviewScreen instead of legacy dialog
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ReviewScreen(
+            jobId:          jobId,
+            revieweeId:     jobData['expertId']?.toString()    ?? '',
+            revieweeName:   jobData['expertName']?.toString()  ?? 'מומחה',
+            revieweeAvatar: jobData['expertImage']?.toString() ?? '',
+            isClientReview: true,
+          ),
+        ),
+      );
     } else {
       showDialog(
         context: context,
@@ -590,203 +617,6 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   }
 
   // ── Rating dialog ──────────────────────────────────────────────────────────
-
-  // Trait tags displayed as emoji chips inside the rating dialog.
-  // Keys are stored in reviews/{id}.traitTags — labels are Hebrew strings.
-  static const _kDialogTraits = [
-    {'key': 'punctual',      'emoji': '⏰', 'label': 'דייקן'},
-    {'key': 'professional',  'emoji': '💼', 'label': 'מקצועי'},
-    {'key': 'communicative', 'emoji': '💬', 'label': 'תקשורתי'},
-    {'key': 'patient',       'emoji': '🤗', 'label': 'סבלני'},
-    {'key': 'knowledgeable', 'emoji': '🎓', 'label': 'מקצוען'},
-    {'key': 'friendly',      'emoji': '😊', 'label': 'ידידותי'},
-    {'key': 'creative',      'emoji': '🎨', 'label': 'יצירתי'},
-    {'key': 'flexible',      'emoji': '🔄', 'label': 'גמיש'},
-  ];
-
-  void _showRatingDialog(
-      BuildContext context, String expertId, String jobId) {
-    double selectedRating = 5;
-    final commentController = TextEditingController();
-    final selectedTraits = <String>{};
-
-    showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-          contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-          actionsPadding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-          title: const Text('איך היה השירות?',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // ── Star row ─────────────────────────────────────────────
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(5, (index) {
-                    return GestureDetector(
-                      onTap: () =>
-                          setDialogState(() => selectedRating = index + 1.0),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child: Icon(
-                          index < selectedRating
-                              ? Icons.star_rounded
-                              : Icons.star_outline_rounded,
-                          color: const Color(0xFFFBBF24),
-                          size: 40,
-                        ),
-                      ),
-                    );
-                  }),
-                ),
-                // ── Rating label ─────────────────────────────────────────
-                Padding(
-                  padding: const EdgeInsets.only(top: 4, bottom: 12),
-                  child: Text(
-                    _ratingLabel(selectedRating),
-                    style: const TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF6366F1),
-                        fontWeight: FontWeight.w600),
-                  ),
-                ),
-                // ── Trait chips ──────────────────────────────────────────
-                const Align(
-                  alignment: Alignment.centerRight,
-                  child: Text('מה בלט במיוחד?',
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF1A1A2E))),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _kDialogTraits.map((t) {
-                    final key     = t['key']!;
-                    final selected = selectedTraits.contains(key);
-                    return GestureDetector(
-                      onTap: () => setDialogState(() {
-                        if (selected) {
-                          selectedTraits.remove(key);
-                        } else {
-                          selectedTraits.add(key);
-                        }
-                      }),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 150),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: selected
-                              ? const Color(0xFF6366F1)
-                              : const Color(0xFFF1F5F9),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: selected
-                                ? const Color(0xFF6366F1)
-                                : const Color(0xFFE2E8F0),
-                          ),
-                        ),
-                        child: Text(
-                          '${t['emoji']} ${t['label']}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: selected ? Colors.white : const Color(0xFF475569),
-                          ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 14),
-                // ── Comment field ────────────────────────────────────────
-                TextField(
-                  controller: commentController,
-                  maxLines: 3,
-                  textAlign: TextAlign.right,
-                  decoration: InputDecoration(
-                    hintText: 'ספר על החוויה שלך... (אופציונלי)',
-                    hintStyle:
-                        const TextStyle(color: Colors.grey, fontSize: 13),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    contentPadding: const EdgeInsets.all(12),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF6366F1),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    padding: const EdgeInsets.symmetric(vertical: 14)),
-                onPressed: () async {
-                  final uid =
-                      FirebaseAuth.instance.currentUser?.uid ?? '';
-                  final userDoc = await FirebaseFirestore.instance
-                      .collection('users')
-                      .doc(uid)
-                      .get();
-                  final reviewerName =
-                      userDoc.data()?['name'] ?? 'לקוח';
-                  try {
-                    await PaymentService.submitReview(
-                      expertId: expertId,
-                      reviewerId: uid,
-                      rating: selectedRating,
-                      comment: commentController.text.trim(),
-                      reviewerName: reviewerName,
-                      traitTags: selectedTraits.toList(),
-                    );
-                    await FirebaseFirestore.instance
-                        .collection('jobs')
-                        .doc(jobId)
-                        .update({'isReviewed': true});
-                    if (context.mounted) Navigator.pop(context);
-                  } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('שגיאה בשליחת הביקורת: $e'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                    }
-                  }
-                },
-                child: const Text('שלח ביקורת',
-                    style: TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _ratingLabel(double r) {
-    if (r >= 5) return '⭐ מצוין!';
-    if (r >= 4) return '😊 טוב מאוד';
-    if (r >= 3) return '😐 בסדר';
-    if (r >= 2) return '😕 מאכזב';
-    return '😞 גרוע';
-  }
 
   // ── Job details bottom sheet ───────────────────────────────────────────────
   void _showJobDetailsSheet(
@@ -1142,6 +972,18 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                   context, doc.data() as Map<String, dynamic>, doc.id),
               onReceipt: () =>
                   _showReceiptFor(context, doc.data() as Map<String, dynamic>),
+              onRate: () {
+                final d = doc.data() as Map<String, dynamic>;
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => ReviewScreen(
+                    jobId:          doc.id,
+                    revieweeId:     d['customerId']?.toString()   ?? '',
+                    revieweeName:   d['customerName']?.toString() ?? 'לקוח',
+                    revieweeAvatar: '',
+                    isClientReview: false,
+                  ),
+                ));
+              },
             ),
           const SizedBox(height: 20),
         ],
@@ -1163,6 +1005,18 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                   context, doc.data() as Map<String, dynamic>, doc.id),
               onReceipt: () =>
                   _showReceiptFor(context, doc.data() as Map<String, dynamic>),
+              onRate: () {
+                final d = doc.data() as Map<String, dynamic>;
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => ReviewScreen(
+                    jobId:          doc.id,
+                    revieweeId:     d['customerId']?.toString()   ?? '',
+                    revieweeName:   d['customerName']?.toString() ?? 'לקוח',
+                    revieweeAvatar: '',
+                    isClientReview: false,
+                  ),
+                ));
+              },
             ),
         ],
       ],
@@ -1243,11 +1097,21 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                               doc.data() as Map<String, dynamic>,
                               amount),
                           onDispute: () => _openDispute(context, doc.id),
-                          onRate: () => _showRatingDialog(
+                          onRate: () {
+                            final d = doc.data() as Map<String, dynamic>;
+                            Navigator.push(
                               context,
-                              (doc.data() as Map<String, dynamic>)['expertId'] ??
-                                  '',
-                              doc.id),
+                              MaterialPageRoute(
+                                builder: (_) => ReviewScreen(
+                                  jobId:          doc.id,
+                                  revieweeId:     d['expertId']?.toString()    ?? '',
+                                  revieweeName:   d['expertName']?.toString()  ?? 'מומחה',
+                                  revieweeAvatar: d['expertImage']?.toString() ?? '',
+                                  isClientReview: true,
+                                ),
+                              ),
+                            );
+                          },
                           onDetails: () => _showJobDetailsSheet(
                               context,
                               doc.data() as Map<String, dynamic>,
@@ -2070,6 +1934,7 @@ class _CustomerBookingCardState extends State<_CustomerBookingCard>
       'receiverName': expertName,
       'amount':       tipAmount,
       'jobId':        widget.jobId,
+      'payoutStatus': 'pending',
       'timestamp':    FieldValue.serverTimestamp(),
     });
     bat.update(db.collection('users').doc(expertId), {
@@ -2120,7 +1985,7 @@ class _CustomerBookingCardState extends State<_CustomerBookingCard>
     final chatRoomId = job['chatRoomId']      as String? ?? '';
     final isCompleted = status == 'completed';
     final isActive    = status == 'paid_escrow' || status == 'expert_completed';
-    final isReviewed  = job['isReviewed'] == true;
+    final isReviewed  = job['clientReviewDone'] == true;
 
     // ── Live signal fields ──────────────────────────────────────────
     final expertOnWay   = job['expertOnWay']   == true;
@@ -2776,6 +2641,7 @@ class _ExpertJobCard extends StatefulWidget {
   final void Function(String jobId) onCancel;
   final VoidCallback onDetails;
   final VoidCallback onReceipt;
+  final VoidCallback? onRate;
 
   const _ExpertJobCard({
     super.key,
@@ -2785,6 +2651,7 @@ class _ExpertJobCard extends StatefulWidget {
     required this.onCancel,
     required this.onDetails,
     required this.onReceipt,
+    this.onRate,
   });
 
   @override
@@ -2801,6 +2668,13 @@ class _ExpertJobCardState extends State<_ExpertJobCard>
   static const _terminalStatuses = {
     'cancelled', 'cancelled_with_penalty', 'refunded',
     'split_resolved', 'completed',
+  };
+
+  // Statuses that get the lightweight "cancelled" card.
+  // 'completed' is intentionally excluded — completed jobs need the full card
+  // so the provider can see and tap the "Leave review" button.
+  static const _cancelledStatuses = {
+    'cancelled', 'cancelled_with_penalty', 'refunded', 'split_resolved',
   };
 
   bool get _isTerminal =>
@@ -2874,7 +2748,7 @@ class _ExpertJobCardState extends State<_ExpertJobCard>
     // ── Guard: render a lightweight read-only card for terminal states ──────
     // This prevents any crash caused by null fields that active-only code paths
     // expect, and stops the animation controller from ticking needlessly.
-    if (_isTerminal) {
+    if (_cancelledStatuses.contains(status)) {
       final customerName = job['customerName'] as String? ?? 'לקוח';
       final customerId   = job['customerId']   as String? ?? '';
       final amount = ((job['netAmountForExpert'] ??
@@ -2989,30 +2863,39 @@ class _ExpertJobCardState extends State<_ExpertJobCard>
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             child: Row(children: [
-              _ProfileAvatar(uid: customerId, name: customerName, size: 50),
+              GestureDetector(
+                onTap: () => showCustomerProfileSheet(
+                    context, customerId, customerName),
+                child: _ProfileAvatar(
+                    uid: customerId, name: customerName, size: 50),
+              ),
               const SizedBox(width: 12),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(customerName,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                            color: Color(0xFF1A1A2E))),
-                    const SizedBox(height: 2),
-                    Row(children: [
-                      const Icon(Icons.calendar_today_rounded,
-                          size: 12, color: Color(0xFF94A3B8)),
-                      const SizedBox(width: 4),
-                      Text(
-                          apptTime.isNotEmpty
-                              ? '$apptStr · $apptTime'
-                              : apptStr,
+                child: GestureDetector(
+                  onTap: () => showCustomerProfileSheet(
+                      context, customerId, customerName),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(customerName,
                           style: const TextStyle(
-                              fontSize: 12, color: Color(0xFF94A3B8))),
-                    ]),
-                  ],
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: Color(0xFF1A1A2E))),
+                      const SizedBox(height: 2),
+                      Row(children: [
+                        const Icon(Icons.calendar_today_rounded,
+                            size: 12, color: Color(0xFF94A3B8)),
+                        const SizedBox(width: 4),
+                        Text(
+                            apptTime.isNotEmpty
+                                ? '$apptStr · $apptTime'
+                                : apptStr,
+                            style: const TextStyle(
+                                fontSize: 12, color: Color(0xFF94A3B8))),
+                      ]),
+                    ],
+                  ),
                 ),
               ),
               _StatusBadge(status),
@@ -3285,7 +3168,7 @@ class _ExpertJobCardState extends State<_ExpertJobCard>
                   ),
                 ],
 
-                // completed: prominent receipt
+                // completed: receipt + provider review button
                 if (isCompleted) ...[
                   SizedBox(
                     width: double.infinity,
@@ -3305,6 +3188,90 @@ class _ExpertJobCardState extends State<_ExpertJobCard>
                       onPressed: widget.onReceipt,
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  // 7-day double-blind review window.
+                  // completedAt is written by _handleCompleteJob; fall back to
+                  // createdAt so old jobs that pre-date this field still work.
+                  Builder(builder: (ctx) {
+                    // Use `tryCast` pattern instead of `as Timestamp?` —
+                    // a serverTimestamp sentinel (FieldValue) that hasn't
+                    // resolved yet is not a Timestamp and would throw _CastError.
+                    Timestamp? toTs(dynamic v) => v is Timestamp ? v : null;
+                    final completedTs =
+                        toTs(job['completedAt']) ?? toTs(job['createdAt']);
+                    final windowOpen = completedTs == null ||
+                        DateTime.now()
+                                .difference(completedTs.toDate())
+                                .inDays <
+                            7;
+                    final reviewed = job['providerReviewDone'] == true;
+
+                    if (reviewed) {
+                      return Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0FFF4),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.check_circle_outline_rounded,
+                                size: 14, color: Color(0xFF16A34A)),
+                            SizedBox(width: 6),
+                            Text('ביקורת נשלחה — תודה!',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF16A34A))),
+                          ],
+                        ),
+                      );
+                    }
+                    if (windowOpen) {
+                      return SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF6366F1),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            minimumSize: const Size(double.infinity, 52),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                          ),
+                          icon: const Icon(Icons.star_rounded, size: 20),
+                          label: const Text('שתף חוות דעת ⭐',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 15)),
+                          onPressed: widget.onRate,
+                        ),
+                      );
+                    }
+                    // Window expired — provider did not review within 7 days
+                    return Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8F8F8),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.lock_clock_rounded,
+                              size: 14, color: Color(0xFF94A3B8)),
+                          SizedBox(width: 6),
+                          Text('חלון הביקורת פג (7 ימים)',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF94A3B8))),
+                        ],
+                      ),
+                    );
+                  }),
                 ],
 
                 // other statuses (cancelled / disputed)
@@ -3606,3 +3573,7 @@ class _QuickActionChip extends StatelessWidget {
     );
   }
 }
+
+// _CustomerProfileSheet, _CustomerRatingRow, and showCustomerProfileSheet
+// are defined in lib/widgets/customer_profile_sheet.dart (shared with
+// opportunities_screen.dart).

@@ -47,3 +47,16 @@ app.*.map.json
 # Sensitive credentials — never commit
 serviceAccountKey.json
 *.key.json
+
+# Firebase native config files — contain OAuth client IDs and API keys.
+# Regenerate via Firebase Console if lost.
+google-services.json
+GoogleService-Info.plist
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Google Maps API key script (contains billing-linked API key)
+# web/Maps.js

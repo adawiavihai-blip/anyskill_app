@@ -6,6 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -14,10 +15,12 @@ import 'services/permission_service.dart';
 import 'services/locale_provider.dart';
 import 'services/cache_service.dart';
 import 'services/audio_service.dart';
+import 'services/app_check_service.dart';
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
 import 'screens/phone_login_screen.dart';
 import 'screens/onboarding_screen.dart';
+import 'constants.dart' show appVersion;
 import 'screens/pending_verification_screen.dart';
 import 'screens/permission_request_screen.dart';
 import 'l10n/app_localizations.dart';
@@ -25,7 +28,8 @@ import 'l10n/app_localizations.dart';
 // The running app version — populated from pubspec.yaml via PackageInfo in main().
 // Admins auto-push this value to admin/settings.latestVersion on login,
 // triggering the update banner for all other users.
-String currentAppVersion = '3.7.5'; // fallback; overwritten before runApp()
+String currentAppVersion =
+    appVersion; // fallback from constants.dart; overwritten by PackageInfo before runApp()
 
 // ── Global navigator key ──────────────────────────────────────────────────────
 // Used by notification handlers to navigate without a BuildContext.
@@ -35,23 +39,32 @@ final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 // Set when the user taps a notification. HomeScreen reads this in initState
 // and calls setState(() => _selectedIndex = PendingNotification.tabIndex!).
 class PendingNotification {
-  static int?    tabIndex;    // tab to activate in HomeScreen
-  static String? chatRoomId;  // optional: open a specific chat room
+  static int? tabIndex; // tab to activate in HomeScreen
+  static String? chatRoomId; // optional: open a specific chat room
 
   static void fromMessage(RemoteMessage message) {
     final type = message.data['type'] as String?;
     chatRoomId = message.data['chatRoomId'] as String?;
     switch (type) {
-      case 'chat':         tabIndex = 2; break;
-      case 'booking':      tabIndex = 1; break;
-      case 'job_request':  tabIndex = 5; break; // הזדמנויות (index 5 — calendar tab removed)
-      case 'market_alert': tabIndex = 6; break; // ניהול (index 6 for admin+provider)
-      default:             tabIndex = 0;
+      case 'chat':
+        tabIndex = 2;
+        break;
+      case 'booking':
+        tabIndex = 1;
+        break;
+      case 'job_request':
+        tabIndex = 5;
+        break; // הזדמנויות (index 5 — calendar tab removed)
+      case 'market_alert':
+        tabIndex = 6;
+        break; // ניהול (index 6 for admin+provider)
+      default:
+        tabIndex = 0;
     }
   }
 
   static void clear() {
-    tabIndex   = null;
+    tabIndex = null;
     chatRoomId = null;
   }
 }
@@ -79,16 +92,27 @@ void main() async {
 
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
+  // Activate App Check — must run before any Firestore/Storage/CF call.
+  // All provider config (reCAPTCHA key, debug token, auto-refresh) lives in
+  // AppCheckService so main.dart stays free of App Check implementation details.
+  await AppCheckService.init();
+
   if (kIsWeb) {
     try {
       await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
       FirebaseFirestore.instance.settings = const Settings(
-        persistenceEnabled: true,   // IndexedDB cache — serves cold reads from cache (<20ms)
-        cacheSizeBytes: 10485760,   // 10 MB cap — prevents unbounded IndexedDB growth
+        persistenceEnabled:
+            true, // IndexedDB cache — serves cold reads from cache (<20ms)
+        cacheSizeBytes:
+            10485760, // 10 MB cap — prevents unbounded IndexedDB growth
       );
-      debugPrint("AnySkill Web: Auth LOCAL persistence set, Firestore cache ENABLED");
+      if (kDebugMode) {
+        debugPrint(
+          "AnySkill Web: Auth LOCAL persistence set, Firestore cache ENABLED",
+        );
+      }
     } catch (e) {
-      debugPrint("Firestore/Auth Web Config Error: $e");
+      if (kDebugMode) debugPrint("Firestore/Auth Web Config Error: $e");
     }
   }
 
@@ -98,23 +122,28 @@ void main() async {
   unawaited(AudioService.instance.init());
 
   // ── CacheService housekeeping — purge expired TTL entries every 5 minutes ──
-  Timer.periodic(const Duration(minutes: 5), (_) => CacheService.purgeExpired());
+  Timer.periodic(
+    const Duration(minutes: 5),
+    (_) => CacheService.purgeExpired(),
+  );
 
   // ── Global Flutter error logger ───────────────────────────────────────────
   // Writes every unhandled Flutter rendering/framework error to Firestore
   // `error_logs` so the admin SystemPerformanceTab can surface it in real-time.
   final originalOnError = FlutterError.onError;
   FlutterError.onError = (FlutterErrorDetails details) {
-    originalOnError?.call(details);        // keep default behaviour (prints to console)
+    originalOnError?.call(
+      details,
+    ); // keep default behaviour (prints to console)
     try {
       FirebaseFirestore.instance.collection('error_logs').add({
-        'type':      'flutter',
-        'message':   details.exceptionAsString(),
-        'screen':    details.library ?? '',
-        'userId':    FirebaseAuth.instance.currentUser?.uid ?? '',
+        'type': 'flutter',
+        'message': details.exceptionAsString(),
+        'screen': details.library ?? '',
+        'userId': FirebaseAuth.instance.currentUser?.uid ?? '',
         'timestamp': FieldValue.serverTimestamp(),
       });
-    } catch (_) {}                         // never let logging crash the app
+    } catch (_) {} // never let logging crash the app
   };
 
   runApp(const AnySkillApp());
@@ -140,26 +169,28 @@ class AnySkillApp extends StatelessWidget {
           behavior: HitTestBehavior.translucent,
           onPointerDown: (_) => AudioService.instance.unlockAudioOnGesture(),
           child: MaterialApp(
-          navigatorKey: rootNavigatorKey,
-          debugShowCheckedModeBanner: false,
-          title: 'AnySkill',
-          // ── i18n: persisted locale (default: Hebrew RTL) ─────────────────
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales:       AppLocalizations.supportedLocales,
-          locale:                 locale,
-          // Auto-resolve RTL/LTR: GlobalMaterialLocalizations handles directionality
-          // for Hebrew (RTL) and English/Spanish (LTR) automatically.
-          theme: ThemeData(
-            useMaterial3: true,
-            colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF007AFF)),
-            scaffoldBackgroundColor: Colors.white,
-            textTheme: GoogleFonts.heeboTextTheme(Theme.of(context).textTheme).apply(
-              fontFamilyFallback: ['NotoSansHebrew'],
+            navigatorKey: rootNavigatorKey,
+            debugShowCheckedModeBanner: false,
+            title: 'AnySkill',
+            // ── i18n: persisted locale (default: Hebrew RTL) ─────────────────
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            locale: locale,
+            // Auto-resolve RTL/LTR: GlobalMaterialLocalizations handles directionality
+            // for Hebrew (RTL) and English/Spanish (LTR) automatically.
+            theme: ThemeData(
+              useMaterial3: true,
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: const Color(0xFF007AFF),
+              ),
+              scaffoldBackgroundColor: Colors.white,
+              textTheme: GoogleFonts.heeboTextTheme(
+                Theme.of(context).textTheme,
+              ).apply(fontFamilyFallback: ['NotoSansHebrew']),
             ),
-          ),
-          home: const AuthWrapper(),
-        ),      // closes MaterialApp
-        );      // closes Listener
+            home: const AuthWrapper(),
+          ), // closes MaterialApp
+        ); // closes Listener
       },
     );
   }
@@ -174,12 +205,12 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
-  StreamSubscription<User?>?           _authSub;
+  StreamSubscription<User?>? _authSub;
   StreamSubscription<DocumentSnapshot>? _versionSub;
-  SharedPreferences?                    _prefs;
+  SharedPreferences? _prefs;
 
-  bool    _updateNotified = false;
-  bool    _bannerVisible  = false;
+  bool _updateNotified = false;
+  bool _bannerVisible = false;
   // The version string from Firestore that triggered the current banner.
   // Stored so we can persist "dismissed for this version" when user taps × or Update.
   String? _latestVersion;
@@ -227,22 +258,22 @@ class _AuthWrapperState extends State<AuthWrapper> {
         .doc('settings')
         .snapshots()
         .listen((doc) {
-      if (!doc.exists || !mounted || _updateNotified) return;
-      final latest =
-          (doc.data()?['latestVersion'] as String?) ?? currentAppVersion;
+          if (!doc.exists || !mounted || _updateNotified) return;
+          final latest =
+              (doc.data()?['latestVersion'] as String?) ?? currentAppVersion;
 
-      // Only show the banner when the server version is strictly newer.
-      if (!_isNewerVersion(latest, currentAppVersion)) return;
+          // Only show the banner when the server version is strictly newer.
+          if (!_isNewerVersion(latest, currentAppVersion)) return;
 
-      // Check if the user has already dismissed THIS specific version.
-      // SharedPreferences persists across reloads/restarts on both web and native.
-      final dismissed = _prefs?.getString('banner_dismissed_v');
-      if (dismissed == latest) return;
+          // Check if the user has already dismissed THIS specific version.
+          // SharedPreferences persists across reloads/restarts on both web and native.
+          final dismissed = _prefs?.getString('banner_dismissed_v');
+          if (dismissed == latest) return;
 
-      _updateNotified = true;
-      _latestVersion  = latest;
-      _showUpdateBanner();
-    }, onError: (_) {}); // silently ignore permission-denied for non-admins
+          _updateNotified = true;
+          _latestVersion = latest;
+          _showUpdateBanner();
+        }, onError: (_) {}); // silently ignore permission-denied for non-admins
   }
 
   /// Returns true only if [candidate] is STRICTLY greater than [base].
@@ -251,8 +282,12 @@ class _AuthWrapperState extends State<AuthWrapper> {
     final c = candidate.split('.').map((p) => int.tryParse(p) ?? 0).toList();
     final b = base.split('.').map((p) => int.tryParse(p) ?? 0).toList();
     final len = c.length > b.length ? c.length : b.length;
-    while (c.length < len) { c.add(0); }
-    while (b.length < len) { b.add(0); }
+    while (c.length < len) {
+      c.add(0);
+    }
+    while (b.length < len) {
+      b.add(0);
+    }
     for (int i = 0; i < len; i++) {
       if (c[i] > b[i]) return true;
       if (c[i] < b[i]) return false;
@@ -296,74 +331,94 @@ class _AuthWrapperState extends State<AuthWrapper> {
               ],
             ),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            child: Builder(builder: (ctx) {
-              final l10n = AppLocalizations.of(ctx);
-              return Directionality(
-                textDirection: l10n.isCurrentRtl
-                    ? TextDirection.rtl
-                    : TextDirection.ltr,
-                child: Row(
-                children: [
-                  const Icon(Icons.system_update_alt_rounded,
-                      color: Colors.white, size: 22),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      l10n.updateBannerText,
-                      style: const TextStyle(
+            child: Builder(
+              builder: (ctx) {
+                final l10n = AppLocalizations.of(ctx);
+                return Directionality(
+                  textDirection:
+                      l10n.isCurrentRtl ? TextDirection.rtl : TextDirection.ltr,
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.system_update_alt_rounded,
                         color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        height: 1.4,
+                        size: 22,
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  // ── Update now button ──────────────────────────────────────
-                  ElevatedButton(
-                    onPressed: () async {
-                      // Persist dismissed version BEFORE reload so the banner
-                      // doesn't reappear on the fresh page (fixes the loop).
-                      if (_latestVersion != null) {
-                        await _prefs?.setString('banner_dismissed_v', _latestVersion!);
-                      }
-                      if (!mounted) return;
-                      setState(() => _bannerVisible = false);
-                      if (kIsWeb) pageReload();
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF6366F1),
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: Text(l10n.updateNowButton,
-                        style: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.bold)),
-                  ),
-                  // ── Dismiss (×) ────────────────────────────────────────────
-                  GestureDetector(
-                    onTap: () async {
-                      // Remember this version was dismissed so it won't resurface.
-                      if (_latestVersion != null) {
-                        await _prefs?.setString('banner_dismissed_v', _latestVersion!);
-                      }
-                      if (!mounted) return;
-                      setState(() => _bannerVisible = false);
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.only(right: 4, left: 8),
-                      child: Icon(Icons.close_rounded,
-                          color: Colors.white.withValues(alpha: 0.55), size: 18),
-                    ),
-                  ),
-                ],
-              ), // Row
-            ); // Directionality
-            }), // Builder
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          l10n.updateBannerText,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      // ── Update now button ──────────────────────────────────────
+                      ElevatedButton(
+                        onPressed: () async {
+                          // Persist dismissed version BEFORE reload so the banner
+                          // doesn't reappear on the fresh page (fixes the loop).
+                          if (_latestVersion != null) {
+                            await _prefs?.setString(
+                              'banner_dismissed_v',
+                              _latestVersion!,
+                            );
+                          }
+                          if (!mounted) return;
+                          setState(() => _bannerVisible = false);
+                          if (kIsWeb) pageReload();
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF6366F1),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 10,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Text(
+                          l10n.updateNowButton,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      // ── Dismiss (×) ────────────────────────────────────────────
+                      GestureDetector(
+                        onTap: () async {
+                          // Remember this version was dismissed so it won't resurface.
+                          if (_latestVersion != null) {
+                            await _prefs?.setString(
+                              'banner_dismissed_v',
+                              _latestVersion!,
+                            );
+                          }
+                          if (!mounted) return;
+                          setState(() => _bannerVisible = false);
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 4, left: 8),
+                          child: Icon(
+                            Icons.close_rounded,
+                            color: Colors.white.withValues(alpha: 0.55),
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ), // Row
+                ); // Directionality
+              },
+            ), // Builder
           ),
         ),
       ),
@@ -414,7 +469,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
         final initial = await messaging.getInitialMessage();
         if (initial != null) {
           WidgetsBinding.instance.addPostFrameCallback(
-              (_) => _navigateFromMessage(initial));
+            (_) => _navigateFromMessage(initial),
+          );
         }
         return;
       }
@@ -422,7 +478,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
       if (storedNotif != PermissionService.granted) {
         // Never asked (or status unknown) — ask the OS exactly once.
         final settings = await messaging.requestPermission(
-          alert: true, badge: true, sound: true,
+          alert: true,
+          badge: true,
+          sound: true,
         );
         final authorized =
             settings.authorizationStatus == AuthorizationStatus.authorized ||
@@ -465,8 +523,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
                     notification.title!,
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                if (notification.body != null)
-                  Text(notification.body!),
+                if (notification.body != null) Text(notification.body!),
               ],
             ),
             backgroundColor: const Color(0xFF6366F1),
@@ -550,7 +607,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
               );
             }
             if (snapshot.hasData && snapshot.data != null) {
-              return const _OnboardingGate();
+              return const OnboardingGate();
             }
             return const PhoneLoginScreen();
           },
@@ -567,14 +624,16 @@ class _AuthWrapperState extends State<AuthWrapper> {
 // One-time Firestore fetch (8 s timeout) to check onboardingComplete.
 // Uses FutureBuilder so a Firestore error or slow connection never leaves the
 // user staring at a spinner; on any failure we default to HomeScreen.
-class _OnboardingGate extends StatefulWidget {
-  const _OnboardingGate();
+// Public so LoginScreen / OtpScreen can navigate here directly after login
+// instead of relying on AuthWrapper's StreamBuilder race condition.
+class OnboardingGate extends StatefulWidget {
+  const OnboardingGate({super.key});
 
   @override
-  State<_OnboardingGate> createState() => _OnboardingGateState();
+  State<OnboardingGate> createState() => _OnboardingGateState();
 }
 
-class _OnboardingGateState extends State<_OnboardingGate> {
+class _OnboardingGateState extends State<OnboardingGate> {
   late final Future<({Map<String, dynamic> data, bool hasSeenPerms})> _future;
 
   @override
@@ -585,7 +644,8 @@ class _OnboardingGateState extends State<_OnboardingGate> {
   }
 
   static Future<({Map<String, dynamic> data, bool hasSeenPerms})> _load(
-      String uid) async {
+    String uid,
+  ) async {
     final results = await Future.wait([
       FirebaseFirestore.instance
           .collection('users')
@@ -624,15 +684,16 @@ class _OnboardingGateState extends State<_OnboardingGate> {
         // Anyone pending admin approval lands on the waiting screen —
         // covers both new signups (isProvider=false, isPendingExpert=true)
         // and provider accounts not yet verified (isProvider=true, isVerified=false).
-        final isProvider      = data['isProvider']      == true;
-        final isVerified      = data['isVerified']      == true;
+        final isProvider = data['isProvider'] == true;
+        final isVerified = data['isVerified'] == true;
         final isPendingExpert = data['isPendingExpert'] == true;
         if ((isProvider && !isVerified) || isPendingExpert) {
           return const PendingVerificationScreen();
         }
 
         // New users who haven't completed onboarding
-        final complete = data['onboardingComplete'] ?? true; // existing users skip
+        final complete =
+            data['onboardingComplete'] ?? true; // existing users skip
         if (!complete) return const OnboardingScreen();
 
         // First launch after sign-up — ask for permissions once
@@ -675,11 +736,11 @@ class _SplashLogoState extends State<_SplashLogo>
 
   @override
   Widget build(BuildContext context) => FadeTransition(
-        opacity: _fade,
-        child: Image.asset(
-          'assets/images/NEW_LOGO1.png.png',
-          height: 120,
-          fit: BoxFit.contain,
-        ),
-      );
+    opacity: _fade,
+    child: Image.asset(
+      'assets/images/NEW_LOGO1.png.png',
+      height: 120,
+      fit: BoxFit.contain,
+    ),
+  );
 }

@@ -11,9 +11,10 @@ import 'provider_registration_screen.dart';
 import '../widgets/vip_confetti.dart';
 import '../l10n/app_localizations.dart';
 import '../services/locale_provider.dart';
+import '../services/account_deletion_service.dart';
 import '../widgets/xp_progress_bar.dart';
 import '../widgets/anyskill_logo.dart';
-import '../main.dart' show currentAppVersion;
+import '../main.dart' show currentAppVersion, rootNavigatorKey;
 import 'favorites_screen.dart';
 import 'phone_login_screen.dart';
 
@@ -26,6 +27,11 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final user = FirebaseAuth.instance.currentUser;
+
+  // Incrementing this key forces StreamBuilder to recreate its subscription,
+  // which is the recovery path after a transient Permission Denied error
+  // (e.g., App Check token not yet ready on first load).
+  int _streamKey = 0;
 
   @override
   void initState() {
@@ -187,13 +193,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ],
       ),
       body: StreamBuilder<DocumentSnapshot>(
+        key: ValueKey(_streamKey),
         stream: FirebaseFirestore.instance.collection('users').doc(user?.uid).snapshots(),
         builder: (context, snapshot) {
           // Guard: auth state changed before AuthWrapper has redirected.
           if (FirebaseAuth.instance.currentUser == null) {
             return const SizedBox.shrink();
           }
-          if (snapshot.hasError) return const SizedBox.shrink();
+          if (snapshot.hasError) {
+            // Likely a transient Permission Denied while App Check token was
+            // not yet ready. Show a retry button so the user can recover
+            // without a full page reload.
+            final l10nInner = AppLocalizations.of(context);
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cloud_off_outlined, size: 48, color: Colors.grey),
+                  const SizedBox(height: 12),
+                  Text(
+                    l10nInner.profileLoadError,
+                    style: const TextStyle(fontSize: 15, color: Colors.grey),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: () => setState(() => _streamKey++),
+                    icon: const Icon(Icons.refresh),
+                    label: Text(l10nInner.retryButton),
+                  ),
+                ],
+              ),
+            );
+          }
           if (!snapshot.hasData || snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator(strokeWidth: 2));
           }
@@ -1329,27 +1361,82 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  /// Calls the Cloud Function, then signs out.
+  /// Runs the full deletion flow via [AccountDeletionService] and handles
+  /// every outcome: success, requires-recent-login, or unexpected error.
   Future<void> _deleteAccount(BuildContext dialogContext) async {
     final uid       = user?.uid ?? '';
     final messenger = ScaffoldMessenger.of(context);
     if (uid.isEmpty) return;
 
-    try {
-      await FirebaseFunctions.instance
-          .httpsCallable('deleteUserAccount')
-          .call({'uid': uid});
+    final result = await AccountDeletionService.deleteAccount(uid);
 
-      if (dialogContext.mounted) Navigator.pop(dialogContext);
-      // Auth state change via AuthWrapper will redirect to LoginScreen
-      await FirebaseAuth.instance.signOut();
-    } catch (e) {
-      if (dialogContext.mounted) Navigator.pop(dialogContext);
-      messenger.showSnackBar(SnackBar(
-        content: Text('שגיאה במחיקת החשבון: $e'),
-        backgroundColor: Colors.red,
-        behavior: SnackBarBehavior.floating,
-      ));
+    // Always pop the confirmation dialog first.
+    if (dialogContext.mounted) Navigator.pop(dialogContext);
+
+    switch (result.outcome) {
+      case DeletionOutcome.success:
+        // Auth user is gone — navigate to the login screen and clear the stack.
+        rootNavigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const PhoneLoginScreen()),
+          (_) => false,
+        );
+
+      case DeletionOutcome.requiresReauth:
+        // Firebase rejected delete() because the session is too old.
+        // Show an explanatory dialog; user must sign out, re-login, then retry.
+        if (!mounted) return;
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Text('נדרשת כניסה מחדש',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                SizedBox(width: 8),
+                Icon(Icons.lock_outline_rounded, color: Colors.orange),
+              ],
+            ),
+            content: const Text(
+              'לצורך מחיקת חשבון, Firebase דורש שנכנסת לאחרונה.\n\n'
+              'אנא התנתק, היכנס מחדש ונסה שוב.',
+              textAlign: TextAlign.right,
+              style: TextStyle(height: 1.5, fontSize: 14),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('ביטול'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6366F1),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  await FirebaseAuth.instance.signOut();
+                  rootNavigatorKey.currentState?.pushAndRemoveUntil(
+                    MaterialPageRoute(
+                        builder: (_) => const PhoneLoginScreen()),
+                    (_) => false,
+                  );
+                },
+                child: const Text('התנתק והיכנס מחדש'),
+              ),
+            ],
+          ),
+        );
+
+      case DeletionOutcome.error:
+        messenger.showSnackBar(SnackBar(
+          content: Text('שגיאה במחיקת החשבון: ${result.errorMessage}'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ));
     }
   }
   /// Stat row used in the specialist Airbnb card:

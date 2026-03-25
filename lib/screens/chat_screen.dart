@@ -56,6 +56,9 @@ class _ChatScreenState extends State<ChatScreen> {
   String _receiverImageUrl     = '';
   String _currentUserImageUrl  = '';
 
+  // ── Provider state (determines if "Send Quote" chip is shown) ─────────────
+  bool   _isProvider           = false;
+
   // ── Chat Guard state ──────────────────────────────────────────────────────
   bool      _guardFlagged      = false;   // true while current input is flagged
   bool      _showGuardBanner   = true;    // dismissible anti-bypass info banner
@@ -108,8 +111,10 @@ class _ChatScreenState extends State<ChatScreen> {
         final d = await CacheService.getDoc(
             'users', currentUserId, ttl: CacheService.kUserProfile);
         if (mounted) {
-          setState(() =>
-              _currentUserImageUrl = d['profileImage'] as String? ?? '');
+          setState(() {
+            _currentUserImageUrl = d['profileImage'] as String? ?? '';
+            _isProvider          = d['isProvider'] == true;
+          });
         }
       } catch (_) {}
     }
@@ -410,6 +415,247 @@ class _ChatScreenState extends State<ChatScreen> {
                 style: TextStyle(color: Colors.white)),
           ),
         ],
+      ),
+    );
+  }
+
+  // ── Official Quote — send to Firestore + chat message ─────────────────────
+
+  Future<void> _sendOfficialQuote(double amount, String description) async {
+    if (!await SafetyModule.hasInternet()) {
+      if (mounted) SafetyModule.showError(context, 'אין חיבור לאינטרנט.');
+      return;
+    }
+    final db    = FirebaseFirestore.instance;
+    final batch = db.batch();
+
+    // 1. Create quote document
+    final quoteRef = db.collection('quotes').doc();
+    batch.set(quoteRef, {
+      'providerId':  currentUserId,
+      'clientId':    widget.receiverId,
+      'chatRoomId':  chatRoomId,
+      'description': description,
+      'amount':      amount,
+      'status':      'pending',
+      'createdAt':   FieldValue.serverTimestamp(),
+    });
+
+    // 2. Create chat message with quoteId embedded
+    final msgRef = db
+        .collection('chats')
+        .doc(chatRoomId)
+        .collection('messages')
+        .doc();
+    final senderName = await _currentUserName();
+    batch.set(msgRef, {
+      'senderId':    currentUserId,
+      'senderName':  senderName,
+      'receiverId':  widget.receiverId,
+      'message':     description,
+      'amount':      amount,
+      'quoteId':     quoteRef.id,
+      'messageId':   msgRef.id,
+      'quoteStatus': 'pending',
+      'type':        'official_quote',
+      'isRead':      false,
+      'timestamp':   FieldValue.serverTimestamp(),
+    });
+
+    // 3. Update chat room metadata
+    final chatRef = db.collection('chats').doc(chatRoomId);
+    batch.set(chatRef, {
+      'users':                              [currentUserId, widget.receiverId],
+      'lastMessage':                        'הצעת מחיר: ₪${amount.toInt()}',
+      'lastMessageTime':                    FieldValue.serverTimestamp(),
+      'unreadCount_${widget.receiverId}':   FieldValue.increment(1),
+    }, SetOptions(merge: true));
+
+    try {
+      await batch.commit();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('הצעת המחיר נשלחה בהצלחה ✅'),
+          backgroundColor: Color(0xFF22C55E),
+          duration: Duration(seconds: 2),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('שגיאה בשליחת ההצעה. נסה שוב.'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ));
+      }
+    }
+  }
+
+  // ── Official Quote dialog ──────────────────────────────────────────────────
+
+  void _showQuoteDialog() {
+    final amountCtrl = TextEditingController();
+    final descCtrl   = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1A0E3C), Color(0xFF2D1A6B)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // Header
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, color: Colors.white54),
+                    onPressed: () => Navigator.pop(ctx),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                  const Row(children: [
+                    Icon(Icons.receipt_long_rounded,
+                        color: Color(0xFFA5B4FC), size: 20),
+                    SizedBox(width: 8),
+                    Text('הצעת מחיר רשמית',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold)),
+                  ]),
+                ],
+              ),
+              const SizedBox(height: 20),
+
+              // Amount field
+              TextField(
+                controller: amountCtrl,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                textAlign: TextAlign.right,
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+                decoration: InputDecoration(
+                  labelText: 'סכום',
+                  labelStyle: const TextStyle(color: Colors.white54),
+                  prefixText: '₪ ',
+                  prefixStyle: const TextStyle(color: Colors.white70),
+                  filled: true,
+                  fillColor: Colors.white.withValues(alpha: 0.08),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.2)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.2)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(
+                        color: Color(0xFF6366F1), width: 1.5),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Description field
+              TextField(
+                controller: descCtrl,
+                textAlign: TextAlign.right,
+                maxLines: 3,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+                decoration: InputDecoration(
+                  labelText: 'תיאור השירות',
+                  labelStyle: const TextStyle(color: Colors.white54),
+                  hintText: 'פרט את השירות הכלול במחיר...',
+                  hintStyle: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.3),
+                      fontSize: 13),
+                  filled: true,
+                  fillColor: Colors.white.withValues(alpha: 0.08),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.2)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.2)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(
+                        color: Color(0xFF6366F1), width: 1.5),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // Trust note
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Icon(Icons.shield_rounded,
+                      size: 11,
+                      color: Colors.white.withValues(alpha: 0.4)),
+                  const SizedBox(width: 4),
+                  Text('הסכום ינעל בנאמנות AnySkill עם אישור הלקוח',
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.white.withValues(alpha: 0.4))),
+                ],
+              ),
+              const SizedBox(height: 20),
+
+              // Send button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6366F1),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  icon: const Icon(Icons.send_rounded, size: 16),
+                  label: const Text('שלח הצעה',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 14)),
+                  onPressed: () {
+                    final amount =
+                        double.tryParse(amountCtrl.text.replaceAll(',', '.')) ??
+                            0;
+                    if (amount <= 0) return;
+                    Navigator.pop(ctx);
+                    _sendOfficialQuote(
+                      amount,
+                      descCtrl.text.trim().isEmpty
+                          ? 'הצעת מחיר'
+                          : descCtrl.text.trim(),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -892,6 +1138,8 @@ class _ChatScreenState extends State<ChatScreen> {
               context: context,
               data:    d,
               isMe:    isMe,
+              currentUserId:  currentUserId,
+              chatRoomId:     chatRoomId,
               senderName:     isMe
                   ? (widget.currentUserName ?? '')
                   : widget.receiverName,
@@ -1007,9 +1255,14 @@ class _ChatScreenState extends State<ChatScreen> {
             final url = await LocationModule.getMapUrl();
             if (url != null) _send(url, 'location');
           }, chipColor: Colors.redAccent),
-          _chip(Icons.payments_rounded, 'בקש תשלום',
-              _showRequestPaymentDialog,
-              chipColor: const Color(0xFFD97706)),
+          if (_isProvider)
+            _chip(Icons.receipt_long_rounded, 'הצעת מחיר 💰',
+                _showQuoteDialog,
+                chipColor: const Color(0xFF6366F1))
+          else
+            _chip(Icons.payments_rounded, 'בקש תשלום',
+                _showRequestPaymentDialog,
+                chipColor: const Color(0xFFD97706)),
           _chip(Icons.directions_car_rounded, 'אני בדרך 🚗',
               () => _send('אני בדרך! 🚗 אגיע בקרוב.', 'text'),
               chipColor: const Color(0xFF16A34A)),

@@ -138,7 +138,19 @@
       "Bash(grep -n \"^import ''dart:async''\" c:/Users/aviha/Desktop/anyskill_app/lib/main.dart)",
       "Bash(find c:/Users/aviha/Desktop/anyskill_app -name *admin*users* -type f)",
       "Bash(find c:/Users/aviha/Desktop/anyskill_app -name *admin* -type f)",
-      "Bash(grep -E \"\\\\.dart$\")"
+      "Bash(grep -E \"\\\\.dart$\")",
+      "Bash(claude login:*)",
+      "Bash(grep -r \"inspect\\\\|review\\\\|approve\" /c/Users/aviha/Desktop/anyskill_app/lib --include=*.dart)",
+      "Bash(grep -r \"CacheControl\\\\|Cache-Control\\\\|CSP\\\\|CORS\\\\|headers\" /c/Users/aviha/Desktop/anyskill_app --include=*.dart)",
+      "Bash(grep -r \"Bearer\\\\|token.*Authorization\" /c/Users/aviha/Desktop/anyskill_app/lib --include=*.dart)",
+      "Bash(find /c/Users/aviha/Desktop/anyskill_app -name .env* -o -name *.key -o -name *.pem -o -name *secret*)",
+      "Bash(find /c/Users/aviha -path *firebase_app_check*activate* -name *.dart)",
+      "Bash(find /c/Users/aviha/AppData/Local/Pub/Cache /c/Users/aviha/.pub-cache -path *firebase_app_check* -name *.dart)",
+      "Bash(npx firebase-tools:*)",
+      "Bash(firebase-tools firestore:rules --check)",
+      "Bash(firebase emulators:exec --only firestore \"echo rules loaded\")",
+      "Bash(xargs wc:*)",
+      "Bash(grep \"\\\\.dart$\")"
     ]
   }
 }

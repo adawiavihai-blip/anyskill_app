@@ -21,6 +21,7 @@ import 'live_activity_tab.dart';
 import 'admin_chat_view_screen.dart';
 import 'admin_demo_experts_tab.dart';
 import 'admin_brand_assets_tab.dart';
+import 'admin_payouts_tab.dart';
 import 'admin_banners_tab.dart';
 import 'admin_pro_tab.dart';
 import 'admin_billing_tab.dart';
@@ -37,7 +38,7 @@ class AdminScreen extends StatefulWidget {
 
 class _AdminScreenState extends State<AdminScreen> {
   String _searchQuery  = "";
-  int    _sectionIndex = 0; // 0 = ניהול (Management), 1 = מערכת (System)
+  int    _sectionIndex = 0; // 0 = ניהול, 1 = תוכן, 2 = מערכת
   double _feePct        = 10.0;
   double _urgencyFeePct = 5.0;
   bool   _settingsLoaded = false;
@@ -1255,6 +1256,7 @@ class _AdminScreenState extends State<AdminScreen> {
               index: _sectionIndex,
               children: [
                 _buildManagementSection(_users, _totalCustomers, _totalProviders),
+                _buildContentSection(),
                 _buildSystemSection(),
               ],
             ),
@@ -1273,6 +1275,11 @@ class _AdminScreenState extends State<AdminScreen> {
         ),
         ButtonSegment(
           value: 1,
+          label: Text('תוכן'),
+          icon: Icon(Icons.movie_filter_rounded, size: 15),
+        ),
+        ButtonSegment(
+          value: 2,
           label: Text('מערכת'),
           icon: Icon(Icons.settings_rounded, size: 15),
         ),
@@ -1283,13 +1290,13 @@ class _AdminScreenState extends State<AdminScreen> {
         tapTargetSize:  MaterialTapTargetSize.shrinkWrap,
         visualDensity:  VisualDensity.compact,
         textStyle:      WidgetStateProperty.all(
-          const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
         ),
       ),
     );
   }
 
-  // ── Management section (ניהול) — 13 tabs ──────────────────────────────────
+  // ── Management section (ניהול) — 14 tabs ──────────────────────────────────
 
   Widget _buildManagementSection(
     List<QueryDocumentSnapshot> allUsers,
@@ -1297,7 +1304,7 @@ class _AdminScreenState extends State<AdminScreen> {
     int providers,
   ) {
     return DefaultTabController(
-      length: 15,
+      length: 14,
       child: Column(
         children: [
           // Search bar
@@ -1349,7 +1356,6 @@ class _AdminScreenState extends State<AdminScreen> {
               Tab(text: "דמו ★"),
               Tab(text: "Pro ⭐"),
               Tab(text: "בינה עסקית 🧠"),
-              Tab(text: "וידאו ✅"),
             ],
           ),
           Expanded(
@@ -1369,7 +1375,6 @@ class _AdminScreenState extends State<AdminScreen> {
                 const AdminDemoExpertsTab(),
                 const AdminProTab(),
                 const BusinessAiScreen(),
-                _buildVideoVerificationTab(),
               ],
             ),
           ),
@@ -1378,11 +1383,478 @@ class _AdminScreenState extends State<AdminScreen> {
     );
   }
 
+  // ── Content section (תוכן) — 4 tabs ─────────────────────────────────────
+
+  Widget _buildContentSection() {
+    return DefaultTabController(
+      length: 4,
+      child: Column(
+        children: [
+          const SizedBox(height: 8),
+          const TabBar(
+            isScrollable: true,
+            labelColor:     Color(0xFFD97706),
+            indicatorColor: Color(0xFFD97706),
+            tabs: [
+              Tab(icon: Icon(Icons.auto_stories_rounded, size: 18), text: 'סטוריז 📸'),
+              Tab(icon: Icon(Icons.school_rounded,       size: 18), text: 'אקדמיה 🎓'),
+              Tab(icon: Icon(Icons.videocam_rounded,     size: 18), text: 'וידאו ✅'),
+              Tab(icon: Icon(Icons.lock_outline_rounded, size: 18), text: 'משוב פרטי 🔒'),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _buildStoriesManagementTab(),
+                _buildAcademyManagementTab(),
+                _buildVideoVerificationTab(),
+                _buildPrivateFeedbackTab(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Private feedback tab ───────────────────────────────────────────────────
+  Widget _buildPrivateFeedbackTab() {
+    return FutureBuilder<QuerySnapshot>(
+      future: FirebaseFirestore.instance
+          .collection('reviews')
+          .orderBy('createdAt', descending: true)
+          .limit(100)
+          .get(),
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final allDocs = snap.data?.docs ?? [];
+        // Filter client-side: only reviews with a non-empty privateAdminComment
+        final docs = allDocs.where((doc) {
+          final d = doc.data() as Map<String, dynamic>? ?? {};
+          final msg = d['privateAdminComment']?.toString() ?? '';
+          return msg.trim().isNotEmpty;
+        }).toList();
+
+        if (docs.isEmpty) {
+          return const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.lock_outline_rounded, size: 52, color: Colors.grey),
+                SizedBox(height: 12),
+                Text('אין הודעות פרטיות למנהל',
+                    style: TextStyle(color: Colors.grey, fontSize: 15)),
+              ],
+            ),
+          );
+        }
+
+        return ListView.separated(
+          padding: const EdgeInsets.all(12),
+          itemCount: docs.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 8),
+          itemBuilder: (context, i) {
+            final d = docs[i].data() as Map<String, dynamic>? ?? {};
+            final reviewerName   = d['reviewerName']?.toString()       ?? '—';
+            final privateComment = d['privateAdminComment']?.toString() ?? '';
+            final overallRating  = (d['overallRating'] as num?)?.toDouble()
+                ?? (d['rating'] as num?)?.toDouble()
+                ?? 0.0;
+            final isPublished    = d['isPublished'] as bool? ?? true;
+            final ts             = d['createdAt'] ?? d['timestamp'];
+            final timeStr = ts is Timestamp
+                ? DateFormat('dd/MM/yy HH:mm').format(ts.toDate())
+                : '—';
+            final isClientReview = d['isClientReview'] as bool? ?? true;
+
+            return Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFFCD34D)),
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.04),
+                      blurRadius: 8),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: isPublished
+                                ? const Color(0xFFD1FAE5)
+                                : const Color(0xFFFEE2E2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            isPublished ? 'פורסם' : 'ממתין',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: isPublished
+                                  ? const Color(0xFF065F46)
+                                  : const Color(0xFF991B1B),
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              overallRating.toStringAsFixed(1),
+                              style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFFFBBF24)),
+                            ),
+                            const SizedBox(width: 3),
+                            const Icon(Icons.star_rounded,
+                                size: 14, color: Color(0xFFFBBF24)),
+                            const SizedBox(width: 8),
+                            Text(
+                              isClientReview ? 'לקוח→מומחה' : 'מומחה→לקוח',
+                              style: const TextStyle(
+                                  fontSize: 11, color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'מאת: $reviewerName',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF374151)),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF3C7),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        privateComment,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                            fontSize: 13, color: Color(0xFF92400E)),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      timeStr,
+                      textAlign: TextAlign.right,
+                      style:
+                          const TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ── Stories management tab ─────────────────────────────────────────────────
+  Widget _buildStoriesManagementTab() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('stories')
+          .orderBy('timestamp', descending: true)
+          .limit(50)
+          .snapshots(),
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final docs = snap.data?.docs ?? [];
+        if (docs.isEmpty) {
+          return const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.auto_stories_rounded, size: 52, color: Colors.grey),
+                SizedBox(height: 12),
+                Text('אין סטוריז פעילים כרגע',
+                    style: TextStyle(color: Colors.grey, fontSize: 15)),
+              ],
+            ),
+          );
+        }
+        return ListView.separated(
+          padding: const EdgeInsets.all(12),
+          itemCount: docs.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 8),
+          itemBuilder: (context, i) {
+            final d = docs[i].data() as Map<String, dynamic>? ?? {};
+            final uid          = docs[i].id;
+            final name         = d['providerName']?.toString()   ?? uid;
+            final serviceType  = d['serviceType']?.toString()    ?? '';
+            final videoUrl     = d['videoUrl']?.toString()       ?? '';
+            final ts           = d['timestamp'];
+            final timeStr      = ts is Timestamp
+                ? DateFormat('dd/MM HH:mm').format(ts.toDate())
+                : '—';
+            return Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8)],
+              ),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                leading: CircleAvatar(
+                  radius: 24,
+                  backgroundColor: const Color(0xFFFEF3C7),
+                  backgroundImage: (d['providerAvatar']?.toString() ?? '').startsWith('http')
+                      ? NetworkImage(d['providerAvatar'] as String)
+                      : null,
+                  child: (d['providerAvatar']?.toString() ?? '').startsWith('http')
+                      ? null
+                      : const Icon(Icons.person, color: Color(0xFFD97706)),
+                ),
+                title: Text(name,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (serviceType.isNotEmpty) Text(serviceType,
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF6366F1))),
+                    Text(timeStr,
+                        style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                    if (videoUrl.isNotEmpty)
+                      Text('📹 ${videoUrl.substring(0, videoUrl.length.clamp(0, 50))}…',
+                          style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                  ],
+                ),
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline_rounded,
+                      color: Colors.redAccent, size: 22),
+                  tooltip: 'מחק סטורי',
+                  onPressed: () async {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (_) => AlertDialog(
+                        title: const Text('מחיקת סטורי'),
+                        content: Text('למחוק את הסטורי של $name?'),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(context, false),
+                              child: const Text('ביטול')),
+                          TextButton(onPressed: () => Navigator.pop(context, true),
+                              child: const Text('מחק', style: TextStyle(color: Colors.red))),
+                        ],
+                      ),
+                    );
+                    if (confirm == true) {
+                      await FirebaseFirestore.instance
+                          .collection('stories')
+                          .doc(uid)
+                          .delete();
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('🗑️ הסטורי נמחק'),
+                            backgroundColor: Colors.redAccent,
+                          ),
+                        );
+                      }
+                    }
+                  },
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ── Academy management tab ─────────────────────────────────────────────────
+  Widget _buildAcademyManagementTab() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('courses')
+          .orderBy('order')
+          .limit(50)
+          .snapshots(),
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final docs = snap.data?.docs ?? [];
+
+        return ListView(
+          padding: const EdgeInsets.all(12),
+          children: [
+            // ── Summary card ──────────────────────────────────────────────
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.school_rounded, color: Colors.white, size: 32),
+                  const SizedBox(width: 14),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('${docs.length} קורסים פעילים',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold)),
+                      const Text('AnySkill Academy',
+                          style: TextStyle(color: Colors.white70, fontSize: 12)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            // ── Course list ───────────────────────────────────────────────
+            if (docs.isEmpty)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Text('אין קורסים עדיין. הוסף קורסים ל-Firestore בקולקציית courses.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey, fontSize: 14)),
+                ),
+              )
+            else
+              ...docs.map((doc) {
+                final d           = doc.data() as Map<String, dynamic>? ?? {};
+                final title       = d['title']?.toString()       ?? '—';
+                final category    = d['category']?.toString()    ?? '';
+                final duration    = d['duration']?.toString()    ?? '';
+                final order       = (d['order'] as num? ?? 0).toInt();
+                final xpReward    = (d['xpReward'] as num? ?? 200).toInt();
+                final quizCount   = (d['quizQuestions'] as List? ?? []).length;
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8)],
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEDE9FE),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text('#$order',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF6366F1),
+                                fontSize: 13)),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(title,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 14)),
+                            const SizedBox(height: 2),
+                            Wrap(
+                              spacing: 6,
+                              children: [
+                                if (category.isNotEmpty)
+                                  _miniChip(category, const Color(0xFF6366F1)),
+                                if (duration.isNotEmpty)
+                                  _miniChip('⏱ $duration', Colors.teal),
+                                _miniChip('+$xpReward XP', Colors.amber.shade700),
+                                _miniChip('$quizCount שאלות', Colors.grey.shade600),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline_rounded,
+                            color: Colors.redAccent, size: 20),
+                        tooltip: 'מחק קורס',
+                        onPressed: () async {
+                          final confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              title: const Text('מחיקת קורס'),
+                              content: Text('למחוק את הקורס "$title"?'),
+                              actions: [
+                                TextButton(
+                                    onPressed: () => Navigator.pop(context, false),
+                                    child: const Text('ביטול')),
+                                TextButton(
+                                    onPressed: () => Navigator.pop(context, true),
+                                    child: const Text('מחק',
+                                        style: TextStyle(color: Colors.red))),
+                              ],
+                            ),
+                          );
+                          if (confirm == true) {
+                            await FirebaseFirestore.instance
+                                .collection('courses')
+                                .doc(doc.id)
+                                .delete();
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _miniChip(String label, Color color) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.1),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Text(label,
+        style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w600)),
+  );
+
   // ── System section (מערכת) — 7 tabs ──────────────────────────────────────
 
   Widget _buildSystemSection() {
     return DefaultTabController(
-      length: 8,
+      length: 9,
       child: Column(
         children: [
           const SizedBox(height: 8),
@@ -1399,6 +1871,7 @@ class _AdminScreenState extends State<AdminScreen> {
               Tab(text: "ביצועים 🖥️"),
               Tab(text: "מיתוג 🎨"),
               Tab(text: "חסימות 🛡️"),
+              Tab(text: "תשלומים 💳"),
             ],
           ),
           Expanded(
@@ -1412,6 +1885,7 @@ class _AdminScreenState extends State<AdminScreen> {
                 const SystemPerformanceTab(),
                 const AdminBrandAssetsTab(),
                 _buildChatGuardTab(),
+                const AdminPayoutsTab(),
               ],
             ),
           ),

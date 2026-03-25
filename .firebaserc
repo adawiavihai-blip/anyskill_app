@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "anyskill-6fdf3"
-  }
+  },
+  "targets": {
+    "anyskill-6fdf3": {
+      "hosting": {
+        "app": [
+          "anyskill-6fdf3"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
