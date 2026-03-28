@@ -13,38 +13,45 @@ class PaymentModule {
   }) async {
     final firestore = db ?? FirebaseFirestore.instance;
     try {
-      await firestore.runTransaction((tx) async {
-        // Read job first to validate status and amount — prevents double-refund
-        // and guards against arbitrary amount injection if the caller is tampered.
-        final jobSnap = await tx.get(firestore.collection('jobs').doc(jobId));
-        if (!jobSnap.exists) throw Exception('Job $jobId not found');
-        final jobData = jobSnap.data() as Map<String, dynamic>;
-        final currentStatus = jobData['status'] as String? ?? '';
-        // Idempotency: already cancelled means the refund was already issued.
-        if (currentStatus == 'cancelled') return;
-        if (currentStatus != 'paid_escrow') {
-          throw Exception('Cannot cancel job in status "$currentStatus"');
-        }
-        // Use the authoritative amount from Firestore, not the caller-supplied value.
+      // Detect Stripe vs legacy job before touching anything.
+      final jobSnap = await firestore.collection('jobs').doc(jobId).get();
+      if (!jobSnap.exists) throw Exception('Job $jobId not found');
+      final jobData      = jobSnap.data() as Map<String, dynamic>;
+      final currentStatus = jobData['status'] as String? ?? '';
+      if (currentStatus == 'cancelled') return true; // idempotent
+      if (currentStatus != 'paid_escrow') {
+        throw Exception('Cannot cancel job in status "$currentStatus"');
+      }
+
+      final isStripeJob = jobData['stripePaymentIntentId'] != null;
+
+      if (isStripeJob) {
+        // Stripe path: CF issues a full refund back to the customer's card.
+        await FirebaseFunctions.instance
+            .httpsCallable('processRefund')
+            .call({'jobId': jobId, 'reason': 'booking_cancelled'});
+      } else {
+        // Legacy path: return internal credits to customer's Firestore balance.
         final authorisedAmount =
             (jobData['totalAmount'] as num? ?? totalAmount).toDouble();
-
-        tx.update(firestore.collection('jobs').doc(jobId), {
-          'status': 'cancelled',
-          'cancelledAt': FieldValue.serverTimestamp(),
+        await firestore.runTransaction((tx) async {
+          tx.update(firestore.collection('jobs').doc(jobId), {
+            'status': 'cancelled',
+            'cancelledAt': FieldValue.serverTimestamp(),
+          });
+          tx.update(firestore.collection('users').doc(customerId), {
+            'balance': FieldValue.increment(authorisedAmount),
+          });
+          tx.set(firestore.collection('transactions').doc(), {
+            'userId':    customerId,
+            'amount':    authorisedAmount,
+            'title':     'ביטול הזמנה — החזר כספי',
+            'timestamp': FieldValue.serverTimestamp(),
+            'type':      'refund',
+            'jobId':     jobId,
+          });
         });
-        tx.update(firestore.collection('users').doc(customerId), {
-          'balance': FieldValue.increment(authorisedAmount),
-        });
-        tx.set(firestore.collection('transactions').doc(), {
-          'userId': customerId,
-          'amount': authorisedAmount,
-          'title': 'ביטול הזמנה — החזר כספי',
-          'timestamp': FieldValue.serverTimestamp(),
-          'type': 'refund',
-          'jobId': jobId,
-        });
-      });
+      }
 
       if (chatRoomId.isNotEmpty) {
         await firestore
@@ -52,15 +59,15 @@ class PaymentModule {
             .doc(chatRoomId)
             .collection('messages')
             .add({
-          'senderId': 'system',
-          'message': '❌ ההזמנה בוטלה. הסכום הוחזר לארנק הלקוח.',
-          'type': 'text',
+          'senderId':  'system',
+          'message':   '❌ ההזמנה בוטלה. הסכום הוחזר ללקוח.',
+          'type':      'text',
           'timestamp': FieldValue.serverTimestamp(),
         });
       }
       return true;
     } catch (e) {
-      debugPrint("cancelEscrow error: $e");
+      debugPrint('cancelEscrow error: $e');
       return false;
     }
   }
@@ -74,38 +81,46 @@ class PaymentModule {
   }) async {
     final firestore = db ?? FirebaseFirestore.instance;
     try {
-      await firestore.runTransaction((tx) async {
-        // Read job first — idempotency guard and amount validation.
-        final jobSnap = await tx.get(firestore.collection('jobs').doc(jobId));
-        if (!jobSnap.exists) throw Exception('Job $jobId not found');
-        final jobData = jobSnap.data() as Map<String, dynamic>;
-        final currentStatus = jobData['status'] as String? ?? '';
-        // Already resolved — don't issue a second refund.
-        if (currentStatus == 'refunded') return;
+      final jobSnap = await firestore.collection('jobs').doc(jobId).get();
+      if (!jobSnap.exists) throw Exception('Job $jobId not found');
+      final jobData       = jobSnap.data() as Map<String, dynamic>;
+      final currentStatus = jobData['status'] as String? ?? '';
+      if (currentStatus == 'refunded') return true; // idempotent
+
+      final isStripeJob = jobData['stripePaymentIntentId'] != null;
+
+      if (isStripeJob) {
+        // Stripe path: admin-triggered full refund via CF.
+        await FirebaseFunctions.instance
+            .httpsCallable('processRefund')
+            .call({'jobId': jobId, 'reason': 'dispute_resolved_customer'});
+      } else {
+        // Legacy path: return internal credits.
         final authorisedAmount =
             (jobData['totalAmount'] as num? ?? totalAmount).toDouble();
-
-        tx.update(firestore.collection('jobs').doc(jobId), {
-          'status': 'refunded',
-          'resolvedAt': FieldValue.serverTimestamp(),
-          'resolvedBy': 'admin',
-          'resolution': 'refund',
+        await firestore.runTransaction((tx) async {
+          tx.update(firestore.collection('jobs').doc(jobId), {
+            'status':     'refunded',
+            'resolvedAt': FieldValue.serverTimestamp(),
+            'resolvedBy': 'admin',
+            'resolution': 'refund',
+          });
+          tx.update(firestore.collection('users').doc(customerId), {
+            'balance': FieldValue.increment(authorisedAmount),
+          });
+          tx.set(firestore.collection('transactions').doc(), {
+            'userId':    customerId,
+            'amount':    authorisedAmount,
+            'title':     'החזר כספי — מחלוקת נפתרה לטובתך',
+            'timestamp': FieldValue.serverTimestamp(),
+            'type':      'refund',
+            'jobId':     jobId,
+          });
         });
-        tx.update(firestore.collection('users').doc(customerId), {
-          'balance': FieldValue.increment(authorisedAmount),
-        });
-        tx.set(firestore.collection('transactions').doc(), {
-          'userId': customerId,
-          'amount': authorisedAmount,
-          'title': 'החזר כספי — מחלוקת נפתרה לטובתך',
-          'timestamp': FieldValue.serverTimestamp(),
-          'type': 'refund',
-          'jobId': jobId,
-        });
-      });
+      }
       return true;
     } catch (e) {
-      debugPrint("refundDisputedJob error: $e");
+      debugPrint('refundDisputedJob error: $e');
       return false;
     }
   }
@@ -119,24 +134,41 @@ class PaymentModule {
     required double totalAmount,
   }) async {
     try {
-      debugPrint("[PPR-CLIENT] calling processPaymentRelease: jobId=$jobId expertId=$expertId total=$totalAmount");
-      final result = await FirebaseFunctions.instance
-          .httpsCallable('processPaymentRelease')
-          .call({
-        'jobId': jobId,
-        'expertId': expertId,
-        'expertName': expertName,
-        'customerName': customerName,
-        'totalAmount': totalAmount,
-      });
-      debugPrint("[PPR-CLIENT] success: ${result.data}");
-      return null; // no error
+      // Check whether this job was paid via Stripe or the legacy Firestore
+      // credits system, and route to the correct Cloud Function accordingly.
+      final jobSnap = await FirebaseFirestore.instance
+          .collection('jobs')
+          .doc(jobId)
+          .get();
+      final isStripeJob =
+          (jobSnap.data() ?? {})['stripePaymentIntentId'] != null;
+
+      if (isStripeJob) {
+        // Stripe path: CF transfers net to provider's Express account.
+        debugPrint("[RELEASE] Stripe job — calling releaseEscrow: $jobId");
+        await FirebaseFunctions.instance
+            .httpsCallable('releaseEscrow')
+            .call({'jobId': jobId});
+      } else {
+        // Legacy path: CF moves Firestore credits between balance fields.
+        debugPrint("[RELEASE] Legacy job — calling processPaymentRelease: $jobId");
+        await FirebaseFunctions.instance
+            .httpsCallable('processPaymentRelease')
+            .call({
+          'jobId':        jobId,
+          'expertId':     expertId,
+          'expertName':   expertName,
+          'customerName': customerName,
+          'totalAmount':  totalAmount,
+        });
+      }
+      return null;
     } on FirebaseFunctionsException catch (e) {
       final msg = "[${e.code}] ${e.message}${e.details != null ? ' | details: ${e.details}' : ''}";
-      debugPrint("[PPR-CLIENT] FirebaseFunctionsException: $msg");
+      debugPrint("[RELEASE] FirebaseFunctionsException: $msg");
       return msg;
     } catch (e) {
-      debugPrint("[PPR-CLIENT] unexpected error: $e");
+      debugPrint("[RELEASE] unexpected error: $e");
       return e.toString();
     }
   }

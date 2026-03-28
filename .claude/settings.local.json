@@ -150,7 +150,8 @@
       "Bash(firebase-tools firestore:rules --check)",
       "Bash(firebase emulators:exec --only firestore \"echo rules loaded\")",
       "Bash(xargs wc:*)",
-      "Bash(grep \"\\\\.dart$\")"
+      "Bash(grep \"\\\\.dart$\")",
+      "Bash(node test_stripe_custom.js)"
     ]
   }
 }

@@ -1,7 +1,7 @@
 name: anyskill_app
 description: "A new Flutter project for AnySkill."
 publish_to: 'none'
-version: 8.9.0+1
+version: 8.9.3+1
 
 environment:
   sdk: ^3.7.0
@@ -42,6 +42,8 @@ dependencies:
   firebase_app_check: 0.4.1+5
   youtube_player_iframe: ^5.2.2
   audioplayers: ^6.1.0
+  flutter_stripe: ^11.3.0          # Stripe Payment Sheet (web + mobile)
+  webview_flutter: ^4.10.0         # Stripe Express onboarding WebView
 
 dependency_overrides:
   # fl_chart 1.x calls translateByDouble/scaleByDouble which were added

@@ -2541,6 +2541,19 @@ final Map<String, Map<String, String>> _translations = {
 // ── AppLocalizations class ────────────────────────────────────────────────────
 
 class AppLocalizations {
+  // ── Content overrides (from Firestore CMS) ─────────────────────────────────
+  static Map<String, String> _overrides = {};
+
+  /// Updates the override map with new values from the CMS.
+  static set overrides(Map<String, String> value) => _overrides = value;
+
+  /// Gets the default value for a key (from the static translations, not overrides).
+  static String getDefault(String key, String locale) {
+    return _translations[locale]?[key]
+        ?? _translations['he']?[key]
+        ?? key;
+  }
+
   final Locale locale;
   AppLocalizations(this.locale);
 
@@ -2552,7 +2565,8 @@ class AppLocalizations {
   // ── Core lookup with Hebrew fallback ────────────────────────────────────────
   String _t(String key) {
     final lang = locale.languageCode;
-    return _translations[lang]?[key]
+    return _overrides[key]
+        ?? _translations[lang]?[key]
         ?? _translations['he']?[key]
         ?? key;
   }

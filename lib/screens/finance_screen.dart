@@ -9,12 +9,13 @@ import 'withdrawal_modal.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/hint_icon.dart';
 import '../services/audio_service.dart';
+import '../services/stripe_service.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
-const _kCardStart  = Color(0xFF1A0E3C);
-const _kCardMid    = Color(0xFF3D1F8B);
-const _kCardEnd    = Color(0xFF6D28D9);
-const _kChartLine  = Color(0xFF6366F1);
+const _kCardStart = Color(0xFF1A0E3C);
+const _kCardMid   = Color(0xFF3D1F8B);
+const _kCardEnd   = Color(0xFF6D28D9);
+const _kChartLine = Color(0xFF6366F1);
 
 class FinanceScreen extends StatefulWidget {
   const FinanceScreen({super.key});
@@ -25,18 +26,23 @@ class FinanceScreen extends StatefulWidget {
 
 class _FinanceScreenState extends State<FinanceScreen>
     with SingleTickerProviderStateMixin {
-  // ── Count-up animation ────────────────────────────────────────────────────
+  // ── Count-up animation (provider only) ───────────────────────────────────
   late AnimationController _countCtrl;
   late Animation<double>   _countAnim;
   bool   _animStarted = false;
   double _animTarget   = 0;
 
-  // ── 7-day earnings chart ──────────────────────────────────────────────────
-  List<double> _dailyEarnings = List.filled(7, 0); // index 0 = 6 days ago
-  bool _chartLoaded = false;
-  double _pendingWeekly  = 0; // this week's earnings (< 7 days)
-  double _finalizedTotal = 0; // older than 7 days, not yet paid
-  DateTime? _nextPayoutDate;  // next Monday
+  // ── 7-day earnings chart (provider only) ─────────────────────────────────
+  List<double> _dailyEarnings = List.filled(7, 0);
+  bool     _chartLoaded    = false;
+  double   _pendingWeekly  = 0;
+  double   _finalizedTotal = 0;
+  DateTime? _nextPayoutDate;
+
+  // ── Saved payment methods (client only) ──────────────────────────────────
+  List<SavedCard> _savedCards  = [];
+  bool _cardsLoading           = true;
+  bool _didLoadCards           = false;  // guard: load exactly once
 
   @override
   void initState() {
@@ -55,7 +61,7 @@ class _FinanceScreenState extends State<FinanceScreen>
     super.dispose();
   }
 
-  // Starts the counter once. Re-calling with the same value is a no-op.
+  // ── Provider: count-up ────────────────────────────────────────────────────
   void _startCountUp(double balance) {
     if (_animStarted && balance == _animTarget) return;
     _animStarted = true;
@@ -65,10 +71,10 @@ class _FinanceScreenState extends State<FinanceScreen>
       CurvedAnimation(parent: _countCtrl, curve: Curves.easeOutCubic),
     );
     _countCtrl.forward();
-    // 💎 Wealth Crystal — fires as the balance animates into view
     if (balance > 0) AudioService.instance.play(AppSound.wealthCrystal);
   }
 
+  // ── Provider: 7-day chart data ────────────────────────────────────────────
   Future<void> _loadChartData() async {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
     if (uid.isEmpty) return;
@@ -82,22 +88,20 @@ class _FinanceScreenState extends State<FinanceScreen>
       final earnings = List<double>.filled(7, 0);
       final now      = DateTime.now();
       for (final doc in snap.docs) {
-        final d   = doc.data();
-        final ts  = d['timestamp'] as Timestamp?;
-        final amt = (d['amount'] as num?)?.toDouble() ?? 0;
+        final d      = doc.data();
+        final ts     = d['timestamp'] as Timestamp?;
+        final amt    = (d['amount'] as num?)?.toDouble() ?? 0;
         if (ts == null || amt <= 0) continue;
         final daysAgo = now.difference(ts.toDate()).inDays;
-        if (daysAgo >= 0 && daysAgo < 7) {
-          earnings[6 - daysAgo] += amt;
-        }
+        if (daysAgo >= 0 && daysAgo < 7) earnings[6 - daysAgo] += amt;
       }
 
       double pendingW  = 0;
       double finalized = 0;
       for (final doc in snap.docs) {
-        final d   = doc.data();
-        final ts  = d['timestamp'] as Timestamp?;
-        final amt = (d['amount'] as num?)?.toDouble() ?? 0;
+        final d          = doc.data();
+        final ts         = d['timestamp']    as Timestamp?;
+        final amt        = (d['amount'] as num?)?.toDouble() ?? 0;
         final paidStatus = d['payoutStatus']?.toString() ?? '';
         if (ts == null || amt <= 0) continue;
         final daysAgo = now.difference(ts.toDate()).inDays;
@@ -107,12 +111,12 @@ class _FinanceScreenState extends State<FinanceScreen>
           finalized += amt;
         }
       }
-      // Next Monday
-      final today = DateTime.now();
-      final daysUntilMonday = (DateTime.monday - today.weekday + 7) % 7;
-      final nextMonday = daysUntilMonday == 0
+
+      final today          = DateTime.now();
+      final daysUntilMon   = (DateTime.monday - today.weekday + 7) % 7;
+      final nextMonday     = daysUntilMon == 0
           ? today.add(const Duration(days: 7))
-          : today.add(Duration(days: daysUntilMonday));
+          : today.add(Duration(days: daysUntilMon));
 
       if (mounted) {
         setState(() {
@@ -128,8 +132,32 @@ class _FinanceScreenState extends State<FinanceScreen>
     }
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
+  // ── Client: saved cards ───────────────────────────────────────────────────
+  Future<void> _loadSavedCards() async {
+    if (mounted) setState(() => _cardsLoading = true);
+    final cards = await StripeService.listSavedCards();
+    if (mounted) setState(() { _savedCards = cards; _cardsLoading = false; });
+  }
 
+  Future<void> _addPaymentMethod() async {
+    // Capture messenger before any await to avoid BuildContext-across-async-gap lint.
+    final messenger = ScaffoldMessenger.of(context);
+    final error = await StripeService.addPaymentMethod();
+    if (!mounted) return;
+    if (error == null) {
+      await _loadSavedCards();
+      messenger.showSnackBar(const SnackBar(
+        content: Text('כרטיס נשמר בהצלחה ✓'),
+        backgroundColor: Color(0xFF16A34A),
+      ));
+    } else if (error != 'canceled') {
+      messenger.showSnackBar(
+        SnackBar(content: Text(error), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final uid  = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -143,7 +171,31 @@ class _FinanceScreenState extends State<FinanceScreen>
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0.5,
-        actions: const [HintIcon(screenKey: 'wallet')],
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'רענן',
+            onPressed: () async {
+              final uid2 = FirebaseAuth.instance.currentUser?.uid ?? '';
+              if (uid2.isEmpty) return;
+              try {
+                final snap = await FirebaseFirestore.instance
+                    .collection('users')
+                    .doc(uid2)
+                    .get(const GetOptions(source: Source.server));
+                final d = snap.data() ?? {};
+                debugPrint('[Wallet refresh] '
+                    'balance type=${d['balance']?.runtimeType} val=${d['balance']} | '
+                    'pendingBalance type=${d['pendingBalance']?.runtimeType} val=${d['pendingBalance']}');
+                // Reset animation so the count-up re-runs with the fresh value
+                if (mounted) setState(() { _animStarted = false; });
+              } catch (e) {
+                debugPrint('[Wallet refresh] error: $e');
+              }
+            },
+          ),
+          const HintIcon(screenKey: 'wallet'),
+        ],
       ),
       body: StreamBuilder<DocumentSnapshot>(
         stream: FirebaseFirestore.instance
@@ -153,57 +205,86 @@ class _FinanceScreenState extends State<FinanceScreen>
         builder: (context, userSnap) {
           final userData =
               userSnap.data?.data() as Map<String, dynamic>? ?? {};
-          final balance =
-              (userData['balance'] as num? ?? 0).toDouble();
-          final pending =
-              (userData['pendingBalance'] as num? ?? 0).toDouble();
+          // Robust cast: handles int, double, NaN, Infinity, and String values.
+          // `as num?` throws if Firestore stored the value as a String.
+          // `?? 0` does NOT catch NaN (NaN is not null) — isFinite is required.
+          double safeDouble(String field, dynamic raw) {
+            if (raw == null) return 0.0;
+            if (raw is! num) {
+              debugPrint('[Wallet] $field unexpected type '
+                  '${raw.runtimeType} value="$raw" — parsing as string');
+            }
+            final d = (raw is num)
+                ? raw.toDouble()
+                : double.tryParse(raw.toString()) ?? 0.0;
+            if (!d.isFinite) {
+              debugPrint('[Wallet] $field non-finite ($d) clamped to 0');
+            }
+            return d.isFinite ? d : 0.0;
+          }
+          final balance = safeDouble('balance',        userData['balance']);
+          final pending = safeDouble('pendingBalance', userData['pendingBalance']);
           final isProvider = userData['isProvider'] == true;
 
-          // Kick off the count-up once data arrives
-          if (userSnap.connectionState != ConnectionState.waiting) {
+          // Trigger one-time card load when we know the user is a client
+          if (!isProvider && !_didLoadCards &&
+              userSnap.connectionState != ConnectionState.waiting) {
+            _didLoadCards = true;
+            WidgetsBinding.instance
+                .addPostFrameCallback((_) => _loadSavedCards());
+          }
+
+          // Kick off balance count-up for providers
+          if (isProvider &&
+              userSnap.connectionState != ConnectionState.waiting) {
             WidgetsBinding.instance
                 .addPostFrameCallback((_) => _startCountUp(balance));
           }
 
           return CustomScrollView(
             slivers: [
-              // ── Loading state ────────────────────────────────────────
               if (userSnap.connectionState == ConnectionState.waiting)
                 const SliverFillRemaining(
                   child: Center(child: CircularProgressIndicator()),
                 )
               else ...[
 
-                // ── Premium glass card ─────────────────────────────────
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-                    child: _buildGlassCard(
-                        context, uid, balance, pending, isProvider),
-                  ),
-                ),
-
-                // ── Payout cycle card (providers only) ────────────────
-                if (isProvider && _chartLoaded) ...[
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                      child: _buildPayoutCycleCard(),
-                    ),
-                  ),
-                ],
-
-                // ── 7-day earnings chart (providers only) ─────────────
-                if (_chartLoaded && isProvider) ...[
+                // ═══════════════════ PROVIDER VIEW ══════════════════════
+                if (isProvider) ...[
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-                      child: _buildEarningsChart(context),
+                      child: _buildProviderBalanceCard(
+                          context, uid, balance, pending),
+                    ),
+                  ),
+                  if (_chartLoaded) ...[
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                        child: _buildPayoutCycleCard(),
+                      ),
+                    ),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+                        child: _buildEarningsChart(context),
+                      ),
+                    ),
+                  ],
+                ],
+
+                // ═══════════════════ CLIENT VIEW ════════════════════════
+                if (!isProvider) ...[
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+                      child: _buildClientPaymentCard(context),
                     ),
                   ),
                 ],
 
-                // ── Promo banners ─────────────────────────────────────
+                // ── Promo banners (both roles) ─────────────────────────
                 const SliverToBoxAdapter(
                   child: Padding(
                     padding: EdgeInsets.symmetric(vertical: 14),
@@ -211,7 +292,7 @@ class _FinanceScreenState extends State<FinanceScreen>
                   ),
                 ),
 
-                // ── Section title ─────────────────────────────────────
+                // ── Recent activity header (both roles) ────────────────
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
@@ -226,7 +307,6 @@ class _FinanceScreenState extends State<FinanceScreen>
                   ),
                 ),
 
-                // ── Transactions ──────────────────────────────────────
                 _buildTransactionSliver(uid),
 
                 const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
@@ -238,10 +318,12 @@ class _FinanceScreenState extends State<FinanceScreen>
     );
   }
 
-  // ── Glassmorphism balance card ─────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PROVIDER — glass balance card
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  Widget _buildGlassCard(BuildContext context, String uid, double balance,
-      double pending, bool isProvider) {
+  Widget _buildProviderBalanceCard(BuildContext context, String uid,
+      double balance, double pending) {
     final l10n = AppLocalizations.of(context);
     return Container(
       decoration: BoxDecoration(
@@ -261,24 +343,17 @@ class _FinanceScreenState extends State<FinanceScreen>
             blurRadius: 36,
             offset: const Offset(0, 14),
           ),
-          BoxShadow(
-            color: Colors.white.withValues(alpha: 0.05),
-            blurRadius: 1,
-            offset: const Offset(0, 1),
-          ),
         ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(26),
         child: Stack(
           children: [
-            // Glass shimmer orbs
+            // Glass orbs
             Positioned(
-              top: -50,
-              right: -40,
+              top: -50, right: -40,
               child: Container(
-                width: 200,
-                height: 200,
+                width: 200, height: 200,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: RadialGradient(colors: [
@@ -289,11 +364,9 @@ class _FinanceScreenState extends State<FinanceScreen>
               ),
             ),
             Positioned(
-              bottom: -60,
-              left: -30,
+              bottom: -60, left: -30,
               child: Container(
-                width: 160,
-                height: 160,
+                width: 160, height: 160,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: RadialGradient(colors: [
@@ -303,16 +376,11 @@ class _FinanceScreenState extends State<FinanceScreen>
                 ),
               ),
             ),
-
-            // Card content
             Padding(
-              padding: isProvider
-                  ? const EdgeInsets.fromLTRB(24, 24, 24, 24)
-                  : const EdgeInsets.fromLTRB(20, 14, 20, 16),
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  // ── Header: chip + badge ─────────────────────────────
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -345,10 +413,7 @@ class _FinanceScreenState extends State<FinanceScreen>
                       _buildChipIcon(),
                     ],
                   ),
-
-                  SizedBox(height: isProvider ? 22 : 10),
-
-                  // ── Balance label ────────────────────────────────────
+                  const SizedBox(height: 22),
                   Text(
                     l10n.financeAvailableBalance,
                     style: TextStyle(
@@ -358,92 +423,82 @@ class _FinanceScreenState extends State<FinanceScreen>
                     ),
                   ),
                   const SizedBox(height: 4),
-
-                  // ── Animated count-up ────────────────────────────────
                   AnimatedBuilder(
                     animation: _countCtrl,
                     builder: (_, __) => Text(
                       '₪${_countAnim.value.toStringAsFixed(0)}',
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: Colors.white,
-                        fontSize: isProvider ? 46 : 34,
+                        fontSize: 46,
                         fontWeight: FontWeight.bold,
                         letterSpacing: -1.5,
                         height: 1.1,
                       ),
                     ),
                   ),
-
-                  // ── Pending balance (providers only) ─────────────────
-                  if (isProvider) ...[
-                    const SizedBox(height: 6),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.10),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.hourglass_top_rounded,
-                                  size: 11,
-                                  color: Colors.white.withValues(alpha: 0.65)),
-                              const SizedBox(width: 4),
-                              Text(
-                                '₪${pending.toStringAsFixed(0)} ${l10n.financePending}',
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.65),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w500,
-                                ),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.hourglass_top_rounded,
+                                size: 11,
+                                color: Colors.white.withValues(alpha: 0.65)),
+                            const SizedBox(width: 4),
+                            Text(
+                              '₪${pending.toStringAsFixed(0)} ${l10n.financePending}',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.65),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      l10n.financeMinWithdraw,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.38),
-                        fontSize: 11,
                       ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    l10n.financeMinWithdraw,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.38),
+                      fontSize: 11,
                     ),
-                  ],
-
-                  SizedBox(height: isProvider ? 22 : 14),
-
-                  // ── Action buttons ───────────────────────────────────
-                  if (isProvider)
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white,
-                          side: BorderSide(
-                              color: Colors.white.withValues(alpha: 0.50),
-                              width: 1.5),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14)),
-                          padding: const EdgeInsets.symmetric(vertical: 13),
-                          backgroundColor:
-                              Colors.white.withValues(alpha: 0.10),
-                        ),
-                        icon: const Icon(Icons.savings_rounded, size: 17),
-                        label: Text(l10n.financeWithdrawButton,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13)),
-                        onPressed: () =>
-                            showWithdrawalModal(context, uid, balance),
+                  ),
+                  const SizedBox(height: 22),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(
+                            color: Colors.white.withValues(alpha: 0.50),
+                            width: 1.5),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 13),
+                        backgroundColor:
+                            Colors.white.withValues(alpha: 0.10),
                       ),
+                      icon: const Icon(Icons.savings_rounded, size: 17),
+                      label: Text(l10n.financeWithdrawButton,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 13)),
+                      onPressed: () =>
+                          showWithdrawalModal(context, uid, balance),
                     ),
+                  ),
                 ],
               ),
             ),
@@ -453,7 +508,263 @@ class _FinanceScreenState extends State<FinanceScreen>
     );
   }
 
-  // ── EMV-style chip icon ────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CLIENT — saved payment methods card
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildClientPaymentCard(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [_kCardStart, _kCardMid, _kCardEnd],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.18),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _kCardEnd.withValues(alpha: 0.50),
+            blurRadius: 36,
+            offset: const Offset(0, 14),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(26),
+        child: Stack(
+          children: [
+            // Glass orb
+            Positioned(
+              top: -50, right: -40,
+              child: Container(
+                width: 200, height: 200,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(colors: [
+                    Colors.white.withValues(alpha: 0.10),
+                    Colors.transparent,
+                  ]),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  // Header row
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // Stripe secure badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.2)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.lock_rounded,
+                                size: 12, color: Colors.white70),
+                            const SizedBox(width: 5),
+                            Text(
+                              'תשלום מאובטח',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.white.withValues(alpha: 0.80),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      _buildChipIcon(),
+                    ],
+                  ),
+
+                  const SizedBox(height: 18),
+
+                  // Section title
+                  Text(
+                    'אמצעי תשלום שמורים',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.65),
+                      fontSize: 13,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // Cards list / loading / empty state
+                  if (_cardsLoading)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Center(
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    )
+                  else if (_savedCards.isEmpty)
+                    _buildNoCardsState()
+                  else
+                    ..._savedCards.map((card) => _buildSavedCardTile(card)),
+
+                  const SizedBox(height: 16),
+
+                  // Add Payment Method button
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(
+                            color: Colors.white.withValues(alpha: 0.50),
+                            width: 1.5),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 13),
+                        backgroundColor:
+                            Colors.white.withValues(alpha: 0.10),
+                      ),
+                      icon: const Icon(Icons.add_card_rounded, size: 18),
+                      label: const Text(
+                        'הוסף אמצעי תשלום',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      onPressed: _addPaymentMethod,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoCardsState() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 18),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.12),
+          style: BorderStyle.solid,
+        ),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.credit_card_off_rounded,
+              size: 32, color: Colors.white.withValues(alpha: 0.40)),
+          const SizedBox(height: 8),
+          Text(
+            'לא נמצאו כרטיסים שמורים',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.55),
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'הוסף כרטיס לתשלום מהיר בהזמנות הבאות',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.35),
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSavedCardTile(SavedCard card) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        children: [
+          // Brand badge
+          Container(
+            width: 46,
+            height: 30,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: card.brandColor.withValues(alpha: 0.90),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              card.brandDisplayName.length > 4
+                  ? card.brandDisplayName.substring(0, 4)
+                  : card.brandDisplayName,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Card number & expiry
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${card.brandDisplayName} •••• ${card.last4}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'תוקף: ${card.expMonth.toString().padLeft(2, '0')}/${card.expYear}',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.55),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.check_circle_rounded,
+              size: 18, color: Color(0xFF6EE7B7)),
+        ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SHARED — EMV chip icon
+  // ═══════════════════════════════════════════════════════════════════════════
 
   Widget _buildChipIcon() {
     return Container(
@@ -512,7 +823,9 @@ class _FinanceScreenState extends State<FinanceScreen>
     );
   }
 
-  // ── Payout cycle mini-card ─────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PROVIDER — payout cycle mini-card
+  // ═══════════════════════════════════════════════════════════════════════════
 
   Widget _buildPayoutCycleCard() {
     return Container(
@@ -520,8 +833,8 @@ class _FinanceScreenState extends State<FinanceScreen>
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [_kCardStart, _kCardMid],
-          begin:  Alignment.topLeft,
-          end:    Alignment.bottomRight,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
@@ -531,7 +844,6 @@ class _FinanceScreenState extends State<FinanceScreen>
       ),
       child: Row(
         children: [
-          // ── מחזור השבוע ──────────────────────────────────────────────
           Expanded(
             child: _payoutCycleItem(
               emoji: '🟡',
@@ -544,7 +856,6 @@ class _FinanceScreenState extends State<FinanceScreen>
               width: 1,
               height: 44,
               color: Colors.white.withValues(alpha: 0.15)),
-          // ── העברה הבאה ───────────────────────────────────────────────
           Expanded(
             child: _payoutCycleItem(
               emoji: '🟢',
@@ -557,7 +868,6 @@ class _FinanceScreenState extends State<FinanceScreen>
               width: 1,
               height: 44,
               color: Colors.white.withValues(alpha: 0.15)),
-          // ── תאריך העברה ──────────────────────────────────────────────
           Expanded(
             child: _payoutCycleItem(
               emoji: '📅',
@@ -586,8 +896,8 @@ class _FinanceScreenState extends State<FinanceScreen>
         Text(
           value,
           style: TextStyle(
-            color:      valueColor,
-            fontSize:   15,
+            color: valueColor,
+            fontSize: 15,
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -595,7 +905,7 @@ class _FinanceScreenState extends State<FinanceScreen>
         Text(
           label,
           style: TextStyle(
-            color:    Colors.white.withValues(alpha: 0.60),
+            color: Colors.white.withValues(alpha: 0.60),
             fontSize: 10,
           ),
           textAlign: TextAlign.center,
@@ -604,18 +914,16 @@ class _FinanceScreenState extends State<FinanceScreen>
     );
   }
 
-  // ── 7-day earnings line chart ──────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PROVIDER — 7-day earnings chart
+  // ═══════════════════════════════════════════════════════════════════════════
 
   Widget _buildEarningsChart(BuildContext context) {
-    final maxY =
-        _dailyEarnings.reduce((a, b) => a > b ? a : b);
+    final maxY        = _dailyEarnings.reduce((a, b) => a > b ? a : b);
     final effectiveMax = maxY > 0 ? maxY * 1.25 : 100.0;
-    final total = _dailyEarnings.fold(0.0, (a, b) => a + b);
-
-    final spots = List.generate(
-      7,
-      (i) => FlSpot(i.toDouble(), _dailyEarnings[i]),
-    );
+    final total       = _dailyEarnings.fold(0.0, (a, b) => a + b);
+    final spots       = List.generate(
+        7, (i) => FlSpot(i.toDouble(), _dailyEarnings[i]));
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
@@ -634,11 +942,9 @@ class _FinanceScreenState extends State<FinanceScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // Title row
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // Total chip
               Container(
                 padding: const EdgeInsets.symmetric(
                     horizontal: 10, vertical: 4),
@@ -664,25 +970,21 @@ class _FinanceScreenState extends State<FinanceScreen>
               ),
             ],
           ),
-
           const SizedBox(height: 18),
-
           SizedBox(
             height: 110,
             child: LineChart(
               LineChartData(
                 gridData: const FlGridData(show: false),
                 borderData: FlBorderData(show: false),
-                minX: 0,
-                maxX: 6,
-                minY: 0,
-                maxY: effectiveMax,
+                minX: 0, maxX: 6,
+                minY: 0, maxY: effectiveMax,
                 titlesData: FlTitlesData(
-                  leftTitles: const AxisTitles(
+                  leftTitles:   const AxisTitles(
                       sideTitles: SideTitles(showTitles: false)),
-                  rightTitles: const AxisTitles(
+                  rightTitles:  const AxisTitles(
                       sideTitles: SideTitles(showTitles: false)),
-                  topTitles: const AxisTitles(
+                  topTitles:    const AxisTitles(
                       sideTitles: SideTitles(showTitles: false)),
                   bottomTitles: AxisTitles(
                     sideTitles: SideTitles(
@@ -695,8 +997,7 @@ class _FinanceScreenState extends State<FinanceScreen>
                         return Padding(
                           padding: const EdgeInsets.only(top: 6),
                           child: Text(
-                            DateFormat('E').format(date)
-                                .substring(0, 2),
+                            DateFormat('E').format(date).substring(0, 2),
                             style: const TextStyle(
                                 fontSize: 10, color: Colors.grey),
                           ),
@@ -761,7 +1062,9 @@ class _FinanceScreenState extends State<FinanceScreen>
     );
   }
 
-  // ── Transactions sliver ────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SHARED — transactions sliver (both roles)
+  // ═══════════════════════════════════════════════════════════════════════════
 
   Widget _buildTransactionSliver(String uid) {
     return StreamBuilder<QuerySnapshot>(
@@ -803,10 +1106,10 @@ class _FinanceScreenState extends State<FinanceScreen>
         }
 
         docs.sort((a, b) {
-          final tA = (a.data() as Map<String, dynamic>)['timestamp']
-              as Timestamp?;
-          final tB = (b.data() as Map<String, dynamic>)['timestamp']
-              as Timestamp?;
+          final tA =
+              (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+          final tB =
+              (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
           if (tA == null || tB == null) return 0;
           return tB.compareTo(tA);
         });
@@ -827,11 +1130,11 @@ class _FinanceScreenState extends State<FinanceScreen>
 
   Widget _buildTransactionTile(
       BuildContext context, QueryDocumentSnapshot doc, String uid) {
-    final l10n    = AppLocalizations.of(context);
-    final tx      = doc.data() as Map<String, dynamic>;
+    final l10n     = AppLocalizations.of(context);
+    final tx       = doc.data() as Map<String, dynamic>;
     final isIncome = tx['receiverId'] == uid;
-    final date    = (tx['timestamp'] as Timestamp?)?.toDate();
-    final amount  = (tx['amount'] as num?)?.toDouble() ?? 0;
+    final date     = (tx['timestamp'] as Timestamp?)?.toDate();
+    final amount   = (tx['amount'] as num?)?.toDouble() ?? 0;
 
     return Card(
       elevation: 0,
@@ -854,8 +1157,8 @@ class _FinanceScreenState extends State<FinanceScreen>
           ),
           child: Icon(
             isIncome
-                ? Icons.south_west_rounded   // income = funds arriving
-                : Icons.north_east_rounded,  // payment = funds leaving
+                ? Icons.south_west_rounded
+                : Icons.north_east_rounded,
             size: 20,
             color: isIncome
                 ? const Color(0xFF16A34A)
@@ -866,8 +1169,7 @@ class _FinanceScreenState extends State<FinanceScreen>
           isIncome
               ? l10n.financeReceivedFrom(tx['senderName'] ?? '')
               : l10n.financePaidTo(tx['receiverName'] ?? ''),
-          style: const TextStyle(
-              fontWeight: FontWeight.bold, fontSize: 14),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
         ),
         subtitle: Text(
           date != null
@@ -888,5 +1190,4 @@ class _FinanceScreenState extends State<FinanceScreen>
       ),
     );
   }
-
 }

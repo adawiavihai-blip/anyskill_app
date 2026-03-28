@@ -4,7 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../services/escrow_service.dart';
+import '../../services/stripe_service.dart';
 
 class ChatUIHelper {
   // ── Main entry point ──────────────────────────────────────────────────────
@@ -555,42 +555,18 @@ class _OfficialQuoteCardState extends State<_OfficialQuoteCard> {
     if (_paying) return;
     setState(() => _paying = true);
 
-    final d           = widget.data;
-    final quoteId     = d['quoteId']?.toString()      ?? '';
-    final msgId       = d['messageId']?.toString()    ?? '';
-    final providerId  = d['senderId']?.toString()     ?? '';
-    final providerName= d['senderName']?.toString()   ?? 'מומחה';
-    final amount      = (d['amount'] as num? ?? 0).toDouble();
-    final description = d['message']?.toString()      ?? '';
+    final quoteId = widget.data['quoteId']?.toString() ?? '';
 
-    // Fetch current user's name
-    String clientName = 'לקוח';
-    try {
-      final snap = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.currentUserId)
-          .get();
-      clientName = (snap.data() ?? {})['name']?.toString() ?? 'לקוח';
-    } catch (_) {}
-
-    final error = await EscrowService.payQuote(
-      quoteId:       quoteId,
-      chatMessageId: msgId,
-      chatRoomId:    widget.chatRoomId,
-      providerId:    providerId,
-      providerName:  providerName,
-      clientId:      widget.currentUserId,
-      clientName:    clientName,
-      amount:        amount,
-      description:   description,
-    );
+    // StripeService presents the native Payment Sheet and delegates all
+    // logic to the Cloud Function. No internal balance is touched here.
+    final result = await StripeService.payQuote(quoteId: quoteId);
 
     if (!mounted) return;
     setState(() => _paying = false);
 
-    if (error != null) {
+    if (!result.ok) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(error),
+        content: Text(result.error ?? 'שגיאת תשלום'),
         backgroundColor: Colors.red,
       ));
     }

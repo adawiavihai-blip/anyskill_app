@@ -18,6 +18,7 @@ import '../services/category_service.dart';
 import '../services/visual_fetcher_service.dart';
 import '../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
 import 'live_activity_tab.dart';
+import 'admin_design_tab.dart';
 import 'admin_chat_view_screen.dart';
 import 'admin_demo_experts_tab.dart';
 import 'admin_brand_assets_tab.dart';
@@ -1258,6 +1259,7 @@ class _AdminScreenState extends State<AdminScreen> {
                 _buildManagementSection(_users, _totalCustomers, _totalProviders),
                 _buildContentSection(),
                 _buildSystemSection(),
+                const AdminDesignTab(),
               ],
             ),
     );
@@ -1282,6 +1284,11 @@ class _AdminScreenState extends State<AdminScreen> {
           value: 2,
           label: Text('מערכת'),
           icon: Icon(Icons.settings_rounded, size: 15),
+        ),
+        ButtonSegment(
+          value: 3,
+          label: Text('עיצוב'),
+          icon: Icon(Icons.design_services_rounded, size: 15),
         ),
       ],
       selected: {_sectionIndex},

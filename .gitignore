@@ -57,6 +57,9 @@ GoogleService-Info.plist
 .env
 .env.*
 !.env.example
+functions/.env
+functions/.env.*
+!functions/.env.example
 
 # Google Maps API key script (contains billing-linked API key)
 # web/Maps.js

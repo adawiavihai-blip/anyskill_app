@@ -1,4 +1,5 @@
 import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 /// Initialises Firebase App Check so that only genuine installs of this
 /// app can call Firestore / Storage / Cloud Functions.
@@ -30,41 +31,26 @@ class AppCheckService {
   static const _debugToken = '9B00B4FB-D810-4092-9039-A8C6127E1A0D';
 
   static Future<void> init() async {
-    await FirebaseAppCheck.instance.activate(
-      providerWeb:     ReCaptchaV3Provider(_webRecaptchaSiteKey),
-      providerAndroid: AndroidDebugProvider(debugToken: _debugToken),
-      providerApple:   AppleDebugProvider(debugToken: _debugToken),
-    );
-
-    // Enable automatic token refresh so App Check tokens never silently expire.
-    await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
-
-    // Log every token refresh so you can copy it into Firebase Console.
-    FirebaseAppCheck.instance.onTokenChange.listen((token) {
-      if (token != null) {
-        // ignore: avoid_print
-        print('🔐 App Check token refreshed — register in Firebase Console → App Check → Debug tokens:\n$token');
-      }
-    });
-
-    // Trigger one eager token fetch and log the result so we can confirm
-    // the debug token is being accepted by Firebase.
+    // App Check failure must NEVER crash the app.
+    // If reCAPTCHA is misconfigured the app still loads; only "Enforced"
+    // Firestore / CF rules will start rejecting requests, which is a
+    // better outcome than a permanent white screen for all users.
     try {
-      final token = await FirebaseAppCheck.instance.getToken(true);
-      if (token != null) {
-        // ignore: avoid_print
-        print('✅ App Check token OBTAINED — Firestore requests will pass:\n$token');
-      } else {
-        // ignore: avoid_print
-        print('⚠️  App Check getToken() returned null — '
-            'check that the debug token is registered in '
-            'Firebase Console → App Check → anyskill_app (web) → Debug tokens');
-      }
+      await FirebaseAppCheck.instance.activate(
+        providerWeb:     ReCaptchaV3Provider(_webRecaptchaSiteKey),
+        providerAndroid: AndroidDebugProvider(debugToken: _debugToken),
+        providerApple:   AppleDebugProvider(debugToken: _debugToken),
+      );
+      await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
     } catch (e) {
-      // ignore: avoid_print
-      print('❌ App Check getToken() threw: $e\n'
-          'On localhost this means FIREBASE_APPCHECK_DEBUG_TOKEN is not set '
-          'or the token is not registered in Firebase Console.');
+      // Log but swallow — runApp() will still be called.
+      debugPrint('⚠️ App Check init failed (app will continue): $e');
     }
+    // NOTE: We intentionally do NOT call getToken() here.
+    // The eager fetch was the direct cause of the white screen:
+    // ReCaptchaV3Provider.getToken() throws [app-check/recaptcha-error]
+    // if the domain is not registered in the reCAPTCHA Console, and that
+    // exception was propagating up through main() before runApp() ran.
+    // App Check obtains tokens lazily on the first Firestore / CF request.
   }
 }

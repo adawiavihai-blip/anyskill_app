@@ -15,6 +15,31 @@ const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 
 admin.initializeApp();
 
+// ── Payment Cloud Functions (Stripe Connect + Morning invoicing) ─────────────
+// Exported from payments.js to keep index.js focused on platform logic.
+const payments = require("./payments");
+
+// Flat (root-level) exports — current Flutter clients call these directly.
+exports.createPaymentIntent        = payments.createPaymentIntent;
+exports.handleStripeWebhook        = payments.handleStripeWebhook;
+exports.releaseEscrow              = payments.releaseEscrow;
+exports.onboardProvider            = payments.onboardProvider;
+exports.processRefund              = payments.processRefund;
+exports.listPaymentMethods         = payments.listPaymentMethods;
+exports.createSetupIntent          = payments.createSetupIntent;
+exports.createStripeSetupSession   = payments.createStripeSetupSession;
+exports.createStripePaymentSession = payments.createStripePaymentSession;
+exports.updateStripeAccount        = payments.updateStripeAccount;
+
+// ── Backward-compat grouped export ───────────────────────────────────────────
+// Older / cached Flutter web builds call  payments-createProviderOnboarding
+// (the grouped path from the pre-refactor structure).  This alias keeps those
+// clients working until the new hosting build propagates everywhere.
+// Safe to remove once all clients are on the current build.
+exports.payments = {
+  createProviderOnboarding: payments.onboardProvider,
+};
+
 // מספר ה-shards לכל מונה unreadCount — מפיץ כתיבות ומונע write contention
 const NUM_SHARDS = 5;
 

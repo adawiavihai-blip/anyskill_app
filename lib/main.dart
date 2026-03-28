@@ -21,6 +21,7 @@ import 'screens/home_screen.dart';
 import 'screens/phone_login_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'constants.dart' show appVersion;
+import 'services/stripe_service.dart';
 import 'screens/pending_verification_screen.dart';
 import 'screens/permission_request_screen.dart';
 import 'l10n/app_localizations.dart';
@@ -81,38 +82,70 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Read real version from pubspec.yaml — no more manual constant updates.
+  // ── Step 1: PackageInfo ────────────────────────────────────────────────────
   try {
     final info = await PackageInfo.fromPlatform();
     if (info.version.isNotEmpty) currentAppVersion = info.version;
-  } catch (_) {}
+    debugPrint('✅ PackageInfo: $currentAppVersion');
+  } catch (e) {
+    debugPrint('⚠️ PackageInfo failed (using constants fallback): $e');
+  }
 
-  // Load saved locale BEFORE first frame so there's no flash of wrong language.
-  await LocaleProvider.init();
+  // ── Step 2: Locale ────────────────────────────────────────────────────────
+  try {
+    await LocaleProvider.init();
+    debugPrint('✅ LocaleProvider ready');
+  } catch (e) {
+    debugPrint('⚠️ LocaleProvider failed (using default locale): $e');
+  }
 
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // ── Step 3: Firebase core ─────────────────────────────────────────────────
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    debugPrint('✅ Firebase initialized');
+  } catch (e) {
+    debugPrint('⚠️ Firebase.initializeApp failed: $e');
+    // Firebase is required — but still call runApp() so we show an error UI
+    // rather than a permanent white screen.
+  }
 
-  // Activate App Check — must run before any Firestore/Storage/CF call.
-  // All provider config (reCAPTCHA key, debug token, auto-refresh) lives in
-  // AppCheckService so main.dart stays free of App Check implementation details.
-  await AppCheckService.init();
+  // ── Step 4: App Check ─────────────────────────────────────────────────────
+  // Failure here must NEVER reach runApp(). If the reCAPTCHA domain is not
+  // registered the app continues; only "Enforced" Firestore rules will reject
+  // requests until the domain is added in the Google Cloud Console.
+  try {
+    await AppCheckService.init();
+    debugPrint('✅ App Check ready');
+  } catch (e) {
+    debugPrint('⚠️ App Check init failed (continuing without it): $e');
+  }
 
+  // ── Step 5: Stripe ────────────────────────────────────────────────────────
+  // applySettings() bootstraps Stripe.js on Flutter Web. If it hangs or throws
+  // (CSP, network timeout) the app still loads; payment calls will fail gracefully.
+  try {
+    await StripeService.init().timeout(
+      const Duration(seconds: 10),
+      onTimeout: () => debugPrint('⚠️ StripeService.init() timed out — skipping'),
+    );
+    debugPrint('✅ Stripe ready');
+  } catch (e) {
+    debugPrint('⚠️ Stripe init failed (payments unavailable until reload): $e');
+  }
+
+  // ── Step 6: Web-specific Firebase settings ────────────────────────────────
   if (kIsWeb) {
     try {
       await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
       FirebaseFirestore.instance.settings = const Settings(
-        persistenceEnabled:
-            true, // IndexedDB cache — serves cold reads from cache (<20ms)
-        cacheSizeBytes:
-            10485760, // 10 MB cap — prevents unbounded IndexedDB growth
+        persistenceEnabled: true,  // IndexedDB cache — cold reads <20 ms
+        cacheSizeBytes: 10485760,  // 10 MB cap — prevents unbounded growth
       );
-      if (kDebugMode) {
-        debugPrint(
-          "AnySkill Web: Auth LOCAL persistence set, Firestore cache ENABLED",
-        );
-      }
+      debugPrint('✅ Web: Auth LOCAL persistence + Firestore cache enabled');
     } catch (e) {
-      if (kDebugMode) debugPrint("Firestore/Auth Web Config Error: $e");
+      debugPrint('⚠️ Web Firebase settings failed: $e');
     }
   }
 
@@ -218,24 +251,25 @@ class _AuthWrapperState extends State<AuthWrapper> {
   @override
   void initState() {
     super.initState();
-    // Load persistent storage early — will be ready well before any version banner fires.
-    SharedPreferences.getInstance().then((p) => _prefs = p);
     _handleWebUpdates();
     _setupPushNotifications();
 
-    // FIX: previously _checkVersionUpdate() ran before auth was ready,
-    // so currentUser was always null. Now we wait for a confirmed login.
-    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
-      if (user != null) {
-        _startVersionListener();
-        _saveAndRefreshToken(user.uid);
-        // After login: recover permission state from Firestore so a reinstall
-        // doesn't re-prompt a user who had already granted permissions before.
-        PermissionService.recoverFromFirestore();
-      } else {
-        _versionSub?.cancel();
-        _versionSub = null;
-      }
+    // Load SharedPreferences FIRST, then start the auth listener.
+    // This eliminates the race condition where the Firestore version
+    // snapshot arrives before _prefs is assigned, causing the
+    // "already dismissed" check to return null (= banner always shown).
+    SharedPreferences.getInstance().then((p) {
+      _prefs = p;
+      _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+        if (user != null) {
+          _startVersionListener();
+          _saveAndRefreshToken(user.uid);
+          PermissionService.recoverFromFirestore();
+        } else {
+          _versionSub?.cancel();
+          _versionSub = null;
+        }
+      });
     });
   }
 
@@ -252,7 +286,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
   // No auto-reload — the user controls when to reload via the banner button.
   void _startVersionListener() {
     _versionSub?.cancel();
-    _updateNotified = false;
+    // Do NOT reset _updateNotified here. Auth state changes can re-call this
+    // method, and resetting the flag would re-trigger the banner for users who
+    // already dismissed it in the same session.
     _versionSub = FirebaseFirestore.instance
         .collection('admin')
         .doc('settings')
