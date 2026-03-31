@@ -1,12 +1,5 @@
-import 'dart:convert';
-import 'dart:math' as math;
-import 'package:crypto/crypto.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:google_sign_in/google_sign_in.dart';
-import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'sign_up_screen.dart';
 import '../services/credentials_service.dart';
 import '../l10n/app_localizations.dart';
@@ -124,214 +117,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Future<void> _loginGoogle() async {
-    // Capture l10n before the first await to avoid BuildContext across async gap.
-    final newUserBio = AppLocalizations.of(context).googleNewUserBio;
-    setState(() => _isLoading = true);
-    try {
-      UserCredential cred;
-      if (kIsWeb) {
-        cred = await FirebaseAuth.instance
-            .signInWithPopup(GoogleAuthProvider());
-      } else {
-        final googleUser = await GoogleSignIn().signIn();
-        if (googleUser == null) return; // user cancelled
-        final googleAuth = await googleUser.authentication;
-        cred = await FirebaseAuth.instance.signInWithCredential(
-          GoogleAuthProvider.credential(
-            accessToken: googleAuth.accessToken,
-            idToken: googleAuth.idToken,
-          ),
-        );
-      }
-
-      final user  = cred.user!;
-      final isNew = cred.additionalUserInfo?.isNewUser ?? false;
-
-      // First-time Google login: create a default customer profile
-      if (isNew) {
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'uid':            user.uid,
-          'name':           user.displayName ?? '',
-          'email':          user.email ?? '',
-          'phone':          '',
-          'balance':        0.0,
-          'rating':         5.0,
-          'reviewsCount':   0,
-          'pricePerHour':   0.0,
-          'serviceType':    '',
-          'aboutMe':        newUserBio,
-          'profileImage':   user.photoURL ?? '',
-          'gallery':        [],
-          'quickTags':      [],
-          'isOnline':       true,
-          'isAdmin':        false,
-          'isVerified':     false,
-          'isCustomer':     true,
-          'isProvider':     false,
-          'termsAccepted':  true,
-          'onboardingComplete': false,
-          'tourComplete':   false,
-          'createdAt':      FieldValue.serverTimestamp(),
-        });
-      }
-
-      // Navigate directly to OnboardingGate and remove all previous routes.
-      // This avoids the race condition where AuthWrapper's StreamBuilder hasn't
-      // rebuilt yet with the new auth state, leaving the user stuck on login.
-      if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const OnboardingGate()),
-          (_) => false,
-        );
-      }
-    } on FirebaseAuthException catch (e) {
-      debugPrint('[GoogleLogin] FirebaseAuthException: code=${e.code} message=${e.message}');
-      if (mounted) {
-        _snack('${AppLocalizations.of(context).errorGoogleLogin}\n(${e.code})', _kRed);
-      }
-    } catch (e) {
-      debugPrint('[GoogleLogin] Error: ${e.runtimeType}: $e');
-      if (mounted) {
-        // Show the actual error type so the user/admin can diagnose
-        final errType = e.runtimeType.toString();
-        final msg = e.toString();
-        // Common causes: PlatformException (missing SHA-1), MissingPluginException,
-        // network errors, popup blocked (web)
-        final hint = msg.contains('network')
-            ? 'בדוק חיבור לאינטרנט'
-            : msg.contains('popup')
-                ? 'חלון הכניסה נחסם — אפשר חלונות קופצים'
-                : msg.contains('sign_in') || msg.contains('ApiException')
-                    ? 'בדוק הגדרות Google Sign-In (SHA-1/OAuth)'
-                    : errType;
-        _snack('${AppLocalizations.of(context).errorGoogleLogin}\n($hint)', _kRed);
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _loginApple() async {
-    final newUserBio = AppLocalizations.of(context).googleNewUserBio;
-    setState(() => _isLoading = true);
-    try {
-      // 1. Generate a nonce for security (prevents replay attacks)
-      final rawNonce = _generateNonce();
-      final hashedNonce = sha256.convert(utf8.encode(rawNonce)).toString();
-
-      // 2. Request Apple credential
-      final appleCredential = await SignInWithApple.getAppleIDCredential(
-        scopes: [
-          AppleIDAuthorizationScopes.email,
-          AppleIDAuthorizationScopes.fullName,
-        ],
-        // On web: nonce is handled by the redirect flow, not passed here.
-        // On native: nonce must be the SHA256 hash for Apple's verification.
-        nonce: kIsWeb ? null : hashedNonce,
-        webAuthenticationOptions: kIsWeb
-            ? WebAuthenticationOptions(
-                clientId: 'com.example.anyskillFix.auth',
-                redirectUri: Uri.parse(
-                  'https://anyskill-6fdf3.firebaseapp.com/__/auth/handler',
-                ),
-              )
-            : null,
-      );
-
-      // 3. Create Firebase credential from Apple token
-      final oauthCredential = OAuthProvider('apple.com').credential(
-        idToken:     appleCredential.identityToken,
-        rawNonce:    rawNonce,
-        accessToken: appleCredential.authorizationCode,
-      );
-
-      // 4. Sign in to Firebase
-      final cred = await FirebaseAuth.instance.signInWithCredential(oauthCredential);
-      final user  = cred.user!;
-      final isNew = cred.additionalUserInfo?.isNewUser ?? false;
-
-      // 5. Build display name from Apple's response
-      // Apple only provides the name on FIRST sign-in — capture it now.
-      String displayName = user.displayName ?? '';
-      if (displayName.isEmpty) {
-        final given  = appleCredential.givenName ?? '';
-        final family = appleCredential.familyName ?? '';
-        displayName  = '$given $family'.trim();
-      }
-      // Persist to Firebase Auth profile if we got a name
-      if (displayName.isNotEmpty && (user.displayName ?? '').isEmpty) {
-        await user.updateDisplayName(displayName);
-      }
-
-      // 6. Create Firestore profile for new users
-      if (isNew) {
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'uid':            user.uid,
-          'name':           displayName,
-          'email':          user.email ?? appleCredential.email ?? '',
-          'phone':          '',
-          'balance':        0.0,
-          'rating':         5.0,
-          'reviewsCount':   0,
-          'pricePerHour':   0.0,
-          'serviceType':    '',
-          'aboutMe':        newUserBio,
-          'profileImage':   '',  // Apple does not provide a photo
-          'gallery':        [],
-          'quickTags':      [],
-          'isOnline':       true,
-          'isAdmin':        false,
-          'isVerified':     false,
-          'isCustomer':     true,
-          'isProvider':     false,
-          'termsAccepted':  true,
-          'onboardingComplete': false,
-          'tourComplete':   false,
-          'createdAt':      FieldValue.serverTimestamp(),
-        });
-      }
-
-      // 7. Navigate — same pattern as Google sign-in
-      if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const OnboardingGate()),
-          (_) => false,
-        );
-      }
-    } on SignInWithAppleAuthorizationException catch (e) {
-      // User cancelled or Apple rejected
-      if (e.code != AuthorizationErrorCode.canceled && mounted) {
-        _snack('שגיאת Apple: ${e.message}', _kRed);
-      }
-    } on FirebaseAuthException catch (e) {
-      debugPrint('[AppleLogin] FirebaseAuthException: code=${e.code}');
-      if (mounted) {
-        _snack(_mapError(e.code, AppLocalizations.of(context)), _kRed);
-      }
-    } catch (e) {
-      debugPrint('[AppleLogin] Error: ${e.runtimeType}: $e');
-      if (mounted) {
-        final msg = e.toString();
-        final hint = msg.contains('network')
-            ? 'בדוק חיבור לאינטרנט'
-            : msg.contains('canceled') || msg.contains('cancelled')
-                ? null // user cancelled — no error shown
-                : 'שגיאת התחברות Apple';
-        if (hint != null) _snack(hint, _kRed);
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  /// Generates a cryptographically secure random nonce (32 bytes, hex-encoded).
-  static String _generateNonce([int length = 32]) {
-    const charset = '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
-    final random = math.Random.secure();
-    return List.generate(length, (_) => charset[random.nextInt(charset.length)]).join();
-  }
-
   void _showForgotPassword() {
     final ctrl = TextEditingController();
     final l10n = AppLocalizations.of(context);
@@ -420,6 +205,14 @@ class _LoginScreenState extends State<LoginScreen> {
     final l10n = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5FF),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded, color: Color(0xFF6366F1)),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
       body: CustomScrollView(
         slivers: [
           // ── Hero ─────────────────────────────────────────────────────────────
@@ -571,33 +364,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
                     // Submit
                     _buildLoginButton(),
-                    const SizedBox(height: 24),
-
-                    // Divider
-                    _buildSocialDivider(),
-                    const SizedBox(height: 14),
-
-                    // Social buttons
-                    Row(
-                      children: [
-                        Expanded(
-                            child: _SocialButton(
-                          label: 'Google',
-                          icon: _googleIcon(),
-                          onTap: _loginGoogle,
-                          borderColor: Colors.grey.shade300,
-                        )),
-                        const SizedBox(width: 12),
-                        Expanded(
-                            child: _SocialButton(
-                          label: 'Apple',
-                          icon:
-                              const Icon(Icons.apple, size: 22),
-                          onTap: _loginApple,
-                          dark: true,
-                        )),
-                      ],
-                    ),
                     const SizedBox(height: 28),
 
                     // Sign-up link
@@ -885,32 +651,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _buildSocialDivider() {
-    final l10n = AppLocalizations.of(context);
-    return Row(
-      children: [
-        Expanded(child: Divider(color: Colors.grey.shade200)),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Text(
-            l10n.loginOrWith,
-            style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[500],
-                fontWeight: FontWeight.w500),
-          ),
-        ),
-        Expanded(child: Divider(color: Colors.grey.shade200)),
-      ],
-    );
-  }
-
-  Widget _googleIcon() {
-    return SizedBox(
-      width: 20, height: 20,
-      child: CustomPaint(painter: _GoogleIconPainter()),
-    );
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -949,63 +689,6 @@ class _StatChip extends StatelessWidget {
   }
 }
 
-class _SocialButton extends StatelessWidget {
-  const _SocialButton({
-    required this.label,
-    required this.icon,
-    required this.onTap,
-    this.borderColor,
-    this.dark = false,
-  });
-
-  final String       label;
-  final Widget       icon;
-  final VoidCallback onTap;
-  final Color?       borderColor;
-  final bool         dark;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 48,
-        decoration: BoxDecoration(
-          color: dark ? Colors.black87 : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: dark
-              ? null
-              : Border.all(
-                  color: borderColor ?? Colors.grey.shade300),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black
-                  .withValues(alpha: dark ? 0.18 : 0.05),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            icon,
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: TextStyle(
-                color: dark ? Colors.white : Colors.black87,
-                fontWeight: FontWeight.w600,
-                fontSize: 14,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom painters
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1032,34 +715,3 @@ class _WavePainter extends CustomPainter {
   bool shouldRepaint(_WavePainter old) => old.color != color;
 }
 
-class _GoogleIconPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final cy = size.height / 2;
-    final r  = size.width / 2;
-
-    canvas.drawCircle(
-        Offset(cx, cy), r, Paint()..color = Colors.white);
-
-    final arc = Paint()
-      ..style      = PaintingStyle.stroke
-      ..strokeWidth = 3.5
-      ..strokeCap  = StrokeCap.round;
-
-    final rect =
-        Rect.fromCircle(center: Offset(cx, cy), radius: r * 0.62);
-
-    arc.color = const Color(0xFF4285F4);
-    canvas.drawArc(rect, -0.3, 1.2, false, arc);
-    arc.color = const Color(0xFF34A853);
-    canvas.drawArc(rect, 0.9, 1.1, false, arc);
-    arc.color = const Color(0xFFFBBC05);
-    canvas.drawArc(rect, 2.0, 1.1, false, arc);
-    arc.color = const Color(0xFFEA4335);
-    canvas.drawArc(rect, 3.1 + math.pi, 1.1, false, arc);
-  }
-
-  @override
-  bool shouldRepaint(_GoogleIconPainter _) => false;
-}
