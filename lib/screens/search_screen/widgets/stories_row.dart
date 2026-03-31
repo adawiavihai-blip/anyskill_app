@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
@@ -1313,10 +1314,12 @@ class _StoryUploadSheet extends StatefulWidget {
 }
 
 class _StoryUploadSheetState extends State<_StoryUploadSheet> {
-  XFile?   _pickedVideo;
-  bool     _uploading    = false;
-  double   _uploadProgress = 0;
-  String?  _errorMessage;
+  Uint8List? _videoBytes;       // raw bytes — read IMMEDIATELY on pick
+  String?    _videoName;        // display name only
+  String?    _videoMimeType;    // original MIME
+  bool       _uploading    = false;
+  double     _uploadProgress = 0;
+  String?    _errorMessage;
 
   Future<void> _pickVideo() async {
     // On web camera video is unreliable — skip source selection
@@ -1377,39 +1380,94 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
       source:      source,
       maxDuration: const Duration(seconds: 60),
     );
-    if (file != null && mounted) setState(() => _pickedVideo = file);
+    if (file == null) return;
+
+    // ── Read bytes immediately — two strategies to avoid Blob revocation ──
+    final fileName = file.name;
+    final fileMime = file.mimeType ?? 'video/mp4';
+    try {
+      Uint8List bytes;
+      try {
+        bytes = await file.readAsBytes();
+      } catch (_) {
+        // Fallback: stream bytes via openRead (bypasses XHR to Blob URL)
+        final chunks = <int>[];
+        await for (final chunk in file.openRead()) {
+          chunks.addAll(chunk);
+        }
+        bytes = Uint8List.fromList(chunks);
+      }
+      if (!mounted) return;
+      setState(() {
+        _videoBytes    = bytes;
+        _videoName     = fileName;
+        _videoMimeType = fileMime;
+        _errorMessage  = null;
+      });
+    } catch (e) {
+      debugPrint('[StoryUpload] readBytes failed: $e');
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'שגיאה בקריאת הקובץ — נסה לבחור שוב';
+        });
+      }
+    }
   }
 
   Future<void> _upload() async {
-    if (_pickedVideo == null) return;
+    if (_videoBytes == null) return;
+
+    // ── Auth guard: rules require request.auth.uid to match filename ──
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      setState(() => _errorMessage = 'לא מחובר — התחבר מחדש');
+      return;
+    }
+    // Use the LIVE auth uid, not widget.uid, to guarantee rule match
+    final authUid = currentUser.uid;
+
+    // Force-refresh the auth token so Storage doesn't reject a stale one
+    try {
+      await currentUser.getIdToken(true);
+    } catch (_) {}
+
     setState(() { _uploading = true; _errorMessage = null; });
 
     try {
       // 1. Read user profile for thumbnail + name
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
-          .doc(widget.uid)
+          .doc(authUid)
           .get();
       final userData    = userDoc.data() ?? {};
       final name        = userData['name']         as String? ?? 'ספק';
       final avatar      = userData['profileImage'] as String? ?? '';
       final serviceType = userData['serviceType']  as String? ?? '';
 
-      // 2. Upload video to Firebase Storage
-      final bytes    = await _pickedVideo!.readAsBytes();
-      // Detect the actual MIME type — iOS returns video/quicktime (.mov),
-      // Android returns video/mp4, web may return video/webm, etc.
-      final mimeType = _pickedVideo!.mimeType ?? 'video/mp4';
-      // Preserve the original extension so Storage serves the right Content-Type.
-      final origName = _pickedVideo!.name;
+      // 2. Upload video to Firebase Storage — using pre-loaded bytes (no Blob URL)
+      final bytes = _videoBytes!;
+      // Guard: reject files > 50 MB to prevent browser OOM / slow uploads
+      const maxBytes = 50 * 1024 * 1024; // 50 MB
+      if (bytes.length > maxBytes) {
+        if (mounted) {
+          setState(() {
+            _errorMessage = 'הסרטון גדול מדי (מקסימום 50MB). נסה סרטון קצר יותר.';
+          });
+        }
+        return;
+      }
+
+      final mimeType = _videoMimeType ?? 'video/mp4';
+      final origName = _videoName ?? 'video.mp4';
       final ext      = origName.contains('.')
           ? origName.split('.').last.toLowerCase()
           : 'mp4';
 
       final ts = DateTime.now().millisecondsSinceEpoch;
+      final storagePath = 'stories/${authUid}_$ts.$ext';
       final storageRef = FirebaseStorage.instance
           .ref()
-          .child('stories/${widget.uid}_$ts.$ext');
+          .child(storagePath);
 
       final uploadTask = storageRef.putData(
         bytes,
@@ -1426,18 +1484,16 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
 
       final snapshot  = await uploadTask;
       final videoUrl  = await snapshot.ref.getDownloadURL();
-
-      // 3. Write to stories/{uid}
       final now       = Timestamp.now();
       final expiresAt = Timestamp.fromDate(
           now.toDate().add(const Duration(hours: 24)));
 
       await FirebaseFirestore.instance
           .collection('stories')
-          .doc(widget.uid)
+          .doc(authUid)
           .set({
-            'uid':            widget.uid,
-            'expertId':       widget.uid,        // spec field
+            'uid':            authUid,
+            'expertId':       authUid,           // spec field
             'expertName':     name,              // spec field
             'videoUrl':       videoUrl,
             'thumbnailUrl':   avatar,            // provider's profile image as thumbnail
@@ -1452,22 +1508,30 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
             'viewCount':      0,                // kept for viewer/Firestore rule compatibility
           });
 
-      // 4. Update users/{uid} for ranking signal
+      // ── Server verification ──────────────────────────────────────────────
+      final verifyDoc = await FirebaseFirestore.instance
+          .collection('stories')
+          .doc(authUid)
+          .get(const GetOptions(source: Source.server));
+      if (!verifyDoc.exists || (verifyDoc.data()?['videoUrl'] ?? '') != videoUrl) {
+        throw Exception('הסטורי לא נשמר בשרת — ייתכן שאין הרשאה');
+      }
+
+      // 5. Update users/{uid} for ranking signal
       await FirebaseFirestore.instance
           .collection('users')
-          .doc(widget.uid)
+          .doc(authUid)
           .update({
             'hasActiveStory':  true,
             'storyTimestamp':  now,
           });
 
-      // 5a. Direct +10 XP on upload
-      unawaited(FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.uid)
-          .update({'xp': FieldValue.increment(10)}));
+      // 6a. Award XP via Cloud Function (xp is a server-only field)
+      unawaited(FirebaseFunctions.instance
+          .httpsCallable('updateUserXP')
+          .call({'userId': authUid, 'eventId': 'story_upload'}));
 
-      // 5b. Admin activity log (fire-and-forget)
+      // 6b. Admin activity log (fire-and-forget)
       unawaited(FirebaseFirestore.instance.collection('activity_log').add({
         'type':        'story_upload',
         'userId':      widget.uid,
@@ -1479,6 +1543,7 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
         'detail':      'שירות: $serviceType',
       }));
 
+      // ── Only NOW show success (server confirmed) ────────────────────────
       if (!mounted) return;
       widget.onSuccess();
       Navigator.of(context).pop();
@@ -1491,22 +1556,26 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
         ),
       );
     } catch (e) {
+      debugPrint('[StoryUpload] upload failed: $e');
       if (mounted) {
-        setState(() {
-          _uploading = false;
-          // Translate common Firebase Storage errors to Hebrew
-          final msg = e.toString();
-          if (msg.contains('unauthorized') || msg.contains('permission')) {
-            _errorMessage = 'שגיאת הרשאה — נסה להתחבר מחדש';
-          } else if (msg.contains('canceled')) {
-            _errorMessage = 'ההעלאה בוטלה';
-          } else if (msg.contains('network') || msg.contains('timeout')) {
-            _errorMessage = 'שגיאת רשת — בדוק את החיבור ונסה שוב';
-          } else {
-            _errorMessage = 'שגיאה בהעלאה — נסה שוב';
-          }
-        });
+        // Translate common Firebase Storage errors to Hebrew
+        final msg = e.toString();
+        String error;
+        if (msg.contains('unauthorized') || msg.contains('permission') || msg.contains('PERMISSION_DENIED')) {
+          error = 'שגיאת הרשאה — נסה להתחבר מחדש';
+        } else if (msg.contains('canceled')) {
+          error = 'ההעלאה בוטלה';
+        } else if (msg.contains('network') || msg.contains('timeout')) {
+          error = 'שגיאת רשת — בדוק את החיבור ונסה שוב';
+        } else if (msg.contains('object-not-found') || msg.contains('storage/unknown')) {
+          error = 'שגיאה בשרת האחסון — נסה שוב';
+        } else {
+          error = 'שגיאה בהעלאה — נסה שוב';
+        }
+        setState(() => _errorMessage = error);
       }
+    } finally {
+      if (mounted) setState(() { _uploading = false; _uploadProgress = 0; });
     }
   }
 
@@ -1581,11 +1650,9 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
                     border:       Border.all(
                         color: _kGradStart.withValues(alpha: 0.3),
                         width: 1.5,
-                        style: _pickedVideo == null
-                            ? BorderStyle.solid
-                            : BorderStyle.solid),
+                        style: BorderStyle.solid),
                   ),
-                  child: _pickedVideo == null
+                  child: _videoBytes == null
                       ? Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
@@ -1606,19 +1673,22 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
                       : Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(Icons.check_circle_rounded,
-                                size: 36, color: Colors.green),
+                            _errorMessage != null
+                                ? const Icon(Icons.error_outline_rounded,
+                                    size: 36, color: Colors.red)
+                                : const Icon(Icons.check_circle_rounded,
+                                    size: 36, color: Colors.green),
                             const SizedBox(height: 6),
                             Text(
-                              _pickedVideo!.name.length > 30
-                                  ? '...${_pickedVideo!.name.substring(_pickedVideo!.name.length - 30)}'
-                                  : _pickedVideo!.name,
+                              (_videoName ?? 'video.mp4').length > 30
+                                  ? '...${(_videoName ?? 'video.mp4').substring((_videoName ?? 'video.mp4').length - 30)}'
+                                  : _videoName ?? 'video.mp4',
                               style: const TextStyle(fontWeight: FontWeight.w500),
                               textAlign: TextAlign.center,
                             ),
                             TextButton(
                               onPressed: _uploading ? null : _pickVideo,
-                              child: const Text('החלף סרטון'),
+                              child: Text(_errorMessage != null ? 'בחר סרטון אחר' : 'החלף סרטון'),
                             ),
                           ],
                         ),
@@ -1669,7 +1739,7 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
                         borderRadius: BorderRadius.circular(16)),
                     elevation: 0,
                   ),
-                  onPressed: _pickedVideo == null || _uploading ? null : _upload,
+                  onPressed: _videoBytes == null || _uploading ? null : _upload,
                   child: _uploading
                       ? const SizedBox(
                           width: 22, height: 22,

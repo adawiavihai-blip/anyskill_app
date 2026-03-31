@@ -51,6 +51,17 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
 
+    // CMS admin check — email-based for content management operations.
+    // Allows adawiavihai@gmail.com to manage CMS content without requiring
+    // the isAdmin Firestore flag to be set on the user document.
+    // Checks both the auth token email (email/Google login) and the Firestore
+    // user doc email (phone/OTP login where the token has no email).
+    function isCmsAdmin() {
+      return isVerifiedAuth()
+          && (request.auth.token.email == "adawiavihai@gmail.com"
+              || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.email == "adawiavihai@gmail.com");
+    }
+
     // ── Field-level write guards (reusable) ───────────────────────────────
 
     // Returns true when the update touches ONLY the listed keys.
@@ -116,6 +127,14 @@ service cloud.firestore {
         // customerReviewsCount fields (written after an expert review
         // of a customer is published).
         || (isVerifiedAuth() && onlyFields(['customerRating', 'customerReviewsCount']))
+        // ── Volunteer badge update ───────────────────────────────────────
+        // Client confirms volunteer task completion → updates provider's
+        // badge timestamp and count. XP increment is handled by CF.
+        || (isVerifiedAuth() && onlyFields(['lastVolunteerTaskAt', 'volunteerTaskCount', 'hasActiveVolunteerBadge']))
+        // ── Engagement: streak + profile boost ───────────────────────────
+        // Provider writes streak data on own doc; engagement service writes
+        // profileBoostUntil when a boost card is awarded.
+        || (isOwner(uid) && onlyFields(['streak', 'lastStreakDate', 'streakBestEver', 'lastDailyDropDate', 'profileBoostUntil']))
         // ── Escrow credit ─────────────────────────────────────────────────
         // Any verified user may write ONLY pendingBalance on another user's
         // doc (client pays a quote → credits the expert's pending balance).
@@ -168,8 +187,12 @@ service cloud.firestore {
                     && onlyFields(['isRead']);
 
       // Normal creation path = Admin SDK in Cloud Functions.
-      // Admin may create directly for emergencies.
-      allow create: if isAdmin();
+      // Client code also creates notifications for volunteer/help_request flows.
+      // Size limit: prevent abuse at scale (max 10 fields, body < 1000 chars).
+      allow create: if isAdmin()
+                    || (isVerifiedAuth()
+                        && request.resource.data.keys().size() <= 10
+                        && request.resource.data.get('body', '').size() <= 1000);
 
       // Owner may dismiss (delete) their own notifications.
       allow delete: if isVerifiedAuth() && resource.data.userId == request.auth.uid;
@@ -275,7 +298,7 @@ service cloud.firestore {
                         && (resource.data.providerId == request.auth.uid
                             || resource.data.clientId  == request.auth.uid));
 
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || isCmsAdmin();
     }
 
 
@@ -290,7 +313,7 @@ service cloud.firestore {
       allow read: if isAdmin()
                   || (isVerifiedAuth() && resource.data.userId == request.auth.uid);
 
-      allow update: if isAdmin();
+      allow update: if isAdmin() || isCmsAdmin();
       allow delete: if false;
     }
 
@@ -301,7 +324,7 @@ service cloud.firestore {
     match /bookingSlots/{slotId} {
       allow read:   if isVerifiedAuth();
       allow create: if isVerifiedAuth();
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || isCmsAdmin();
       allow update: if false;
     }
 
@@ -311,7 +334,7 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════════════════
     match /platform_earnings/{id} {
       allow create: if isVerifiedAuth();
-      allow read:   if isAdmin();
+      allow read:   if isAdmin() || isCmsAdmin();
       allow update, delete: if false;
     }
 
@@ -327,27 +350,39 @@ service cloud.firestore {
       // Authenticated users always get through; unauthenticated visitors on
       // production need a valid App Check token (reCAPTCHA / Play Integrity).
       allow read:  if isAuth() || isAppCheckValid();
-      allow write: if isAdmin();
+      allow write: if isAdmin() || isCmsAdmin();
+    }
+
+    match /application_content/{locale} {
+      // CMS content overrides: readable by authenticated users, writable only by CMS admin.
+      allow read:  if isAuth() || isAppCheckValid();
+      allow write: if isAdmin() || isCmsAdmin();
+
+      // Nested documents (if any) inherit the same rules.
+      match /{document=**} {
+        allow read:  if isAuth() || isAppCheckValid();
+        allow write: if isAdmin() || isCmsAdmin();
+      }
     }
 
     match /courses/{courseId} {
       allow read:  if isAuth() || isAppCheckValid();
-      allow write: if isAdmin();
+      allow write: if isAdmin() || isCmsAdmin();
     }
 
     match /system_settings/{docId} {
       allow read:  if isAuth() || isAppCheckValid();
-      allow write: if isAdmin();
+      allow write: if isAdmin() || isCmsAdmin();
     }
 
     match /app_hints/{screenKey} {
       allow read:  if isAuth() || isAppCheckValid();
-      allow write: if isAdmin();
+      allow write: if isAdmin() || isCmsAdmin();
     }
 
     match /banners/{id} {
       allow read:   if isAuth() || isAppCheckValid();
-      allow create, delete: if isAdmin();
+      allow create, delete: if isAdmin() || isCmsAdmin();
       allow update: if isAdmin()
                     || (isVerifiedAuth() && onlyFields(['clicks']));
     }
@@ -412,7 +447,7 @@ service cloud.firestore {
                         && request.resource.data.isPublished == true
                         && request.time > resource.data.createdAt + duration.value(7, 'd'));
 
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || isCmsAdmin();
     }
 
 
@@ -452,7 +487,131 @@ service cloud.firestore {
                     && request.resource.data.clientId == request.auth.uid;
       allow read:   if isAdmin()
                     || (isVerifiedAuth() && resource.data.clientId == request.auth.uid);
-      allow update: if isAdmin();
+      allow update: if isAdmin() || isCmsAdmin();
+      allow delete: if false;
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CATEGORY REQUESTS ("Other" custom category pending admin approval)
+    // ═══════════════════════════════════════════════════════════════════════
+    match /category_requests/{reqId} {
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.userId == request.auth.uid;
+      allow read:   if isAdmin()
+                    || (isVerifiedAuth() && resource.data.userId == request.auth.uid);
+      allow update: if isAdmin() || isCmsAdmin();
+      allow delete: if isAdmin() || isCmsAdmin();
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SUPPORT TICKETS (user↔admin support chat)
+    //
+    // Users create tickets and read/update their own.
+    // Admins can read and update all tickets.
+    // ═══════════════════════════════════════════════════════════════════════
+    match /support_tickets/{ticketId} {
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.userId == request.auth.uid;
+
+      allow read: if isAdmin()
+                  || (isVerifiedAuth() && resource.data.userId == request.auth.uid);
+
+      allow update: if isAdmin()
+                    || (isVerifiedAuth() && resource.data.userId == request.auth.uid);
+
+      allow delete: if isAdmin() || isCmsAdmin();
+
+      match /messages/{msgId} {
+        allow read: if isAdmin()
+                    || (isVerifiedAuth()
+                        && get(/databases/$(database)/documents/support_tickets/$(ticketId)).data.userId == request.auth.uid);
+
+        allow create: if isAdmin()
+                      || (isVerifiedAuth()
+                          && get(/databases/$(database)/documents/support_tickets/$(ticketId)).data.userId == request.auth.uid);
+      }
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // APP SETTINGS (admin-managed global configuration)
+    // Readable by all authenticated users (e.g., sound mappings on startup).
+    // Writable only by admins.
+    // ═══════════════════════════════════════════════════════════════════════
+    match /app_settings/{docId} {
+      allow read:  if isVerifiedAuth();
+      allow write: if isAdmin() || isCmsAdmin();
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // USER REWARDS (Daily Drop, streak milestones, engagement rewards)
+    // ═══════════════════════════════════════════════════════════════════════
+    match /user_rewards/{rewardId} {
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.userId == request.auth.uid;
+      allow read:   if isVerifiedAuth()
+                    && resource.data.userId == request.auth.uid;
+      allow update: if isVerifiedAuth()
+                    && resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin() || isCmsAdmin();
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // JOB BROADCASTS (urgent first-come-first-served claims)
+    //
+    // Created by the client (via JobBroadcastService). Any authenticated
+    // provider may read (to see available broadcasts) and update (to claim).
+    // Claim atomicity is enforced by Firestore transaction in the service.
+    // ═══════════════════════════════════════════════════════════════════════
+    match /job_broadcasts/{broadcastId} {
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.clientId == request.auth.uid;
+
+      allow read: if isVerifiedAuth();
+
+      allow update: if isVerifiedAuth();
+
+      allow delete: if isAdmin() || isCmsAdmin();
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // HELP REQUESTS (community volunteer help — from community_screen)
+    // ═══════════════════════════════════════════════════════════════════════
+    match /help_requests/{reqId} {
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.userId == request.auth.uid;
+      allow read:   if isVerifiedAuth();
+      allow update: if isVerifiedAuth();
+      allow delete: if isAdmin() || isCmsAdmin();
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // VOLUNTEER TASKS (verified volunteer lifecycle)
+    //
+    // Anti-fraud: clientId != providerId enforced at the service layer.
+    // Only the client (clientId) or provider (providerId) may read/update.
+    // ═══════════════════════════════════════════════════════════════════════
+    match /volunteer_tasks/{taskId} {
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.providerId == request.auth.uid
+                    && request.resource.data.clientId != request.auth.uid;
+
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && (resource.data.clientId   == request.auth.uid
+                          || resource.data.providerId == request.auth.uid));
+
+      allow update: if isAdmin()
+                    || (isVerifiedAuth()
+                        && (resource.data.clientId   == request.auth.uid
+                            || resource.data.providerId == request.auth.uid));
+
       allow delete: if false;
     }
 
@@ -464,11 +623,11 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════════════════
     match /admin/{docId} {
       allow read:  if isVerifiedAuth();
-      allow write: if isAdmin();
+      allow write: if isAdmin() || isCmsAdmin();
 
       match /{nestedDoc=**} {
         allow read:  if isVerifiedAuth();
-        allow write: if isAdmin();
+        allow write: if isAdmin() || isCmsAdmin();
       }
     }
 
@@ -478,7 +637,7 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════════════════
     match /settings_gamification/{docId} {
       allow read:  if isVerifiedAuth();
-      allow write: if isAdmin();
+      allow write: if isAdmin() || isCmsAdmin();
     }
 
 
@@ -510,14 +669,20 @@ service cloud.firestore {
 
     match /search_logs/{id} {
       allow create: if isVerifiedAuth();
-      allow read:   if isAdmin();
+      allow read:   if isAdmin() || isCmsAdmin();
       allow update, delete: if false;
     }
 
     match /error_logs/{logId} {
       allow create: if isVerifiedAuth()
                     && request.resource.data.userId == request.auth.uid;
-      allow read:   if isAdmin();
+      allow read:   if isAdmin() || isCmsAdmin();
+      allow update, delete: if false;
+    }
+
+    match /crash_reports_summary/{logId} {
+      allow create: if isVerifiedAuth();
+      allow read:   if isAdmin() || isCmsAdmin();
       allow update, delete: if false;
     }
 
@@ -528,25 +693,25 @@ service cloud.firestore {
                     || (isAppCheckValid()
                         && request.resource.data.type is string
                         && request.resource.data.type.matches('reg_step_[1-5]'));
-      allow read:   if isAdmin();
+      allow read:   if isAdmin() || isCmsAdmin();
       allow update, delete: if false;
     }
 
     match /admin_logs/{logId} {
-      allow read:   if isAdmin();
+      allow read:   if isAdmin() || isCmsAdmin();
       allow update: if isAdmin() && onlyFields(['isReviewed']);
       allow create, delete: if false; // Admin SDK only
     }
 
     match /reengagement_log/{logId} {
-      allow create: if isAdmin();
-      allow read:   if isAdmin();
+      allow create: if isAdmin() || isCmsAdmin();
+      allow read:   if isAdmin() || isCmsAdmin();
       allow update, delete: if false;
     }
 
     match /broadcast_history/{docId} {
-      allow create: if isAdmin();
-      allow read:   if isAdmin();
+      allow create: if isAdmin() || isCmsAdmin();
+      allow read:   if isAdmin() || isCmsAdmin();
       allow update, delete: if false;
     }
 
@@ -556,16 +721,16 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════════════════
 
     match /categories_pending/{id} {
-      allow read, write: if isAdmin();
+      allow read, write: if isAdmin() || isCmsAdmin();
     }
 
     match /market_alerts/{id} {
-      allow read:  if isAdmin();
+      allow read:  if isAdmin() || isCmsAdmin();
       allow write: if false;
     }
 
     match /market_opportunities/{docId} {
-      allow read:  if isAdmin();
+      allow read:  if isAdmin() || isCmsAdmin();
       allow write: if false;
     }
 
@@ -585,7 +750,7 @@ service cloud.firestore {
       allow update: if isAppCheckValid()
                     && request.resource.data.keys().size() <= 10;
 
-      allow read:   if isAdmin();
+      allow read:   if isAdmin() || isCmsAdmin();
       allow delete: if false;
     }
 

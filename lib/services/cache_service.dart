@@ -34,7 +34,7 @@ class CacheService {
 
   // ── TTL constants ──────────────────────────────────────────────────────────
   static const Duration kUserProfile   = Duration(minutes: 5);
-  static const Duration kCategories    = Duration(minutes: 10);
+  static const Duration kCategories    = Duration(minutes: 30); // quasi-static at scale
   static const Duration kAdminSettings = Duration(minutes: 1);
   static const Duration kExpertProfile = Duration(minutes: 5);
   static const Duration kShortLived    = Duration(seconds: 30);

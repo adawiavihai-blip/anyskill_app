@@ -38,18 +38,16 @@ class NotificationModule {
         vapidKey: "BMps6y9pYxVgpcL6BI6iieleDICi-coUHasv6KjzYzdawU", 
       );
 
-      if (token != null) {
-        // שימוש ב-Set עם Merge כדי לוודא יצירה/עדכון בטוחים
-        await FirebaseFirestore.instance.collection('users').doc(userId).set({
-          'deviceToken': token,
-          'fcmToken': token,
-          'lastTokenUpdate': FieldValue.serverTimestamp(),
-          'platform': 'web',
-        }, SetOptions(merge: true));
-        
-        debugPrint("QA Success: Token saved to Firestore: $token");
-      }
-    } catch (e) {
+      // שימוש ב-Set עם Merge כדי לוודא יצירה/עדכון בטוחים
+      await FirebaseFirestore.instance.collection('users').doc(userId).set({
+        'deviceToken': token,
+        'fcmToken': token,
+        'lastTokenUpdate': FieldValue.serverTimestamp(),
+        'platform': 'web',
+      }, SetOptions(merge: true));
+      
+      debugPrint("QA Success: Token saved to Firestore: $token");
+        } catch (e) {
       debugPrint("QA Error - Save Token: $e");
     }
   }

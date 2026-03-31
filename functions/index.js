@@ -4637,3 +4637,390 @@ exports.adminApproveProvider = onCall(
     return { success: true };
   }
 );
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AI SERVICE SCHEMA GENERATOR
+//
+// Takes a Hebrew category name and returns a JSON serviceSchema array with
+// category-specific fields (pricing units, boolean features, dropdowns).
+// Called from the admin panel when creating or editing a category.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const _SCHEMA_SYSTEM_PROMPT = `\
+You are AnySkill's service schema generator for an Israeli marketplace app.
+Given a category name in Hebrew, generate a serviceSchema JSON array that
+defines the custom fields providers in this category should fill in.
+
+RULES:
+1. ALWAYS include a primary price field as the FIRST item (type: "number",
+   unit containing "₪" and the appropriate Hebrew pricing unit).
+2. Include 2-4 additional fields that are specific to this service category.
+3. Field types: "number", "text", "bool", "dropdown".
+4. ALL labels and option values MUST be in Hebrew.
+5. Each dropdown field MUST include an "options" array with 3-5 Hebrew options.
+6. Keep IDs in camelCase English (e.g., "pricePerNight", "hasFencedYard").
+7. RESPOND WITH ONLY A VALID JSON ARRAY — no markdown fences, no explanation.
+
+EXAMPLES:
+
+Category: "פנסיון לחיות מחמד"
+[
+  {"id":"pricePerNight","label":"מחיר ללילה","type":"number","unit":"₪/ללילה"},
+  {"id":"hasFencedYard","label":"חצר מגודרת?","type":"bool"},
+  {"id":"maxPetWeight","label":"משקל מקסימלי לחיה (ק\"ג)","type":"number","unit":"ק\"ג"},
+  {"id":"petTypes","label":"סוגי חיות","type":"dropdown","options":["כלבים","חתולים","כלבים וחתולים","כל סוג"]}
+]
+
+Category: "הובלות"
+[
+  {"id":"pricePerHour","label":"מחיר לשעה","type":"number","unit":"₪/לשעה"},
+  {"id":"truckSize","label":"גודל משאית","type":"dropdown","options":["קטנה (1.5 טון)","בינונית (3.5 טון)","גדולה (7+ טון)"]},
+  {"id":"includesPacking","label":"כולל אריזה?","type":"bool"},
+  {"id":"maxFloors","label":"עד כמה קומות (ללא מעלית)","type":"number","unit":"קומות"}
+]`;
+
+exports.generateServiceSchema = onCall(
+    {
+      secrets:      [ANTHROPIC_API_KEY],
+      maxInstances: 5,
+      region:       "us-central1",
+      memory:       "256MiB",
+    },
+    async (request) => {
+      // ── Auth check ──────────────────────────────────────────────────────
+      if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Login required.");
+      }
+
+      // ── Admin check ─────────────────────────────────────────────────────
+      const callerSnap = await admin.firestore()
+          .collection("users").doc(request.auth.uid).get();
+      const isAdminUser =
+          callerSnap.exists &&
+          (callerSnap.data().isAdmin === true ||
+           request.auth.token.email === "adawiavihai@gmail.com");
+      if (!isAdminUser) {
+        throw new HttpsError("permission-denied", "Admin access required.");
+      }
+
+      // ── Input ───────────────────────────────────────────────────────────
+      const categoryName = (request.data.categoryName || "").trim();
+      if (!categoryName || categoryName.length < 2) {
+        throw new HttpsError("invalid-argument",
+            "שם קטגוריה חייב להכיל לפחות 2 תווים.");
+      }
+
+      // ── Call Claude ─────────────────────────────────────────────────────
+      const apiKey = ANTHROPIC_API_KEY.value() ||
+          process.env.ANTHROPIC_API_KEY || "";
+      if (!apiKey) {
+        throw new HttpsError("internal",
+            "SECRET_MISSING: ANTHROPIC_API_KEY not configured.");
+      }
+
+      const anthropic = new Anthropic({ apiKey });
+
+      const msg = await anthropic.messages.create({
+        model:      "claude-haiku-4-5-20251001",
+        max_tokens: 1024,
+        system:     _SCHEMA_SYSTEM_PROMPT,
+        messages:   [{
+          role: "user",
+          content: `Generate a serviceSchema for the category: "${categoryName}"`,
+        }],
+      });
+
+      // ── Track cost ──────────────────────────────────────────────────────
+      _trackApiCost(
+        admin.firestore(),
+        msg.usage?.input_tokens || 0,
+        msg.usage?.output_tokens || 0,
+      ).catch(() => {});
+
+      // ── Parse response ──────────────────────────────────────────────────
+      const raw = (msg.content[0]?.text ?? "[]")
+          .replace(/```(?:json)?\s*/gi, "")
+          .replace(/```/g, "")
+          .trim();
+
+      let schema;
+      try {
+        schema = JSON.parse(raw);
+      } catch (e) {
+        console.error("generateServiceSchema: JSON parse failed:", raw);
+        throw new HttpsError("internal",
+            "AI returned invalid JSON. Try again.");
+      }
+
+      if (!Array.isArray(schema)) {
+        throw new HttpsError("internal",
+            "AI returned non-array. Try again.");
+      }
+
+      // Validate each field has required properties
+      const validated = schema.filter((f) =>
+          f && typeof f.id === "string" &&
+          typeof f.label === "string" &&
+          typeof f.type === "string"
+      ).map((f) => ({
+        id:      f.id,
+        label:   f.label,
+        type:    f.type,
+        unit:    f.unit || "",
+        ...(Array.isArray(f.options) ? { options: f.options } : {}),
+      }));
+
+      console.log(`generateServiceSchema: "${categoryName}" → ${validated.length} fields`);
+      return { schema: validated };
+    }
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AI CEO STRATEGIC AGENT
+//
+// Receives a platform metrics snapshot and returns a strategic analysis:
+//   - Morning Brief (Hebrew, concise)
+//   - 3 Strategic Recommendations
+//   - Red Flags (fraud patterns, drops, anomalies)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const _CEO_SYSTEM_PROMPT = `\
+You are the AI CEO of AnySkill, an Israeli service marketplace.
+Your goal is to maximize user retention, trust, and platform growth.
+
+You receive a JSON snapshot of current platform metrics.
+Analyze the data and respond with ONLY VALID JSON (no markdown, no fences):
+
+{
+  "morningBrief": "<2-3 paragraph Hebrew summary of what happened in the last 24h. Include key numbers. Be concise and executive-level.>",
+  "recommendations": [
+    "<Actionable Hebrew recommendation #1 — be specific with numbers>",
+    "<Actionable Hebrew recommendation #2>",
+    "<Actionable Hebrew recommendation #3>"
+  ],
+  "redFlags": [
+    "<Hebrew alert about any concerning pattern — fraud, drops, anomalies>"
+  ]
+}
+
+RULES:
+1. ALL text MUST be in Hebrew.
+2. morningBrief: Start with a headline, then 2-3 sentences with specific numbers.
+3. recommendations: Exactly 3 items. Each must be actionable ("הגדל...", "בדוק...", "שנה...").
+4. redFlags: 0-5 items. Include BOTH business AND technical red flags. Empty array [] is fine.
+5. If openDisputes > 0 or openTickets > 3, flag it.
+6. If pendingVerifications > 5, recommend faster review.
+7. If weeklyRevenue is low relative to activeJobs, analyze why.
+8. Look at ticketCategories distribution for systemic issues.
+9. Look at recentCategoryRequests for market demand signals.
+
+TECHNICAL MONITORING (crashesByErrorCode):
+10. The metrics include "crashesByErrorCode" — a map of error codes to {count, severity, platforms, sample}.
+11. CRITICAL RULE: If ANY errorCode has count >= 3, it MUST appear as a RED FLAG with prefix "🔧 תקלה טכנית:".
+12. Include the error code name, count of affected users, and affected platforms in the red flag text.
+13. For fatal crashes (severity="fatal"), always flag even if count is 1.
+14. If totalCrashes24h > 10, include a recommendation to investigate via Firebase Crashlytics.
+15. If crashes are concentrated on one platform, note it ("רוב הקריסות ב-web/android/ios").`;
+
+const GEMINI_API_KEY = defineSecret("GEMINI_API_KEY");
+
+exports.generateCeoInsight = onCall(
+    {
+      secrets:      [GEMINI_API_KEY],
+      maxInstances: 3,
+      region:       "us-central1",
+      memory:       "512MiB",
+      timeoutSeconds: 120,
+    },
+    async (request) => {
+      // ── Auth: admin only ──────────────────────────────────────────────
+      if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Login required.");
+      }
+      const callerSnap = await admin.firestore()
+          .collection("users").doc(request.auth.uid).get();
+      const isAdminUser =
+          callerSnap.exists &&
+          (callerSnap.data().isAdmin === true ||
+           request.auth.token.email === "adawiavihai@gmail.com");
+      if (!isAdminUser) {
+        throw new HttpsError("permission-denied", "Admin access required.");
+      }
+
+      // ── Collect metrics SERVER-SIDE (Admin SDK — bypasses all rules) ──
+      const db = admin.firestore();
+      const now = new Date();
+      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const lastWeek  = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      // Helper: safe count — returns 0 on any error
+      async function safeSize(query) {
+        try { return (await query.limit(500).get()).size; }
+        catch { return 0; }
+      }
+      async function safeDocs(query, limit = 100) {
+        try { return (await query.limit(limit).get()).docs; }
+        catch { return []; }
+      }
+
+      const [
+        totalUsers,
+        totalProviders,
+        pendingVerifications,
+        activeJobs,
+        completedJobs24h,
+        openDisputes,
+        openTickets,
+        pendingCategories,
+        openBroadcasts,
+      ] = await Promise.all([
+        safeSize(db.collection("users")),
+        safeSize(db.collection("users").where("isProvider", "==", true)),
+        safeSize(db.collection("users").where("isPendingExpert", "==", true)),
+        safeSize(db.collection("jobs").where("status", "in", ["paid_escrow", "expert_completed"])),
+        safeSize(db.collection("jobs").where("status", "==", "completed").where("completedAt", ">", yesterday)),
+        safeSize(db.collection("jobs").where("status", "==", "disputed")),
+        safeSize(db.collection("support_tickets").where("status", "==", "open")),
+        safeSize(db.collection("category_requests").where("status", "==", "pending")),
+        safeSize(db.collection("job_broadcasts").where("status", "==", "open")),
+      ]);
+
+      // Revenue (7 days)
+      const earningsDocs = await safeDocs(
+        db.collection("platform_earnings").where("timestamp", ">", lastWeek), 200
+      );
+      let weeklyRevenue = 0;
+      earningsDocs.forEach(d => { weeklyRevenue += (d.data().amount || 0); });
+
+      // Ticket categories (24h)
+      const ticketDocs = await safeDocs(
+        db.collection("support_tickets").where("createdAt", ">", yesterday), 50
+      );
+      const ticketCategories = {};
+      ticketDocs.forEach(d => {
+        const cat = d.data().category || "other";
+        ticketCategories[cat] = (ticketCategories[cat] || 0) + 1;
+      });
+
+      // Category requests (7d)
+      const catReqDocs = await safeDocs(
+        db.collection("category_requests").where("createdAt", ">", lastWeek), 30
+      );
+      const recentCategoryRequests = catReqDocs
+        .map(d => d.data().description || "")
+        .filter(d => d.length > 0);
+
+      // Crash reports (24h)
+      const crashDocs = await safeDocs(
+        db.collection("crash_reports_summary").where("timestamp", ">", yesterday), 100
+      );
+      const crashesByErrorCode = {};
+      crashDocs.forEach(d => {
+        const data = d.data();
+        const code = data.errorCode || "unknown";
+        if (!crashesByErrorCode[code]) {
+          crashesByErrorCode[code] = {
+            count: 0, severity: data.severity || "non-fatal",
+            platforms: new Set(), sample: data.message || "",
+          };
+        }
+        crashesByErrorCode[code].count++;
+        crashesByErrorCode[code].platforms.add(data.platform || "unknown");
+      });
+      // Convert Sets to arrays for JSON
+      Object.values(crashesByErrorCode).forEach(v => {
+        v.platforms = [...v.platforms];
+      });
+
+      const metrics = {
+        totalUsers, totalProviders,
+        totalCustomers: totalUsers - totalProviders,
+        pendingVerifications, activeJobs, completedJobs24h,
+        openDisputes, openTickets, pendingCategories, openBroadcasts,
+        weeklyRevenue: weeklyRevenue.toFixed(0),
+        ticketCategories, recentCategoryRequests,
+        totalCrashes24h: crashDocs.length,
+        crashesByErrorCode,
+        snapshotTime: now.toISOString(),
+      };
+
+      console.log("generateCeoInsight: metrics collected:", JSON.stringify({
+        totalUsers, totalProviders, activeJobs, openDisputes,
+        openTickets, weeklyRevenue: weeklyRevenue.toFixed(0),
+        totalCrashes24h: crashDocs.length,
+      }));
+
+      // ── Call Google AI (Gemini) via raw HTTPS — no SDK dependency issues ──
+      // Direct REST call to generativelanguage.googleapis.com/v1beta.
+      // This bypasses ALL SDK version/model/parameter compatibility problems.
+      const geminiKey = GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
+      if (!geminiKey) {
+        throw new HttpsError("internal",
+          "GEMINI_API_KEY not set. Run: firebase functions:secrets:set GEMINI_API_KEY\n" +
+          "Get a free key at: https://aistudio.google.com/apikey");
+      }
+
+      const geminiUrl =
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`;
+
+      const geminiBody = {
+        contents: [{
+          parts: [{
+            text: _CEO_SYSTEM_PROMPT +
+              "\n\n--- PLATFORM METRICS ---\n\n" +
+              JSON.stringify(metrics, null, 2),
+          }],
+        }],
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 2048,
+        },
+      };
+
+      let parsed;
+      try {
+        const resp = await fetch(geminiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(geminiBody),
+        });
+
+        if (!resp.ok) {
+          const errText = await resp.text();
+          console.error("generateCeoInsight: Gemini HTTP error:", resp.status, errText.substring(0, 300));
+          throw new HttpsError("internal",
+            `Gemini API returned ${resp.status}: ${errText.substring(0, 150)}`);
+        }
+
+        const geminiResult = await resp.json();
+        const raw = (geminiResult.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}")
+            .replace(/```(?:json)?\s*/gi, "")
+            .replace(/```/g, "")
+            .trim();
+
+        console.log("generateCeoInsight: raw AI response length:", raw.length);
+
+        try {
+          parsed = JSON.parse(raw);
+        } catch (parseErr) {
+          console.error("generateCeoInsight: JSON parse failed:", raw.substring(0, 300));
+          throw new HttpsError("internal",
+            "AI returned invalid JSON. Snippet: " + raw.substring(0, 150));
+        }
+      } catch (aiErr) {
+        if (aiErr.code) throw aiErr;
+        console.error("generateCeoInsight: Gemini call failed:", aiErr.message || aiErr);
+        throw new HttpsError("internal",
+          "Gemini failed: " + (aiErr.message || "unknown").substring(0, 200));
+      }
+
+      console.log("generateCeoInsight: generated successfully");
+      return {
+        morningBrief:    parsed.morningBrief || "",
+        recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : [],
+        redFlags:        Array.isArray(parsed.redFlags) ? parsed.redFlags : [],
+      };
+    }
+);

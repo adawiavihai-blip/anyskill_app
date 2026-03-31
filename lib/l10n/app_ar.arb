@@ -1,0 +1,88 @@
+{
+  "@@locale": "ar",
+  "@@last_modified": "2026-03-30",
+
+  "appName": "AnySkill",
+
+  "greetingMorning":   "صباح الخير",
+  "greetingAfternoon": "مساء الخير",
+  "greetingEvening":   "مساء الخير",
+  "greetingNight":     "ليلة سعيدة",
+
+  "searchPlaceholder": "ابحث عن محترف، خدمة...",
+  "searchTitle":       "البحث",
+  "discoverCategories":"اكتشف الفئات",
+
+  "tabHome":     "الرئيسية",
+  "tabBookings": "الحجوزات",
+  "tabChat":     "الرسائل",
+  "tabWallet":   "المحفظة",
+  "tabProfile":  "الملف الشخصي",
+
+  "statusPaidEscrow":       "بانتظار التأكيد",
+  "statusExpertCompleted":  "مكتمل — بانتظار موافقتك",
+  "statusCompleted":        "مكتمل",
+  "statusCancelled":        "ملغى",
+  "statusDispute":          "قيد النزاع",
+  "statusPendingPayment":   "بانتظار الدفع",
+
+  "bookNow":        "احجز الآن",
+  "quickRequest":   "طلب سريع",
+  "openChat":       "فتح المحادثة",
+  "cancel":         "إلغاء",
+  "confirm":        "تأكيد",
+  "submit":         "إرسال",
+  "save":           "حفظ",
+  "close":          "إغلاق",
+  "back":           "رجوع",
+  "next":           "التالي",
+
+  "walletBalance":      "الرصيد القابل للسحب",
+  "walletMinWithdraw":  "الحد الأدنى للسحب: ₪50",
+  "withdrawFunds":      "سحب الأموال",
+  "withdrawalPending":  "طلب السحب قيد المعالجة",
+
+  "loginTitle":    "مرحباً بكم في AnySkill",
+  "loginSubtitle": "منصة المحترفين الرائدة في إسرائيل",
+  "loginEmail":    "البريد الإلكتروني",
+  "loginPassword": "كلمة المرور",
+  "loginButton":   "تسجيل الدخول",
+  "signupButton":  "تسجيل",
+  "forgotPassword":"نسيت كلمة المرور",
+
+  "profileProvider": "مقدّم خدمة",
+  "profileCustomer": "عميل",
+  "profileRating":   "التقييم",
+  "profileReviews":  "المراجعات",
+  "profileOrders":   "الحجوزات",
+
+  "errorNetworkTitle":  "لا يوجد اتصال بالإنترنت",
+  "errorNetworkBody":   "تحقق من الاتصال بالشبكة وحاول مجدداً",
+  "errorGeneric":       "حدث خطأ. حاول مجدداً",
+  "errorProfileLoad":   "خطأ في تحميل الملف الشخصي",
+
+  "tosTitle":   "شروط الاستخدام",
+  "tosVersion": "الإصدار 2.0",
+  "tosAgree":   "قرأت وأوافق على الشروط",
+
+  "urgentProviderLabel": "Pulse",
+  "urgentCustomerLabel": "عاجل",
+  "urgentOpenButton":    "فتح",
+
+  "trendingBadge":       "رائج",
+  "subCategoryPrompt":   "اختر التخصص",
+
+  "emptyActivityTitle":  "لا توجد نشاطات بعد",
+  "emptyActivityCta":    "انشر طلبك الأول ←",
+
+  "onlineStatus":  "متاح",
+  "offlineStatus": "غير متاح",
+
+  "currencySymbol": "₪",
+
+  "taxDeclarationText": "أُقرّ بمسؤوليتي الحصرية عن الإبلاغ الضريبي وفقاً للقانون (البند 6 في النظام). أعلم أن AnySkill ليست جهة توظيفي ولا تخصم ضرائب من المصدر.",
+
+  "reviewsPlaceholder":  "أخبرنا عن تجربتك...",
+  "reviewSubmit":        "إرسال التقييم",
+  "ratingLabel":         "قيّم الخدمة"
+}

@@ -26,6 +26,9 @@ import 'admin_payouts_tab.dart';
 import 'admin_banners_tab.dart';
 import 'admin_pro_tab.dart';
 import 'admin_billing_tab.dart';
+import 'admin_sounds_tab.dart';
+import 'admin_support_inbox_tab.dart';
+import 'admin_ai_ceo_tab.dart';
 import '../widgets/hint_icon.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -123,7 +126,9 @@ class _AdminScreenState extends State<AdminScreen> {
   Future<void> _syncAppVersion() async {
     try {
       final info = await PackageInfo.fromPlatform();
-      final version = info.version;
+      // Strip "+buildNumber" suffix — write only "MAJOR.MINOR.PATCH" to Firestore.
+      // This prevents "8.9.3+1" from being treated as newer than "8.9.3".
+      final version = info.version.split('+').first;
       if (version.isEmpty) return;
       await FirebaseFirestore.instance
           .collection('admin')
@@ -209,6 +214,7 @@ class _AdminScreenState extends State<AdminScreen> {
     // 2. Net revenue — sum amount from platform_earnings
     _insEarnSub = FirebaseFirestore.instance
         .collection('platform_earnings')
+        .limit(5000)
         .snapshots()
         .listen((snap) {
       double rev = 0;
@@ -238,6 +244,7 @@ class _AdminScreenState extends State<AdminScreen> {
     // 4. Transaction count — total records in transactions collection
     _insTxSub = FirebaseFirestore.instance
         .collection('transactions')
+        .limit(5000)
         .snapshots()
         .listen((snap) {
       if (mounted) setState(() { _insTxCount = snap.docs.length; _insTxLoaded = true; });
@@ -1238,8 +1245,12 @@ class _AdminScreenState extends State<AdminScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
-        title: _buildSectionToggle(),
-        centerTitle: true,
+        title: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: _buildSectionToggle(),
+        ),
+        titleSpacing: 8,
+        centerTitle: false,
         elevation: 0,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
@@ -1260,6 +1271,7 @@ class _AdminScreenState extends State<AdminScreen> {
                 _buildContentSection(),
                 _buildSystemSection(),
                 const AdminDesignTab(),
+                const AdminAiCeoTab(),
               ],
             ),
     );
@@ -1290,6 +1302,11 @@ class _AdminScreenState extends State<AdminScreen> {
           label: Text('עיצוב'),
           icon: Icon(Icons.design_services_rounded, size: 15),
         ),
+        ButtonSegment(
+          value: 4,
+          label: Text('AI CEO'),
+          icon: Icon(Icons.psychology_rounded, size: 15),
+        ),
       ],
       selected: {_sectionIndex},
       onSelectionChanged: (s) => setState(() => _sectionIndex = s.first),
@@ -1311,7 +1328,7 @@ class _AdminScreenState extends State<AdminScreen> {
     int providers,
   ) {
     return DefaultTabController(
-      length: 14,
+      length: 15,
       child: Column(
         children: [
           // Search bar
@@ -1346,6 +1363,7 @@ class _AdminScreenState extends State<AdminScreen> {
           // Tabs
           const TabBar(
             isScrollable: true,
+            tabAlignment: TabAlignment.start,
             labelColor:     Colors.blueAccent,
             indicatorColor: Colors.blueAccent,
             tabs: [
@@ -1363,6 +1381,7 @@ class _AdminScreenState extends State<AdminScreen> {
               Tab(text: "דמו ★"),
               Tab(text: "Pro ⭐"),
               Tab(text: "בינה עסקית 🧠"),
+              Tab(text: "תיבת פניות 📮"),
             ],
           ),
           Expanded(
@@ -1382,6 +1401,7 @@ class _AdminScreenState extends State<AdminScreen> {
                 const AdminDemoExpertsTab(),
                 const AdminProTab(),
                 const BusinessAiScreen(),
+                const AdminSupportInboxTab(),
               ],
             ),
           ),
@@ -1400,6 +1420,7 @@ class _AdminScreenState extends State<AdminScreen> {
           const SizedBox(height: 8),
           const TabBar(
             isScrollable: true,
+            tabAlignment: TabAlignment.start,
             labelColor:     Color(0xFFD97706),
             indicatorColor: Color(0xFFD97706),
             tabs: [
@@ -1861,12 +1882,13 @@ class _AdminScreenState extends State<AdminScreen> {
 
   Widget _buildSystemSection() {
     return DefaultTabController(
-      length: 9,
+      length: 10,
       child: Column(
         children: [
           const SizedBox(height: 8),
           const TabBar(
             isScrollable: true,
+            tabAlignment: TabAlignment.start,
             labelColor:     Color(0xFF7C3AED),
             indicatorColor: Color(0xFF7C3AED),
             tabs: [
@@ -1879,6 +1901,7 @@ class _AdminScreenState extends State<AdminScreen> {
               Tab(text: "מיתוג 🎨"),
               Tab(text: "חסימות 🛡️"),
               Tab(text: "תשלומים 💳"),
+              Tab(text: "צלילים 🔊"),
             ],
           ),
           Expanded(
@@ -1893,6 +1916,7 @@ class _AdminScreenState extends State<AdminScreen> {
                 const AdminBrandAssetsTab(),
                 _buildChatGuardTab(),
                 const AdminPayoutsTab(),
+                const AdminSoundsTab(),
               ],
             ),
           ),

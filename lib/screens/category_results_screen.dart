@@ -9,7 +9,9 @@ import 'expert_profile_screen.dart';
 import '../utils/expert_filter.dart';
 import '../services/location_service.dart';
 import '../services/search_ranking_service.dart';
+import '../services/volunteer_service.dart';
 import '../services/category_service.dart';
+import '../widgets/category_specs_widget.dart';
 import '../widgets/level_badge.dart';
 import '../constants/quick_tags.dart';
 import '../l10n/app_localizations.dart';
@@ -55,6 +57,9 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   bool _hasMore       = true;
   DocumentSnapshot<Map<String, dynamic>>? _lastDoc;
 
+  /// Dynamic service schema for this category (loaded once from Firestore).
+  List<SchemaField> _categorySchema = [];
+
   late final ScrollController _scrollCtrl;
 
   @override
@@ -62,6 +67,10 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     super.initState();
     _scrollCtrl = ScrollController()..addListener(_onScroll);
     _loadInitial();
+    // Load category schema (fire-and-forget)
+    loadSchemaForCategory(widget.categoryName).then((schema) {
+      if (mounted) setState(() => _categorySchema = schema);
+    });
     // Use cached position instantly; fall back to a dialog-based request
     final cached = LocationService.cached;
     if (cached != null) {
@@ -558,7 +567,9 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     final l10n        = AppLocalizations.of(context);
     final isPro       = data['isAnySkillPro'] == true;
     final name        = data['name'] as String? ?? l10n.catResultsExpertDefault;
-    final price       = data['pricePerHour'] ?? 100;
+    final (dynPrice, dynUnit) = primaryPriceDisplay(data, _categorySchema);
+    final price       = dynPrice;
+    final priceUnit   = dynUnit;
     final rating      = (data['rating'] as num?)?.toDouble() ?? 5.0;
     final reviewsCount = (data['reviewsCount'] as num?)?.toInt() ?? 0;
     final bio         = data['aboutMe'] as String? ?? '';
@@ -599,7 +610,9 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                               fontSize: 18),
                         ),
                         TextSpan(
-                          text: l10n.catResultsPerHour,
+                          text: _categorySchema.isNotEmpty
+                              ? ' $priceUnit'
+                              : l10n.catResultsPerHour,
                           style: const TextStyle(
                               color: Colors.grey,
                               fontSize: 11,
@@ -647,7 +660,36 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                   ],
                   if (data['isVolunteer'] == true) ...[
                     const SizedBox(width: 4),
-                    const Icon(Icons.favorite, color: Colors.red, size: 15),
+                    VolunteerService.hasActiveVolunteerBadge(data)
+                        ? Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [
+                                  Color(0xFF10B981),
+                                  Color(0xFF6366F1),
+                                ],
+                              ),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.volunteer_activism,
+                                    color: Colors.white, size: 11),
+                                SizedBox(width: 2),
+                                Text('מתנדב',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                    )),
+                              ],
+                            ),
+                          )
+                        : const Icon(Icons.favorite,
+                            color: Colors.red, size: 15),
                   ],
                   const SizedBox(width: 4),
                   Flexible(

@@ -1,7 +1,9 @@
 // ignore_for_file: use_build_context_synchronously
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
@@ -42,6 +44,7 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
   late final TextEditingController _nameCtrl;
   late String  _selectedIconName;
   String?      _newImageUrl;      // set after successful upload
+  Uint8List?   _pickedBytes;      // in-memory preview (avoids Blob URL issues on Web)
   bool         _isUploading = false;
   bool         _isSaving    = false;
   bool         _isDeleting  = false;
@@ -74,18 +77,49 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
     );
     if (file == null) return;
 
-    setState(() => _isUploading = true);
+    // Read bytes IMMEDIATELY — two strategies to avoid Blob URL revocation
+    Uint8List bytes;
     try {
-      final bytes = await file.readAsBytes();
-      final ref   = FirebaseStorage.instance
+      bytes = await file.readAsBytes();
+    } catch (_) {
+      debugPrint('[CategoryEditSheet] readAsBytes failed, trying openRead...');
+      final chunks = <int>[];
+      await for (final chunk in file.openRead()) {
+        chunks.addAll(chunk);
+      }
+      bytes = Uint8List.fromList(chunks);
+    }
+    if (mounted) {
+      setState(() {
+        _pickedBytes = bytes;
+        _isUploading = true;
+      });
+    }
+
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('לא מחובר — התחבר מחדש'),
+            backgroundColor: Colors.red,
+          ));
+        }
+        return;
+      }
+      await currentUser.getIdToken(true);
+      final ref = FirebaseStorage.instance
           .ref()
           .child('category_images/${widget.docId}.jpg');
       final snap = await ref.putData(
-          bytes, SettableMetadata(contentType: 'image/jpeg'));
+          Uint8List.fromList(bytes),
+          SettableMetadata(contentType: 'image/jpeg'));
       final url = await snap.ref.getDownloadURL();
       if (mounted) setState(() => _newImageUrl = url);
     } catch (e) {
+      debugPrint('[CategoryEditSheet] Image upload failed: $e');
       if (mounted) {
+        setState(() => _pickedBytes = null);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('שגיאה בהעלאת תמונה: $e'),
           backgroundColor: Colors.red,
@@ -103,19 +137,68 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) return;
 
-    // Capture context-dependents BEFORE the first await so they remain
-    // valid even after the sheet is popped.
     final nav       = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
 
     setState(() => _isSaving = true);
     try {
-      await CategoryService.updateCategory(widget.docId, {
+      // ── Step 1: Upload image to Storage (if user picked one) ────────────
+      if (_pickedBytes != null && _newImageUrl == null) {
+        try {
+          final ref = FirebaseStorage.instance
+              .ref()
+              .child('category_images/${widget.docId}.jpg');
+          final snap = await ref.putData(
+              Uint8List.fromList(_pickedBytes!),
+              SettableMetadata(contentType: 'image/jpeg'));
+          _newImageUrl = await snap.ref.getDownloadURL();
+        } catch (storageErr) {
+          throw Exception('העלאת תמונה נכשלה — בדוק חיבור ונסה שוב.\n'
+              '(${storageErr.runtimeType})');
+        }
+      }
+
+      // ── Step 2: Write fields to Firestore ───────────────────────────────
+      final updates = <String, dynamic>{
         'name':      name,
-        'iconName':  _selectedIconName,
+        'iconName':  FieldValue.delete(),
         'cardScale': _cardScale,
-        if (_newImageUrl != null) 'img': _newImageUrl,
-      });
+      };
+      if (_newImageUrl != null) {
+        updates['img'] = _newImageUrl;
+      }
+      await CategoryService.updateCategory(widget.docId, updates);
+
+      // ── Step 3: Server-side verification ────────────────────────────────
+      final verify = await FirebaseFirestore.instance
+          .collection('categories')
+          .doc(widget.docId)
+          .get(const GetOptions(source: Source.server));
+      final serverData = verify.data() ?? {};
+
+      if (serverData['name'] != name) {
+        throw Exception('השמירה נכשלה בשרת — ייתכן שאין לך הרשאת עריכה');
+      }
+      if (_newImageUrl != null && serverData['img'] != _newImageUrl) {
+        throw Exception('עדכון התמונה נכשל בשרת');
+      }
+
+      // ── Step 4: Evict cached images so home screen shows the new one ───
+      // CachedNetworkImage caches by URL. Evict old URL (if it existed) and
+      // the new URL (in case a stale entry was written during upload).
+      try {
+        if (widget.initialImageUrl.isNotEmpty) {
+          await CachedNetworkImage.evictFromCache(widget.initialImageUrl);
+        }
+        if (_newImageUrl != null) {
+          await CachedNetworkImage.evictFromCache(_newImageUrl!);
+        }
+        // Also clear Flutter's in-memory image cache
+        PaintingBinding.instance.imageCache.clear();
+        PaintingBinding.instance.imageCache.clearLiveImages();
+      } catch (_) {}
+
+      // ── Step 5: Only NOW show success ───────────────────────────────────
       nav.pop();
       messenger.showSnackBar(SnackBar(
         content: Row(children: [
@@ -128,9 +211,10 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ));
     } catch (e) {
+      debugPrint('[CategoryEditSheet] ❌ SAVE ERROR: ${e.runtimeType}: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('שגיאה בשמירה: $e'),
+          content: Text('❌ שגיאה בשמירה: $e'),
           backgroundColor: Colors.red,
           behavior: SnackBarBehavior.floating,
         ));
@@ -390,16 +474,24 @@ class _CategoryEditSheetState extends State<CategoryEditSheet> {
             const SizedBox(height: 8),
             Row(
               children: [
-                // Thumbnail preview
+                // Thumbnail preview — uses in-memory bytes on Web to avoid
+                // "Could not load Blob from URL" errors. Falls back to
+                // CachedNetworkImage for the initial Firestore URL.
                 ClipRRect(
                   borderRadius: BorderRadius.circular(10),
-                  child: previewUrl.isNotEmpty
-                      ? CachedNetworkImage(
-                          imageUrl: previewUrl,
+                  child: _pickedBytes != null
+                      ? Image.memory(
+                          _pickedBytes!,
                           width: 72, height: 60, fit: BoxFit.cover,
-                          errorWidget: (_, __, ___) =>
-                              _imagePlaceholder())
-                      : _imagePlaceholder(),
+                          errorBuilder: (_, __, ___) => _imagePlaceholder(),
+                        )
+                      : previewUrl.isNotEmpty
+                          ? CachedNetworkImage(
+                              imageUrl: previewUrl,
+                              width: 72, height: 60, fit: BoxFit.cover,
+                              errorWidget: (_, __, ___) =>
+                                  _imagePlaceholder())
+                          : _imagePlaceholder(),
                 ),
                 const SizedBox(width: 12),
                 // Upload button

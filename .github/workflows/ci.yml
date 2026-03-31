@@ -1,0 +1,136 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# AnySkill CI/CD Pipeline
+#
+# Triggers:
+#   push to master     → analyze + test + build + deploy to PRODUCTION
+#   push to staging    → analyze + test + build + deploy to STAGING
+#   pull request       → analyze + test only (no deploy)
+#
+# Secrets required (set in GitHub → Settings → Secrets):
+#   FIREBASE_SERVICE_ACCOUNT_PROD    — JSON key for production project
+#   FIREBASE_SERVICE_ACCOUNT_STAGING — JSON key for staging project
+#   STRIPE_PUBLISHABLE_KEY           — Stripe pk_live_... key
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: CI/CD
+
+on:
+  push:
+    branches: [master, staging]
+  pull_request:
+    branches: [master]
+
+# Cancel in-progress runs on the same branch (saves minutes)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── Step 1: Analyze + Test ───────────────────────────────────────────────
+  test:
+    name: Analyze & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.1'  # pin to known-good version
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze (must be 0 errors)
+        run: flutter analyze --no-fatal-warnings
+
+      - name: Run unit tests
+        run: flutter test test/unit/ --reporter expanded
+
+  # ─── Step 2: Build Web ───────────────────────────────────────────────────
+  build:
+    name: Build Web
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only build on push (not on PR — PR just tests)
+    if: github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.1'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build web release
+        run: |
+          flutter build web --release \
+            --dart-define=STRIPE_PUBLISHABLE_KEY=${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: build/web
+          retention-days: 3
+
+  # ─── Step 3a: Deploy to STAGING ──────────────────────────────────────────
+  deploy-staging:
+    name: Deploy → Staging
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/staging'
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: build/web
+
+      - name: Deploy to Firebase Staging
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}
+          projectId: anyskill-staging
+          channelId: live
+
+  # ─── Step 3b: Deploy to PRODUCTION ───────────────────────────────────────
+  deploy-production:
+    name: Deploy → Production
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: build/web
+
+      - name: Deploy to Firebase Production
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_PROD }}
+          projectId: anyskill-6fdf3
+          channelId: live

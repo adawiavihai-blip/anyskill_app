@@ -12,7 +12,9 @@ import '../widgets/vip_confetti.dart';
 import '../l10n/app_localizations.dart';
 import '../services/locale_provider.dart';
 import '../services/account_deletion_service.dart';
+import '../services/volunteer_service.dart';
 import '../widgets/xp_progress_bar.dart';
+import '../widgets/streak_badge.dart';
 import '../widgets/anyskill_logo.dart';
 import '../main.dart' show currentAppVersion, rootNavigatorKey;
 import 'favorites_screen.dart';
@@ -125,6 +127,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _langTile(ctx, const Locale('he'), '🇮🇱', l10n.languageHe, current),
             _langTile(ctx, const Locale('en'), '🇬🇧', l10n.languageEn, current),
             _langTile(ctx, const Locale('es'), '🇪🇸', l10n.languageEs, current),
+            _langTile(ctx, const Locale('ar'), '🇸🇦', l10n.languageAr, current),
             const SizedBox(height: 16),
           ],
         ),
@@ -385,6 +388,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           const SizedBox(height: 16),
                           // ── XP Progress Bar ───────────────────────────
                           XpProgressBar(xp: (data['xp'] as num? ?? 0).toInt()),
+
+                          // ── Streak Badge ───────────────────────────────
+                          if ((data['streak'] as num? ?? 0).toInt() > 0) ...[
+                            const SizedBox(height: 10),
+                            Align(
+                              alignment: AlignmentDirectional.centerStart,
+                              child: StreakBadge.fromUserData(data),
+                            ),
+                          ],
+
+                          // ── Dynamic Volunteer Badge (active if task in last 30d) ──
+                          if (VolunteerService.hasActiveVolunteerBadge(data)) ...[
+                            const SizedBox(height: 12),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [Color(0xFF10B981), Color(0xFF6366F1)],
+                                  begin: AlignmentDirectional.centerEnd,
+                                  end: AlignmentDirectional.centerStart,
+                                ),
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: const Color(0xFF10B981).withValues(alpha: 0.3),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 3),
+                                  ),
+                                ],
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.volunteer_activism, color: Colors.white, size: 16),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    'מתנדב פעיל',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -726,6 +776,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     switch (LocaleProvider.instance.locale.languageCode) {
       case 'en': return '🇬🇧 ${l10n.languageEn}';
       case 'es': return '🇪🇸 ${l10n.languageEs}';
+      case 'ar': return '🇸🇦 ${l10n.languageAr}';
       default:   return '🇮🇱 ${l10n.languageHe}';
     }
   }

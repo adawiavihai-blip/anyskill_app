@@ -8,7 +8,6 @@ import '../widgets/banner_carousel.dart';
 import 'withdrawal_modal.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/hint_icon.dart';
-import '../services/audio_service.dart';
 import '../services/stripe_service.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -71,7 +70,8 @@ class _FinanceScreenState extends State<FinanceScreen>
       CurvedAnimation(parent: _countCtrl, curve: Curves.easeOutCubic),
     );
     _countCtrl.forward();
-    if (balance > 0) AudioService.instance.play(AppSound.wealthCrystal);
+    // Sound removed: this fires on screen init, NOT on actual payment.
+    // Real payment sounds are triggered by playEvent(onPaymentSuccess) in chat_screen.
   }
 
   // ── Provider: 7-day chart data ────────────────────────────────────────────

@@ -16,6 +16,7 @@ import 'my_requests_screen.dart';
 import '../services/location_service.dart';
 import '../services/ai_analysis_service.dart';
 import '../services/matchmaker_service.dart';
+import '../services/job_broadcast_service.dart';
 import '../services/opportunity_hunter_service.dart';
 import '../services/audio_service.dart';
 import '../services/cache_service.dart';
@@ -762,10 +763,12 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
           Future.value(null),
       ]);
 
-      final pos          = results[0] as dynamic;
-      final settingsData = isUrgent ? results[1] as Map<String, dynamic>? : null;
+      final pos          = results[0];
+      final double? lat  = pos != null ? (pos as dynamic).latitude as double? : null;
+      final double? lng  = pos != null ? (pos as dynamic).longitude as double? : null;
+      final settingsData = isUrgent ? (results[1] as Map<String, dynamic>?) : null;
       final urgencyFeePct = isUrgent
-          ? (((settingsData?['urgencyFeePercentage'] as num?) ?? 0.05) * 100).toDouble()
+          ? ((settingsData?['urgencyFeePercentage'] as num?) ?? 0.05) * 100.0
           : 0.0;
 
       // Write job_request and call matchmakerpitch in parallel
@@ -784,26 +787,41 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
           'interestedProviderNames': [],
           'interestedCount':        0,
           'createdAt':              FieldValue.serverTimestamp(),
-          if (pos != null) 'clientLat': (pos as dynamic).latitude as double,
-          if (pos != null) 'clientLng': (pos as dynamic).longitude as double,
+          if (lat != null) 'clientLat': lat,
+          if (lng != null) 'clientLng': lng,
         }),
         MatchmakerService.findMatch(
           requestText: desc,
           category:    category,
           clientName:  widget.clientName,
-          clientLat:   pos != null ? (pos as dynamic).latitude as double? : null,
-          clientLng:   pos != null ? (pos as dynamic).longitude as double? : null,
+          clientLat:   lat,
+          clientLng:   lng,
         ),
       ]);
 
-      final matchResult = futures[1] as MatchmakerResult?;
+      final jobRequestRef = futures[0] as DocumentReference;
+      final matchResult   = futures[1] as MatchmakerResult?;
       _dotsTimer?.cancel();
+
+      // ── Broadcast to nearby providers if urgent (fire-and-forget) ───────
+      if (isUrgent) {
+        JobBroadcastService.broadcastUrgentJob(
+          clientId:           widget.clientUid,
+          clientName:         widget.clientName,
+          category:           category,
+          description:        desc,
+          location:           locText,
+          sourceJobRequestId: jobRequestRef.id,
+          clientLat: lat,
+          clientLng: lng,
+        );
+      }
 
       if (!mounted) return;
 
       if (matchResult != null && matchResult.pitch.isNotEmpty) {
-        // 🔒 Solution Snap — the AI locked in a match
-        AudioService.instance.play(AppSound.solutionSnap);
+        // Sound: AI match (resolved via admin event mapping)
+        AudioService.instance.playEvent(AppEvent.onAiMatchFound);
         // Show AI result
         setState(() {
           _matchResult = matchResult;

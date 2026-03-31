@@ -108,7 +108,14 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       }
     } on FirebaseAuthException catch (e) {
+      debugPrint('[Login] FirebaseAuthException: code=${e.code} message=${e.message}');
       if (mounted) _snack(_mapError(e.code, AppLocalizations.of(context)), _kRed);
+    } catch (e) {
+      // Catches non-FirebaseAuth errors (network, channel, platform)
+      debugPrint('[Login] Unexpected error: $e');
+      if (mounted) {
+        _snack('${AppLocalizations.of(context).errorGenericLogin}\n(${e.runtimeType})', _kRed);
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -165,8 +172,38 @@ class _LoginScreenState extends State<LoginScreen> {
           'createdAt':      FieldValue.serverTimestamp(),
         });
       }
-    } catch (_) {
-      if (mounted) _snack(AppLocalizations.of(context).errorGoogleLogin, _kRed);
+
+      // Navigate directly to OnboardingGate and remove all previous routes.
+      // This avoids the race condition where AuthWrapper's StreamBuilder hasn't
+      // rebuilt yet with the new auth state, leaving the user stuck on login.
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const OnboardingGate()),
+          (_) => false,
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      debugPrint('[GoogleLogin] FirebaseAuthException: code=${e.code} message=${e.message}');
+      if (mounted) {
+        _snack('${AppLocalizations.of(context).errorGoogleLogin}\n(${e.code})', _kRed);
+      }
+    } catch (e) {
+      debugPrint('[GoogleLogin] Error: ${e.runtimeType}: $e');
+      if (mounted) {
+        // Show the actual error type so the user/admin can diagnose
+        final errType = e.runtimeType.toString();
+        final msg = e.toString();
+        // Common causes: PlatformException (missing SHA-1), MissingPluginException,
+        // network errors, popup blocked (web)
+        final hint = msg.contains('network')
+            ? 'בדוק חיבור לאינטרנט'
+            : msg.contains('popup')
+                ? 'חלון הכניסה נחסם — אפשר חלונות קופצים'
+                : msg.contains('sign_in') || msg.contains('ApiException')
+                    ? 'בדוק הגדרות Google Sign-In (SHA-1/OAuth)'
+                    : errType;
+        _snack('${AppLocalizations.of(context).errorGoogleLogin}\n($hint)', _kRed);
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

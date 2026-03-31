@@ -4,10 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
-import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'utils/web_utils.dart';
@@ -16,6 +16,9 @@ import 'services/locale_provider.dart';
 import 'services/cache_service.dart';
 import 'services/audio_service.dart';
 import 'services/app_check_service.dart';
+import 'repositories/logger_repository.dart';
+import 'models/app_log.dart';
+import 'theme/app_theme.dart';
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
 import 'screens/phone_login_screen.dart';
@@ -82,6 +85,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+
   // ── Step 1: PackageInfo ────────────────────────────────────────────────────
   try {
     final info = await PackageInfo.fromPlatform();
@@ -109,6 +113,18 @@ void main() async {
     debugPrint('⚠️ Firebase.initializeApp failed: $e');
     // Firebase is required — but still call runApp() so we show an error UI
     // rather than a permanent white screen.
+  }
+
+  // ── Step 3b: Crashlytics ──────────────────────────────────────────────────
+  // Native crash reporting for Android + iOS. On web, Crashlytics is a no-op
+  // (web errors go to the Firestore error_logs handler below instead).
+  if (!kIsWeb) {
+    try {
+      await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(true);
+      debugPrint('✅ Crashlytics ready');
+    } catch (e) {
+      debugPrint('⚠️ Crashlytics init failed (continuing): $e');
+    }
   }
 
   // ── Step 4: App Check ─────────────────────────────────────────────────────
@@ -140,10 +156,14 @@ void main() async {
     try {
       await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
       FirebaseFirestore.instance.settings = const Settings(
-        persistenceEnabled: true,  // IndexedDB cache — cold reads <20 ms
-        cacheSizeBytes: 10485760,  // 10 MB cap — prevents unbounded growth
+        persistenceEnabled: false, // Disabled — IndexedDB cache causes
+                                   // "INTERNAL ASSERTION FAILED: Unexpected
+                                   // state" on Firestore 12.9.0 web SDK.
+                                   // All reads go to server (adds ~50 ms
+                                   // per cold read but eliminates phantom
+                                   // writes and corrupted cache crashes).
       );
-      debugPrint('✅ Web: Auth LOCAL persistence + Firestore cache enabled');
+      debugPrint('✅ Web: Auth LOCAL persistence + Firestore server-only mode');
     } catch (e) {
       debugPrint('⚠️ Web Firebase settings failed: $e');
     }
@@ -160,23 +180,30 @@ void main() async {
     (_) => CacheService.purgeExpired(),
   );
 
-  // ── Global Flutter error logger ───────────────────────────────────────────
-  // Writes every unhandled Flutter rendering/framework error to Firestore
-  // `error_logs` so the admin SystemPerformanceTab can surface it in real-time.
-  final originalOnError = FlutterError.onError;
+  // ── Watchtower: Global error & activity logger ────────────────────────────
+  // Batched writes (every 10s or 20 entries) to error_logs / activity_log.
+  // Replaces the previous inline Firestore writes.
+  Watchtower.init();
+
+  // ── Global Flutter error handler ─────────────────────────────────────────
   FlutterError.onError = (FlutterErrorDetails details) {
-    originalOnError?.call(
-      details,
-    ); // keep default behaviour (prints to console)
-    try {
-      FirebaseFirestore.instance.collection('error_logs').add({
-        'type': 'flutter',
-        'message': details.exceptionAsString(),
-        'screen': details.library ?? '',
-        'userId': FirebaseAuth.instance.currentUser?.uid ?? '',
-        'timestamp': FieldValue.serverTimestamp(),
-      });
-    } catch (_) {} // never let logging crash the app
+    if (!kIsWeb) {
+      FirebaseCrashlytics.instance.recordFlutterFatalError(details);
+    }
+    Watchtower.instance.error(
+      details.exception,
+      screen: details.library,
+      severity: LogSeverity.fatal,
+    );
+  };
+
+  // ── Async / platform-level error handler ─────────────────────────────────
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+    if (!kIsWeb) {
+      FirebaseCrashlytics.instance.recordError(error, stack, fatal: false);
+    }
+    Watchtower.instance.error(error, stack: stack, severity: LogSeverity.warning);
+    return true;
   };
 
   runApp(const AnySkillApp());
@@ -211,16 +238,9 @@ class AnySkillApp extends StatelessWidget {
             locale: locale,
             // Auto-resolve RTL/LTR: GlobalMaterialLocalizations handles directionality
             // for Hebrew (RTL) and English/Spanish (LTR) automatically.
-            theme: ThemeData(
-              useMaterial3: true,
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: const Color(0xFF007AFF),
-              ),
-              scaffoldBackgroundColor: Colors.white,
-              textTheme: GoogleFonts.heeboTextTheme(
-                Theme.of(context).textTheme,
-              ).apply(fontFamilyFallback: ['NotoSansHebrew']),
-            ),
+            theme:     AppTheme.light(context),
+            darkTheme: AppTheme.dark(context),
+            themeMode: ThemeMode.light, // switch to ThemeMode.system to follow OS
             home: const AuthWrapper(),
           ), // closes MaterialApp
         ); // closes Listener
@@ -295,6 +315,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
         .snapshots()
         .listen((doc) {
           if (!doc.exists || !mounted || _updateNotified) return;
+
+          // Never show update banner in debug/development builds.
+          if (kDebugMode) return;
+
           final latest =
               (doc.data()?['latestVersion'] as String?) ?? currentAppVersion;
 
@@ -314,9 +338,14 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
   /// Returns true only if [candidate] is STRICTLY greater than [base].
   /// Compares "MAJOR.MINOR.PATCH" version strings segment by segment.
+  /// Strips build number suffix ("+N") before comparison to avoid
+  /// "8.9.3+1" being treated as newer than "8.9.3".
   bool _isNewerVersion(String candidate, String base) {
-    final c = candidate.split('.').map((p) => int.tryParse(p) ?? 0).toList();
-    final b = base.split('.').map((p) => int.tryParse(p) ?? 0).toList();
+    // Strip "+buildNumber" suffix (e.g., "8.9.3+1" → "8.9.3")
+    final cleanCandidate = candidate.split('+').first;
+    final cleanBase = base.split('+').first;
+    final c = cleanCandidate.split('.').map((p) => int.tryParse(p) ?? 0).toList();
+    final b = cleanBase.split('.').map((p) => int.tryParse(p) ?? 0).toList();
     final len = c.length > b.length ? c.length : b.length;
     while (c.length < len) {
       c.add(0);

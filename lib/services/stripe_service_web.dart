@@ -35,8 +35,9 @@ class StripeService {
         {'quoteId': quoteId},
       );
       final url = result.data['url'] as String?;
-      if (url == null || url.isEmpty)
+      if (url == null || url.isEmpty) {
         return PayQuoteResult.failure('שגיאה ב-URL');
+      }
       await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
       return PayQuoteResult.webRedirect();
     } catch (e) {

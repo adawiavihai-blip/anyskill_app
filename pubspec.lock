@@ -325,10 +325,10 @@ packages:
     dependency: "direct dev"
     description:
       name: fake_cloud_firestore
-      sha256: e527f18d4bb7bc329f499d99c3562f98f0cb55e5b2e92e11d9555b48e9f0fe1c
+      sha256: "95e01c95f956b31c62cb9fc54b8d51f32f1ae2909e6c0a5ce316da997e83a5c4"
       url: "https://pub.dev"
     source: hosted
-    version: "4.0.2+1"
+    version: "4.1.0+1"
   fake_firebase_security_rules:
     dependency: transitive
     description:
@@ -481,6 +481,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.5.1"
+  firebase_crashlytics:
+    dependency: "direct main"
+    description:
+      name: firebase_crashlytics
+      sha256: "9f9831b4ca1282421f4387181bfb8e6c4ee82049e616e433272c4fd13dfd5484"
+      url: "https://pub.dev"
+    source: hosted
+    version: "5.1.0"
+  firebase_crashlytics_platform_interface:
+    dependency: transitive
+    description:
+      name: firebase_crashlytics_platform_interface
+      sha256: "310f6ecc2bb27e36025c6777bef9d2e7dd32562a7cae3d914ea88ad5a2d536e4"
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.8.19"
   firebase_messaging:
     dependency: "direct main"
     description:

@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'chat_screen.dart';
 import '../services/audio_service.dart';
+import '../services/job_broadcast_service.dart';
 import '../services/location_service.dart';
 import '../services/gamification_service.dart';
 import '../services/business_coach_service.dart';
@@ -110,8 +111,8 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
 
       final newIds = incoming.difference(_knownOpportunityIds!);
       if (newIds.isNotEmpty) {
-        // Play once regardless of how many new jobs arrived in this batch.
-        AudioService.instance.play(AppSound.opportunityPulse);
+        // Sound: new opportunity (resolved via admin event mapping)
+        AudioService.instance.playEvent(AppEvent.onNewOpportunity);
       }
       _knownOpportunityIds = incoming;
     });
@@ -471,6 +472,83 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
     );
   }
 
+  // ── Broadcast claim section ──────────────────────────────────────────────
+
+  Widget _buildBroadcastSection() {
+    final category = widget.isAdmin
+        ? ''
+        : resolveCanonicalCategory(widget.serviceType);
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: widget.isAdmin
+          ? JobBroadcastService.streamAllActive()
+          : category.isNotEmpty
+              ? JobBroadcastService.streamOpenBroadcasts(category)
+              : const Stream.empty(),
+      builder: (context, snap) {
+        if (!snap.hasData || snap.data!.docs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        final broadcasts = snap.data!.docs;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: _kUrgentOr.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.bolt, size: 14, color: _kUrgentOr),
+                        const SizedBox(width: 4),
+                        Text(
+                          'משרות דחופות — הראשון תופס!',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: _kUrgentOr.withValues(alpha: 0.9),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 148,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                itemCount: broadcasts.length,
+                itemBuilder: (context, i) {
+                  final doc = broadcasts[i];
+                  return _BroadcastClaimCard(
+                    key: ValueKey(doc.id),
+                    broadcastId: doc.id,
+                    currentUid: _uid,
+                    providerName: widget.providerName,
+                    currentPosition: _currentPosition,
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 4),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildNormalScaffold(AppLocalizations l10n) {
     return Scaffold(
       backgroundColor: const Color(0xFFF0F2F8),
@@ -494,6 +572,8 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
           _CoachingBriefCard(uid: _uid),
         _buildXpBanner(),
         _buildSortChips(),
+        // ── Urgent broadcast claims (first-come-first-served) ───────────
+        _buildBroadcastSection(),
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
             stream: _buildQuery(),
@@ -1796,4 +1876,273 @@ class _ArcPainter extends CustomPainter {
   @override
   bool shouldRepaint(_ArcPainter o) =>
       o.fill != fill || o.color != color || o.bg != bg;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BROADCAST CLAIM CARD — real-time status with first-come-first-served claim
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class _BroadcastClaimCard extends StatefulWidget {
+  final String broadcastId;
+  final String currentUid;
+  final String providerName;
+  final Position? currentPosition;
+
+  const _BroadcastClaimCard({
+    super.key,
+    required this.broadcastId,
+    required this.currentUid,
+    required this.providerName,
+    required this.currentPosition,
+  });
+
+  @override
+  State<_BroadcastClaimCard> createState() => _BroadcastClaimCardState();
+}
+
+class _BroadcastClaimCardState extends State<_BroadcastClaimCard> {
+  bool _claiming = false;
+
+  Future<void> _handleClaim() async {
+    if (_claiming) return;
+    setState(() => _claiming = true);
+
+    final result = await JobBroadcastService.claimJob(
+      broadcastId: widget.broadcastId,
+      providerId: widget.currentUid,
+      providerName: widget.providerName,
+    );
+
+    if (!mounted) return;
+    setState(() => _claiming = false);
+
+    if (result.isSuccess && result.clientId != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✓ תפסת את המשרה! נפתח צ\'אט עם הלקוח'),
+          backgroundColor: Color(0xFF10B981),
+        ),
+      );
+      // Open chat with the client
+      final clientDoc = await FirebaseFirestore.instance
+          .collection('users').doc(result.clientId).get();
+      final clientName = (clientDoc.data()?['name'] as String?) ?? 'לקוח';
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ChatScreen(
+            receiverId: result.clientId!,
+            receiverName: clientName,
+          ),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message),
+          backgroundColor: result.isTaken
+              ? const Color(0xFFF59E0B)
+              : const Color(0xFFEF4444),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<DocumentSnapshot>(
+      stream: JobBroadcastService.streamBroadcast(widget.broadcastId),
+      builder: (context, snap) {
+        if (!snap.hasData || !snap.data!.exists) {
+          return const SizedBox.shrink();
+        }
+
+        final d = snap.data!.data() as Map<String, dynamic>? ?? {};
+        final status = d['status'] as String? ?? 'open';
+        final category = d['category'] as String? ?? '';
+        final description = d['description'] as String? ?? '';
+        final clientName = d['clientName'] as String? ?? '';
+        final claimedByName = d['claimedByName'] as String? ?? '';
+        final createdAt = d['createdAt'] as Timestamp?;
+        final isOpen = status == 'open';
+        final isClaimed = status == 'claimed';
+        final isMyClaim = d['claimedBy'] == widget.currentUid;
+
+        // Distance label
+        String? distLabel;
+        final cLat = (d['clientLat'] as num?)?.toDouble();
+        final cLng = (d['clientLng'] as num?)?.toDouble();
+        if (cLat != null && cLng != null && widget.currentPosition != null) {
+          distLabel = LocationService.distanceLabel(
+            widget.currentPosition!.latitude,
+            widget.currentPosition!.longitude,
+            cLat, cLng,
+          );
+        }
+
+        // Age label
+        String ageLabel = '';
+        if (createdAt != null) {
+          final mins = DateTime.now().difference(createdAt.toDate()).inMinutes;
+          ageLabel = mins < 1 ? 'עכשיו' : 'לפני $mins דק\'';
+        }
+
+        return Container(
+          width: 260,
+          margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          decoration: BoxDecoration(
+            color: isClaimed
+                ? (isMyClaim ? const Color(0xFFECFDF5) : const Color(0xFFF9FAFB))
+                : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isOpen
+                  ? _kUrgentOr.withValues(alpha: 0.6)
+                  : isMyClaim
+                      ? const Color(0xFF10B981).withValues(alpha: 0.5)
+                      : Colors.grey.withValues(alpha: 0.2),
+              width: isOpen ? 2 : 1,
+            ),
+            boxShadow: [
+              if (isOpen)
+                BoxShadow(
+                  color: _kUrgentOr.withValues(alpha: 0.15),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+            ],
+          ),
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Header row ──────────────────────────────────────────────
+              Row(
+                children: [
+                  if (isOpen)
+                    const Icon(Icons.bolt, color: _kUrgentOr, size: 16),
+                  if (isClaimed && isMyClaim)
+                    const Icon(Icons.check_circle,
+                        color: Color(0xFF10B981), size: 16),
+                  if (isClaimed && !isMyClaim)
+                    const Icon(Icons.lock,
+                        color: Color(0xFF9CA3AF), size: 16),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      category,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        color: isOpen
+                            ? const Color(0xFF1A1A2E)
+                            : const Color(0xFF6B7280),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    ageLabel,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: isOpen ? _kUrgentOr : const Color(0xFF9CA3AF),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+
+              // ── Description ─────────────────────────────────────────────
+              Text(
+                description,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 12, color: Color(0xFF4B5563), height: 1.3),
+              ),
+              const Spacer(),
+
+              // ── Footer: distance + client name ──────────────────────────
+              Row(
+                children: [
+                  if (distLabel != null) ...[
+                    const Icon(Icons.location_on,
+                        size: 12, color: Color(0xFF9CA3AF)),
+                    const SizedBox(width: 2),
+                    Text(distLabel,
+                        style: const TextStyle(
+                            fontSize: 10, color: Color(0xFF6B7280))),
+                    const SizedBox(width: 8),
+                  ],
+                  Text(clientName,
+                      style: const TextStyle(
+                          fontSize: 10, color: Color(0xFF9CA3AF))),
+                ],
+              ),
+              const SizedBox(height: 8),
+
+              // ── Action button ───────────────────────────────────────────
+              SizedBox(
+                width: double.infinity,
+                height: 34,
+                child: isOpen
+                    ? ElevatedButton(
+                        onPressed: _claiming ? null : _handleClaim,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _kUrgentOr,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10)),
+                          elevation: 0,
+                          padding: EdgeInsets.zero,
+                          textStyle: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        child: _claiming
+                            ? const SizedBox(
+                                width: 18, height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white))
+                            : const Text('תפוס עכשיו'),
+                      )
+                    : isMyClaim
+                        ? Container(
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF10B981)
+                                  .withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Text(
+                              '✓ תפסת את המשרה!',
+                              style: TextStyle(
+                                color: Color(0xFF065F46),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            ),
+                          )
+                        : Container(
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              'נתפסה ע"י $claimedByName',
+                              style: const TextStyle(
+                                color: Color(0xFF9CA3AF),
+                                fontWeight: FontWeight.w500,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }

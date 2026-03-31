@@ -151,7 +151,23 @@
       "Bash(firebase emulators:exec --only firestore \"echo rules loaded\")",
       "Bash(xargs wc:*)",
       "Bash(grep \"\\\\.dart$\")",
-      "Bash(node test_stripe_custom.js)"
+      "Bash(node test_stripe_custom.js)",
+      "Bash(awk \"NR>=1700 && NR<=1730\" lib/l10n/app_localizations.dart)",
+      "Bash(grep -n \"  ''es'':\" lib/l10n/app_localizations.dart)",
+      "Skill(update-config)",
+      "Bash(grep -E \"^d|^-.*\\\\.dart$\")",
+      "Bash(find C:UsersavihaDesktopanyskill_app -name *.functions.* -o -name firebaserc -o -name functions -type d)",
+      "Bash(find C:Usersaviha.claudeprojectsC--Users-aviha-Desktop-anyskill-appmemory -type f -name *.md)",
+      "Bash(find /c/Users/aviha/Desktop/anyskill_app/functions -type f -name *.js -o -name *.ts -o -name package.json)",
+      "Bash(grep -v \"^total\\\\|^d.*\\\\.$\")",
+      "Bash(find /c/Users/aviha/Desktop/anyskill_app -name *stripe*service* -o -name *cloud*functions* -o -name *payment*)",
+      "Bash(grep -rn \"const Color\\\\|static const.*Color\" lib/screens/*.dart)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(bash /tmp/count_tabs.sh)",
+      "Bash(node:*)",
+      "Bash(2)",
+      "Bash(find /c/Users/aviha/Desktop/anyskill_app -maxdepth 2 \\\\\\(-name .github -o -name Makefile -o -name *.yaml -o -name *.yml -o -name .gitlab-ci.yml -o -name .drone.yml -o -name azure-pipelines.yml \\\\\\))"
     ]
   }
 }

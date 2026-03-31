@@ -36,6 +36,7 @@ class LocaleProvider extends ChangeNotifier {
     Locale('he'),
     Locale('en'),
     Locale('es'),
+    Locale('ar'),
   ];
 
   /// Reads the saved locale from SharedPreferences and subscribes to CMS overrides.

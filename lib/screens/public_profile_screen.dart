@@ -7,7 +7,9 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'chat_screen.dart';
 import 'my_bookings_screen.dart';
 import '../models/pricing_model.dart';
+import '../services/volunteer_service.dart';
 import '../widgets/xp_progress_bar.dart';
+import '../widgets/category_specs_widget.dart';
 
 class PublicProfileScreen extends StatefulWidget {
   final String userId;
@@ -393,6 +395,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     final reviewsCount = (data['reviewsCount'] as num? ?? 0).toInt();
     final jobsCount =
         (data['completedJobsCount'] as num? ?? reviewsCount).toInt();
+    final hasVolunteerBadge = VolunteerService.hasActiveVolunteerBadge(data);
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -518,6 +521,71 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           const SizedBox(height: 16),
           // ── XP Progress Bar ─────────────────────────────────────
           XpProgressBar(xp: xp),
+
+          // ── Category-specific specs (dynamic schema) ────────────
+          Builder(
+            builder: (context) {
+              final details =
+                  data['categoryDetails'] as Map<String, dynamic>? ?? {};
+              if (details.isNotEmpty) {
+                return FutureBuilder<List<SchemaField>>(
+                  future: loadSchemaForCategory(
+                      data['serviceType'] as String? ?? ''),
+                  builder: (context, snap) {
+                    if (!snap.hasData || snap.data!.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: CategorySpecsDisplay(
+                        schema: snap.data!,
+                        values: details,
+                      ),
+                    );
+                  },
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+
+          // ── Dynamic Volunteer Badge (active if task in last 30d) ──
+          if (hasVolunteerBadge) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF10B981), Color(0xFF6366F1)],
+                  begin: AlignmentDirectional.centerEnd,
+                  end: AlignmentDirectional.centerStart,
+                ),
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF10B981).withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.volunteer_activism, color: Colors.white, size: 16),
+                  SizedBox(width: 6),
+                  Text(
+                    'מתנדב פעיל',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

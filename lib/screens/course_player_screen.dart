@@ -134,8 +134,8 @@ class _CoursePlayerScreenState extends State<CoursePlayerScreen> {
       _showCelebration = true;
     });
 
-    // 🚀 Growth Ascend — XP earned, level up!
-    AudioService.instance.play(AppSound.growthAscend);
+    // Sound: course completed (resolved via admin event mapping)
+    AudioService.instance.playEvent(AppEvent.onCourseCompleted);
 
     await AcademyService.completeCourse(
       uid:         widget.uid,

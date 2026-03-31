@@ -12,6 +12,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import '../services/category_service.dart';
 import '../services/cancellation_policy_service.dart';
+import '../widgets/category_specs_widget.dart';
 import '../constants/quick_tags.dart';
 
 class EditProfileScreen extends StatefulWidget {
@@ -33,6 +34,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String? _selectedSubCatId; // doc ID of selected sub-category (nullable)
   List<Map<String, dynamic>> _mainCategories = [];
   List<Map<String, dynamic>> _subCategories = []; // subs for selected main
+  List<SchemaField> _categorySchema = [];
+  Map<String, dynamic> _categoryDetails = {};
 
   int? _responseTimeMinutes;
   String _cancellationPolicy = 'flexible';
@@ -72,6 +75,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       text: widget.userData['videoUrl'] as String? ?? '',
     );
     _galleryImages = List.from(widget.userData['gallery'] ?? []);
+    _categoryDetails = Map<String, dynamic>.from(
+      widget.userData['categoryDetails'] as Map? ?? {},
+    );
     _selectedQuickTags = Set<String>.from(
       (widget.userData['quickTags'] as List? ?? []).cast<String>(),
     );
@@ -132,6 +138,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         _subCategories = subs;
         _selectedSubCatId = _selectedSubCatId ?? subId;
       });
+      // Load schema for the resolved category
+      final resolvedCatName = widget.userData['serviceType'] as String? ?? '';
+      if (resolvedCatName.isNotEmpty && _categorySchema.isEmpty) {
+        loadSchemaForCategory(resolvedCatName).then((schema) {
+          if (mounted) setState(() => _categorySchema = schema);
+        });
+      }
     });
   }
 
@@ -418,6 +431,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         payload['videoUrl'] = videoUrlResult?.value ?? ''; // ← sanitized
         if (_responseTimeMinutes != null) {
           payload['responseTimeMinutes'] = _responseTimeMinutes;
+        }
+        // Dynamic service schema fields
+        if (_categoryDetails.isNotEmpty) {
+          payload['categoryDetails'] = _categoryDetails;
         }
       }
 
@@ -923,15 +940,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                         ),
                                       )
                                       .toList(),
-                              onChanged:
-                                  (val) => setState(() {
-                                    _selectedMainCatId = val;
-                                    _selectedSubCatId = null;
-                                    _subCategories =
-                                        _categories
-                                            .where((c) => c['parentId'] == val)
-                                            .toList();
-                                  }),
+                              onChanged: (val) {
+                                setState(() {
+                                  _selectedMainCatId = val;
+                                  _selectedSubCatId = null;
+                                  _subCategories = _categories
+                                      .where((c) => c['parentId'] == val)
+                                      .toList();
+                                  _categorySchema = [];
+                                  _categoryDetails = {};
+                                });
+                                // Load schema for new category
+                                if (val != null) {
+                                  final catName = _mainCategories
+                                      .where((c) => c['id'] == val)
+                                      .map((c) => c['name'] as String? ?? '')
+                                      .firstOrNull ?? '';
+                                  if (catName.isNotEmpty) {
+                                    loadSchemaForCategory(catName).then((s) {
+                                      if (mounted) setState(() => _categorySchema = s);
+                                    });
+                                  }
+                                }
+                              },
                               decoration: const InputDecoration(
                                 border: OutlineInputBorder(),
                               ),
@@ -1163,6 +1194,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                               hintText: l10n.profileFieldPriceHint,
                             ),
                           ),
+
+                          // ── Dynamic service schema fields ───────────
+                          if (_categorySchema.isNotEmpty)
+                            DynamicSchemaForm(
+                              schema: _categorySchema,
+                              initialValues: _categoryDetails,
+                              onChanged: (vals) => _categoryDetails = vals,
+                            ),
+
                           const SizedBox(height: 20),
                           Text(
                             l10n.profileFieldResponseTime,

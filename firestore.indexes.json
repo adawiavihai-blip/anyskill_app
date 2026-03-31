@@ -235,6 +235,90 @@
         { "fieldPath": "status",    "order": "ASCENDING"  },
         { "fieldPath": "createdAt", "order": "ASCENDING"  }
       ]
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SCALE-UP INDEXES (added 2026-03-30 for 3M+ users)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // ── volunteer_tasks: anti-fraud cooldown check ──────────────────────────
+    {
+      "collectionGroup": "volunteer_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "providerId",   "order": "ASCENDING"  },
+        { "fieldPath": "clientId",     "order": "ASCENDING"  },
+        { "fieldPath": "status",       "order": "ASCENDING"  },
+        { "fieldPath": "completedAt",  "order": "DESCENDING" }
+      ]
+    },
+    // ── volunteer_tasks: reciprocal block check ─────────────────────────────
+    {
+      "collectionGroup": "volunteer_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "providerId", "order": "ASCENDING" },
+        { "fieldPath": "clientId",   "order": "ASCENDING" },
+        { "fieldPath": "status",     "order": "ASCENDING" }
+      ]
+    },
+    // ── volunteer_tasks: daily XP cap + recent completed count ───────────────
+    {
+      "collectionGroup": "volunteer_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "providerId",  "order": "ASCENDING"  },
+        { "fieldPath": "status",      "order": "ASCENDING"  },
+        { "fieldPath": "completedAt", "order": "DESCENDING" }
+      ]
+    },
+    // ── volunteer_tasks: client pending stream ──────────────────────────────
+    {
+      "collectionGroup": "volunteer_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId",  "order": "ASCENDING"  },
+        { "fieldPath": "status",    "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    // ── job_broadcasts: open by category sorted by time ─────────────────────
+    {
+      "collectionGroup": "job_broadcasts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",    "order": "ASCENDING"  },
+        { "fieldPath": "category",  "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    // ── support_tickets: admin inbox by status + date ────────────────────────
+    {
+      "collectionGroup": "support_tickets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",    "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    // ── support_tickets: user's own tickets ──────────────────────────────────
+    {
+      "collectionGroup": "support_tickets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId",    "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    // ── user_rewards: active rewards for a user ─────────────────────────────
+    {
+      "collectionGroup": "user_rewards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId",    "order": "ASCENDING" },
+        { "fieldPath": "status",    "order": "ASCENDING" },
+        { "fieldPath": "expiresAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

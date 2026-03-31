@@ -189,11 +189,12 @@ class _ProviderStripeOnboardingScreenState
           )
           ..loadRequest(Uri.parse(url));
 
-    if (mounted)
+    if (mounted) {
       setState(() {
         _controller = controller;
         _loading = false;
       });
+    }
   }
 
   @override
@@ -349,8 +350,9 @@ class _ProviderStripeOnboardingScreenState
   Widget _buildOriginalBody() {
     if (_error != null) return _buildError();
     if (kIsWeb && _webBrowserOpened) return _buildWebWaiting();
-    if (_controller == null)
+    if (_controller == null) {
       return const Center(child: CircularProgressIndicator());
+    }
 
     return Stack(
       children: [

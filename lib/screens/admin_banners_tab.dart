@@ -679,7 +679,7 @@ class _BannerEditDialogState extends State<_BannerEditDialog> {
 
   Future<void> _pickAndUploadImage() async {
     final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    final picked = await picker.pickImage(source: ImageSource.gallery, maxWidth: 1200, maxHeight: 800, imageQuality: 75);
     if (picked == null) return;
 
     setState(() => _uploadingImage = true);

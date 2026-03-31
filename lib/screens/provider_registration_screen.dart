@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image_picker/image_picker.dart';
 import '../constants.dart';
 import '../services/service_architect.dart';
 import 'pending_verification_screen.dart';
@@ -48,10 +50,19 @@ class _ProviderRegistrationScreenState
   final _aboutCtrl    = TextEditingController();
   final _priceCtrl    = TextEditingController();
   final _taxCtrl      = TextEditingController();
+  final _otherDescCtrl = TextEditingController();
+
+  static const String _kOther = 'אחר...';
 
   String  _category    = APP_CATEGORIES.first['name'] as String;
   String  _subCategory = '';
+  bool    _isOtherCategory = false;
+  bool    _isOtherSubCategory = false;
   bool    _isLoading   = false;
+
+  // ── Business document upload ───────────────────────────────────────────
+  String? _businessDocUrl;
+  bool    _isUploading = false;
 
   @override
   void initState() {
@@ -89,6 +100,7 @@ class _ProviderRegistrationScreenState
     _aboutCtrl.dispose();
     _priceCtrl.dispose();
     _taxCtrl.dispose();
+    _otherDescCtrl.dispose();
     super.dispose();
   }
 
@@ -105,6 +117,10 @@ class _ProviderRegistrationScreenState
     final price = double.tryParse(_priceCtrl.text.trim()) ?? 0.0;
     final taxId = _taxCtrl.text.trim();
 
+    final isOther = _isOtherCategory || _isOtherSubCategory;
+    final effectiveCategory = isOther ? _otherDescCtrl.text.trim() : _category;
+    final effectiveSubCategory = _isOtherCategory ? '' : _subCategory;
+
     try {
       final db    = FirebaseFirestore.instance;
       final batch = db.batch();
@@ -113,60 +129,54 @@ class _ProviderRegistrationScreenState
       final applicationData = {
         'submittedAt':  FieldValue.serverTimestamp(),
         'phoneNumber':  phone,
-        'category':     _category,
-        'subCategory':  _subCategory,
+        'category':     effectiveCategory,
+        'subCategory':  effectiveSubCategory,
         'taxId':        taxId,
         'aboutMe':      about,
         'pricePerHour': price,
+        'isCustomCategory': isOther,
+        if (_businessDocUrl != null) 'businessDocUrl': _businessDocUrl,
+      };
+
+      final userPayload = <String, dynamic>{
+        'name':                    name,
+        'phone':                   phone,
+        'serviceType':             effectiveCategory,
+        'subCategory':             effectiveSubCategory,
+        'aboutMe':                 about,
+        'pricePerHour':            price,
+        'isPendingExpert':         true,
+        'isProvider':              false,   // admin approval flips this
+        'isVerified':              false,
+        'categoryReviewedByAdmin': false,
+        'expertApplicationData':   applicationData,
+        'updatedAt':               FieldValue.serverTimestamp(),
+        if (_businessDocUrl != null) 'businessDocUrl': _businessDocUrl,
+        if (isOther) 'pendingCategoryApproval': true,
       };
 
       if (widget.isExistingUser) {
-        // ── Existing client → upgrade to pending provider ──────────────────
-        batch.set(userRef, {
-          'name':                    name,
-          'phone':                   phone,
-          'serviceType':             _category,
-          'subCategory':             _subCategory,
-          'aboutMe':                 about,
-          'pricePerHour':            price,
-          'isPendingExpert':         true,
-          'isProvider':              false,   // admin approval flips this
-          'isVerified':              false,
-          'categoryReviewedByAdmin': false,
-          'expertApplicationData':   applicationData,
-          'updatedAt':               FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+        batch.set(userRef, userPayload, SetOptions(merge: true));
       } else {
-        // ── Brand-new user → create full profile ───────────────────────────
         final d = widget.prefillData;
         batch.set(userRef, {
           'uid':            uid,
-          'name':           name,
           'email':          d['email'] ?? '',
-          'phone':          phone,
           'profileImage':   d['photoURL'] ?? d['profileImage'] ?? '',
           'balance':        0.0,
           'pendingBalance': 0.0,
           'rating':         5.0,
           'reviewsCount':   0,
-          'pricePerHour':   price,
-          'serviceType':             _category,
-          'subCategory':             _subCategory,
-          'aboutMe':                 about,
-          'categoryReviewedByAdmin': false,
-          'gallery':                 [],
+          'gallery':        [],
           'quickTags':      [],
           'isOnline':       true,
           'isAdmin':        false,
-          'isVerified':     false,
           'isCustomer':     false,
-          'isProvider':     false,       // admin approval flips this
-          'isPendingExpert': true,
-          'expertApplicationData': applicationData,
           'termsAccepted':      true,
-          'onboardingComplete': true,    // skip onboarding — goes to pending screen
+          'onboardingComplete': true,
           'tourComplete':       false,
           'createdAt':          FieldValue.serverTimestamp(),
+          ...userPayload,
         }, SetOptions(merge: false));
       }
 
@@ -176,22 +186,51 @@ class _ProviderRegistrationScreenState
         'userId':      uid,
         'name':        name,
         'phone':       phone,
-        'category':    _category,
-        'priority':    'high',
+        'category':    effectiveCategory,
+        'priority':    isOther ? 'urgent' : 'high',
         'timestamp':   FieldValue.serverTimestamp(),
-        'message':     'בקשת הצטרפות כנותן שירות ב$_category: $name',
+        'message':     isOther
+            ? 'בקשת קטגוריה חדשה מ$name: "$effectiveCategory"'
+            : 'בקשת הצטרפות כנותן שירות ב$effectiveCategory: $name',
       });
+
+      // ── "Other" category: create request + send admin email ────────────
+      if (isOther) {
+        batch.set(db.collection('category_requests').doc(), {
+          'userId':      uid,
+          'userName':    name,
+          'description': _otherDescCtrl.text.trim(),
+          'originalCategory': _isOtherCategory ? null : _category,
+          'status':      'pending',
+          'createdAt':   FieldValue.serverTimestamp(),
+        });
+
+        // Admin email notification via mail collection (Firebase Trigger Email)
+        batch.set(db.collection('mail').doc(), {
+          'to': ['adawiavihai@gmail.com'],
+          'message': {
+            'subject': 'AnySkill — בקשת קטגוריה חדשה מ$name',
+            'html': '<p style="direction:rtl;font-family:sans-serif">'
+                '<strong>$name</strong> ($phone) ביקש/ה קטגוריה חדשה:<br><br>'
+                '<em>"${_otherDescCtrl.text.trim()}"</em><br><br>'
+                'UID: $uid<br>'
+                'אישור דרך לוח הניהול → ניהול → תיבת פניות</p>',
+          },
+        });
+      }
 
       await batch.commit();
 
       if (mounted) {
         if (widget.isExistingUser) {
-          // Pop back to ProfileScreen — the isPendingExpert chip will appear
-          // automatically via its StreamBuilder.
           Navigator.of(context).pop();
-          _snack('הבקשה נשלחה! נחזור אליך בהקדם לאחר בדיקת הפרטים.', _kGreen);
+          _snack(
+            isOther
+                ? 'הבקשה נשלחה! נבדוק את הקטגוריה החדשה ונחזור אליך.'
+                : 'הבקשה נשלחה! נחזור אליך בהקדם לאחר בדיקת הפרטים.',
+            _kGreen,
+          );
         } else {
-          // New user — wipe the full stack and land on the waiting screen.
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(
                 builder: (_) => const PendingVerificationScreen()),
@@ -284,11 +323,14 @@ class _ProviderRegistrationScreenState
 
                       // Sub-category
                       _buildSubCategoryDropdown(),
+
+                      // "Other" free-text (shown when אחר... selected)
+                      _buildOtherDescription(),
                       const SizedBox(height: 14),
 
-                      // AI service suggestions (updates on category change)
-                      _buildServiceSuggestions(),
-                      const SizedBox(height: 14),
+                      // AI service suggestions (only for known categories)
+                      if (!_isOtherCategory) _buildServiceSuggestions(),
+                      if (!_isOtherCategory) const SizedBox(height: 14),
 
                       // About me
                       _field(
@@ -329,6 +371,10 @@ class _ProviderRegistrationScreenState
                         icon: Icons.badge_outlined,
                         keyboardType: TextInputType.number,
                       ),
+                      const SizedBox(height: 16),
+
+                      // ── Business document upload ────────────────────────
+                      _buildDocumentUpload(),
                       const SizedBox(height: 28),
 
                       // ── Info box ─────────────────────────────────────────────
@@ -456,44 +502,158 @@ class _ProviderRegistrationScreenState
     );
   }
 
-  // ── Category dropdown ─────────────────────────────────────────────────────
+  // ── Category dropdown (with "אחר..." option) ─────────────────────────────
   Widget _buildCategoryDropdown() {
     final cats = APP_CATEGORIES.map((c) => c['name'] as String).toList();
+    final allOptions = [...cats, _kOther];
+    final displayValue = _isOtherCategory ? _kOther : _category;
+
     return DropdownButtonFormField<String>(
-      value: _category,
-      decoration: _inputDeco('תחום / קטגוריה', Icons.category_outlined),
+      value: allOptions.contains(displayValue) ? displayValue : cats.first,
+      decoration: _inputDeco('תחום עיסוק', Icons.category_outlined),
       isExpanded: true,
-      items: cats.map((name) => DropdownMenuItem(
+      items: allOptions.map((name) => DropdownMenuItem(
         value: name,
-        child: Text(name, textAlign: TextAlign.right),
+        child: Text(
+          name,
+          textAlign: TextAlign.right,
+          style: name == _kOther
+              ? const TextStyle(color: _kPurple, fontWeight: FontWeight.w600)
+              : null,
+        ),
       )).toList(),
       onChanged: (v) {
         if (v == null) return;
-        final subs = APP_SUB_CATEGORIES[v] ?? [];
-        setState(() {
-          _category    = v;
-          _subCategory = subs.isNotEmpty ? subs.first : '';
-        });
+        if (v == _kOther) {
+          setState(() {
+            _isOtherCategory = true;
+            _isOtherSubCategory = true;
+            _category = '';
+            _subCategory = '';
+          });
+        } else {
+          final subs = APP_SUB_CATEGORIES[v] ?? [];
+          setState(() {
+            _isOtherCategory = false;
+            _isOtherSubCategory = false;
+            _category = v;
+            _subCategory = subs.isNotEmpty ? subs.first : '';
+          });
+        }
       },
     );
   }
 
-  // ── Sub-category dropdown ─────────────────────────────────────────────────
+  // ── Sub-category dropdown (with "אחר..." option) ─────────────────────────
   Widget _buildSubCategoryDropdown() {
+    // If "Other" category → show only the free-text field
+    if (_isOtherCategory) return const SizedBox.shrink();
+
     final subs = APP_SUB_CATEGORIES[_category] ?? [];
     if (subs.isEmpty) return const SizedBox.shrink();
-    // Ensure _subCategory is a valid option (e.g. after category switch)
-    final current =
-        subs.contains(_subCategory) ? _subCategory : subs.first;
+
+    final allSubs = [...subs, _kOther];
+    final displayValue = _isOtherSubCategory ? _kOther
+        : (subs.contains(_subCategory) ? _subCategory : subs.first);
+
     return DropdownButtonFormField<String>(
-      value: current,
+      value: allSubs.contains(displayValue) ? displayValue : subs.first,
       decoration: _inputDeco('תת-קטגוריה', Icons.tune_rounded),
       isExpanded: true,
-      items: subs.map((s) => DropdownMenuItem(
+      items: allSubs.map((s) => DropdownMenuItem(
         value: s,
-        child: Text(s, textAlign: TextAlign.right),
+        child: Text(
+          s,
+          textAlign: TextAlign.right,
+          style: s == _kOther
+              ? const TextStyle(color: _kPurple, fontWeight: FontWeight.w600)
+              : null,
+        ),
       )).toList(),
-      onChanged: (v) => setState(() => _subCategory = v ?? _subCategory),
+      onChanged: (v) {
+        if (v == _kOther) {
+          setState(() {
+            _isOtherSubCategory = true;
+            _subCategory = '';
+          });
+        } else {
+          setState(() {
+            _isOtherSubCategory = false;
+            _subCategory = v ?? _subCategory;
+          });
+        }
+      },
+    );
+  }
+
+  // ── "Other" free-text description field ──────────────────────────────────
+  Widget _buildOtherDescription() {
+    if (!_isOtherCategory && !_isOtherSubCategory) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: _kPurple.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _kPurple.withValues(alpha: 0.15)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.edit_note_rounded, size: 16, color: _kPurple),
+                  SizedBox(width: 6),
+                  Text(
+                    'קטגוריה חדשה — ממתין לאישור מנהל',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _kPurple,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _otherDescCtrl,
+                textAlign: TextAlign.right,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  hintText: 'תאר את השירות שלך בפירוט...',
+                  hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey.shade200),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey.shade200),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: _kPurple, width: 1.5),
+                  ),
+                  contentPadding: const EdgeInsets.all(12),
+                ),
+                validator: (v) {
+                  if ((_isOtherCategory || _isOtherSubCategory) &&
+                      (v?.trim().length ?? 0) < 10) {
+                    return 'יש לתאר את השירות (לפחות 10 תווים)';
+                  }
+                  return null;
+                },
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -711,6 +871,135 @@ class _ProviderRegistrationScreenState
         ],
       ),
     );
+  }
+
+  // ── Business Document Upload ───────────────────────────────────────────────
+  Widget _buildDocumentUpload() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAFAFF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200, width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.upload_file_rounded, size: 18, color: _kPurple),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'העלה תעודת עוסק מורשה/פטור או רישיון עסק',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1A1A2E),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'אופציונלי — מזרז את תהליך האישור',
+            style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+          ),
+          const SizedBox(height: 12),
+
+          if (_businessDocUrl != null) ...[
+            // ── Uploaded state ──────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: _kGreen.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _kGreen.withValues(alpha: 0.2)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: _kGreen, size: 18),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'מסמך הועלה בהצלחה',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF065F46),
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () => setState(() => _businessDocUrl = null),
+                    child: const Icon(Icons.close, size: 16,
+                        color: Color(0xFF9CA3AF)),
+                  ),
+                ],
+              ),
+            ),
+          ] else ...[
+            // ── Upload button ───────────────────────────────────────────
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: OutlinedButton.icon(
+                icon: _isUploading
+                    ? const SizedBox(
+                        width: 16, height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: _kPurple))
+                    : const Icon(Icons.cloud_upload_outlined, size: 18),
+                label: Text(
+                  _isUploading ? 'מעלה...' : 'בחר קובץ',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _kPurple,
+                  side: const BorderSide(color: _kPurple, width: 1.2),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: _isUploading ? null : _pickAndUploadDocument,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickAndUploadDocument() async {
+    final picker = ImagePicker();
+    final file = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 2000,
+      imageQuality: 85,
+    );
+    if (file == null) return;
+
+    setState(() => _isUploading = true);
+    try {
+      final uid = widget.prefillData['uid'] as String?
+          ?? FirebaseAuth.instance.currentUser?.uid ?? '';
+      final bytes = await file.readAsBytes();
+      final ext = file.name.split('.').last;
+      final ref = FirebaseStorage.instance
+          .ref('business_docs/$uid/license_${DateTime.now().millisecondsSinceEpoch}.$ext');
+
+      await ref.putData(
+        Uint8List.fromList(bytes),
+        SettableMetadata(contentType: 'image/$ext'),
+      );
+      final url = await ref.getDownloadURL();
+
+      if (mounted) setState(() => _businessDocUrl = url);
+    } catch (e) {
+      if (mounted) _snack('שגיאה בהעלאה: $e', _kRed);
+    } finally {
+      if (mounted) setState(() => _isUploading = false);
+    }
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

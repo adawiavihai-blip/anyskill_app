@@ -2,7 +2,7 @@
 ///
 /// Implements the weighted scoring formula:
 ///   Score = (XP_Score × 0.6) + (Distance_Score × 0.2) + (Story_Bonus × 0.2)
-///           + Promoted_Add
+///           + Promoted_Add + Online_Add + VolunteerBadge_Add
 ///
 /// Higher score = higher position in search results.
 /// All component scores are normalised to a 0–100 range before weighting,
@@ -11,6 +11,7 @@ library;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'gamification_service.dart';
+import 'volunteer_service.dart';
 
 class SearchRankingService {
   SearchRankingService._();
@@ -27,6 +28,15 @@ class SearchRankingService {
   /// This is the "Uber" logic: active providers earn more leads.
   static const double _onlineBonus = 100.0;
 
+  /// Providers with an active Volunteer Badge (completed 1+ volunteer task
+  /// in the last 30 days) get a search boost. Sits below online/promoted
+  /// but meaningfully lifts position (~5-8 spots in a typical result set).
+  static const double _volunteerBadgeBonus = 50.0;
+
+  /// Profile Boost Card (Daily Drop reward or streak milestone).
+  /// Equivalent to VIP promotion for 12 hours — same +200 bonus.
+  static const double _profileBoostBonus = 200.0;
+
   // ── Formula ─────────────────────────────────────────────────────────────
 
   /// Returns a rank score for a single provider.
@@ -38,12 +48,16 @@ class SearchRankingService {
   ///   [hasActiveStory] True if provider posted a Skills Story in the last 24 h.
   ///   [isOnline]       Online providers float above offline ones (Uber logic).
   ///   [isPromoted]     Admin-promoted providers float above all others.
+  ///   [hasActiveVolunteerBadge] Completed 1+ volunteer task in last 30 days.
+  ///   [hasProfileBoost] Active Profile Boost Card from Daily Drop/streak.
   static double score({
     required int    xp,
     required double? distanceMeters,
     required bool   hasActiveStory,
     bool isOnline   = false,
     bool isPromoted = false,
+    bool hasActiveVolunteerBadge = false,
+    bool hasProfileBoost = false,
   }) {
     // ── 1. XP Score (0–100) ──────────────────────────────────────────────
     // Capped at goldThreshold (default 2000 XP = 100 pts).
@@ -74,8 +88,10 @@ class SearchRankingService {
         (storyBonus * 0.2);
 
     return weighted
-        + (isPromoted ? _promotedBonus : 0.0)
-        + (isOnline   ? _onlineBonus   : 0.0);
+        + (isPromoted              ? _promotedBonus       : 0.0)
+        + (hasProfileBoost         ? _profileBoostBonus   : 0.0)
+        + (isOnline                ? _onlineBonus         : 0.0)
+        + (hasActiveVolunteerBadge ? _volunteerBadgeBonus : 0.0);
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -113,6 +129,15 @@ class SearchRankingService {
     final bool   hasStory   = e['hasActiveStory'] as bool? ?? false;
     final bool   isOnline   = e['isOnline']        as bool? ?? false;
     final bool   isPromoted = e['isPromoted']      as bool? ?? false;
+    final bool   hasVolBadge = VolunteerService.hasActiveVolunteerBadge(e);
+
+    // Profile Boost Card: check denormalized expiry timestamp on user doc.
+    // Set by EngagementService when a PROFILE_BOOST_CARD reward is awarded.
+    bool hasBoosted = false;
+    final boostUntil = e['profileBoostUntil'] as Timestamp?;
+    if (boostUntil != null && boostUntil.toDate().isAfter(DateTime.now())) {
+      hasBoosted = true;
+    }
 
     double? distM;
     if (myLat != null && myLng != null) {
@@ -124,11 +149,13 @@ class SearchRankingService {
     }
 
     return score(
-      xp:             xp,
-      distanceMeters: distM,
-      hasActiveStory: hasStory,
-      isOnline:       isOnline,
-      isPromoted:     isPromoted,
+      xp:                       xp,
+      distanceMeters:           distM,
+      hasActiveStory:           hasStory,
+      isOnline:                 isOnline,
+      isPromoted:               isPromoted,
+      hasActiveVolunteerBadge:  hasVolBadge,
+      hasProfileBoost:          hasBoosted,
     );
   }
 }

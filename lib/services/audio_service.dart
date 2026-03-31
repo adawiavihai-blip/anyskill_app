@@ -17,6 +17,7 @@ library;
 
 import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -41,6 +42,45 @@ enum AppSound {
     AppSound.solutionSnap     => 'Solution Snap 🔒 — התאמת AI',
     AppSound.opportunityPulse => 'Opportunity Pulse 🌊 — התראות',
     AppSound.growthAscend     => 'Growth Ascend 🚀 — עלייה ב-XP',
+  };
+}
+
+// ── App Events → Sound Mapping ───────────────────────────────────────────────
+// Central registry: every sound trigger in the app is mapped here.
+// The admin Sounds tab displays this mapping and allows reassignment.
+
+enum AppEvent {
+  onPaymentSuccess,   // Expert marks job complete / escrow unlocked
+  onAiMatchFound,     // AI Matchmaker locked in a provider
+  onNewOpportunity,   // New job request arrives in opportunities feed
+  onCourseCompleted,  // Academy course completion + XP
+  onLogin;            // User successfully logs in (default: none)
+
+  /// Default sound for this event. Null means silent (no sound).
+  AppSound? get defaultSound => switch (this) {
+    AppEvent.onPaymentSuccess  => AppSound.wealthCrystal,
+    AppEvent.onAiMatchFound    => AppSound.solutionSnap,
+    AppEvent.onNewOpportunity  => AppSound.opportunityPulse,
+    AppEvent.onCourseCompleted => AppSound.growthAscend,
+    AppEvent.onLogin           => null,  // silent by default
+  };
+
+  /// Hebrew description shown in admin UI.
+  String get hebrewLabel => switch (this) {
+    AppEvent.onPaymentSuccess  => 'תשלום שוחרר (אסקרו)',
+    AppEvent.onAiMatchFound    => 'התאמת AI נמצאה',
+    AppEvent.onNewOpportunity  => 'הזדמנות עבודה חדשה',
+    AppEvent.onCourseCompleted => 'קורס הושלם (XP)',
+    AppEvent.onLogin           => 'כניסת משתמש',
+  };
+
+  /// Code-level trigger location for admin reference.
+  String get triggerFile => switch (this) {
+    AppEvent.onPaymentSuccess  => 'chat_screen.dart',
+    AppEvent.onAiMatchFound    => 'home_screen.dart',
+    AppEvent.onNewOpportunity  => 'opportunities_screen.dart',
+    AppEvent.onCourseCompleted => 'course_player_screen.dart',
+    AppEvent.onLogin           => 'home_tab.dart',
   };
 }
 
@@ -94,6 +134,45 @@ class AudioService {
       }
     }
     debugPrint('AudioService: initialised (sound=$_soundEnabled, haptic=$_hapticEnabled)');
+
+    // Load custom sound + event mappings from Firestore (fire-and-forget)
+    _loadCustomMappings();
+    _loadEventMappings();
+  }
+
+  /// Loads admin-configured sound mappings from `app_settings/sounds`.
+  /// If a mapping exists, replaces the preloaded player for that sound.
+  Future<void> _loadCustomMappings() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('app_settings')
+          .doc('sounds')
+          .get();
+      if (!doc.exists) return;
+      final data = doc.data() ?? {};
+      for (final sound in AppSound.values) {
+        final customPath = data[sound.name] as String?;
+        if (customPath != null && customPath != sound.assetPath) {
+          try {
+            final player = AudioPlayer();
+            await player.setReleaseMode(ReleaseMode.stop);
+            if (customPath.startsWith('http')) {
+              await player.setSource(UrlSource(customPath));
+            } else {
+              await player.setSource(AssetSource(customPath));
+            }
+            // Dispose old player and replace
+            _players[sound]?.dispose();
+            _players[sound] = player;
+            debugPrint('AudioService: loaded custom sound for ${sound.name}');
+          } catch (e) {
+            debugPrint('AudioService: failed to load custom ${sound.name}: $e');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('AudioService: custom mappings load error: $e');
+    }
   }
 
   // ── iOS Web Audio Context unlock ──────────────────────────────────────────
@@ -157,6 +236,75 @@ class AudioService {
     } catch (e) {
       debugPrint('AudioService.play(${sound.name}) error: $e');
     }
+  }
+
+  // ── Event-based playback (resolves through custom mapping) ─────────────────
+
+  /// Custom event→sound mapping loaded from Firestore `app_settings/sounds`.
+  /// Key: AppEvent.name, Value: AppSound.name.
+  final Map<String, String> _eventMappings = {};
+
+  /// Loads custom event→sound mappings from Firestore.
+  /// Called during init() after sound files are preloaded.
+  Future<void> _loadEventMappings() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('app_settings').doc('event_sounds').get();
+      if (!doc.exists) return;
+      final data = doc.data() ?? {};
+      for (final entry in data.entries) {
+        _eventMappings[entry.key] = entry.value.toString();
+      }
+      debugPrint('AudioService: loaded ${_eventMappings.length} event mappings');
+    } catch (e) {
+      debugPrint('AudioService: event mappings load error: $e');
+    }
+  }
+
+  /// Plays the sound assigned to [event]. Uses custom mapping if set,
+  /// otherwise falls back to the event's default sound.
+  /// If mapped to 'none' or default is null, plays NOTHING.
+  Future<void> playEvent(AppEvent event) async {
+    final mappedName = _eventMappings[event.name];
+
+    // Explicit "none" mapping — play nothing
+    if (mappedName == 'none') return;
+
+    AppSound? sound = event.defaultSound;
+    if (mappedName != null) {
+      try {
+        sound = AppSound.values.byName(mappedName);
+      } catch (_) {
+        // Invalid mapping — fall back to default
+      }
+    }
+
+    // Null default (e.g., onLogin) — play nothing unless admin mapped a sound
+    if (sound == null) return;
+    return play(sound);
+  }
+
+  /// Returns the current sound for an event (respecting custom mapping).
+  /// Returns null if mapped to 'none' or default is null.
+  AppSound? soundForEvent(AppEvent event) {
+    final mappedName = _eventMappings[event.name];
+    if (mappedName == 'none') return null;
+    if (mappedName != null) {
+      try {
+        return AppSound.values.byName(mappedName);
+      } catch (_) {}
+    }
+    return event.defaultSound;
+  }
+
+  /// Saves a custom event→sound mapping. Pass null to set "none" (silent).
+  Future<void> setEventMapping(AppEvent event, AppSound? sound) async {
+    final value = sound?.name ?? 'none';
+    _eventMappings[event.name] = value;
+    await FirebaseFirestore.instance
+        .collection('app_settings')
+        .doc('event_sounds')
+        .set({event.name: value}, SetOptions(merge: true));
   }
 
   // ── Haptic patterns — each matched to its sound's psychoacoustic profile ────

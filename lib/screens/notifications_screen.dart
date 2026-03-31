@@ -3,6 +3,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../l10n/app_localizations.dart';
+import '../services/volunteer_service.dart';
+import '../services/job_broadcast_service.dart';
+import 'chat_screen.dart';
 import 'provider_ai_insights_screen.dart';
 
 class NotificationsScreen extends StatefulWidget {
@@ -90,12 +93,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   /// Marks the notification as read, then navigates to the relevant screen
   /// based on [type] or keywords in [title].
-  void _handleTap(String docId, String type, String title) {
+  void _handleTap(String docId, Map<String, dynamic> data) {
     _markRead(docId);
-    _navigate(type, title);
+    final type = data['type'] as String? ?? 'general';
+    final title = data['title'] as String? ?? '';
+    _navigate(type, title, data);
   }
 
-  void _navigate(String type, String title) {
+  void _navigate(String type, String title, Map<String, dynamic> data) {
     final titleLower = title.toLowerCase();
     final isAiNotif  = type == 'ai_insight' ||
         type == 'ai_suggestion' ||
@@ -112,8 +117,356 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           builder: (_) => const ProviderAiInsightsScreen(),
         ),
       );
+      return;
     }
-    // Future routing hooks: 'new_booking' → MyBookingsScreen, etc.
+
+    // ── Volunteer flow notifications ──────────────────────────────────────
+    final relatedUserId = data['relatedUserId'] as String? ?? '';
+    final category = data['category'] as String? ?? '';
+
+    if (type == 'help_request' && relatedUserId.isNotEmpty) {
+      // Volunteer received a help request → show accept sheet
+      _showVolunteerAcceptSheet(relatedUserId, category);
+      return;
+    }
+
+    if ((type == 'volunteer_accepted' || type == 'volunteer_completed')
+        && relatedUserId.isNotEmpty) {
+      // Open chat with the related user
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ChatScreen(
+            receiverId: relatedUserId,
+            receiverName: data['body'] as String? ?? '',
+          ),
+        ),
+      );
+      return;
+    }
+
+    // ── Broadcast urgent → show claim sheet ────────────────────────────────
+    if (type == 'broadcast_urgent') {
+      final broadcastId = data['broadcastId'] as String? ?? '';
+      if (broadcastId.isNotEmpty) {
+        _showBroadcastClaimSheet(broadcastId);
+      }
+      return;
+    }
+
+    // ── Broadcast claimed → open chat with provider ───────────────────────
+    if (type == 'broadcast_claimed' && relatedUserId.isNotEmpty) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ChatScreen(
+            receiverId: relatedUserId,
+            receiverName: '',
+          ),
+        ),
+      );
+      return;
+    }
+  }
+
+  // ── Broadcast Claim Sheet ──────────────────────────────────────────────────
+
+  void _showBroadcastClaimSheet(String broadcastId) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StreamBuilder<DocumentSnapshot>(
+        stream: JobBroadcastService.streamBroadcast(broadcastId),
+        builder: (context, snap) {
+          if (!snap.hasData || !snap.data!.exists) {
+            return const SizedBox.shrink();
+          }
+
+          final d = snap.data!.data() as Map<String, dynamic>? ?? {};
+          final status = d['status'] as String? ?? '';
+          final category = d['category'] as String? ?? '';
+          final description = d['description'] as String? ?? '';
+          final clientName = d['clientName'] as String? ?? 'לקוח';
+          final isOpen = status == 'open';
+          final isClaimed = status == 'claimed';
+          final claimedByName = d['claimedByName'] as String? ?? '';
+
+          return Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Icon(
+                  isOpen ? Icons.bolt : isClaimed ? Icons.lock : Icons.timer_off,
+                  color: isOpen
+                      ? const Color(0xFFF97316)
+                      : const Color(0xFF9CA3AF),
+                  size: 36,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  isOpen ? 'משרה דחופה זמינה!' : isClaimed ? 'המשרה נתפסה' : 'המשרה פגה תוקף',
+                  style: const TextStyle(
+                      fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '$clientName • $category',
+                  style: const TextStyle(
+                      fontSize: 14, color: Color(0xFF6B7280)),
+                ),
+                if (description.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[50],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(description,
+                        textAlign: TextAlign.start,
+                        style: const TextStyle(fontSize: 13, height: 1.5)),
+                  ),
+                ],
+                const SizedBox(height: 20),
+                if (isOpen)
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.bolt, size: 18),
+                      label: const Text('תפוס עכשיו!',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 16)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFF97316),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                        elevation: 0,
+                      ),
+                      onPressed: () async {
+                        final nav = Navigator.of(ctx);
+                        final messenger = ScaffoldMessenger.of(context);
+                        nav.pop();
+                        final result = await JobBroadcastService.claimJob(
+                          broadcastId: broadcastId,
+                          providerId: _uid,
+                          providerName: '',
+                        );
+                        if (!mounted) return;
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: Text(result.message),
+                            backgroundColor: result.isSuccess
+                                ? const Color(0xFF10B981)
+                                : const Color(0xFFF59E0B),
+                          ),
+                        );
+                        if (result.isSuccess && result.clientId != null) {
+                          Navigator.push(
+                            // ignore: use_build_context_synchronously
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ChatScreen(
+                                receiverId: result.clientId!,
+                                receiverName: clientName,
+                              ),
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                  )
+                else if (isClaimed)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      'המשרה נתפסה ע"י $claimedByName',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontSize: 14, color: Color(0xFF6B7280)),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ── Volunteer Accept Sheet ──────────────────────────────────────────────
+
+  void _showVolunteerAcceptSheet(String clientId, String category) async {
+    // Fetch client info
+    final clientDoc = await FirebaseFirestore.instance
+        .collection('users').doc(clientId).get();
+    final clientData = clientDoc.data() ?? {};
+    final clientName = clientData['name'] as String? ?? 'לקוח';
+
+    // Find the open help_request from this client in this category
+    final helpSnap = await FirebaseFirestore.instance
+        .collection('help_requests')
+        .where('userId', isEqualTo: clientId)
+        .where('category', isEqualTo: category)
+        .where('status', isEqualTo: 'open')
+        .limit(1)
+        .get();
+
+    final helpRequestId = helpSnap.docs.isNotEmpty ? helpSnap.docs.first.id : null;
+    final description = helpSnap.docs.isNotEmpty
+        ? (helpSnap.docs.first.data()['description'] as String? ?? '')
+        : '';
+    final clientLat = (clientData['latitude'] as num?)?.toDouble();
+    final clientLng = (clientData['longitude'] as num?)?.toDouble();
+
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              width: 56, height: 56,
+              decoration: BoxDecoration(
+                color: const Color(0xFF10B981).withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.volunteer_activism,
+                  color: Color(0xFF10B981), size: 28),
+            ),
+            const SizedBox(height: 16),
+            const Text('בקשת עזרה מהקהילה',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text('$clientName צריך/ה עזרה בקטגוריית "$category"',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xFF6B7280), fontSize: 14)),
+            if (description.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(description,
+                    textAlign: TextAlign.start,
+                    style: const TextStyle(fontSize: 13, height: 1.5)),
+              ),
+            ],
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(0, 48),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('לא עכשיו'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.check_circle, size: 18),
+                    label: const Text('אני רוצה לעזור!',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF10B981),
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(0, 48),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
+                    ),
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      final taskId = await VolunteerService.createTask(
+                        clientId: clientId,
+                        providerId: _uid,
+                        category: category,
+                        description: description,
+                        helpRequestId: helpRequestId,
+                        clientLat: clientLat,
+                        clientLng: clientLng,
+                      );
+                      if (!mounted) return;
+                      if (taskId == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('לא ניתן לקבל בקשה זו'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                        return;
+                      }
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('✓ קיבלת את הבקשה! נפתח צ\'אט עם הלקוח'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ChatScreen(
+                            receiverId: clientId,
+                            receiverName: clientName,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -166,7 +519,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               final ts = (n['createdAt'] as Timestamp?)?.toDate();
 
               return InkWell(
-                onTap: () => _handleTap(doc.id, type, title),
+                onTap: () => _handleTap(doc.id, n),
                 child: Container(
                   color: isRead ? Colors.white : Colors.blue.shade50,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),

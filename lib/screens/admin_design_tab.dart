@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../services/content_management_service.dart';
+import 'admin_catalog_tab.dart';
 
 /// Admin Design Tab — A self-contained CMS for managing application text.
 /// Only visible to adawiavihai@gmail.com.
@@ -55,6 +56,11 @@ class _AdminDesignTabState extends State<AdminDesignTab> {
   }
 
   void _refreshControllers() {
+    // Special case: "ניהול קטלוג" has no text keys
+    if (_selectedScreen == 'ניהול קטלוג') {
+      return;
+    }
+
     // Dispose old controllers
     for (final ctrl in _controllers.values) {
       ctrl.dispose();
@@ -280,13 +286,15 @@ class _AdminDesignTabState extends State<AdminDesignTab> {
                     ],
                   ),
                 ),
-                // Editor fields
+                // Editor fields or Catalog Manager
                 Expanded(
-                  child: keys.isEmpty
-                      ? const Center(
-                          child: Text('בחר קטגוריה לעריכה'),
-                        )
-                      : ListView.builder(
+                  child: _selectedScreen == 'ניהול קטלוג'
+                      ? const AdminCatalogTab()
+                      : keys.isEmpty
+                          ? const Center(
+                              child: Text('בחר קטגוריה לעריכה'),
+                            )
+                          : ListView.builder(
                           padding: const EdgeInsets.all(16),
                           itemCount: keys.length,
                           itemBuilder: (ctx, idx) {
@@ -332,31 +340,32 @@ class _AdminDesignTabState extends State<AdminDesignTab> {
                           },
                         ),
                 ),
-                // Bottom buttons
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    border: Border(
-                      top: BorderSide(color: Colors.grey[300]!),
+                // Bottom buttons (hidden for catalog manager)
+                if (_selectedScreen != 'ניהול קטלוג')
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        top: BorderSide(color: Colors.grey[300]!),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: _resetting ? null : _resetScreen,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('אפס הכל'),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          onPressed: _saving ? null : _saveChanges,
+                          icon: const Icon(Icons.save),
+                          label: const Text('שמור שינויים'),
+                        ),
+                      ],
                     ),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: _resetting ? null : _resetScreen,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('אפס הכל'),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton.icon(
-                        onPressed: _saving ? null : _saveChanges,
-                        icon: const Icon(Icons.save),
-                        label: const Text('שמור שינויים'),
-                      ),
-                    ],
-                  ),
-                ),
               ],
             ),
           ),

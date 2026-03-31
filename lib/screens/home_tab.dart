@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../services/category_service.dart';
 import '../l10n/app_localizations.dart';
 import '../services/visual_fetcher_service.dart';
 import 'category_results_screen.dart';
@@ -16,9 +15,12 @@ import 'community_screen.dart';
 import '../widgets/skeleton_loader.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../widgets/anyskill_logo.dart';
+import '../widgets/category_edit_sheet.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/opportunity_hunter_service.dart';
+import '../services/engagement_service.dart';
 import '../services/auth_service.dart';
+import '../widgets/daily_drop_modal.dart';
 import '../main.dart' show currentAppVersion;
 
 // ─── Public entry point ───────────────────────────────────────────────────────
@@ -173,6 +175,27 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
     // Back-fill missing category images once per app session
     VisualFetcherService.backfillAll();
+
+    // ── Engagement: Daily Drop + Streak check (providers only) ────────────
+    if (widget.userData['isProvider'] == true &&
+        widget.currentUserId.isNotEmpty) {
+      _runEngagementChecks();
+    }
+  }
+
+  Future<void> _runEngagementChecks() async {
+    final uid = widget.currentUserId;
+
+    // Update streak (fire-and-forget — updates Firestore)
+    EngagementService.checkAndUpdateStreak(uid);
+
+    // Daily Drop: roll the dice
+    final reward = await EngagementService.calculateRandomReward(uid);
+    if (reward != null && mounted) {
+      // Small delay so the home screen is fully rendered first
+      await Future.delayed(const Duration(milliseconds: 600));
+      if (mounted) showDailyDropModal(context, reward);
+    }
   }
 
   @override
@@ -243,8 +266,12 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             // All top-level categories, sorted by popularity:
             //   1. clickCount DESC  2. order ASC  3. name ASC
             final mainDocs = allDocs
-                .where((d) =>
-                    ((d.data() as Map)['parentId'] as String? ?? '').isEmpty)
+                .where((d) {
+                  final data = d.data() as Map;
+                  final parentId = (data['parentId'] as String? ?? '');
+                  final isHidden = data['isHidden'] as bool? ?? false;
+                  return parentId.isEmpty && !isHidden;
+                })
                 .toList()
               ..sort((a, b) {
                 final cA =
@@ -723,8 +750,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       final parentData = parentDoc.data() as Map<String, dynamic>;
       final parentName = parentData['name']     as String? ?? '';
       final parentImg  = parentData['img']      as String? ?? '';
-      final parentIcon = CategoryService.getIcon(
-          parentData['iconName'] as String? ?? '');
       final subs       = subsByParent[parentDoc.id] ?? [];
       final hasSubs    = subs.isNotEmpty;
 
@@ -792,7 +817,8 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                 return _buildSubCatCard(
                   name:         subName,
                   imageUrl:     subImg,
-                  fallbackIcon: parentIcon,
+                  isAdmin:      isAdmin,
+                  docId:        subs[si].id,
                   onTap: () {
                     OpportunityHunterService.recordCategoryTap(
                         widget.currentUserId, subName);
@@ -811,64 +837,87 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
         slivers.add(SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: GestureDetector(
-              onTap: () {
-                OpportunityHunterService.recordCategoryTap(
-                    widget.currentUserId, parentName);
-                Navigator.push(context, MaterialPageRoute(
-                  builder: (_) =>
-                      CategoryResultsScreen(categoryName: parentName),
-                ));
-              },
-              child: Container(
-                height: 72,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8F9FA),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: const Color(0xFFE5E7EB)),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: parentImg.isNotEmpty
-                          ? CachedNetworkImage(
-                              imageUrl: parentImg,
-                              width: 48,
-                              height: 48,
-                              fit: BoxFit.cover,
-                              errorWidget: (_, __, ___) => Container(
-                                width: 48, height: 48,
-                                color: const Color(0xFFEEF2FF),
-                                child: Icon(parentIcon, size: 22,
-                                    color: const Color(0xFF6366F1)),
-                              ),
-                            )
-                          : Container(
-                              width: 48, height: 48,
-                              color: const Color(0xFFEEF2FF),
-                              child: Icon(parentIcon, size: 22,
-                                  color: const Color(0xFF6366F1)),
-                            ),
+            child: Stack(
+              children: [
+                GestureDetector(
+                  onTap: () {
+                    OpportunityHunterService.recordCategoryTap(
+                        widget.currentUserId, parentName);
+                    Navigator.push(context, MaterialPageRoute(
+                      builder: (_) =>
+                          CategoryResultsScreen(categoryName: parentName),
+                    ));
+                  },
+                  child: Container(
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8F9FA),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
                     ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Text(
-                        parentName,
-                        textDirection: TextDirection.rtl,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF111827),
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: parentImg.isNotEmpty
+                              ? CachedNetworkImage(
+                                  imageUrl: parentImg,
+                                  width: 48,
+                                  height: 48,
+                                  fit: BoxFit.cover,
+                                  errorWidget: (_, __, ___) =>
+                                      _categoryPlaceholder(width: 48, height: 48, label: parentName),
+                                )
+                              : _categoryPlaceholder(width: 48, height: 48, label: parentName),
                         ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Text(
+                            parentName,
+                            textDirection: TextDirection.rtl,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF111827),
+                            ),
+                          ),
+                        ),
+                        const Icon(Icons.chevron_left,
+                            size: 18, color: Color(0xFF9CA3AF)),
+                      ],
+                    ),
+                  ),
+                ),
+                // ── Admin edit overlay ──────────────────────────────────
+                if (isAdmin)
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _openCategoryEditSheet(
+                        context: context,
+                        docId: parentDoc.id,
+                        name: parentName,
+                        iconName: parentData['iconName'] as String? ?? '',
+                        imageUrl: parentImg,
+                        cardScale: (parentData['cardScale'] as num?)?.toDouble(),
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.all(7),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.30)),
+                        ),
+                        child: const Icon(Icons.edit_rounded,
+                            size: 14, color: Colors.white),
                       ),
                     ),
-                    const Icon(Icons.chevron_left,
-                        size: 18, color: Color(0xFF9CA3AF)),
-                  ],
-                ),
-              ),
+                  ),
+              ],
             ),
           ),
         ));
@@ -890,7 +939,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
         child: GestureDetector(
-          onTap: () => Navigator.push(context,
+          onTap: () => Navigator.of(context, rootNavigator: true).push(
               MaterialPageRoute(builder: (_) => const CommunityScreen())),
           child: Container(
             height: 64,
@@ -927,11 +976,42 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   }
 
   // ── Sub-category card (used in horizontal rows) ───────────────────────────
+  // Placeholder shown when a category has no image URL.
+  static Widget _categoryPlaceholder({
+    required double width,
+    required double height,
+    required String label,
+  }) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFEEF2FF), Color(0xFFE0E7FF)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Center(
+        child: Text(
+          label.isNotEmpty ? label[0].toUpperCase() : '?',
+          style: const TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF6366F1),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSubCatCard({
     required String name,
     required String imageUrl,
-    required IconData fallbackIcon,
     required VoidCallback onTap,
+    bool isAdmin = false,
+    String docId = '',
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -941,27 +1021,49 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: imageUrl.isNotEmpty
-                  ? CachedNetworkImage(
-                      imageUrl: imageUrl,
-                      width: 100,
-                      height: 90,
-                      fit: BoxFit.cover,
-                      errorWidget: (_, __, ___) => Container(
-                        width: 100, height: 90,
-                        color: const Color(0xFFEEF2FF),
-                        child: Icon(fallbackIcon, size: 30,
-                            color: const Color(0xFF6366F1)),
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: imageUrl.isNotEmpty
+                      ? CachedNetworkImage(
+                          imageUrl: imageUrl,
+                          width: 100,
+                          height: 90,
+                          fit: BoxFit.cover,
+                          errorWidget: (_, __, ___) =>
+                              _categoryPlaceholder(width: 100, height: 90, label: name),
+                        )
+                      : _categoryPlaceholder(width: 100, height: 90, label: name),
+                ),
+                // ── Admin edit overlay ──────────────────────────────
+                if (isAdmin && docId.isNotEmpty)
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _openCategoryEditSheet(
+                        context: context,
+                        docId: docId,
+                        name: name,
+                        iconName: '',
+                        imageUrl: imageUrl,
                       ),
-                    )
-                  : Container(
-                      width: 100, height: 90,
-                      color: const Color(0xFFEEF2FF),
-                      child: Icon(fallbackIcon, size: 30,
-                          color: const Color(0xFF6366F1)),
+                      child: Container(
+                        padding: const EdgeInsets.all(5),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.30)),
+                        ),
+                        child: const Icon(Icons.edit_rounded,
+                            size: 11, color: Colors.white),
+                      ),
                     ),
+                  ),
+              ],
             ),
             const SizedBox(height: 5),
             Text(
@@ -977,6 +1079,31 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ── Shared edit sheet launcher ─────────────────────────────────────────────
+  void _openCategoryEditSheet({
+    required BuildContext context,
+    required String docId,
+    required String name,
+    required String iconName,
+    required String imageUrl,
+    double? cardScale,
+  }) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => CategoryEditSheet(
+        docId:            docId,
+        initialName:      name,
+        initialIconName:  iconName,
+        initialImageUrl:  imageUrl,
+        initialCardScale: cardScale,
       ),
     );
   }

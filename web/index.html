@@ -33,8 +33,6 @@
                  script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'
                    https://*.googleapis.com
                    https://*.gstatic.com
-                   https://maps.googleapis.com
-                   https://www.gstatic.com
                    https://www.google.com
                    https://www.recaptcha.net
                    https://recaptcha.google.com
@@ -47,14 +45,16 @@
                    https://*.googleapis.com
                    https://*.gstatic.com
                    https://firebasestorage.googleapis.com
+                   https://*.firebasestorage.app
                    https://img.youtube.com
                    https://images.unsplash.com
                    https://*.stripe.com;
-                 connect-src 'self'
+                 connect-src 'self' blob:
                    https://*.googleapis.com
                    https://*.gstatic.com
-                   https://www.gstatic.com
                    https://*.firebaseio.com
+                   https://*.firebasestorage.app
+                   https://firebasestorage.googleapis.com
                    https://firestore.googleapis.com
                    https://identitytoolkit.googleapis.com
                    https://securetoken.googleapis.com
@@ -87,8 +87,8 @@
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>AnySkill Elite</title>
   <!-- app version — bump this string on every release to bust browser cache -->
-  <meta name="app-version" content="8.6.1">
-  <meta name="build-id" content="20260327-861">
+  <meta name="app-version" content="8.9.4">
+  <meta name="build-id" content="20260531-v4">
 
   <!-- ── PWA / installability ───────────────────────────────────────────── -->
   <link rel="manifest" href="manifest.json">
@@ -119,10 +119,10 @@
   <script src="https://js.stripe.com/v3/" async></script>
 
   <!-- Flutter engine — חייב להיטען לפני app_init.js -->
-  <script src="flutter.js" defer></script>
+  <script src="flutter.js?v=1748700000" defer></script>
 
   <!-- אתחול Flutter + רישום Service Worker -->
-  <script src="app_init.js?v=3.7.5" defer></script>
+  <script src="app_init.js?v=1748700000" defer></script>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f4f7f9;">
 </body>

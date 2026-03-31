@@ -9,6 +9,9 @@ import '../widgets/skeleton_loader.dart';
 
 import 'chat_modules/location_module.dart';
 import '../services/cache_service.dart';
+import '../services/volunteer_service.dart';
+import '../services/location_service.dart';
+import 'support_center_screen.dart';
 import 'chat_modules/image_module.dart';
 import 'chat_modules/payment_module.dart';
 import 'chat_modules/chat_ui_helper.dart';
@@ -672,6 +675,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _buildSafetyBanner(),
           _buildGuardBanner(),
           _buildJobStatusBanner(),
+          _buildVolunteerConfirmBanner(),
           Expanded(child: _buildMessagesList()),
           if (_isReceiverTyping) _buildTypingBubble(),
           _buildQuickActions(),
@@ -772,11 +776,33 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.support_agent_rounded,
+              color: Color(0xFF9CA3AF), size: 22),
+          tooltip: 'מרכז התמיכה',
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => SupportCenterScreen(
+                jobId: _findActiveJobId(),
+              ),
+            ),
+          ),
+        ),
+      ],
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(1),
         child: Container(height: 1, color: Colors.grey.shade100),
       ),
     );
+  }
+
+  /// Finds an active job ID for this chat pair (for contextual support).
+  String? _findActiveJobId() {
+    // The chatRoomId IS the sorted UID pair — same as job query pattern.
+    // Return null; actual job linking happens when user selects category.
+    return null;
   }
 
   String _lastSeenLabel(Timestamp? ts) {
@@ -858,6 +884,546 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // ── Volunteer task banner (two-role: provider GPS + client confirm) ────────
+  //
+  // Queries volunteer_tasks where current user is EITHER the client or the
+  // provider. Shows role-appropriate UI:
+  //   Provider → "הגעתי" GPS button  (validates proximity)
+  //   Client   → GPS status badge + "אשר סיום" confirm button
+
+  Widget _buildVolunteerConfirmBanner() {
+    // Single query: tasks between these two users that are still pending.
+    // The current user could be either role.
+    final ids = [currentUserId, widget.receiverId];
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('volunteer_tasks')
+          .where('clientId', whereIn: ids)
+          .where('status', isEqualTo: 'pending')
+          .limit(2)
+          .snapshots(),
+      builder: (context, snap) {
+        if (!snap.hasData || snap.data!.docs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        // Find the task that involves both users in this chat
+        QueryDocumentSnapshot? match;
+        for (final doc in snap.data!.docs) {
+          final d = doc.data() as Map<String, dynamic>? ?? {};
+          final cId = d['clientId'] as String? ?? '';
+          final pId = d['providerId'] as String? ?? '';
+          if ((cId == currentUserId && pId == widget.receiverId) ||
+              (pId == currentUserId && cId == widget.receiverId)) {
+            match = doc;
+            break;
+          }
+        }
+        if (match == null) return const SizedBox.shrink();
+
+        final taskData = match.data() as Map<String, dynamic>? ?? {};
+        final clientId = taskData['clientId'] as String? ?? '';
+        final isClient = clientId == currentUserId;
+        final category = taskData['category'] as String? ?? '';
+        final gpsValidated = taskData['gpsValidated'] == true;
+        final gpsDistance = (taskData['gpsDistanceMeters'] as num?)?.toDouble();
+
+        if (isClient) {
+          return _buildClientVolunteerBanner(
+            taskId: match.id,
+            category: category,
+            gpsValidated: gpsValidated,
+            gpsDistance: gpsDistance,
+          );
+        } else {
+          return _buildProviderVolunteerBanner(
+            taskId: match.id,
+            category: category,
+            gpsValidated: gpsValidated,
+            gpsDistance: gpsDistance,
+          );
+        }
+      },
+    );
+  }
+
+  // ── Provider banner: "הגעתי" GPS validation ────────────────────────────────
+
+  Widget _buildProviderVolunteerBanner({
+    required String taskId,
+    required String category,
+    required bool gpsValidated,
+    required double? gpsDistance,
+  }) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFEDE9FE), Color(0xFFECFDF5)],
+          begin: AlignmentDirectional.centerStart,
+          end: AlignmentDirectional.centerEnd,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: gpsValidated
+              ? const Color(0xFF10B981).withValues(alpha: 0.5)
+              : const Color(0xFF6366F1).withValues(alpha: 0.3),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(
+                gpsValidated ? Icons.check_circle : Icons.volunteer_activism,
+                color: gpsValidated
+                    ? const Color(0xFF10B981)
+                    : const Color(0xFF6366F1),
+                size: 20,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      gpsValidated ? 'המיקום אומת בהצלחה' : 'משימת התנדבות פעילה',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: gpsValidated
+                            ? const Color(0xFF065F46)
+                            : const Color(0xFF312E81),
+                      ),
+                    ),
+                    if (category.isNotEmpty)
+                      Text(
+                        category,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (!gpsValidated)
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.location_on, size: 16),
+                  label: const Text('הגעתי'),
+                  onPressed: () => _handleProviderGpsCheck(taskId),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6366F1),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 8),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                    elevation: 0,
+                    textStyle: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                )
+              else
+                _gpsStatusChip(validated: true, distance: gpsDistance),
+            ],
+          ),
+
+          // GPS validated — show success detail row
+          if (gpsValidated && gpsDistance != null) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Icon(Icons.gps_fixed, size: 14, color: Color(0xFF10B981)),
+                const SizedBox(width: 6),
+                Text(
+                  'מרחק: ${gpsDistance < 1000 ? '${gpsDistance.toInt()} מ\'' : '${(gpsDistance / 1000).toStringAsFixed(1)} ק"מ'}',
+                  style: const TextStyle(fontSize: 11, color: Color(0xFF065F46)),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'הלקוח יכול לאשר את השלמת ההתנדבות',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleProviderGpsCheck(String taskId) async {
+    // Request location permission if needed
+    final position = await LocationService.requestAndGet(context);
+
+    if (position == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('לא ניתן לקבל מיקום. אנא אפשר גישה למיקום בהגדרות.'),
+          backgroundColor: Color(0xFFEF4444),
+        ),
+      );
+      return;
+    }
+
+    final isValid = await VolunteerService.validateGpsProximity(
+      taskId: taskId,
+      providerLat: position.latitude,
+      providerLng: position.longitude,
+    );
+
+    if (!mounted) return;
+
+    if (isValid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✓ המיקום אומת בהצלחה! הלקוח יכול כעת לאשר את ההתנדבות.'),
+          backgroundColor: Color(0xFF10B981),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('המיקום שלך רחוק מהלקוח. נא להגיע למיקום השירות ולנסות שוב.'),
+          backgroundColor: Color(0xFFF59E0B),
+        ),
+      );
+    }
+  }
+
+  // ── Client banner: GPS status + confirm button ─────────────────────────────
+
+  Widget _buildClientVolunteerBanner({
+    required String taskId,
+    required String category,
+    required bool gpsValidated,
+    required double? gpsDistance,
+  }) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFECFDF5), Color(0xFFEDE9FE)],
+          begin: AlignmentDirectional.centerStart,
+          end: AlignmentDirectional.centerEnd,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: const Color(0xFF10B981).withValues(alpha: 0.3),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.volunteer_activism,
+                  color: Color(0xFF10B981), size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'התנדבות בתהליך',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF065F46),
+                      ),
+                    ),
+                    if (category.isNotEmpty)
+                      Text(
+                        category,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _gpsStatusChip(validated: gpsValidated, distance: gpsDistance),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: () => _confirmVolunteerTask(
+                  taskId,
+                  gpsValidated: gpsValidated,
+                  gpsDistance: gpsDistance,
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 8),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  elevation: 0,
+                  textStyle: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                child: const Text('אשר סיום'),
+              ),
+            ],
+          ),
+
+          // GPS detail row for client
+          if (gpsValidated && gpsDistance != null) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Icon(Icons.gps_fixed,
+                    size: 14, color: Color(0xFF10B981)),
+                const SizedBox(width: 6),
+                Text(
+                  'נותן השירות אימת הגעה — ${gpsDistance < 1000 ? '${gpsDistance.toInt()} מ\'' : '${(gpsDistance / 1000).toStringAsFixed(1)} ק"מ'} ממך',
+                  style: const TextStyle(
+                      fontSize: 11, color: Color(0xFF065F46)),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ── GPS status chip (shared by both banners) ───────────────────────────────
+
+  Widget _gpsStatusChip({
+    required bool validated,
+    required double? distance,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: validated
+            ? const Color(0xFF10B981).withValues(alpha: 0.12)
+            : const Color(0xFF9CA3AF).withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            validated ? Icons.gps_fixed : Icons.gps_off,
+            size: 12,
+            color: validated
+                ? const Color(0xFF10B981)
+                : const Color(0xFF9CA3AF),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            validated ? 'מיקום אומת' : 'ממתין לאימות',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: validated
+                  ? const Color(0xFF065F46)
+                  : const Color(0xFF6B7280),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Confirm dialog (client-side) ───────────────────────────────────────────
+
+  Future<void> _confirmVolunteerTask(
+    String taskId, {
+    required bool gpsValidated,
+    required double? gpsDistance,
+  }) async {
+    final gpsLine = gpsValidated
+        ? 'נותן השירות אימת הגעה למיקום שלך '
+          '(${gpsDistance != null && gpsDistance < 1000 ? '${gpsDistance.toInt()} מ\'' : gpsDistance != null ? '${(gpsDistance / 1000).toStringAsFixed(1)} ק"מ' : ''}).'
+        : 'שים לב: נותן השירות טרם אימת מיקום באמצעות GPS.';
+
+    final reviewCtrl = TextEditingController();
+
+    final reviewText = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final charCount = reviewCtrl.text.trim().length;
+          final isValid = charCount >= VolunteerService.minReviewLength;
+
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20)),
+            title: const Text('אישור השלמת התנדבות',
+                textAlign: TextAlign.start),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('האם נותן השירות השלים את ההתנדבות?'),
+                  const SizedBox(height: 12),
+
+                  // ── GPS status card ──────────────────────────────────
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: gpsValidated
+                          ? const Color(0xFFECFDF5)
+                          : const Color(0xFFFFF7ED),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: gpsValidated
+                            ? const Color(0xFF10B981).withValues(alpha: 0.3)
+                            : const Color(0xFFF59E0B).withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          gpsValidated ? Icons.gps_fixed : Icons.gps_off,
+                          size: 18,
+                          color: gpsValidated
+                              ? const Color(0xFF10B981)
+                              : const Color(0xFFF59E0B),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            gpsLine,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: gpsValidated
+                                  ? const Color(0xFF065F46)
+                                  : const Color(0xFF92400E),
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // ── Proof-of-work review field ───────────────────────
+                  const Text(
+                    'ספר/י בקצרה על השירות שקיבלת:',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1A1A2E),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: reviewCtrl,
+                    textAlign: TextAlign.start,
+                    textDirection: TextDirection.rtl,
+                    maxLines: 3,
+                    maxLength: 300,
+                    onChanged: (_) => setDialogState(() {}),
+                    decoration: InputDecoration(
+                      hintText: 'לדוגמה: "תיקן את הברז במטבח, עבודה מקצועית"',
+                      hintStyle: const TextStyle(
+                          fontSize: 13, color: Color(0xFF9CA3AF)),
+                      filled: true,
+                      fillColor: const Color(0xFFF9FAFB),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: isValid
+                              ? const Color(0xFF10B981)
+                              : const Color(0xFFD1D5DB),
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: isValid
+                              ? const Color(0xFF10B981)
+                              : const Color(0xFFD1D5DB),
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(
+                            color: Color(0xFF6366F1), width: 1.5),
+                      ),
+                      contentPadding: const EdgeInsets.all(12),
+                      counterText:
+                          '$charCount/${VolunteerService.minReviewLength} תווים מינימום',
+                      counterStyle: TextStyle(
+                        fontSize: 11,
+                        color: isValid
+                            ? const Color(0xFF10B981)
+                            : const Color(0xFF9CA3AF),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 8),
+                  Text(
+                    'אישור ייתן לנותן השירות '
+                    '+${VolunteerService.volunteerXpReward} XP '
+                    'ותג "מתנדב פעיל".',
+                    style: const TextStyle(
+                        fontSize: 12, color: Color(0xFF6B7280)),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, null),
+                child: const Text('עוד לא'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isValid
+                      ? const Color(0xFF10B981)
+                      : const Color(0xFFD1D5DB),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: isValid
+                    ? () => Navigator.pop(ctx, reviewCtrl.text.trim())
+                    : null,
+                child: const Text('כן, אשר!'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    reviewCtrl.dispose();
+
+    if (reviewText == null || reviewText.isEmpty) return;
+
+    final result = await VolunteerService.confirmCompletion(
+      taskId: taskId,
+      confirmingUserId: currentUserId,
+      reviewText: reviewText,
+    );
+
+    if (!mounted) return;
+    final isOk = result == VolunteerService.confirmOk;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(isOk ? '✓ ההתנדבות אושרה! תודה רבה.' : result),
+        backgroundColor: isOk ? Colors.green : Colors.red,
+      ),
+    );
+  }
+
   // ── Job status banner (existing logic, premium visual) ───────────────────
 
   Widget _buildJobStatusBanner() {
@@ -927,8 +1493,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   'status':            'expert_completed',
                   'expertCompletedAt': FieldValue.serverTimestamp(),
                 });
-                // 💎 Wealth Crystal — escrow unlocked, money en route
-                AudioService.instance.play(AppSound.wealthCrystal);
+                // Sound: payment success (resolved via admin event mapping)
+                AudioService.instance.playEvent(AppEvent.onPaymentSuccess);
                 await FirebaseFirestore.instance
                     .collection('chats')
                     .doc(chatRoomId)
@@ -1016,6 +1582,36 @@ class _ChatScreenState extends State<ChatScreen> {
                   debugPrint('QA: Firestore job status after release = $confirmedStatus');
                   if (confirmedStatus != 'completed') {
                     error = 'הסטטוס לא עודכן — נסה שוב (status: $confirmedStatus)';
+                  } else {
+                    // Award Community Hero badge if this is a volunteer job
+                    final jobData = snap.data() ?? {};
+                    final isVolunteerJob = (jobData['isVolunteer'] as bool?) ?? false;
+                    if (isVolunteerJob) {
+                      final expertId = jobData['expertId'] as String? ?? widget.receiverId;
+                      try {
+                        await FirebaseFirestore.instance
+                            .collection('users')
+                            .doc(expertId)
+                            .update({
+                          'hasCommunityHeroBadge': true,
+                          'xp': FieldValue.increment(100),
+                        });
+
+                        // Send in-app notification to the expert
+                        await FirebaseFirestore.instance
+                            .collection('notifications')
+                            .add({
+                          'userId': expertId,
+                          'title': '🦸 קיבלת תג גיבור קהילה!',
+                          'body': 'תודה על ההתנדבות שלך — הקהילה מודה לך.',
+                          'type': 'community_hero',
+                          'isRead': false,
+                          'createdAt': FieldValue.serverTimestamp(),
+                        });
+                      } catch (e) {
+                        debugPrint('Error awarding Community Hero badge: $e');
+                      }
+                    }
                   }
                 }
               } catch (e) {
