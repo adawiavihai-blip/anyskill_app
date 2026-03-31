@@ -5,8 +5,11 @@
     "start_url": "/",
     "scope": "/",
     "display": "standalone",
-    "display_override": ["standalone", "minimal-ui"],
-    "background_color": "#1E1B4B",
+    "display_override": [
+        "standalone",
+        "minimal-ui"
+    ],
+    "background_color": "#FFFFFF",
     "theme_color": "#6366F1",
     "description": "פלטפורמת שירותים מקצועיים — מצא ספקים, הזמן שירותים, נהל תשלומים",
     "orientation": "portrait-primary",

@@ -4041,9 +4041,25 @@ class _AdminScreenState extends State<AdminScreen> {
                         ],
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Icon(Icons.hourglass_top_rounded,
-                        size: 16, color: Colors.orange[400]),
+                    const SizedBox(width: 4),
+                    // ── Admin refund button (Red Button) ──────────
+                    IconButton(
+                      icon: const Icon(Icons.undo_rounded, size: 18),
+                      color: Colors.red,
+                      tooltip: 'החזר כספי',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 36, minHeight: 36),
+                      onPressed: () => _showAdminRefundDialog(
+                        context,
+                        jobId:        doc.id,
+                        amount:       amt,
+                        customerName: customer,
+                        customerId:   j['customerId'] as String? ?? '',
+                        expertName:   expert,
+                        isStripe:     (j['stripePaymentIntentId'] as String? ?? '').isNotEmpty,
+                      ),
+                    ),
                   ],
                 ),
               );
@@ -4051,6 +4067,175 @@ class _AdminScreenState extends State<AdminScreen> {
           ],
         );
       },
+    );
+  }
+
+  // ── Admin refund dialog — "Red Button" ───────────────────────────────────
+  Future<void> _showAdminRefundDialog(
+    BuildContext ctx, {
+    required String jobId,
+    required double amount,
+    required String customerName,
+    required String customerId,
+    required String expertName,
+    required bool isStripe,
+  }) async {
+    // Capture before async gap (showDialog)
+    final messenger = ScaffoldMessenger.of(ctx);
+
+    final confirmed = await showDialog<bool>(
+      context: ctx,
+      builder: (dCtx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red, size: 24),
+            SizedBox(width: 8),
+            Text('החזר כספי', style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text('האם להחזיר ₪${amount.toStringAsFixed(0)} ללקוח?',
+                style: const TextStyle(fontSize: 15)),
+            const SizedBox(height: 12),
+            _refundRow('לקוח', customerName),
+            _refundRow('ספק', expertName),
+            _refundRow('סכום', '₪${amount.toStringAsFixed(2)}'),
+            _refundRow('אמצעי', isStripe ? 'Stripe (כרטיס)' : 'יתרה פנימית'),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.red[50],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'פעולה זו אינה הפיכה. הכספים יוחזרו ללקוח והעבודה תבוטל.',
+                textAlign: TextAlign.right,
+                style: TextStyle(fontSize: 12, color: Colors.red),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: const Text('ביטול'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dCtx, true),
+            icon: const Icon(Icons.undo_rounded, size: 16, color: Colors.white),
+            label: const Text('אשר החזר', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    messenger.showSnackBar(
+      const SnackBar(content: Text('מבצע החזר כספי...'), duration: Duration(seconds: 2)),
+    );
+
+    try {
+      if (isStripe) {
+        // Stripe refund via Cloud Function
+        await FirebaseFunctions.instance
+            .httpsCallable('processRefund')
+            .call({'jobId': jobId, 'reason': 'admin_refund'});
+      } else {
+        // Legacy: refund to customer balance + update job
+        final batch = FirebaseFirestore.instance.batch();
+
+        // Update job status
+        batch.update(
+          FirebaseFirestore.instance.collection('jobs').doc(jobId),
+          {
+            'status':      'refunded',
+            'resolvedAt':  FieldValue.serverTimestamp(),
+            'resolvedBy':  'admin',
+            'resolution':  'refund',
+          },
+        );
+
+        // Credit customer balance
+        batch.update(
+          FirebaseFirestore.instance.collection('users').doc(customerId),
+          {'balance': FieldValue.increment(amount)},
+        );
+
+        // Transaction record
+        batch.set(
+          FirebaseFirestore.instance.collection('transactions').doc(),
+          {
+            'senderId':    'platform',
+            'receiverId':  customerId,
+            'amount':      amount,
+            'type':        'refund',
+            'jobId':       jobId,
+            'timestamp':   FieldValue.serverTimestamp(),
+            'payoutStatus': 'completed',
+          },
+        );
+
+        await batch.commit();
+      }
+
+      // Log to Watchtower
+      try {
+        FirebaseFirestore.instance.collection('activity_log').add({
+          'type':      'admin_refund',
+          'title':     '🔴 החזר כספי ע"י אדמין',
+          'detail':    '₪${amount.toStringAsFixed(0)} → $customerName (עבודה: $jobId)',
+          'userId':    customerId,
+          'priority':  'high',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      } catch (_) {}
+
+      // Notify customer
+      try {
+        FirebaseFirestore.instance.collection('notifications').add({
+          'userId':    customerId,
+          'title':     'החזר כספי',
+          'body':      'קיבלת החזר של ₪${amount.toStringAsFixed(0)} לארנק שלך.',
+          'type':      'refund',
+          'isRead':    false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      } catch (_) {}
+
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text('✅ הוחזרו ₪${amount.toStringAsFixed(0)} ל-$customerName'),
+          backgroundColor: Colors.green,
+        ));
+      }
+    } catch (e) {
+      debugPrint('[AdminRefund] Error: $e');
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text('❌ שגיאה בהחזר: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    }
+  }
+
+  Widget _refundRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          Text(label, style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+        ],
+      ),
     );
   }
 
