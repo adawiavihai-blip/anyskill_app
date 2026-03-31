@@ -593,7 +593,22 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     try {
       UserCredential cred;
       if (kIsWeb) {
-        cred = await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
+        // Use signInWithRedirect on mobile web — popups are blocked by
+        // Safari and Chrome on iOS/Android. signInWithRedirect navigates
+        // away and returns via getRedirectResult on reload.
+        // However, getRedirectResult only works after a redirect has
+        // completed. For simplicity: try popup first, fall back to redirect.
+        try {
+          cred = await FirebaseAuth.instance
+              .signInWithPopup(GoogleAuthProvider());
+        } catch (popupErr) {
+          debugPrint('[GoogleLogin] popup failed ($popupErr), trying redirect');
+          await FirebaseAuth.instance
+              .signInWithRedirect(GoogleAuthProvider());
+          // After redirect, the page reloads and AuthWrapper picks up
+          // the signed-in user automatically. No further code runs here.
+          return;
+        }
       } else {
         final googleUser = await GoogleSignIn().signIn();
         if (googleUser == null) {
@@ -646,14 +661,15 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
         );
       }
     } on FirebaseAuthException catch (e) {
-      debugPrint('[GoogleLogin] ${e.code}');
-      if (mounted) _snack('שגיאת Google: ${e.code}', _kRed);
+      debugPrint('[GoogleLogin] FirebaseAuth: ${e.code} — ${e.message}');
+      if (mounted) _snack('Google: ${e.code}\n${e.message ?? ""}', _kRed);
     } catch (e) {
-      debugPrint('[GoogleLogin] $e');
+      debugPrint('[GoogleLogin] ${e.runtimeType}: $e');
       if (mounted) {
         final msg = e.toString();
         if (!msg.contains('canceled') && !msg.contains('cancelled')) {
-          _snack('שגיאת התחברות Google', _kRed);
+          // Show the FULL error so user can report it
+          _snack('Google error: ${e.runtimeType}\n${msg.length > 120 ? msg.substring(0, 120) : msg}', _kRed);
         }
       }
     } finally {
@@ -742,18 +758,19 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
         );
       }
     } on SignInWithAppleAuthorizationException catch (e) {
+      debugPrint('[AppleLogin] AppleAuth: ${e.code} — ${e.message}');
       if (e.code != AuthorizationErrorCode.canceled && mounted) {
-        _snack('שגיאת Apple: ${e.message}', _kRed);
+        _snack('Apple: ${e.code.name}\n${e.message}', _kRed);
       }
     } on FirebaseAuthException catch (e) {
-      debugPrint('[AppleLogin] ${e.code}');
-      if (mounted) _snack('שגיאת Apple: ${e.code}', _kRed);
+      debugPrint('[AppleLogin] FirebaseAuth: ${e.code} — ${e.message}');
+      if (mounted) _snack('Apple: ${e.code}\n${e.message ?? ""}', _kRed);
     } catch (e) {
-      debugPrint('[AppleLogin] $e');
+      debugPrint('[AppleLogin] ${e.runtimeType}: $e');
       if (mounted) {
         final msg = e.toString();
         if (!msg.contains('canceled') && !msg.contains('cancelled')) {
-          _snack('שגיאת התחברות Apple', _kRed);
+          _snack('Apple error: ${e.runtimeType}\n${msg.length > 120 ? msg.substring(0, 120) : msg}', _kRed);
         }
       }
     } finally {
