@@ -206,6 +206,67 @@ void main() async {
     return true;
   };
 
+  // ── Step 7: Process pending web redirect (Google/Apple Sign-In) ──────────
+  // After signInWithRedirect, the page reloads and lands here. We MUST call
+  // getRedirectResult() BEFORE runApp() so that:
+  //   1. The redirect credential is processed → user signed in
+  //   2. authStateChanges() starts with a non-null user (no flash of login page)
+  //   3. Firestore profile is created for new users before OnboardingGate reads it
+  // If we wait until a widget's initState, there's a race condition on iOS Safari
+  // where authStateChanges() resolves to null before getRedirectResult completes.
+  if (kIsWeb) {
+    try {
+      final result = await FirebaseAuth.instance.getRedirectResult();
+      final user = result.user;
+      if (user != null) {
+        debugPrint('✅ Web redirect: signed in as ${user.uid}');
+        // Create Firestore profile for new users
+        final isNew = result.additionalUserInfo?.isNewUser ?? false;
+        if (isNew) {
+          final docRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+          final existing = await docRef.get();
+          if (!existing.exists) {
+            String name = user.displayName ?? '';
+            if (name.isEmpty) {
+              final profile = result.additionalUserInfo?.profile;
+              if (profile != null) {
+                name = (profile['name'] as String?) ?? '';
+              }
+            }
+            await docRef.set({
+              'uid':            user.uid,
+              'name':           name,
+              'email':          user.email ?? '',
+              'phone':          user.phoneNumber ?? '',
+              'balance':        0.0,
+              'rating':         5.0,
+              'reviewsCount':   0,
+              'pricePerHour':   0.0,
+              'serviceType':    '',
+              'aboutMe':        '',
+              'profileImage':   user.photoURL ?? '',
+              'gallery':        [],
+              'quickTags':      [],
+              'isOnline':       true,
+              'isAdmin':        false,
+              'isVerified':     false,
+              'isCustomer':     true,
+              'isProvider':     false,
+              'termsAccepted':  true,
+              'onboardingComplete': false,
+              'tourComplete':   false,
+              'createdAt':      FieldValue.serverTimestamp(),
+            });
+            debugPrint('✅ Web redirect: created profile for new user');
+          }
+        }
+      }
+    } catch (e) {
+      // getRedirectResult throws if no redirect happened — this is normal
+      debugPrint('ℹ️ No pending redirect result: ${e.runtimeType}');
+    }
+  }
+
   runApp(const AnySkillApp());
 }
 
@@ -264,6 +325,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
   bool _updateNotified = false;
   bool _bannerVisible = false;
+  bool _startupGrace  = true; // suppress banner for 3s after app start
   // The version string from Firestore that triggered the current banner.
   // Stored so we can persist "dismissed for this version" when user taps × or Update.
   String? _latestVersion;
@@ -271,6 +333,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
   @override
   void initState() {
     super.initState();
+    // Suppress update banner for 3 seconds after startup to avoid
+    // interrupting auth redirects (Google/Apple sign-in on mobile web).
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _startupGrace = false);
+    });
     _handleWebUpdates();
     _setupPushNotifications();
 
@@ -315,6 +382,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         .snapshots()
         .listen((doc) {
           if (!doc.exists || !mounted || _updateNotified) return;
+          if (_startupGrace) return; // don't flash banner during auth redirect
 
           // Never show update banner in debug/development builds.
           if (kDebugMode) return;

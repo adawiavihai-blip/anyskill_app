@@ -72,71 +72,8 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
   bool      _isLoading = false;
   bool?     _phoneOk;
 
-  @override
-  void initState() {
-    super.initState();
-    // After a signInWithRedirect (Google/Apple on mobile web), the page
-    // reloads and we land here again. Process the redirect result to
-    // create the Firestore profile for new users.
-    if (kIsWeb) _handleRedirectResult();
-  }
-
-  Future<void> _handleRedirectResult() async {
-    try {
-      final result = await FirebaseAuth.instance.getRedirectResult();
-      final user = result.user;
-      if (user == null) return; // no redirect happened
-
-      debugPrint('[Redirect] Got user: ${user.uid}');
-      final isNew = result.additionalUserInfo?.isNewUser ?? false;
-
-      if (isNew) {
-        // Build display name — works for both Google and Apple redirects
-        String name = user.displayName ?? '';
-        if (name.isEmpty) {
-          final profile = result.additionalUserInfo?.profile;
-          if (profile != null) {
-            name = (profile['name'] as String?) ?? '';
-          }
-        }
-
-        final existing = await FirebaseFirestore.instance
-            .collection('users').doc(user.uid).get();
-        if (!existing.exists) {
-          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-            'uid':            user.uid,
-            'name':           name,
-            'email':          user.email ?? '',
-            'phone':          '',
-            'balance':        0.0,
-            'rating':         5.0,
-            'reviewsCount':   0,
-            'pricePerHour':   0.0,
-            'serviceType':    '',
-            'aboutMe':        '',
-            'profileImage':   user.photoURL ?? '',
-            'gallery':        [],
-            'quickTags':      [],
-            'isOnline':       true,
-            'isAdmin':        false,
-            'isVerified':     false,
-            'isCustomer':     true,
-            'isProvider':     false,
-            'termsAccepted':  true,
-            'onboardingComplete': false,
-            'tourComplete':   false,
-            'createdAt':      FieldValue.serverTimestamp(),
-          });
-          debugPrint('[Redirect] Created profile for new user: ${user.uid}');
-        }
-      }
-      // AuthWrapper's StreamBuilder will pick up the user and navigate
-      // to OnboardingGate automatically — no manual navigation needed.
-    } catch (e) {
-      debugPrint('[Redirect] getRedirectResult error: $e');
-      // Non-fatal — if redirect didn't happen, this throws harmlessly
-    }
-  }
+  // Redirect result is now handled in main() BEFORE runApp(),
+  // guaranteeing the user is signed in before AuthWrapper renders.
 
   @override
   void dispose() {
