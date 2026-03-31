@@ -226,7 +226,9 @@ class _LoginScreenState extends State<LoginScreen> {
           AppleIDAuthorizationScopes.email,
           AppleIDAuthorizationScopes.fullName,
         ],
-        nonce: hashedNonce,
+        // On web: nonce is handled by the redirect flow, not passed here.
+        // On native: nonce must be the SHA256 hash for Apple's verification.
+        nonce: kIsWeb ? null : hashedNonce,
         webAuthenticationOptions: kIsWeb
             ? WebAuthenticationOptions(
                 clientId: 'com.example.anyskillFix.auth',

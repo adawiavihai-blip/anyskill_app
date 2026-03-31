@@ -1,10 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../main.dart' show currentAppVersion;
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import '../main.dart' show currentAppVersion, OnboardingGate;
 import '../widgets/anyskill_logo.dart';
 import 'otp_screen.dart';
 import 'login_screen.dart'; // email fallback for migrating users
@@ -234,7 +239,39 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
 
                     // ── Send button ───────────────────────────────────────────
                     _buildSendButton(),
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 20),
+
+                    // ── Social divider ────────────────────────────────────────
+                    Row(children: [
+                      Expanded(child: Divider(color: Colors.grey[300])),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        child: Text('או',
+                            style: TextStyle(color: Colors.grey[400], fontSize: 13)),
+                      ),
+                      Expanded(child: Divider(color: Colors.grey[300])),
+                    ]),
+                    const SizedBox(height: 16),
+
+                    // ── Social sign-in buttons ───────────────────────────────
+                    Row(
+                      children: [
+                        Expanded(child: _buildSocialBtn(
+                          label: 'Google',
+                          icon: _buildGoogleIcon(),
+                          onTap: _loginGoogle,
+                          dark: false,
+                        )),
+                        const SizedBox(width: 12),
+                        Expanded(child: _buildSocialBtn(
+                          label: 'Apple',
+                          icon: const Icon(Icons.apple, size: 22, color: Colors.white),
+                          onTap: _loginApple,
+                          dark: true,
+                        )),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
 
                     // ── Email fallback (migrating users) ──────────────────────
                     Center(
@@ -243,7 +280,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                           MaterialPageRoute(builder: (_) => const LoginScreen())),
                         child: Text.rich(
                           TextSpan(
-                            text: 'יש לך חשבון ישן עם אימייל? ',
+                            text: 'יש לך חשבון עם אימייל? ',
                             style: TextStyle(color: Colors.grey[500], fontSize: 13),
                             children: const [
                               TextSpan(
@@ -497,6 +534,266 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
       ),
     );
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Social sign-in — Google + Apple (on the landing page for 1-tap access)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildSocialBtn({
+    required String label,
+    required Widget icon,
+    required VoidCallback onTap,
+    bool dark = false,
+  }) {
+    return GestureDetector(
+      onTap: _isLoading ? null : onTap,
+      child: Container(
+        height: 48,
+        decoration: BoxDecoration(
+          color: dark ? Colors.black87 : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: dark ? null : Border.all(color: Colors.grey.shade300),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: dark ? 0.18 : 0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            icon,
+            const SizedBox(width: 8),
+            Text(label,
+              style: TextStyle(
+                color: dark ? Colors.white : Colors.black87,
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGoogleIcon() {
+    return SizedBox(
+      width: 20, height: 20,
+      child: CustomPaint(painter: _GoogleLogoPainter()),
+    );
+  }
+
+  // ── Google Sign-In ──────────────────────────────────────────────────────
+
+  Future<void> _loginGoogle() async {
+    setState(() => _isLoading = true);
+    try {
+      UserCredential cred;
+      if (kIsWeb) {
+        cred = await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
+      } else {
+        final googleUser = await GoogleSignIn().signIn();
+        if (googleUser == null) {
+          if (mounted) setState(() => _isLoading = false);
+          return;
+        }
+        final googleAuth = await googleUser.authentication;
+        cred = await FirebaseAuth.instance.signInWithCredential(
+          GoogleAuthProvider.credential(
+            accessToken: googleAuth.accessToken,
+            idToken: googleAuth.idToken,
+          ),
+        );
+      }
+
+      final user  = cred.user!;
+      final isNew = cred.additionalUserInfo?.isNewUser ?? false;
+
+      if (isNew) {
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'uid':            user.uid,
+          'name':           user.displayName ?? '',
+          'email':          user.email ?? '',
+          'phone':          '',
+          'balance':        0.0,
+          'rating':         5.0,
+          'reviewsCount':   0,
+          'pricePerHour':   0.0,
+          'serviceType':    '',
+          'aboutMe':        '',
+          'profileImage':   user.photoURL ?? '',
+          'gallery':        [],
+          'quickTags':      [],
+          'isOnline':       true,
+          'isAdmin':        false,
+          'isVerified':     false,
+          'isCustomer':     true,
+          'isProvider':     false,
+          'termsAccepted':  true,
+          'onboardingComplete': false,
+          'tourComplete':   false,
+          'createdAt':      FieldValue.serverTimestamp(),
+        });
+      }
+
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const OnboardingGate()),
+          (_) => false,
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      debugPrint('[GoogleLogin] ${e.code}');
+      if (mounted) _snack('שגיאת Google: ${e.code}', _kRed);
+    } catch (e) {
+      debugPrint('[GoogleLogin] $e');
+      if (mounted) {
+        final msg = e.toString();
+        if (!msg.contains('canceled') && !msg.contains('cancelled')) {
+          _snack('שגיאת התחברות Google', _kRed);
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // ── Apple Sign-In ───────────────────────────────────────────────────────
+
+  Future<void> _loginApple() async {
+    setState(() => _isLoading = true);
+    try {
+      final rawNonce = _generateNonce();
+      final hashedNonce = sha256.convert(utf8.encode(rawNonce)).toString();
+
+      final appleCredential = await SignInWithApple.getAppleIDCredential(
+        scopes: [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+        // On web: nonce goes to webAuthenticationOptions only.
+        // On native: nonce is passed at the top level.
+        nonce: kIsWeb ? null : hashedNonce,
+        webAuthenticationOptions: kIsWeb
+            ? WebAuthenticationOptions(
+                clientId: 'com.example.anyskillFix.auth',
+                redirectUri: Uri.parse(
+                  'https://anyskill-6fdf3.firebaseapp.com/__/auth/handler',
+                ),
+              )
+            : null,
+      );
+
+      final oauthCredential = OAuthProvider('apple.com').credential(
+        idToken:     appleCredential.identityToken,
+        rawNonce:    rawNonce,
+        accessToken: appleCredential.authorizationCode,
+      );
+
+      final cred = await FirebaseAuth.instance.signInWithCredential(oauthCredential);
+      final user  = cred.user!;
+      final isNew = cred.additionalUserInfo?.isNewUser ?? false;
+
+      // Apple only provides name on FIRST sign-in
+      String displayName = user.displayName ?? '';
+      if (displayName.isEmpty) {
+        final given  = appleCredential.givenName ?? '';
+        final family = appleCredential.familyName ?? '';
+        displayName  = '$given $family'.trim();
+      }
+      if (displayName.isNotEmpty && (user.displayName ?? '').isEmpty) {
+        await user.updateDisplayName(displayName);
+      }
+
+      if (isNew) {
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'uid':            user.uid,
+          'name':           displayName,
+          'email':          user.email ?? appleCredential.email ?? '',
+          'phone':          '',
+          'balance':        0.0,
+          'rating':         5.0,
+          'reviewsCount':   0,
+          'pricePerHour':   0.0,
+          'serviceType':    '',
+          'aboutMe':        '',
+          'profileImage':   '',
+          'gallery':        [],
+          'quickTags':      [],
+          'isOnline':       true,
+          'isAdmin':        false,
+          'isVerified':     false,
+          'isCustomer':     true,
+          'isProvider':     false,
+          'termsAccepted':  true,
+          'onboardingComplete': false,
+          'tourComplete':   false,
+          'createdAt':      FieldValue.serverTimestamp(),
+        });
+      }
+
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const OnboardingGate()),
+          (_) => false,
+        );
+      }
+    } on SignInWithAppleAuthorizationException catch (e) {
+      if (e.code != AuthorizationErrorCode.canceled && mounted) {
+        _snack('שגיאת Apple: ${e.message}', _kRed);
+      }
+    } on FirebaseAuthException catch (e) {
+      debugPrint('[AppleLogin] ${e.code}');
+      if (mounted) _snack('שגיאת Apple: ${e.code}', _kRed);
+    } catch (e) {
+      debugPrint('[AppleLogin] $e');
+      if (mounted) {
+        final msg = e.toString();
+        if (!msg.contains('canceled') && !msg.contains('cancelled')) {
+          _snack('שגיאת התחברות Apple', _kRed);
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  static String _generateNonce([int length = 32]) {
+    const charset = '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
+    final random = math.Random.secure();
+    return List.generate(length, (_) => charset[random.nextInt(charset.length)]).join();
+  }
+
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Google logo painter (matches login_screen.dart)
+// ─────────────────────────────────────────────────────────────────────────────
+class _GoogleLogoPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double s = size.width;
+    // Blue arc (top-right)
+    canvas.drawArc(Rect.fromLTWH(0, 0, s, s), -0.5, 1.8,
+        true, Paint()..color = const Color(0xFF4285F4));
+    // Green arc (bottom-right)
+    canvas.drawArc(Rect.fromLTWH(0, 0, s, s), 1.3, 1.2,
+        true, Paint()..color = const Color(0xFF34A853));
+    // Yellow arc (bottom-left)
+    canvas.drawArc(Rect.fromLTWH(0, 0, s, s), 2.5, 1.0,
+        true, Paint()..color = const Color(0xFFFBBC05));
+    // Red arc (top-left)
+    canvas.drawArc(Rect.fromLTWH(0, 0, s, s), 3.5, 1.1,
+        true, Paint()..color = const Color(0xFFEA4335));
+    // White center
+    canvas.drawCircle(Offset(s / 2, s / 2), s * 0.3,
+        Paint()..color = Colors.white);
+  }
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
