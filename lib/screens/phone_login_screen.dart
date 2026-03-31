@@ -675,14 +675,13 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     try {
       if (kIsWeb) {
         // On web: use Firebase's built-in OAuthProvider with redirect.
-        // The sign_in_with_apple package returns JS objects that crash
-        // in minified builds ("Instance of 'minified:Pc' is not a subtype").
-        // Firebase's OAuthProvider handles the Apple OAuth flow natively.
+        // Firebase Console has the Service ID + redirect URI configured,
+        // so we do NOT pass a manual clientId here — Firebase handles it.
         final provider = OAuthProvider('apple.com')
           ..addScope('email')
           ..addScope('name');
         await FirebaseAuth.instance.signInWithRedirect(provider);
-        return; // page navigates away — _handleRedirectResult picks up
+        return; // page reloads → main() getRedirectResult() picks up
       }
 
       // Native iOS: use sign_in_with_apple package

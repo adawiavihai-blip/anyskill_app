@@ -42,6 +42,9 @@ String currentAppVersion =
 User? _pendingRedirectUser;
 bool _pendingRedirectIsNew = false;
 Map<String, dynamic>? _pendingRedirectProfile;
+/// True while getRedirectResult() found a user — tells AuthWrapper to show
+/// splash instead of flashing the login page while auth state propagates.
+bool _redirectSignInPending = false;
 
 // ── Global navigator key ──────────────────────────────────────────────────────
 // Used by notification handlers to navigate without a BuildContext.
@@ -224,10 +227,10 @@ void main() async {
       final result = await FirebaseAuth.instance.getRedirectResult();
       if (result.user != null) {
         debugPrint('✅ Web redirect: signed in as ${result.user!.uid}');
-        // Store redirect metadata for OnboardingGate to use
         _pendingRedirectUser = result.user;
         _pendingRedirectIsNew = result.additionalUserInfo?.isNewUser ?? false;
         _pendingRedirectProfile = result.additionalUserInfo?.profile;
+        _redirectSignInPending = true; // tell AuthWrapper to show splash
       }
     } catch (e) {
       debugPrint('ℹ️ No pending redirect result: ${e.runtimeType}');
@@ -707,7 +710,23 @@ class _AuthWrapperState extends State<AuthWrapper> {
               );
             }
             if (snapshot.hasData && snapshot.data != null) {
+              _redirectSignInPending = false; // consumed
               return const OnboardingGate();
+            }
+            // A redirect just completed but authStateChanges hasn't fired
+            // yet — show splash instead of flashing the login page.
+            if (_redirectSignInPending) {
+              // Safety: clear after 4 seconds if auth never fires
+              Future.delayed(const Duration(seconds: 4), () {
+                if (mounted && _redirectSignInPending) {
+                  _redirectSignInPending = false;
+                  if (mounted) setState(() {});
+                }
+              });
+              return const Scaffold(
+                backgroundColor: Colors.white,
+                body: Center(child: _SplashLogo()),
+              );
             }
             return const PhoneLoginScreen();
           },
