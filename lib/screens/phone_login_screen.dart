@@ -73,6 +73,72 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
   bool?     _phoneOk;
 
   @override
+  void initState() {
+    super.initState();
+    // After a signInWithRedirect (Google/Apple on mobile web), the page
+    // reloads and we land here again. Process the redirect result to
+    // create the Firestore profile for new users.
+    if (kIsWeb) _handleRedirectResult();
+  }
+
+  Future<void> _handleRedirectResult() async {
+    try {
+      final result = await FirebaseAuth.instance.getRedirectResult();
+      final user = result.user;
+      if (user == null) return; // no redirect happened
+
+      debugPrint('[Redirect] Got user: ${user.uid}');
+      final isNew = result.additionalUserInfo?.isNewUser ?? false;
+
+      if (isNew) {
+        // Build display name — works for both Google and Apple redirects
+        String name = user.displayName ?? '';
+        if (name.isEmpty) {
+          final profile = result.additionalUserInfo?.profile;
+          if (profile != null) {
+            name = (profile['name'] as String?) ?? '';
+          }
+        }
+
+        final existing = await FirebaseFirestore.instance
+            .collection('users').doc(user.uid).get();
+        if (!existing.exists) {
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+            'uid':            user.uid,
+            'name':           name,
+            'email':          user.email ?? '',
+            'phone':          '',
+            'balance':        0.0,
+            'rating':         5.0,
+            'reviewsCount':   0,
+            'pricePerHour':   0.0,
+            'serviceType':    '',
+            'aboutMe':        '',
+            'profileImage':   user.photoURL ?? '',
+            'gallery':        [],
+            'quickTags':      [],
+            'isOnline':       true,
+            'isAdmin':        false,
+            'isVerified':     false,
+            'isCustomer':     true,
+            'isProvider':     false,
+            'termsAccepted':  true,
+            'onboardingComplete': false,
+            'tourComplete':   false,
+            'createdAt':      FieldValue.serverTimestamp(),
+          });
+          debugPrint('[Redirect] Created profile for new user: ${user.uid}');
+        }
+      }
+      // AuthWrapper's StreamBuilder will pick up the user and navigate
+      // to OnboardingGate automatically — no manual navigation needed.
+    } catch (e) {
+      debugPrint('[Redirect] getRedirectResult error: $e');
+      // Non-fatal — if redirect didn't happen, this throws harmlessly
+    }
+  }
+
+  @override
   void dispose() {
     _phoneCtrl.dispose();
     super.dispose();
@@ -591,38 +657,27 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
   Future<void> _loginGoogle() async {
     setState(() => _isLoading = true);
     try {
-      UserCredential cred;
       if (kIsWeb) {
-        // Use signInWithRedirect on mobile web — popups are blocked by
-        // Safari and Chrome on iOS/Android. signInWithRedirect navigates
-        // away and returns via getRedirectResult on reload.
-        // However, getRedirectResult only works after a redirect has
-        // completed. For simplicity: try popup first, fall back to redirect.
-        try {
-          cred = await FirebaseAuth.instance
-              .signInWithPopup(GoogleAuthProvider());
-        } catch (popupErr) {
-          debugPrint('[GoogleLogin] popup failed ($popupErr), trying redirect');
-          await FirebaseAuth.instance
-              .signInWithRedirect(GoogleAuthProvider());
-          // After redirect, the page reloads and AuthWrapper picks up
-          // the signed-in user automatically. No further code runs here.
-          return;
-        }
-      } else {
-        final googleUser = await GoogleSignIn().signIn();
-        if (googleUser == null) {
-          if (mounted) setState(() => _isLoading = false);
-          return;
-        }
-        final googleAuth = await googleUser.authentication;
-        cred = await FirebaseAuth.instance.signInWithCredential(
-          GoogleAuthProvider.credential(
-            accessToken: googleAuth.accessToken,
-            idToken: googleAuth.idToken,
-          ),
-        );
+        // On web (especially mobile Safari/Chrome): use redirect.
+        // Popups are blocked on iOS Safari. After redirect, the page
+        // reloads and _handleRedirectResult() processes the new user.
+        await FirebaseAuth.instance.signInWithRedirect(GoogleAuthProvider());
+        return; // page navigates away — no further code runs
       }
+
+      // Native mobile: use GoogleSignIn plugin
+      final googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+      final googleAuth = await googleUser.authentication;
+      final cred = await FirebaseAuth.instance.signInWithCredential(
+        GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        ),
+      );
 
       final user  = cred.user!;
       final isNew = cred.additionalUserInfo?.isNewUser ?? false;
@@ -668,8 +723,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
       if (mounted) {
         final msg = e.toString();
         if (!msg.contains('canceled') && !msg.contains('cancelled')) {
-          // Show the FULL error so user can report it
-          _snack('Google error: ${e.runtimeType}\n${msg.length > 120 ? msg.substring(0, 120) : msg}', _kRed);
+          _snack('Google: ${e.runtimeType}\n${msg.length > 120 ? msg.substring(0, 120) : msg}', _kRed);
         }
       }
     } finally {
@@ -682,6 +736,19 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
   Future<void> _loginApple() async {
     setState(() => _isLoading = true);
     try {
+      if (kIsWeb) {
+        // On web: use Firebase's built-in OAuthProvider with redirect.
+        // The sign_in_with_apple package returns JS objects that crash
+        // in minified builds ("Instance of 'minified:Pc' is not a subtype").
+        // Firebase's OAuthProvider handles the Apple OAuth flow natively.
+        final provider = OAuthProvider('apple.com')
+          ..addScope('email')
+          ..addScope('name');
+        await FirebaseAuth.instance.signInWithRedirect(provider);
+        return; // page navigates away — _handleRedirectResult picks up
+      }
+
+      // Native iOS: use sign_in_with_apple package
       final rawNonce = _generateNonce();
       final hashedNonce = sha256.convert(utf8.encode(rawNonce)).toString();
 
@@ -690,17 +757,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           AppleIDAuthorizationScopes.email,
           AppleIDAuthorizationScopes.fullName,
         ],
-        // On web: nonce goes to webAuthenticationOptions only.
-        // On native: nonce is passed at the top level.
-        nonce: kIsWeb ? null : hashedNonce,
-        webAuthenticationOptions: kIsWeb
-            ? WebAuthenticationOptions(
-                clientId: 'com.example.anyskillFix.auth',
-                redirectUri: Uri.parse(
-                  'https://anyskill-6fdf3.firebaseapp.com/__/auth/handler',
-                ),
-              )
-            : null,
+        nonce: hashedNonce,
       );
 
       final oauthCredential = OAuthProvider('apple.com').credential(
@@ -770,7 +827,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
       if (mounted) {
         final msg = e.toString();
         if (!msg.contains('canceled') && !msg.contains('cancelled')) {
-          _snack('Apple error: ${e.runtimeType}\n${msg.length > 120 ? msg.substring(0, 120) : msg}', _kRed);
+          _snack('Apple: ${e.runtimeType}\n${msg.length > 120 ? msg.substring(0, 120) : msg}', _kRed);
         }
       }
     } finally {
