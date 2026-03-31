@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'dart:math' as math;
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'sign_up_screen.dart';
 import '../services/credentials_service.dart';
 import '../l10n/app_localizations.dart';
@@ -210,8 +213,121 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _loginApple() async {
-    _snack(AppLocalizations.of(context).loginAppleComingSoon, Colors.black87);
-    // TODO: implement with sign_in_with_apple package
+    final newUserBio = AppLocalizations.of(context).googleNewUserBio;
+    setState(() => _isLoading = true);
+    try {
+      // 1. Generate a nonce for security (prevents replay attacks)
+      final rawNonce = _generateNonce();
+      final hashedNonce = sha256.convert(utf8.encode(rawNonce)).toString();
+
+      // 2. Request Apple credential
+      final appleCredential = await SignInWithApple.getAppleIDCredential(
+        scopes: [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+        nonce: hashedNonce,
+        webAuthenticationOptions: kIsWeb
+            ? WebAuthenticationOptions(
+                clientId: 'com.example.anyskillFix.auth',
+                redirectUri: Uri.parse(
+                  'https://anyskill-6fdf3.firebaseapp.com/__/auth/handler',
+                ),
+              )
+            : null,
+      );
+
+      // 3. Create Firebase credential from Apple token
+      final oauthCredential = OAuthProvider('apple.com').credential(
+        idToken:     appleCredential.identityToken,
+        rawNonce:    rawNonce,
+        accessToken: appleCredential.authorizationCode,
+      );
+
+      // 4. Sign in to Firebase
+      final cred = await FirebaseAuth.instance.signInWithCredential(oauthCredential);
+      final user  = cred.user!;
+      final isNew = cred.additionalUserInfo?.isNewUser ?? false;
+
+      // 5. Build display name from Apple's response
+      // Apple only provides the name on FIRST sign-in — capture it now.
+      String displayName = user.displayName ?? '';
+      if (displayName.isEmpty) {
+        final given  = appleCredential.givenName ?? '';
+        final family = appleCredential.familyName ?? '';
+        displayName  = '$given $family'.trim();
+      }
+      // Persist to Firebase Auth profile if we got a name
+      if (displayName.isNotEmpty && (user.displayName ?? '').isEmpty) {
+        await user.updateDisplayName(displayName);
+      }
+
+      // 6. Create Firestore profile for new users
+      if (isNew) {
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'uid':            user.uid,
+          'name':           displayName,
+          'email':          user.email ?? appleCredential.email ?? '',
+          'phone':          '',
+          'balance':        0.0,
+          'rating':         5.0,
+          'reviewsCount':   0,
+          'pricePerHour':   0.0,
+          'serviceType':    '',
+          'aboutMe':        newUserBio,
+          'profileImage':   '',  // Apple does not provide a photo
+          'gallery':        [],
+          'quickTags':      [],
+          'isOnline':       true,
+          'isAdmin':        false,
+          'isVerified':     false,
+          'isCustomer':     true,
+          'isProvider':     false,
+          'termsAccepted':  true,
+          'onboardingComplete': false,
+          'tourComplete':   false,
+          'createdAt':      FieldValue.serverTimestamp(),
+        });
+      }
+
+      // 7. Navigate — same pattern as Google sign-in
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const OnboardingGate()),
+          (_) => false,
+        );
+      }
+    } on SignInWithAppleAuthorizationException catch (e) {
+      // User cancelled or Apple rejected
+      if (e.code != AuthorizationErrorCode.canceled && mounted) {
+        _snack('שגיאת Apple: ${e.message}', _kRed);
+      }
+    } on FirebaseAuthException catch (e) {
+      debugPrint('[AppleLogin] FirebaseAuthException: code=${e.code}');
+      if (mounted) {
+        _snack(_mapError(e.code, AppLocalizations.of(context)), _kRed);
+      }
+    } catch (e) {
+      debugPrint('[AppleLogin] Error: ${e.runtimeType}: $e');
+      if (mounted) {
+        final msg = e.toString();
+        final hint = msg.contains('network')
+            ? 'בדוק חיבור לאינטרנט'
+            : msg.contains('canceled') || msg.contains('cancelled')
+                ? null // user cancelled — no error shown
+                : 'שגיאת התחברות Apple';
+        if (hint != null) _snack(hint, _kRed);
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// Generates a cryptographically secure random nonce (32 bytes, hex-encoded).
+  static String _generateNonce([int length = 32]) {
+    const charset = '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
+    final random = math.Random.secure();
+    return List.generate(length, (_) => charset[random.nextInt(charset.length)]).join();
   }
 
   void _showForgotPassword() {
