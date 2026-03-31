@@ -8,6 +8,7 @@ import 'package:video_player/video_player.dart';
 import 'dart:convert';
 import 'edit_profile_screen.dart';
 import 'provider_registration_screen.dart';
+import 'terms_of_service_screen.dart';
 import '../widgets/vip_confetti.dart';
 import '../l10n/app_localizations.dart';
 import '../services/locale_provider.dart';
@@ -720,6 +721,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ],
                 const SizedBox(height: 16),
+                // ── Legal links ───────────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 25),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.push(context,
+                          MaterialPageRoute(builder: (_) =>
+                            const TermsOfServiceScreen(showAcceptButton: false))),
+                        child: const Text('תנאי שימוש',
+                          style: TextStyle(fontSize: 13, color: Color(0xFF6366F1))),
+                      ),
+                      Text(' • ', style: TextStyle(color: Colors.grey[400])),
+                      TextButton(
+                        onPressed: () => Navigator.push(context,
+                          MaterialPageRoute(builder: (_) =>
+                            const TermsOfServiceScreen(showAcceptButton: false))),
+                        child: const Text('מדיניות פרטיות',
+                          style: TextStyle(fontSize: 13, color: Color(0xFF6366F1))),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
                 // ── Logout ────────────────────────────────────────────────
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 25),
