@@ -167,7 +167,8 @@
       "Bash(bash /tmp/count_tabs.sh)",
       "Bash(node:*)",
       "Bash(2)",
-      "Bash(find /c/Users/aviha/Desktop/anyskill_app -maxdepth 2 \\\\\\(-name .github -o -name Makefile -o -name *.yaml -o -name *.yml -o -name .gitlab-ci.yml -o -name .drone.yml -o -name azure-pipelines.yml \\\\\\))"
+      "Bash(find /c/Users/aviha/Desktop/anyskill_app -maxdepth 2 \\\\\\(-name .github -o -name Makefile -o -name *.yaml -o -name *.yml -o -name .gitlab-ci.yml -o -name .drone.yml -o -name azure-pipelines.yml \\\\\\))",
+      "Bash(wc -l /c/Users/aviha/Desktop/anyskill_app/lib/repositories/*.dart)"
     ]
   }
 }
