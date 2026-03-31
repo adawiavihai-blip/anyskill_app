@@ -35,6 +35,14 @@ import 'l10n/app_localizations.dart';
 String currentAppVersion =
     appVersion; // fallback from constants.dart; overwritten by PackageInfo before runApp()
 
+// ── Pending redirect metadata (set in main, consumed by OnboardingGate) ────
+// These globals carry the redirect result across the main() → runApp() boundary.
+// OnboardingGate reads them once to create the Firestore profile at the right time
+// (after App Check + Firestore auth token are fully propagated).
+User? _pendingRedirectUser;
+bool _pendingRedirectIsNew = false;
+Map<String, dynamic>? _pendingRedirectProfile;
+
 // ── Global navigator key ──────────────────────────────────────────────────────
 // Used by notification handlers to navigate without a BuildContext.
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -207,62 +215,21 @@ void main() async {
   };
 
   // ── Step 7: Process pending web redirect (Google/Apple Sign-In) ──────────
-  // After signInWithRedirect, the page reloads and lands here. We MUST call
-  // getRedirectResult() BEFORE runApp() so that:
-  //   1. The redirect credential is processed → user signed in
-  //   2. authStateChanges() starts with a non-null user (no flash of login page)
-  //   3. Firestore profile is created for new users before OnboardingGate reads it
-  // If we wait until a widget's initState, there's a race condition on iOS Safari
-  // where authStateChanges() resolves to null before getRedirectResult completes.
+  // After signInWithRedirect, the page reloads and lands here. Call
+  // getRedirectResult() to ensure the auth credential is processed before
+  // authStateChanges() fires. Profile creation is deferred to OnboardingGate
+  // to avoid permission-denied races with App Check / token propagation.
   if (kIsWeb) {
     try {
       final result = await FirebaseAuth.instance.getRedirectResult();
-      final user = result.user;
-      if (user != null) {
-        debugPrint('✅ Web redirect: signed in as ${user.uid}');
-        // Create Firestore profile for new users
-        final isNew = result.additionalUserInfo?.isNewUser ?? false;
-        if (isNew) {
-          final docRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
-          final existing = await docRef.get();
-          if (!existing.exists) {
-            String name = user.displayName ?? '';
-            if (name.isEmpty) {
-              final profile = result.additionalUserInfo?.profile;
-              if (profile != null) {
-                name = (profile['name'] as String?) ?? '';
-              }
-            }
-            await docRef.set({
-              'uid':            user.uid,
-              'name':           name,
-              'email':          user.email ?? '',
-              'phone':          user.phoneNumber ?? '',
-              'balance':        0.0,
-              'rating':         5.0,
-              'reviewsCount':   0,
-              'pricePerHour':   0.0,
-              'serviceType':    '',
-              'aboutMe':        '',
-              'profileImage':   user.photoURL ?? '',
-              'gallery':        [],
-              'quickTags':      [],
-              'isOnline':       true,
-              'isAdmin':        false,
-              'isVerified':     false,
-              'isCustomer':     true,
-              'isProvider':     false,
-              'termsAccepted':  true,
-              'onboardingComplete': false,
-              'tourComplete':   false,
-              'createdAt':      FieldValue.serverTimestamp(),
-            });
-            debugPrint('✅ Web redirect: created profile for new user');
-          }
-        }
+      if (result.user != null) {
+        debugPrint('✅ Web redirect: signed in as ${result.user!.uid}');
+        // Store redirect metadata for OnboardingGate to use
+        _pendingRedirectUser = result.user;
+        _pendingRedirectIsNew = result.additionalUserInfo?.isNewUser ?? false;
+        _pendingRedirectProfile = result.additionalUserInfo?.profile;
       }
     } catch (e) {
-      // getRedirectResult throws if no redirect happened — this is normal
       debugPrint('ℹ️ No pending redirect result: ${e.runtimeType}');
     }
   }
@@ -779,6 +746,57 @@ class _OnboardingGateState extends State<OnboardingGate> {
   static Future<({Map<String, dynamic> data, bool hasSeenPerms})> _load(
     String uid,
   ) async {
+    // ── Handle pending social redirect (Google/Apple on web) ──────────
+    // If main() detected a new user from getRedirectResult(), create the
+    // Firestore profile here — AFTER App Check, Firestore settings, and
+    // auth token propagation are all complete. This avoids the
+    // permission-denied race condition.
+    if (_pendingRedirectIsNew && _pendingRedirectUser != null && uid.isNotEmpty) {
+      try {
+        final docRef = FirebaseFirestore.instance.collection('users').doc(uid);
+        final existing = await docRef.get();
+        if (!existing.exists) {
+          final user = _pendingRedirectUser!;
+          String name = user.displayName ?? '';
+          if (name.isEmpty && _pendingRedirectProfile != null) {
+            name = (_pendingRedirectProfile!['name'] as String?) ?? '';
+          }
+          await docRef.set({
+            'uid':            uid,
+            'name':           name,
+            'email':          user.email ?? '',
+            'phone':          user.phoneNumber ?? '',
+            'balance':        0.0,
+            'rating':         5.0,
+            'reviewsCount':   0,
+            'pricePerHour':   0.0,
+            'serviceType':    '',
+            'aboutMe':        '',
+            'profileImage':   user.photoURL ?? '',
+            'gallery':        [],
+            'quickTags':      [],
+            'isOnline':       true,
+            'isAdmin':        false,
+            'isVerified':     false,
+            'isCustomer':     true,
+            'isProvider':     false,
+            'termsAccepted':  true,
+            'onboardingComplete': false,
+            'tourComplete':   false,
+            'createdAt':      FieldValue.serverTimestamp(),
+          });
+          debugPrint('✅ OnboardingGate: created profile for redirect user');
+        }
+      } catch (e) {
+        debugPrint('⚠️ OnboardingGate: redirect profile creation failed: $e');
+      } finally {
+        // Clear globals — consumed once
+        _pendingRedirectUser = null;
+        _pendingRedirectIsNew = false;
+        _pendingRedirectProfile = null;
+      }
+    }
+
     final results = await Future.wait([
       FirebaseFirestore.instance
           .collection('users')
