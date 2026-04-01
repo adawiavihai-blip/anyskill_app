@@ -170,6 +170,16 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                if (snapshot.hasError) {
+                  return Center(child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.wifi_off_rounded, size: 48, color: Colors.grey[400]),
+                      const SizedBox(height: 12),
+                      Text('שגיאה בטעינת הצ\'אטים', style: TextStyle(color: Colors.grey[600])),
+                    ],
+                  ));
+                }
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return _buildEmptyState();
 
                 var chats = snapshot.data!.docs;

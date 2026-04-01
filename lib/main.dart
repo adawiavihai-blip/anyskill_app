@@ -15,7 +15,6 @@ import 'services/permission_service.dart';
 import 'services/locale_provider.dart';
 import 'services/cache_service.dart';
 import 'services/audio_service.dart';
-import 'services/app_check_service.dart';
 import 'repositories/logger_repository.dart';
 import 'models/app_log.dart';
 import 'theme/app_theme.dart';
@@ -35,16 +34,6 @@ import 'l10n/app_localizations.dart';
 String currentAppVersion =
     appVersion; // fallback from constants.dart; overwritten by PackageInfo before runApp()
 
-// ── Pending redirect metadata (set in main, consumed by OnboardingGate) ────
-// These globals carry the redirect result across the main() → runApp() boundary.
-// OnboardingGate reads them once to create the Firestore profile at the right time
-// (after App Check + Firestore auth token are fully propagated).
-User? _pendingRedirectUser;
-bool _pendingRedirectIsNew = false;
-Map<String, dynamic>? _pendingRedirectProfile;
-/// True while getRedirectResult() found a user — tells AuthWrapper to show
-/// splash instead of flashing the login page while auth state propagates.
-bool _redirectSignInPending = false;
 
 // ── Global navigator key ──────────────────────────────────────────────────────
 // Used by notification handlers to navigate without a BuildContext.
@@ -92,6 +81,61 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 }
 
+// ── Create Firestore profile for a social-login user (if new) ────────────────
+Future<void> _ensureProfileExists(User user) async {
+  try {
+    final docRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+    final snap = await docRef.get();
+    if (snap.exists) {
+      // ignore: avoid_print
+      print('ℹ️ [Profile] Already exists for ${user.uid}');
+      return;
+    }
+    await docRef.set({
+      'uid':            user.uid,
+      'name':           user.displayName ?? '',
+      'email':          user.email ?? '',
+      'phone':          user.phoneNumber ?? '',
+      'rating':         5.0,
+      'reviewsCount':   0,
+      'pricePerHour':   0.0,
+      'serviceType':    '',
+      'aboutMe':        '',
+      'profileImage':   user.photoURL ?? '',
+      'gallery':        [],
+      'quickTags':      [],
+      'isOnline':       true,
+      'isCustomer':     true,
+      'isProvider':     false,
+      'termsAccepted':  true,
+      'onboardingComplete': false,
+      'tourComplete':   false,
+      'createdAt':      FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    // ignore: avoid_print
+    print('✅ [Profile] Created for ${user.uid}');
+  } catch (e) {
+    // ignore: avoid_print
+    print('⚠️ [Profile] Creation failed: $e');
+  }
+}
+
+// ── Web auth session check ───────────────────────────────────────────────────
+// On web startup, check if Firebase Auth already has a signed-in user
+// (restored from IndexedDB persistence). If so, ensure their profile exists.
+// No redirect handling needed — we use signInWithPopup exclusively.
+Future<void> _handleWebRedirectResult() async {
+  final existingUser = FirebaseAuth.instance.currentUser;
+  if (existingUser != null) {
+    // ignore: avoid_print
+    print('✅ [Auth] Session restored: uid=${existingUser.uid}');
+    await _ensureProfileExists(existingUser);
+  } else {
+    // ignore: avoid_print
+    print('ℹ️ [Auth] No existing session — showing login screen');
+  }
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -126,9 +170,29 @@ void main() async {
     // rather than a permanent white screen.
   }
 
-  // ── Step 3b: Crashlytics ──────────────────────────────────────────────────
-  // Native crash reporting for Android + iOS. On web, Crashlytics is a no-op
-  // (web errors go to the Firestore error_logs handler below instead).
+  // ── Step 3b: Web Auth persistence ──────────────────────────────────────
+  // MUST be the very first call on FirebaseAuth.instance — before
+  // getRedirectResult(), before Stripe, before anything that could
+  // trigger an implicit auth state read.
+  if (kIsWeb) {
+    try {
+      await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
+      debugPrint('✅ Web: Auth LOCAL persistence set');
+    } catch (e) {
+      debugPrint('⚠️ Web Auth persistence failed: $e');
+    }
+  }
+
+  // ── Step 3c: Handle returning redirect (Google/Apple on mobile Safari) ─
+  // This MUST run immediately after setPersistence and BEFORE any other
+  // async initialisation (Stripe, AudioService, etc.) that could delay it.
+  // The OAuth credential is only available on the first getRedirectResult()
+  // call after a redirect — if anything consumes it first, it's lost.
+  if (kIsWeb) {
+    await _handleWebRedirectResult();
+  }
+
+  // ── Step 3d: Crashlytics ─────────────────────────────────────────────────
   if (!kIsWeb) {
     try {
       await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(true);
@@ -138,20 +202,10 @@ void main() async {
     }
   }
 
-  // ── Step 4: App Check ─────────────────────────────────────────────────────
-  // Failure here must NEVER reach runApp(). If the reCAPTCHA domain is not
-  // registered the app continues; only "Enforced" Firestore rules will reject
-  // requests until the domain is added in the Google Cloud Console.
-  try {
-    await AppCheckService.init();
-    debugPrint('✅ App Check ready');
-  } catch (e) {
-    debugPrint('⚠️ App Check init failed (continuing without it): $e');
-  }
+  // ── Step 4: App Check — DISABLED ───────────────────────────────────────
+  debugPrint('ℹ️ App Check: DISABLED (social auth compatibility)');
 
   // ── Step 5: Stripe ────────────────────────────────────────────────────────
-  // applySettings() bootstraps Stripe.js on Flutter Web. If it hangs or throws
-  // (CSP, network timeout) the app still loads; payment calls will fail gracefully.
   try {
     await StripeService.init().timeout(
       const Duration(seconds: 10),
@@ -162,41 +216,17 @@ void main() async {
     debugPrint('⚠️ Stripe init failed (payments unavailable until reload): $e');
   }
 
-  // ── Step 6: Web-specific Firebase settings ────────────────────────────────
-  if (kIsWeb) {
-    try {
-      await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
-      FirebaseFirestore.instance.settings = const Settings(
-        persistenceEnabled: false, // Disabled — IndexedDB cache causes
-                                   // "INTERNAL ASSERTION FAILED: Unexpected
-                                   // state" on Firestore 12.9.0 web SDK.
-                                   // All reads go to server (adds ~50 ms
-                                   // per cold read but eliminates phantom
-                                   // writes and corrupted cache crashes).
-      );
-      debugPrint('✅ Web: Auth LOCAL persistence + Firestore server-only mode');
-    } catch (e) {
-      debugPrint('⚠️ Web Firebase settings failed: $e');
-    }
-  }
-
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
-  // Pre-load brand audio assets — must run after WidgetsFlutterBinding.ensureInitialized()
   unawaited(AudioService.instance.init());
 
-  // ── CacheService housekeeping — purge expired TTL entries every 5 minutes ──
   Timer.periodic(
     const Duration(minutes: 5),
     (_) => CacheService.purgeExpired(),
   );
 
-  // ── Watchtower: Global error & activity logger ────────────────────────────
-  // Batched writes (every 10s or 20 entries) to error_logs / activity_log.
-  // Replaces the previous inline Firestore writes.
   Watchtower.init();
 
-  // ── Global Flutter error handler ─────────────────────────────────────────
   FlutterError.onError = (FlutterErrorDetails details) {
     if (!kIsWeb) {
       FirebaseCrashlytics.instance.recordFlutterFatalError(details);
@@ -208,7 +238,6 @@ void main() async {
     );
   };
 
-  // ── Async / platform-level error handler ─────────────────────────────────
   PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
     if (!kIsWeb) {
       FirebaseCrashlytics.instance.recordError(error, stack, fatal: false);
@@ -216,26 +245,6 @@ void main() async {
     Watchtower.instance.error(error, stack: stack, severity: LogSeverity.warning);
     return true;
   };
-
-  // ── Step 7: Process pending web redirect (Google/Apple Sign-In) ──────────
-  // After signInWithRedirect, the page reloads and lands here. Call
-  // getRedirectResult() to ensure the auth credential is processed before
-  // authStateChanges() fires. Profile creation is deferred to OnboardingGate
-  // to avoid permission-denied races with App Check / token propagation.
-  if (kIsWeb) {
-    try {
-      final result = await FirebaseAuth.instance.getRedirectResult();
-      if (result.user != null) {
-        debugPrint('✅ Web redirect: signed in as ${result.user!.uid}');
-        _pendingRedirectUser = result.user;
-        _pendingRedirectIsNew = result.additionalUserInfo?.isNewUser ?? false;
-        _pendingRedirectProfile = result.additionalUserInfo?.profile;
-        _redirectSignInPending = true; // tell AuthWrapper to show splash
-      }
-    } catch (e) {
-      debugPrint('ℹ️ No pending redirect result: ${e.runtimeType}');
-    }
-  }
 
   runApp(const AnySkillApp());
 }
@@ -554,7 +563,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
     // Defer to the first frame so the widget tree is fully mounted before
     // setState is called inside _showUpdateBanner.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && !_bannerVisible) _showUpdateBanner();
+      if (mounted && !_bannerVisible && !_updateNotified) {
+        _updateNotified = true;
+        _showUpdateBanner();
+      }
     });
   }
 
@@ -710,23 +722,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
               );
             }
             if (snapshot.hasData && snapshot.data != null) {
-              _redirectSignInPending = false; // consumed
               return const OnboardingGate();
-            }
-            // A redirect just completed but authStateChanges hasn't fired
-            // yet — show splash instead of flashing the login page.
-            if (_redirectSignInPending) {
-              // Safety: clear after 4 seconds if auth never fires
-              Future.delayed(const Duration(seconds: 4), () {
-                if (mounted && _redirectSignInPending) {
-                  _redirectSignInPending = false;
-                  if (mounted) setState(() {});
-                }
-              });
-              return const Scaffold(
-                backgroundColor: Colors.white,
-                body: Center(child: _SplashLogo()),
-              );
             }
             return const PhoneLoginScreen();
           },
@@ -765,57 +761,6 @@ class _OnboardingGateState extends State<OnboardingGate> {
   static Future<({Map<String, dynamic> data, bool hasSeenPerms})> _load(
     String uid,
   ) async {
-    // ── Handle pending social redirect (Google/Apple on web) ──────────
-    // If main() detected a new user from getRedirectResult(), create the
-    // Firestore profile here — AFTER App Check, Firestore settings, and
-    // auth token propagation are all complete. This avoids the
-    // permission-denied race condition.
-    if (_pendingRedirectIsNew && _pendingRedirectUser != null && uid.isNotEmpty) {
-      try {
-        final docRef = FirebaseFirestore.instance.collection('users').doc(uid);
-        final existing = await docRef.get();
-        if (!existing.exists) {
-          final user = _pendingRedirectUser!;
-          String name = user.displayName ?? '';
-          if (name.isEmpty && _pendingRedirectProfile != null) {
-            name = (_pendingRedirectProfile!['name'] as String?) ?? '';
-          }
-          await docRef.set({
-            'uid':            uid,
-            'name':           name,
-            'email':          user.email ?? '',
-            'phone':          user.phoneNumber ?? '',
-            'balance':        0.0,
-            'rating':         5.0,
-            'reviewsCount':   0,
-            'pricePerHour':   0.0,
-            'serviceType':    '',
-            'aboutMe':        '',
-            'profileImage':   user.photoURL ?? '',
-            'gallery':        [],
-            'quickTags':      [],
-            'isOnline':       true,
-            'isAdmin':        false,
-            'isVerified':     false,
-            'isCustomer':     true,
-            'isProvider':     false,
-            'termsAccepted':  true,
-            'onboardingComplete': false,
-            'tourComplete':   false,
-            'createdAt':      FieldValue.serverTimestamp(),
-          });
-          debugPrint('✅ OnboardingGate: created profile for redirect user');
-        }
-      } catch (e) {
-        debugPrint('⚠️ OnboardingGate: redirect profile creation failed: $e');
-      } finally {
-        // Clear globals — consumed once
-        _pendingRedirectUser = null;
-        _pendingRedirectIsNew = false;
-        _pendingRedirectProfile = null;
-      }
-    }
-
     final results = await Future.wait([
       FirebaseFirestore.instance
           .collection('users')
@@ -844,10 +789,15 @@ class _OnboardingGateState extends State<OnboardingGate> {
             body: Center(child: _SplashLogo()),
           );
         }
-        // On error (Firestore crash, timeout, no network) default to HomeScreen.
+        // On error (Firestore crash, timeout, no network):
+        // If user is authenticated, let them into HomeScreen (safe: screens
+        // handle missing data gracefully). If NOT authenticated, show login.
         if (snapshot.hasError) {
           debugPrint('_OnboardingGate error: ${snapshot.error}');
-          return const HomeScreen();
+          if (FirebaseAuth.instance.currentUser != null) {
+            return const HomeScreen();
+          }
+          return const PhoneLoginScreen();
         }
         final (:data, :hasSeenPerms) = snapshot.data!;
 
@@ -861,9 +811,14 @@ class _OnboardingGateState extends State<OnboardingGate> {
           return const PendingVerificationScreen();
         }
 
-        // New users who haven't completed onboarding
-        final complete =
-            data['onboardingComplete'] ?? true; // existing users skip
+        // New users who haven't completed onboarding.
+        // Default FALSE for empty/missing data — ensures new social login
+        // users don't skip onboarding when profile creation was delayed.
+        // Existing users created before this field was added will have the
+        // field missing, but they'll also have isProvider/isCustomer set,
+        // so they'll have data['onboardingComplete'] == true from the
+        // OnboardingScreen._finish() or ProviderRegistrationScreen._submit().
+        final complete = data['onboardingComplete'] ?? data.isNotEmpty;
         if (!complete) return const OnboardingScreen();
 
         // First launch after sign-up — ask for permissions once

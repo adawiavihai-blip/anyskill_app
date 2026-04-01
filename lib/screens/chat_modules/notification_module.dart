@@ -46,7 +46,7 @@ class NotificationModule {
         'platform': 'web',
       }, SetOptions(merge: true));
       
-      debugPrint("QA Success: Token saved to Firestore: $token");
+      debugPrint("QA Success: FCM token saved to Firestore");
         } catch (e) {
       debugPrint("QA Error - Save Token: $e");
     }

@@ -13,13 +13,13 @@ class CategoryRepository {
     FirebaseFirestore? firestore,
     FirebaseStorage? storage,
   })  : _db      = firestore ?? FirebaseFirestore.instance,
-        _storage = storage   ?? FirebaseStorage.instance;
+        _storage = storage;
 
   @visibleForTesting
-  CategoryRepository.dummy();
+  CategoryRepository.dummy() : _storage = null;
 
   late final FirebaseFirestore _db;
-  late final FirebaseStorage   _storage;
+  final FirebaseStorage?      _storage;
 
   // ── Read ──────────────────────────────────────────────────────────────
 
@@ -96,7 +96,8 @@ class CategoryRepository {
 
   /// Upload a category image to Storage, returns the download URL.
   Future<String> uploadImage(String docId, Uint8List bytes) async {
-    final ref = _storage.ref().child('category_images/$docId.jpg');
+    final storage = _storage ?? FirebaseStorage.instance;
+    final ref = storage.ref().child('category_images/$docId.jpg');
     final snap = await ref.putData(
       bytes,
       SettableMetadata(contentType: 'image/jpeg'),
@@ -126,7 +127,7 @@ class CategoryRepository {
     // 3. Delete Storage image (best-effort)
     if (imageUrl.isNotEmpty) {
       try {
-        await _storage.refFromURL(imageUrl).delete();
+        await (_storage ?? FirebaseStorage.instance).refFromURL(imageUrl).delete();
       } catch (e) {
         debugPrint('[CategoryRepository] Image delete failed (non-fatal): $e');
       }

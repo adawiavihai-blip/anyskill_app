@@ -103,23 +103,35 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       _lastDoc = null;
       _hasMore = true;
     });
-    final page = await _fetchPage();
-    if (!mounted) return;
-    setState(() {
-      _allExperts.addAll(page);
-      _isLoading = false;
-    });
+    try {
+      final page = await _fetchPage();
+      if (!mounted) return;
+      setState(() {
+        _allExperts.addAll(page);
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('⚠️ _loadInitial error: $e');
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _loadMore() async {
     if (_isLoadingMore || !_hasMore || _isLoading) return;
     setState(() => _isLoadingMore = true);
-    final page = await _fetchPage();
-    if (!mounted) return;
-    setState(() {
-      _allExperts.addAll(page);
-      _isLoadingMore = false;
-    });
+    try {
+      final page = await _fetchPage();
+      if (!mounted) return;
+      setState(() {
+        _allExperts.addAll(page);
+        _isLoadingMore = false;
+      });
+    } catch (e) {
+      debugPrint('⚠️ _loadMore error: $e');
+      if (!mounted) return;
+      setState(() => _isLoadingMore = false);
+    }
   }
 
   /// Fetches the next page of experts using Firestore cursor pagination.

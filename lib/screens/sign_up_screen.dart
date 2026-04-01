@@ -586,7 +586,7 @@ class _SignUpScreenState extends State<SignUpScreen>
 
   Future<void> _signInApple() async {
     _snack('התחברות עם Apple תהיה זמינה בקרוב', Colors.black87);
-    // TODO: implement with sign_in_with_apple package
+    // Apple Sign-In is on the landing page (phone_login_screen.dart)
   }
 
   void _snack(String msg, Color color) {

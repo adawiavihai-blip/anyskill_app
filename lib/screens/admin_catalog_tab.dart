@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/category_service.dart';
 import '../services/ai_schema_service.dart';
+import '../services/cache_service.dart';
 import '../widgets/category_specs_widget.dart';
 
 /// Admin Catalog Manager — CRUD for categories with multi-locale names,
@@ -657,6 +658,8 @@ class _CategoryCardState extends State<_CategoryCard> {
   Future<void> _saveField(String field, dynamic value) async {
     try {
       await CategoryService.updateCategory(widget.catId, {field: value});
+      // Bust category cache so all screens pick up the change immediately
+      CacheService.invalidatePrefix('categories/');
       widget.onUpdate();
     } catch (e) {
       if (mounted) {

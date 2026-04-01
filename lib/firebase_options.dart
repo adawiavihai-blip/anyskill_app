@@ -65,6 +65,8 @@ class DefaultFirebaseOptions {
     projectId: 'anyskill-6fdf3',
     storageBucket: 'anyskill-6fdf3.firebasestorage.app',
     iosBundleId: 'com.example.anyskillApp',
+    iosClientId:
+        '281981409319-abse2ege4k4uqi0abdlkvhmea56ub2kl.apps.googleusercontent.com',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
@@ -74,6 +76,8 @@ class DefaultFirebaseOptions {
     projectId: 'anyskill-6fdf3',
     storageBucket: 'anyskill-6fdf3.firebasestorage.app',
     iosBundleId: 'com.example.anyskillApp',
+    iosClientId:
+        '281981409319-abse2ege4k4uqi0abdlkvhmea56ub2kl.apps.googleusercontent.com',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
@@ -81,7 +85,7 @@ class DefaultFirebaseOptions {
     appId: '1:281981409319:web:5b2131bb9985df2c819602',
     messagingSenderId: '281981409319',
     projectId: 'anyskill-6fdf3',
-    authDomain: 'anyskill-6fdf3.firebaseapp.com',
+    authDomain: 'anyskill-6fdf3.web.app',
     storageBucket: 'anyskill-6fdf3.firebasestorage.app',
     measurementId: 'G-6P433S6E7G',
   );

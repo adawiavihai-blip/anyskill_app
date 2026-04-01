@@ -6,29 +6,29 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:async';
 import 'dart:convert';
-import '../services/category_service.dart';
-import '../services/profile_setup_service.dart';
+import 'dart:typed_data';
+import '../constants.dart';
 import 'home_screen.dart';
-import '../l10n/app_localizations.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
-const _kPurple = Color(0xFF6366F1);
-const _kGreen  = Color(0xFF10B981);
+const _kPurple      = Color(0xFF6366F1);
+const _kPurpleDark  = Color(0xFF4F46E5);
+const _kPurpleLight = Color(0xFF8B5CF6);
+const _kGreen       = Color(0xFF10B981);
+const _kRed         = Color(0xFFEF4444);
+const _kAmber       = Color(0xFFF59E0B);
+const _kScaffoldBg  = Color(0xFFF4F7F9);
+const _kDarkText    = Color(0xFF1E1B4B);
+const _kMuted       = Color(0xFF6B7280);
 
-// ── Role enum ─────────────────────────────────────────────────────────────────
-// Two-value enum — no "none" state.  Customer is the default.
-// ONE variable, never two booleans.
 enum UserRole { customer, expert }
 
-// ── Business type options ─────────────────────────────────────────────────────
 const _kBusinessTypes = [
   'עוסק פטור',
   'עוסק מורשה',
   'חברה בע"מ',
   'שכיר המוציא חשבונית דרך חברה חיצונית',
 ];
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -37,153 +37,143 @@ class OnboardingScreen extends StatefulWidget {
   State<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-class _OnboardingScreenState extends State<OnboardingScreen> {
-  final _pageController = PageController();
-  int  _currentPage = 0;
-  bool _isSaving    = false;
+class _OnboardingScreenState extends State<OnboardingScreen>
+    with SingleTickerProviderStateMixin {
+  bool _isSaving = false;
 
-  // ── Step 1: role ─────────────────────────────────────────────────────────
-  // Single source of truth.  Defaults to customer.
-  // Changing _currentRole triggers setState → full Column rebuild.
+  // ── Role ──────────────────────────────────────────────────────────────────
   UserRole _currentRole = UserRole.customer;
-
-  // Convenience getters used by the rest of the file.
   bool get _isProvider => _currentRole == UserRole.expert;
   bool get _isCustomer => _currentRole == UserRole.customer;
 
-  // ── Expert inline fields (Step 1, visible when _selectedRole == expert) ──
+  // ── Expert fields ─────────────────────────────────────────────────────────
   String? _businessType;
-  final   _idController = TextEditingController(); // ת.ז. / ח.פ.
+  final _idController = TextEditingController();
+  final _nameController = TextEditingController();
 
-  // ── Step 2: service details ───────────────────────────────────────────────
+  // Business document upload
+  String? _businessDocUrl;
+  String? _businessDocName;
+  Uint8List? _businessDocThumb;
+  bool _isUploadingBizDoc = false;
+
+  // ID / Passport upload
+  String? _idDocUrl;
+  String? _idDocName;
+  Uint8List? _idDocThumb;
+  bool _isUploadingIdDoc = false;
+
+  // Category selection
   String? _selectedCategory;
-  final   _priceController       = TextEditingController();
-  final   _descriptionController = TextEditingController();
-  bool    _classifying           = false;
-  bool?   _isNewCategory;
-  List<Map<String, dynamic>> _categories = [];
-  StreamSubscription<List<Map<String, dynamic>>>? _categorySub;
+  String? _selectedSubCategory;
+  bool _isOtherCategory = false;
+  bool _isOtherSubCategory = false;
+  final _otherCategoryController = TextEditingController();
 
-  // ── Step 3: tax compliance ────────────────────────────────────────────────
-  String? _taxStatus;
-  String? _complianceDocUrl;
-  String? _complianceDocName;
-  bool   _isUploadingDoc = false;
-  double _uploadProgress = 0;
+  // Service details
+  final _priceController = TextEditingController();
 
-  // ── Step 4: profile ───────────────────────────────────────────────────────
+  // ── All users ─────────────────────────────────────────────────────────────
   String? _profileImageBase64;
-  final   _bioController = TextEditingController();
+  final _bioController = TextEditingController();
 
-  // Customers: page 0 → page 3 (skip pages 1–2)
-  // Providers: page 0 → 1 → 2 → 3
-  int get _totalPages => _isProvider ? 4 : 2;
-  static const _profilePageIndex = 3;
+  // ── Terms ─────────────────────────────────────────────────────────────────
+  bool _termsAccepted = false;
+  bool _termsRead = false;
 
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Progress ──────────────────────────────────────────────────────────────
+  late AnimationController _progressAnimCtrl;
 
   @override
   void initState() {
     super.initState();
-    _categorySub = CategoryService.stream().listen((cats) {
-      if (mounted) setState(() => _categories = cats);
-    });
+    _progressAnimCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    // Pre-fill name from Firebase Auth
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      _nameController.text = user.displayName ?? '';
+    }
   }
 
   @override
   void dispose() {
-    _categorySub?.cancel();
-    _pageController.dispose();
+    _progressAnimCtrl.dispose();
     _idController.dispose();
+    _nameController.dispose();
+    _otherCategoryController.dispose();
     _priceController.dispose();
-    _descriptionController.dispose();
     _bioController.dispose();
     super.dispose();
   }
 
-  // ── Navigation ────────────────────────────────────────────────────────────
-
-  void _nextPage() {
-    final l10n = AppLocalizations.of(context);
-
-    // Step 0: role validation
-    if (_currentPage == 0) {
-      if (_isProvider && _businessType == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('יש לבחור סוג עסק'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-        return;
-      }
-      if (_isCustomer) {
-        // Customers skip service + tax steps
-        _pageController.animateToPage(
-          _profilePageIndex,
-          duration: const Duration(milliseconds: 350),
-          curve: Curves.easeInOut,
-        );
-        setState(() => _currentPage = _profilePageIndex);
-        return;
-      }
+  // ── Progress calculation ─────────────────────────────────────────────────
+  double get _progress {
+    if (_isCustomer) {
+      int done = 1; // role selected = 1
+      if (_profileImageBase64 != null) done++;
+      if (_bioController.text.trim().isNotEmpty) done++;
+      if (_termsAccepted) done++;
+      return done / 4;
     }
-
-    // Step 1: service details validation
-    if (_currentPage == 1) {
-      if (_selectedCategory == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.validationCategoryRequired),
-            backgroundColor: Colors.orange,
-          ),
-        );
-        return;
-      }
-      final price = double.tryParse(_priceController.text.trim());
-      if (price == null || price <= 0) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(price == null
-                ? l10n.validationPriceInvalid
-                : l10n.validationPricePositive),
-            backgroundColor: Colors.orange,
-          ),
-        );
-        return;
-      }
-    }
-
-    // Step 2: tax compliance validation
-    if (_currentPage == 2) {
-      if (_taxStatus == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.onboardingTaxStatusRequired),
-            backgroundColor: Colors.orange,
-          ),
-        );
-        return;
-      }
-      if (_complianceDocUrl == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.onboardingDocRequired),
-            backgroundColor: Colors.orange,
-          ),
-        );
-        return;
-      }
-    }
-
-    _pageController.nextPage(
-      duration: const Duration(milliseconds: 350),
-      curve: Curves.easeInOut,
-    );
-    setState(() => _currentPage++);
+    int done = 1; // role selected
+    const total = 10;
+    if (_businessType != null) done++;
+    if (_idController.text.trim().isNotEmpty) done++;
+    if (_idDocUrl != null) done++;
+    if (_selectedCategory != null || _isOtherCategory) done++;
+    if (_priceController.text.trim().isNotEmpty) done++;
+    if (_profileImageBase64 != null) done++;
+    if (_bioController.text.trim().isNotEmpty) done++;
+    if (_nameController.text.trim().isNotEmpty) done++;
+    if (_termsAccepted) done++;
+    return done / total;
   }
 
-  // ── Finish / Save ─────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // ACTIONS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  void _submit() {
+    if (_isProvider) {
+      if (_nameController.text.trim().isEmpty) {
+        _snack('נא להזין שם מלא', _kRed);
+        return;
+      }
+      if (_businessType == null) {
+        _snack('נא לבחור סוג עסק', _kRed);
+        return;
+      }
+      if (_idController.text.trim().isEmpty) {
+        _snack('נא להזין מספר ת.ז. / ח.פ.', _kRed);
+        return;
+      }
+      if (_idDocUrl == null) {
+        _snack('נא להעלות צילום תעודת זהות או דרכון', _kRed);
+        return;
+      }
+      if (_selectedCategory == null && !_isOtherCategory) {
+        _snack('נא לבחור קטגוריה', _kRed);
+        return;
+      }
+      if (_isOtherCategory && _otherCategoryController.text.trim().length < 3) {
+        _snack('נא לפרט את תחום המומחיות שלך', _kRed);
+        return;
+      }
+      final price = double.tryParse(_priceController.text.trim()) ?? 0;
+      if (price <= 0) {
+        _snack('נא להזין מחיר לשעה', _kRed);
+        return;
+      }
+    }
+    if (!_termsAccepted) {
+      _snack('יש לקרוא ולאשר את תנאי השימוש', _kRed);
+      return;
+    }
+    _finish();
+  }
 
   Future<void> _finish() async {
     setState(() => _isSaving = true);
@@ -194,23 +184,44 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         'isCustomer':         _isCustomer,
         'isProvider':         _isProvider,
         'onboardingComplete': true,
+        'termsAccepted':      true,
       };
 
+      if (_nameController.text.trim().isNotEmpty) {
+        updates['name'] = _nameController.text.trim();
+      }
+
       if (_isProvider) {
-        updates['serviceType']  = _selectedCategory;
-        updates['pricePerHour'] = double.tryParse(_priceController.text.trim()) ?? 0.0;
-        updates['businessType'] = _businessType;
-        updates['idNumber']     = _idController.text.trim();
-        // compliance is NOT in the rules' blocked-field list — safe to write.
-        updates['compliance'] = {
-          'taxStatus':   _taxStatus,
-          'docUrl':      _complianceDocUrl,
-          'docName':     _complianceDocName,
-          'submittedAt': FieldValue.serverTimestamp(),
-          'verified':    false,
+        final effectiveCategory = _isOtherCategory
+            ? _otherCategoryController.text.trim()
+            : _selectedCategory;
+        final effectiveSubCategory = _isOtherSubCategory
+            ? ''
+            : (_selectedSubCategory ?? '');
+
+        updates['serviceType']    = effectiveCategory;
+        updates['subCategory']    = effectiveSubCategory;
+        updates['pricePerHour']   = double.tryParse(_priceController.text.trim()) ?? 0.0;
+        updates['businessType']   = _businessType;
+        updates['idNumber']       = _idController.text.trim();
+        updates['isPendingExpert'] = true;
+        updates['isProvider']     = false;
+        updates['isVerified']     = false;
+        updates['categoryReviewedByAdmin'] = false;
+        if (_businessDocUrl != null) updates['businessDocUrl'] = _businessDocUrl;
+        if (_idDocUrl != null) updates['idDocUrl'] = _idDocUrl;
+        if (_isOtherCategory) updates['pendingCategoryApproval'] = true;
+
+        updates['expertApplicationData'] = {
+          'submittedAt':      FieldValue.serverTimestamp(),
+          'category':         effectiveCategory,
+          'subCategory':      effectiveSubCategory,
+          'businessType':     _businessType,
+          'idNumber':         _idController.text.trim(),
+          'isCustomCategory': _isOtherCategory,
+          if (_businessDocUrl != null) 'businessDocUrl': _businessDocUrl,
+          if (_idDocUrl != null) 'idDocUrl': _idDocUrl,
         };
-        // NOTE: isVerifiedProvider is server-only (blocked in Firestore rules).
-        // Do NOT write it from the client.
       }
 
       if (_bioController.text.trim().isNotEmpty) {
@@ -220,39 +231,47 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         updates['profileImage'] = 'data:image/png;base64,$_profileImageBase64';
       }
 
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .update(updates);
+      await FirebaseFirestore.instance.collection('users').doc(uid).update(updates);
 
-      // Notify admin via Trigger Email extension
+      // "Other" category request
+      if (_isProvider && _isOtherCategory) {
+        await FirebaseFirestore.instance.collection('category_requests').add({
+          'userId':           uid,
+          'userName':         _nameController.text.trim(),
+          'description':      _otherCategoryController.text.trim(),
+          'originalCategory': null,
+          'status':           'pending',
+          'createdAt':        FieldValue.serverTimestamp(),
+        });
+      }
+
+      // Admin email
       try {
-        final authUser   = FirebaseAuth.instance.currentUser;
-        final userName   = authUser?.displayName ?? 'לא צוין';
-        final userEmail  = authUser?.email ?? 'לא צוין';
-        final userType   = _isProvider ? 'נותן שירות (ספק)' : 'לקוח';
-        final serviceStr = _isProvider ? (_selectedCategory ?? 'לא צוין') : '—';
-        final bizStr     = _isProvider ? (_businessType ?? 'לא צוין') : null;
+        final authUser  = FirebaseAuth.instance.currentUser;
+        final userName  = _nameController.text.trim().isNotEmpty
+            ? _nameController.text.trim()
+            : (authUser?.displayName ?? 'לא צוין');
+        final userEmail = authUser?.email ?? 'לא צוין';
+        final userType  = _isProvider ? 'נותן שירות (ספק)' : 'לקוח';
+        final serviceStr = _isProvider
+            ? (_selectedCategory ?? _otherCategoryController.text.trim())
+            : '—';
         await FirebaseFirestore.instance.collection('mail').add({
           'to': 'adawiavihai@gmail.com',
           'message': {
             'subject': '🆕 [AnySkill] נרשם $userType: $userName',
-            'html': '''<div dir="rtl" style="font-family:Arial;padding:16px">
-              <h2>משתמש חדש נרשם ל-AnySkill</h2>
-              <p><b>שם:</b> $userName</p>
-              <p><b>אימייל:</b> $userEmail</p>
-              <p><b>סוג:</b> $userType</p>
-              <p><b>תחום:</b> $serviceStr</p>
-              ${bizStr != null ? '<p><b>סוג עסק:</b> $bizStr</p>' : ''}
-              <p><b>UID:</b> $uid</p>
-            </div>''',
+            'html': '<div dir="rtl" style="font-family:Arial;padding:16px">'
+              '<h2>משתמש חדש נרשם ל-AnySkill</h2>'
+              '<p><b>שם:</b> $userName</p>'
+              '<p><b>אימייל:</b> $userEmail</p>'
+              '<p><b>סוג:</b> $userType</p>'
+              '<p><b>תחום:</b> $serviceStr</p>'
+              '<p><b>UID:</b> $uid</p></div>',
           },
         });
       } catch (_) {}
 
-      try {
-        await _sendWelcomeMessage(uid, _isProvider);
-      } catch (_) {}
+      try { await _sendWelcomeMessage(uid, _isProvider); } catch (_) {}
 
       if (mounted) {
         Navigator.pushReplacement(
@@ -261,81 +280,20 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(AppLocalizations.of(context).onboardingError(e.toString())),
-          ),
-        );
-      }
+      if (mounted) _snack('שגיאה בשמירה: $e', _kRed);
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
   }
 
-  // ── Compliance doc upload ─────────────────────────────────────────────────
-
-  Future<void> _pickAndUploadDoc() async {
-    final XFile? image = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
-    );
-    if (image == null) return;
-
-    setState(() { _isUploadingDoc = true; _uploadProgress = 0; });
-
-    try {
-      final uid   = FirebaseAuth.instance.currentUser?.uid ?? 'unknown';
-      final ext   = image.name.split('.').last;
-      final bytes = await image.readAsBytes();
-      final ref   = FirebaseStorage.instance
-          .ref()
-          .child('compliance_docs/$uid/tax_document.$ext');
-
-      final task = ref.putData(bytes, SettableMetadata(contentType: 'image/$ext'));
-      task.snapshotEvents.listen((snap) {
-        if (mounted && snap.totalBytes > 0) {
-          setState(() => _uploadProgress = snap.bytesTransferred / snap.totalBytes);
-        }
-      });
-      await task;
-
-      final downloadUrl = await ref.getDownloadURL();
-      if (mounted) {
-        setState(() {
-          _complianceDocUrl  = downloadUrl;
-          _complianceDocName = image.name;
-          _isUploadingDoc    = false;
-          _uploadProgress    = 1;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isUploadingDoc = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(AppLocalizations.of(context)
-                .onboardingUploadError(e.toString())),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  // ── Welcome message ───────────────────────────────────────────────────────
-
   Future<void> _sendWelcomeMessage(String uid, bool isProvider) async {
     const systemUid = 'anyskill_system';
     final db = FirebaseFirestore.instance;
-
     final text = isProvider
         ? 'איזה כיף שהצטרפת לנבחרת אנשי המקצוע של AnySkill! 🚀 '
-          'המסמכים שלך התקבלו ובביקורת. תקבל עדכון ברגע שהחשבון יאושר. '
-          'בינתיים, השלם את הפרופיל שלך כדי להיות מוכן ללקוח הראשון!'
+          'המסמכים שלך התקבלו ובביקורת. תקבל עדכון ברגע שהחשבון יאושר.'
         : 'ברוכים הבאים ל-AnySkill! 🌟 צריכים עזרה במשהו? הגעתם למקום הנכון. '
-          'אלפי אנשי מקצוע זמינים עבורכם עכשיו. חיפוש קל, צ\'אט ישיר, '
-          'תיאום פשוט ובטוח ישירות מהאפליקציה. במה נתחיל היום?';
+          'אלפי אנשי מקצוע זמינים עבורכם עכשיו.';
 
     try {
       await db.collection('users').doc(systemUid).set({
@@ -344,36 +302,30 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       }, SetOptions(merge: true));
     } catch (_) {}
 
-    final ids        = [uid, systemUid]..sort();
+    final ids = [uid, systemUid]..sort();
     final chatRoomId = ids.join('_');
 
     await db.collection('chats').doc(chatRoomId).set({
-      'users':                  [uid, systemUid],
-      'lastMessage':            text.length > 50 ? '${text.substring(0, 50)}...' : text,
-      'lastMessageTime':        FieldValue.serverTimestamp(),
-      'lastSenderId':           systemUid,
-      'unreadCount_$uid':       1,
+      'users': [uid, systemUid],
+      'lastMessage': text.length > 50 ? '${text.substring(0, 50)}...' : text,
+      'lastMessageTime': FieldValue.serverTimestamp(),
+      'lastSenderId': systemUid,
+      'unreadCount_$uid': 1,
       'unreadCount_$systemUid': 0,
     }, SetOptions(merge: true));
 
     await db.collection('chats').doc(chatRoomId).collection('messages').add({
-      'senderId':   systemUid,
-      'receiverId': uid,
-      'message':    text,
-      'type':       'text',
-      'timestamp':  FieldValue.serverTimestamp(),
-      'isRead':     false,
+      'senderId': systemUid, 'receiverId': uid,
+      'message': text, 'type': 'text',
+      'timestamp': FieldValue.serverTimestamp(), 'isRead': false,
     });
   }
 
-  // ── Profile image picker ──────────────────────────────────────────────────
+  // ── File uploads ────────────────────────────────────────────────────────
 
   Future<void> _pickProfileImage() async {
     final XFile? image = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 300,
-      maxHeight: 300,
-      imageQuality: 50,
+      source: ImageSource.gallery, maxWidth: 300, maxHeight: 300, imageQuality: 50,
     );
     if (image != null) {
       final bytes = await image.readAsBytes();
@@ -381,41 +333,43 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
   }
 
-  // ── AI classifier ─────────────────────────────────────────────────────────
+  Future<void> _uploadDocument({
+    required String storagePath,
+    required void Function(String url, String name, Uint8List thumb) onSuccess,
+    required void Function(bool val) setUploading,
+  }) async {
+    final XFile? image = await ImagePicker().pickImage(
+      source: ImageSource.gallery, maxWidth: 1600, imageQuality: 85,
+    );
+    if (image == null) return;
+    setUploading(true);
 
-  Future<void> _classifyDescription() async {
-    final text = _descriptionController.text.trim();
-    if (text.length < 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('תאר את השירות שלך בכמה מילים לפחות')),
-      );
-      return;
+    try {
+      final uid   = FirebaseAuth.instance.currentUser?.uid ?? 'unknown';
+      final ext   = image.name.split('.').last;
+      final bytes = await image.readAsBytes();
+      final ref   = FirebaseStorage.instance
+          .ref()
+          .child('$storagePath/$uid/${DateTime.now().millisecondsSinceEpoch}.$ext');
+      await ref.putData(bytes, SettableMetadata(contentType: 'image/$ext'));
+      final url = await ref.getDownloadURL();
+
+      // Use the uploaded bytes as thumbnail preview
+      if (mounted) onSuccess(url, image.name, bytes);
+    } catch (e) {
+      if (mounted) _snack('שגיאה בהעלאה: $e', _kRed);
+    } finally {
+      if (mounted) setUploading(false);
     }
-    setState(() { _classifying = true; _isNewCategory = null; });
+  }
 
-    final result = await ProfileSetupService.classifyAndResolve(text);
-    if (!mounted) return;
-
-    if (result.categoryName.isEmpty) {
-      setState(() => _classifying = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('לא הצלחנו לזהות קטגוריה — בחר מהרשימה ידנית'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    setState(() {
-      _selectedCategory = result.categoryName;
-      _isNewCategory    = result.isNewCategory;
-      _classifying      = false;
-      if (result.isNewCategory &&
-          !_categories.any((c) => c['name'] == result.categoryName)) {
-        _categories = [..._categories, {'name': result.categoryName}];
-      }
-    });
+  void _snack(String msg, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: color,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ));
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -425,890 +379,845 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: _kScaffoldBg,
       body: SafeArea(
         child: Column(
           children: [
+            // ── Sticky progress bar ─────────────────────────────────────
             _buildProgressBar(),
+            // ── Scrollable content ──────────────────────────────────────
             Expanded(
-              child: PageView(
-                controller: _pageController,
-                physics:    const NeverScrollableScrollPhysics(),
-                children: [
-                  _buildStep1RoleAndExpertFields(),
-                  _buildStep2ServiceDetails(),
-                  _buildStep3TaxCompliance(),
-                  _buildStep4Profile(),
+              child: CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(child: _buildHeader()),
+                  // Social proof
+                  SliverToBoxAdapter(child: _buildSocialProof()),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+                    sliver: SliverList(
+                      delegate: SliverChildListDelegate([
+                        // 1. Role
+                        _sectionCard(
+                          icon: Icons.person_outline_rounded,
+                          title: 'בחר תפקיד',
+                          check: true,
+                          child: _buildRoleCards(),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // 2. Provider fields
+                        if (_isProvider) ...[
+                          _sectionCard(
+                            icon: Icons.business_center_outlined,
+                            title: 'פרטים עסקיים',
+                            check: _businessType != null && _idController.text.trim().isNotEmpty,
+                            child: _buildBusinessFields(),
+                          ),
+                          const SizedBox(height: 16),
+                          _sectionCard(
+                            icon: Icons.category_outlined,
+                            title: 'תחום שירות',
+                            check: _selectedCategory != null || _isOtherCategory,
+                            child: _buildCategoryFields(),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+
+                        // 3. Profile
+                        _sectionCard(
+                          icon: Icons.badge_outlined,
+                          title: 'הפרופיל שלך',
+                          check: _profileImageBase64 != null || _bioController.text.trim().isNotEmpty,
+                          child: _buildProfileSection(),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // 4. Terms
+                        _buildTermsSection(),
+                        const SizedBox(height: 20),
+
+                        // 5. Submit
+                        _buildSubmitButton(),
+                        const SizedBox(height: 24),
+                      ]),
+                    ),
+                  ),
                 ],
               ),
             ),
-            _buildBottomButton(),
           ],
         ),
       ),
     );
   }
 
-  // ── Progress bar ──────────────────────────────────────────────────────────
+  // ── Progress bar (sticky at top) ───────────────────────────────────────
 
   Widget _buildProgressBar() {
-    final l10n       = AppLocalizations.of(context);
-    final displayStep  = (!_isProvider && _currentPage == _profilePageIndex)
-        ? 1
-        : _currentPage;
-    final displayTotal = _totalPages;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+    final pct = _progress;
+    final label = (pct * 100).toInt();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+      color: Colors.white,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: List.generate(displayTotal, (i) {
-              return Expanded(
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: i <= displayStep ? Colors.black : Colors.grey[200],
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              );
-            }),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            l10n.onboardingStep(displayStep + 1, displayTotal),
-            style: TextStyle(fontSize: 12, color: Colors.grey[500]),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // STEP 1 — Role selection + Expert inline fields
-  // ══════════════════════════════════════════════════════════════════════════
-  //
-  // _currentRole is a two-value enum (customer | expert).
-  // Customer is the default — no "none" state.
-  // Tapping Expert: setState(() { _currentRole = UserRole.expert; })
-  //   → full Column rebuild → if (_currentRole == UserRole.expert) block
-  //     becomes true → all three expert fields appear immediately.
-  // Tapping Customer: opposite — fields disappear.
-
-  Widget _buildStep1RoleAndExpertFields() {
-    final l10n = AppLocalizations.of(context);
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Header ────────────────────────────────────────────────────────
-          Text(l10n.onboardingWelcome,
-              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          Text(l10n.onboardingWelcomeSub,
-              style: TextStyle(color: Colors.grey[600], fontSize: 15)),
-          const SizedBox(height: 28),
-
-          // ── Customer card ─────────────────────────────────────────────────
-          _RoleCard(
-            key:      const ValueKey('card_customer'),
-            icon:     Icons.search_rounded,
-            title:    l10n.onboardingRoleCustomerTitle,
-            subtitle: l10n.onboardingRoleCustomerSub,
-            selected: _currentRole == UserRole.customer,
-            onTap: () => setState(() {
-              _currentRole  = UserRole.customer;
-              _businessType = null;
-            }),
-          ),
-          const SizedBox(height: 14),
-
-          // ── Expert card ───────────────────────────────────────────────────
-          _RoleCard(
-            key:      const ValueKey('card_expert'),
-            icon:     Icons.star_outline_rounded,
-            title:    l10n.onboardingRoleProviderTitle,
-            subtitle: l10n.onboardingRoleProviderSub,
-            selected: _currentRole == UserRole.expert,
-            onTap: () => setState(() {
-              _currentRole = UserRole.expert;
-            }),
-          ),
-
-          // ── Expert-only fields ────────────────────────────────────────────
-          // ONE if-block with a spread.  All three fields live here.
-          // setState above guarantees a rebuild; this condition is then true.
-          if (_currentRole == UserRole.expert) ...[
-            const SizedBox(height: 28),
-
-            // 1. Business type ───────────────────────────────────────────────
-            _sectionLabel('סוג עסק'),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              value: _businessType,
-              isExpanded: true,
-              decoration: _inputDecoration('בחר סוג עסק...'),
-              items: _kBusinessTypes
-                  .map((t) => DropdownMenuItem(
-                        value: t,
-                        child: Text(t,
-                            textAlign: TextAlign.right,
-                            style: const TextStyle(fontSize: 14)),
-                      ))
-                  .toList(),
-              onChanged: (v) => setState(() => _businessType = v),
-            ),
-            const SizedBox(height: 20),
-
-            // 2. ID / Business number ────────────────────────────────────────
-            _sectionLabel('מספר תעודת זהות / ח.פ.'),
-            const SizedBox(height: 4),
-            Text('נדרש לאימות זהות ועמידה בדרישות חוקיות',
-                style: TextStyle(fontSize: 12, color: Colors.grey[500])),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _idController,
-              keyboardType: TextInputType.number,
-              textAlign: TextAlign.right,
-              decoration: _inputDecoration('הזן מספר ת.ז. או ח.פ...').copyWith(
-                prefixIcon: const Icon(Icons.badge_outlined, color: _kPurple),
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            // 3. AI category classifier ──────────────────────────────────────
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFEEF2FF), Color(0xFFF5F3FF)],
-                ),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: _kPurple.withValues(alpha: 0.2)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.smart_toy_rounded, color: _kPurple, size: 18),
-                      SizedBox(width: 8),
-                      Text('AI זיהוי קטגוריה',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                              color: _kPurple)),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _descriptionController,
-                    maxLines: 2,
-                    textAlign: TextAlign.right,
-                    decoration: InputDecoration(
-                      hintText:
-                          'תאר את השירות שלך... (למשל: אני שרברב מוסמך עם 5 שנות ניסיון)',
-                      hintStyle:
-                          const TextStyle(fontSize: 13, color: Colors.grey),
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide.none),
-                      contentPadding: const EdgeInsets.all(12),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _kPurple,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      onPressed: _classifying ? null : _classifyDescription,
-                      icon: _classifying
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.auto_awesome_rounded,
-                              color: Colors.white, size: 18),
-                      label: Text(
-                        _classifying ? 'מזהה...' : 'זהה קטגוריה אוטומטית',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
-                  if (_selectedCategory != null && _isNewCategory != null) ...[
-                    const SizedBox(height: 10),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: _isNewCategory!
-                            ? const Color(0xFFFFF7ED)
-                            : const Color(0xFFF0FFF4),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: _isNewCategory!
-                              ? const Color(0xFFF97316)
-                              : const Color(0xFF22C55E),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            _isNewCategory!
-                                ? Icons.add_circle_outline_rounded
-                                : Icons.check_circle_outline_rounded,
-                            size: 18,
-                            color: _isNewCategory!
-                                ? const Color(0xFFF97316)
-                                : const Color(0xFF22C55E),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _isNewCategory!
-                                      ? 'קטגוריה חדשה נוצרה 🎉'
-                                      : 'קטגוריה זוהתה ✓',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: _isNewCategory!
-                                        ? const Color(0xFFC2410C)
-                                        : const Color(0xFF166534),
-                                  ),
-                                ),
-                                Text(_selectedCategory!,
-                                    style: const TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold)),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-          ], // end if (_currentRole == UserRole.expert)
-        ],
-      ),
-    );
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // STEP 2 — Service category + price (provider only)
-  // ══════════════════════════════════════════════════════════════════════════
-
-  Widget _buildStep2ServiceDetails() {
-    final l10n       = AppLocalizations.of(context);
-    final hasAiResult = _selectedCategory != null && _isNewCategory != null;
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(l10n.onboardingServiceTitle,
-              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          Text(l10n.onboardingServiceSub,
-              style: TextStyle(color: Colors.grey[600], fontSize: 15)),
-          const SizedBox(height: 24),
-
-          // AI pre-fill hint
-          if (hasAiResult) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF0FFF4),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF22C55E)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.auto_awesome_rounded,
-                      color: Color(0xFF22C55E), size: 18),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text('AI זיהה: $_selectedCategory',
-                        style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF166534))),
-                  ),
-                ],
-              ),
-            ),
-          ],
-
-          // Category dropdown
-          _sectionLabel(l10n.onboardingCategory),
-          const SizedBox(height: 8),
-          DropdownButtonFormField<String>(
-            value: _selectedCategory != null &&
-                    _categories.any((c) => c['name'] == _selectedCategory)
-                ? _selectedCategory
-                : null,
-            isExpanded: true,
-            decoration: _inputDecoration(l10n.onboardingCategoryHint),
-            items: _categories
-                .map((c) => DropdownMenuItem(
-                      value: c['name'] as String,
-                      child: Text(c['name'], textAlign: TextAlign.right),
-                    ))
-                .toList(),
-            onChanged: (v) =>
-                setState(() { _selectedCategory = v; _isNewCategory = false; }),
-          ),
-          const SizedBox(height: 24),
-
-          // Price
-          _sectionLabel(l10n.onboardingPriceLabel),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _priceController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            textAlign: TextAlign.right,
-            decoration: _inputDecoration(l10n.onboardingPriceHint)
-                .copyWith(prefixText: '₪ '),
-          ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.green[50],
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.lightbulb_outline, color: Colors.green[700], size: 18),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(l10n.onboardingPriceTip,
-                      style: TextStyle(color: Colors.green[700], fontSize: 13)),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // STEP 3 — Tax compliance (provider only)
-  // ══════════════════════════════════════════════════════════════════════════
-
-  Widget _buildStep3TaxCompliance() {
-    final l10n = AppLocalizations.of(context);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: _kPurple.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.shield_outlined, color: _kPurple, size: 26),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(l10n.onboardingTaxTitle,
-                        style: const TextStyle(
-                            fontSize: 22, fontWeight: FontWeight.bold)),
-                    Text(l10n.onboardingTaxSubtitle,
-                        style: TextStyle(color: Colors.grey[600], fontSize: 13)),
-                  ],
-                ),
-              ),
+              Text('$label%',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: pct >= 1.0 ? _kGreen : _kPurple,
+                )),
+              const SizedBox(width: 8),
+              Expanded(child: Text(
+                pct >= 1.0 ? 'הכל מוכן!' : 'השלם את הפרטים',
+                style: const TextStyle(fontSize: 12, color: _kMuted),
+              )),
+              if (pct >= 1.0)
+                const Icon(Icons.check_circle_rounded, size: 18, color: _kGreen),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 6),
+          TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: pct),
+            duration: const Duration(milliseconds: 500),
+            curve: Curves.easeOutCubic,
+            builder: (_, val, __) => ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: val,
+                minHeight: 6,
+                backgroundColor: Colors.grey.shade200,
+                valueColor: AlwaysStoppedAnimation(
+                  pct >= 1.0 ? _kGreen : _kPurple,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Header ──────────────────────────────────────────────────────────────
+
+  Widget _buildHeader() {
+    final user = FirebaseAuth.instance.currentUser;
+    final greeting = user?.displayName?.isNotEmpty == true
+        ? 'היי ${user!.displayName!.split(' ').first},'
+        : 'היי,';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [_kPurpleDark, _kPurple, _kPurpleLight],
+          begin: AlignmentDirectional.topStart,
+          end: AlignmentDirectional.bottomEnd,
+        ),
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(32),
+          bottomRight: Radius.circular(32),
+        ),
+      ),
+      child: Column(
+        children: [
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.blue[50],
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.blue.shade200),
+              color: Colors.white.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
             ),
+            child: const Icon(Icons.rocket_launch_rounded, size: 32, color: Colors.white),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '$greeting ברוכים הבאים!',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'עוד רגע מתחילים. ספר לנו קצת על עצמך.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.85)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Social proof banner ────────────────────────────────────────────────
+
+  Widget _buildSocialProof() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: _kGreen.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _kGreen.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: _kGreen.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.trending_up_rounded, size: 16, color: _kGreen),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'מעל 250 אנשי מקצוע הצטרפו החודש',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _kGreen),
+              ),
+            ),
+            const Text('🔥', style: TextStyle(fontSize: 16)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Section card wrapper ───────────────────────────────────────────────
+
+  Widget _sectionCard({
+    required IconData icon,
+    required String title,
+    required bool check,
+    required Widget child,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 2))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Section header
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.verified_user_outlined,
-                    color: Colors.blue[700], size: 18),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(l10n.onboardingTaxNotice,
-                      style: TextStyle(
-                          color: Colors.blue[800], fontSize: 13, height: 1.4)),
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: (check ? _kGreen : _kPurple).withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, size: 18, color: check ? _kGreen : _kPurple),
                 ),
+                const SizedBox(width: 10),
+                Expanded(child: Text(title,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _kDarkText))),
+                if (check)
+                  const Icon(Icons.check_circle_rounded, size: 20, color: _kGreen),
               ],
             ),
           ),
-          const SizedBox(height: 28),
-          _sectionLabel(l10n.onboardingTaxStatusLabel),
-          const SizedBox(height: 12),
-          _TaxStatusCard(
-            title: l10n.onboardingTaxBusiness,
-            subtitle: l10n.onboardingTaxBusinessSub,
-            icon: Icons.business_center_outlined,
-            value: 'business',
-            selected: _taxStatus == 'business',
-            onTap: () => setState(() {
-              _taxStatus = 'business';
-              _complianceDocUrl  = null;
-              _complianceDocName = null;
-              _uploadProgress    = 0;
-            }),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: child,
           ),
-          const SizedBox(height: 12),
-          _TaxStatusCard(
-            title: l10n.onboardingTaxIndividual,
-            subtitle: l10n.onboardingTaxIndividualSub,
-            icon: Icons.badge_outlined,
-            value: 'individual',
-            selected: _taxStatus == 'individual',
-            onTap: () => setState(() {
-              _taxStatus = 'individual';
-              _complianceDocUrl  = null;
-              _complianceDocName = null;
-              _uploadProgress    = 0;
-            }),
-          ),
-          const SizedBox(height: 28),
-          if (_taxStatus != null) ...[
-            _sectionLabel(_taxStatus == 'business'
-                ? l10n.onboardingDocLabelBusiness
-                : l10n.onboardingDocLabelIndividual),
-            const SizedBox(height: 6),
-            Text(
-              _taxStatus == 'business'
-                  ? l10n.onboardingDocHintBusiness
-                  : l10n.onboardingDocHintIndividual,
-              style: TextStyle(color: Colors.grey[600], fontSize: 13),
-            ),
-            const SizedBox(height: 12),
-            GestureDetector(
-              onTap: _isUploadingDoc ? null : _pickAndUploadDoc,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: _complianceDocUrl != null
-                      ? _kGreen.withValues(alpha: 0.06)
-                      : Colors.grey[50],
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: _complianceDocUrl != null
-                        ? _kGreen.withValues(alpha: 0.4)
-                        : Colors.grey.shade300,
-                    width: _complianceDocUrl != null ? 1.5 : 1,
-                  ),
-                ),
-                child: _isUploadingDoc
-                    ? _buildUploadProgress(l10n)
-                    : _complianceDocUrl != null
-                        ? _buildDocUploaded(l10n)
-                        : _buildDocPrompt(l10n),
-              ),
-            ),
-          ],
         ],
       ),
     );
   }
 
-  Widget _buildUploadProgress(AppLocalizations l10n) => Column(children: [
-        const SizedBox(height: 4),
-        SizedBox(
-          height: 36, width: 36,
-          child: CircularProgressIndicator(
-            value: _uploadProgress > 0 ? _uploadProgress : null,
-            strokeWidth: 3, color: _kPurple,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          _uploadProgress > 0
-              ? '${(_uploadProgress * 100).toInt()}%'
-              : l10n.onboardingUploading,
-          style: TextStyle(color: Colors.grey[600], fontSize: 13),
-        ),
-      ]);
+  // ── Role cards ──────────────────────────────────────────────────────────
 
-  Widget _buildDocUploaded(AppLocalizations l10n) => Row(children: [
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: _kGreen.withValues(alpha: 0.12), shape: BoxShape.circle),
-          child: const Icon(Icons.check_circle_rounded, color: _kGreen, size: 22),
-        ),
+  Widget _buildRoleCards() {
+    return Row(
+      children: [
+        Expanded(child: _roleCard(
+          role: UserRole.customer,
+          icon: Icons.search_rounded,
+          title: 'אני מחפש שירות',
+          subtitle: 'אני רוצה למצוא איש מקצוע',
+        )),
         const SizedBox(width: 12),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(l10n.onboardingDocUploaded,
-                style: const TextStyle(
-                    color: _kGreen, fontWeight: FontWeight.bold, fontSize: 14)),
-            if (_complianceDocName != null)
-              Text(_complianceDocName!,
-                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                  overflow: TextOverflow.ellipsis),
-          ]),
-        ),
-        TextButton(
-          onPressed: _pickAndUploadDoc,
-          child: Text(l10n.onboardingDocReplace,
-              style: const TextStyle(fontSize: 12, color: _kPurple)),
-        ),
-      ]);
-
-  Widget _buildDocPrompt(AppLocalizations l10n) => Column(children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: _kPurple.withValues(alpha: 0.08), shape: BoxShape.circle),
-          child: const Icon(Icons.folder_open_outlined, color: _kPurple, size: 28),
-        ),
-        const SizedBox(height: 10),
-        Text(l10n.onboardingDocUploadPrompt,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-        const SizedBox(height: 4),
-        Text(l10n.onboardingDocUploadSub,
-            style: TextStyle(color: Colors.grey[500], fontSize: 12)),
-      ]);
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // STEP 4 — Profile photo + bio
-  // ══════════════════════════════════════════════════════════════════════════
-
-  Widget _buildStep4Profile() {
-    final l10n = AppLocalizations.of(context);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(l10n.onboardingProfileTitle,
-              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          Text(l10n.onboardingProfileSub,
-              style: TextStyle(color: Colors.grey[600], fontSize: 15)),
-          const SizedBox(height: 32),
-          Center(
-            child: GestureDetector(
-              onTap: _pickProfileImage,
-              child: Stack(
-                children: [
-                  CircleAvatar(
-                    radius: 56,
-                    backgroundColor: Colors.grey[100],
-                    backgroundImage: _profileImageBase64 != null
-                        ? MemoryImage(base64Decode(_profileImageBase64!))
-                            as ImageProvider
-                        : null,
-                    child: _profileImageBase64 == null
-                        ? Icon(Icons.person, size: 56, color: Colors.grey[400])
-                        : null,
-                  ),
-                  Positioned(
-                    bottom: 0, right: 0,
-                    child: CircleAvatar(
-                      radius: 18,
-                      backgroundColor: Colors.black,
-                      child: const Icon(Icons.camera_alt,
-                          size: 16, color: Colors.white),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Center(
-            child: TextButton(
-              onPressed: _pickProfileImage,
-              child: Text(l10n.onboardingAddPhoto,
-                  style: const TextStyle(color: Colors.black)),
-            ),
-          ),
-          const SizedBox(height: 24),
-          _sectionLabel(l10n.onboardingBioLabel),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _bioController,
-            maxLines: 4,
-            textAlign: TextAlign.right,
-            decoration: _inputDecoration(l10n.onboardingBioHint),
-          ),
-        ],
-      ),
+        Expanded(child: _roleCard(
+          role: UserRole.expert,
+          icon: Icons.star_rounded,
+          title: 'אני רוצה לתת שירות',
+          subtitle: 'ברצוני לעבוד דרך AnySkill',
+        )),
+      ],
     );
   }
 
-  // ── Bottom button ─────────────────────────────────────────────────────────
-
-  Widget _buildBottomButton() {
-    final l10n       = AppLocalizations.of(context);
-    final isLastPage = _currentPage == _profilePageIndex;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (isLastPage && !_isSaving)
-            TextButton(
-              onPressed: _finish,
-              child: Text(l10n.onboardingSkipFinish,
-                  style: const TextStyle(color: Colors.grey)),
-            ),
-          const SizedBox(height: 4),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.black,
-              minimumSize: const Size(double.infinity, 56),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
-            ),
-            onPressed: _isSaving ? null : (isLastPage ? _finish : _nextPage),
-            child: _isSaving
-                ? const SizedBox(
-                    height: 22, width: 22,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white))
-                : Text(
-                    isLastPage ? l10n.onboardingStart : l10n.onboardingNext,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Shared style helpers ──────────────────────────────────────────────────
-
-  static Widget _sectionLabel(String text) => Text(
-        text,
-        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-      );
-
-  static InputDecoration _inputDecoration(String hint) => InputDecoration(
-        hintText: hint,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// _RoleCard
-// ══════════════════════════════════════════════════════════════════════════════
-//
-// `selected` drives the visual state:
-//   true  → _kPurple background, white text, check icon
-//   false → grey background, black text
-
-class _RoleCard extends StatelessWidget {
-  const _RoleCard({
-    super.key,          // ValueKey passed from parent
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final IconData     icon;
-  final String       title;
-  final String       subtitle;
-  final bool         selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _roleCard({
+    required UserRole role,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    final selected = _currentRole == role;
     return GestureDetector(
-      onTap: onTap,
+      onTap: () => setState(() => _currentRole = role),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: selected ? _kPurple : Colors.grey[50],
-          borderRadius: BorderRadius.circular(16),
+          color: selected ? _kPurple.withValues(alpha: 0.08) : _kScaffoldBg,
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: selected ? _kPurple : Colors.grey[200]!,
+            color: selected ? _kPurple : Colors.grey.shade200,
             width: selected ? 2 : 1,
           ),
-          boxShadow: selected
-              ? [BoxShadow(
-                  color: _kPurple.withValues(alpha: 0.25),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4))]
-              : [],
         ),
-        child: Row(
+        child: Column(
           children: [
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: selected
-                    ? Colors.white.withValues(alpha: 0.2)
-                    : Colors.grey[200],
-                borderRadius: BorderRadius.circular(10),
+                color: (selected ? _kPurple : _kMuted).withValues(alpha: 0.10),
+                shape: BoxShape.circle,
               ),
-              child: Icon(icon,
-                  color: selected ? Colors.white : Colors.black, size: 24),
+              child: Icon(icon, size: 26, color: selected ? _kPurple : _kMuted),
             ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                          color: selected ? Colors.white : Colors.black)),
-                  const SizedBox(height: 2),
-                  Text(subtitle,
-                      style: TextStyle(
-                          fontSize: 13,
-                          color: selected
-                              ? Colors.white70
-                              : Colors.grey[600])),
-                ],
-              ),
-            ),
-            if (selected)
-              const Icon(Icons.check_circle, color: Colors.white, size: 22),
+            const SizedBox(height: 10),
+            Text(title, textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13,
+                color: selected ? _kPurple : _kDarkText)),
+            const SizedBox(height: 3),
+            Text(subtitle, textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 10.5, color: _kMuted)),
           ],
         ),
       ),
     );
   }
-}
 
-// ══════════════════════════════════════════════════════════════════════════════
-// _TaxStatusCard
-// ══════════════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
+  // PROVIDER: BUSINESS FIELDS
+  // ══════════════════════════════════════════════════════════════════════════
 
-class _TaxStatusCard extends StatelessWidget {
-  const _TaxStatusCard({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.value,
-    required this.selected,
-    required this.onTap,
-  });
+  Widget _buildBusinessFields() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Name
+        _buildTextField(
+          controller: _nameController,
+          label: 'שם מלא',
+          hint: 'כפי שמופיע בתעודת הזהות',
+          prefixIcon: const Icon(Icons.person_outline, size: 20, color: _kMuted),
+        ),
+        const SizedBox(height: 12),
 
-  final String       title;
-  final String       subtitle;
-  final IconData     icon;
-  final String       value;
-  final bool         selected;
-  final VoidCallback onTap;
+        // Business type
+        _buildDropdown(
+          value: _businessType,
+          hint: 'סוג עסק',
+          items: _kBusinessTypes,
+          onChanged: (v) => setState(() => _businessType = v),
+        ),
+        const SizedBox(height: 12),
 
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: selected ? _kPurple.withValues(alpha: 0.06) : Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: selected ? _kPurple : Colors.grey.shade200,
-            width: selected ? 1.5 : 1,
+        // Business doc upload (conditional)
+        if (_businessType != null) ...[
+          _buildUploadCard(
+            label: 'העלה צילום תעודת עוסק (פטור/מורשה/חברה)',
+            fileName: _businessDocName,
+            thumb: _businessDocThumb,
+            isUploading: _isUploadingBizDoc,
+            onTap: () => _uploadDocument(
+              storagePath: 'business_docs',
+              onSuccess: (url, name, thumb) => setState(() {
+                _businessDocUrl = url; _businessDocName = name; _businessDocThumb = thumb;
+              }),
+              setUploading: (v) => setState(() => _isUploadingBizDoc = v),
+            ),
           ),
-          boxShadow: selected
-              ? [BoxShadow(
-                  color: _kPurple.withValues(alpha: 0.1),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2))]
-              : [BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.03),
-                  blurRadius: 4)],
+          const SizedBox(height: 12),
+        ],
+
+        // ID Number
+        _buildTextField(
+          controller: _idController,
+          label: 'מספר תעודת זהות / ח.פ.',
+          hint: 'הזן מספר ת.ז. או ח.פ.',
+          keyboardType: TextInputType.number,
+          prefixIcon: const Icon(Icons.badge_outlined, size: 20, color: _kMuted),
+        ),
+        const SizedBox(height: 12),
+
+        // ID doc upload
+        _buildUploadCard(
+          label: 'העלה צילום תעודת זהות או דרכון',
+          fileName: _idDocName,
+          thumb: _idDocThumb,
+          isUploading: _isUploadingIdDoc,
+          required_: true,
+          onTap: () => _uploadDocument(
+            storagePath: 'id_docs',
+            onSuccess: (url, name, thumb) => setState(() {
+              _idDocUrl = url; _idDocName = name; _idDocThumb = thumb;
+            }),
+            setUploading: (v) => setState(() => _isUploadingIdDoc = v),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PROVIDER: CATEGORY FIELDS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildCategoryFields() {
+    final subCats = _selectedCategory != null && !_isOtherCategory
+        ? (APP_SUB_CATEGORIES[_selectedCategory] ?? <String>[])
+        : <String>[];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildDropdown(
+          value: _isOtherCategory ? 'אחר / לא מצאתי' : _selectedCategory,
+          hint: 'בחר קטגוריה ראשית',
+          items: [
+            ...APP_CATEGORIES.map((c) => c['name'] as String),
+            'אחר / לא מצאתי',
+          ],
+          onChanged: (v) => setState(() {
+            if (v == 'אחר / לא מצאתי') {
+              _isOtherCategory = true;
+              _selectedCategory = null;
+              _selectedSubCategory = null;
+              _isOtherSubCategory = false;
+            } else {
+              _isOtherCategory = false;
+              _selectedCategory = v;
+              _selectedSubCategory = null;
+              _isOtherSubCategory = false;
+            }
+          }),
+        ),
+        const SizedBox(height: 12),
+
+        if (!_isOtherCategory && _selectedCategory != null && subCats.isNotEmpty) ...[
+          _buildDropdown(
+            value: _isOtherSubCategory ? 'אחר / לא מצאתי' : _selectedSubCategory,
+            hint: 'בחר תת-קטגוריה',
+            items: [...subCats, 'אחר / לא מצאתי'],
+            onChanged: (v) => setState(() {
+              if (v == 'אחר / לא מצאתי') {
+                _isOtherSubCategory = true; _selectedSubCategory = null;
+              } else {
+                _isOtherSubCategory = false; _selectedSubCategory = v;
+              }
+            }),
+          ),
+          const SizedBox(height: 12),
+        ],
+
+        if (_isOtherCategory) ...[
+          _buildTextField(
+            controller: _otherCategoryController,
+            label: 'פרט את תחום המומחיות שלך',
+            hint: 'עד 30 תווים',
+            maxLength: 30,
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _kAmber.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _kAmber.withValues(alpha: 0.3)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.info_outline_rounded, size: 18, color: _kAmber),
+                SizedBox(width: 8),
+                Expanded(child: Text(
+                  'צוות AnySkill יבחן את הפרטים וישייך אותך לקטגוריה המתאימה',
+                  style: TextStyle(fontSize: 12, color: _kDarkText),
+                )),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+
+        // Price
+        _buildTextField(
+          controller: _priceController,
+          label: 'מחיר לשעה (₪)',
+          hint: 'לדוגמה: 150',
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          prefixIcon: const Icon(Icons.payments_outlined, size: 20, color: _kMuted),
+        ),
+      ],
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PROFILE SECTION
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildProfileSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Center(
+          child: GestureDetector(
+            onTap: _pickProfileImage,
+            child: Stack(
+              children: [
+                CircleAvatar(
+                  radius: 44,
+                  backgroundColor: _kPurple.withValues(alpha: 0.10),
+                  backgroundImage: _profileImageBase64 != null
+                      ? MemoryImage(base64Decode(_profileImageBase64!))
+                      : null,
+                  child: _profileImageBase64 == null
+                      ? const Icon(Icons.camera_alt_rounded, size: 28, color: _kPurple)
+                      : null,
+                ),
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: _kPurple,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.edit, size: 14, color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Center(child: Text(
+          _profileImageBase64 != null ? 'לחץ להחלפה' : 'הוסף תמונת פרופיל',
+          style: const TextStyle(fontSize: 12, color: _kPurple),
+        )),
+        const SizedBox(height: 14),
+        _buildTextField(
+          controller: _bioController,
+          label: 'ספר על עצמך',
+          hint: _isProvider
+              ? 'ניסיון, כישורים, התמחויות...'
+              : 'מה תרצה שנדע עליך?',
+          maxLines: 3,
+        ),
+      ],
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // TERMS SECTION
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildTermsSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: _termsAccepted ? _kGreen : Colors.grey.shade200,
+          width: _termsAccepted ? 1.5 : 1,
+        ),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 8)],
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () async {
+              await showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  title: const Row(
+                    children: [
+                      Icon(Icons.gavel_rounded, size: 22, color: _kPurple),
+                      SizedBox(width: 8),
+                      Text('תנאי שימוש ומדיניות פרטיות',
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  content: const SingleChildScrollView(
+                    child: Text(
+                      'ברוכים הבאים ל-AnySkill.\n\n'
+                      'השימוש באפליקציה מותנה בהסכמתך לתנאים הבאים:\n\n'
+                      '1. AnySkill משמשת כפלטפורמה לחיבור בין לקוחות לנותני שירות.\n'
+                      '2. כל עסקה בין משתמשים כפופה לתנאי השימוש המלאים.\n'
+                      '3. מידע אישי נשמר בהתאם למדיניות הפרטיות שלנו.\n'
+                      '4. נותני שירות מחויבים לספק שירות מקצועי ואמין.\n'
+                      '5. AnySkill גובה עמלה על עסקאות שהושלמו בהצלחה.\n'
+                      '6. ביטול עסקה כפוף למדיניות הביטולים.\n'
+                      '7. כל המחלוקות יטופלו דרך מערכת הסכסוכים של AnySkill.\n'
+                      '8. AnySkill שומרת לעצמה את הזכות לעדכן תנאים אלה.\n\n'
+                      'מדיניות פרטיות:\n'
+                      'אנו אוספים מידע הנדרש להפעלת השירות בלבד. '
+                      'המידע שלך לא יימסר לצד שלישי ללא הסכמתך, '
+                      'למעט במקרים הנדרשים על-פי חוק.',
+                      style: TextStyle(fontSize: 13, height: 1.6),
+                    ),
+                  ),
+                  actions: [
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _kPurple,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: () {
+                        setState(() => _termsRead = true);
+                        Navigator.pop(ctx);
+                      },
+                      child: const Text('קראתי והבנתי',
+                        style: TextStyle(color: Colors.white)),
+                    ),
+                  ],
+                ),
+              );
+            },
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  const Icon(Icons.description_outlined, size: 18, color: _kPurple),
+                  const SizedBox(width: 8),
+                  const Expanded(child: Text(
+                    'קרא את תנאי השימוש ומדיניות הפרטיות',
+                    style: TextStyle(fontSize: 13, color: _kPurple, decoration: TextDecoration.underline),
+                  )),
+                  if (_termsRead)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: _kGreen.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text('נקרא', style: TextStyle(fontSize: 10, color: _kGreen, fontWeight: FontWeight.w600)),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 22, height: 22,
+                child: Checkbox(
+                  value: _termsAccepted,
+                  activeColor: _kGreen,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                  onChanged: _termsRead
+                      ? (v) => setState(() => _termsAccepted = v ?? false)
+                      : null,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(child: Text(
+                'אני מאשר/ת שקראתי והסכמתי לתנאי השימוש ולמדיניות הפרטיות של AnySkill',
+                style: TextStyle(fontSize: 12, color: _termsRead ? _kDarkText : _kMuted),
+              )),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SUBMIT BUTTON
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildSubmitButton() {
+    final canSubmit = _termsAccepted && !_isSaving;
+    return SizedBox(
+      height: 54,
+      child: ElevatedButton(
+        onPressed: canSubmit ? _submit : null,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: _kPurple,
+          disabledBackgroundColor: Colors.grey.shade300,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          elevation: canSubmit ? 6 : 0,
+          shadowColor: _kPurple.withValues(alpha: 0.4),
+        ),
+        child: _isSaving
+            ? const SizedBox(
+                width: 22, height: 22,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+            : const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('סיום הרשמה',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white)),
+                  SizedBox(width: 8),
+                  Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 20),
+                ],
+              ),
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // REUSABLE WIDGETS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildDropdown({
+    required String? value,
+    required String hint,
+    required List<String> items,
+    required void Function(String?) onChanged,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _kScaffoldBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: DropdownButtonFormField<String>(
+        value: items.contains(value) ? value : null,
+        decoration: InputDecoration(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          border: InputBorder.none,
+          hintText: hint,
+          hintStyle: const TextStyle(color: _kMuted, fontSize: 14),
+        ),
+        isExpanded: true,
+        icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _kMuted),
+        items: items.map((item) => DropdownMenuItem(
+          value: item,
+          child: Text(item, style: const TextStyle(fontSize: 14)),
+        )).toList(),
+        onChanged: onChanged,
+      ),
+    );
+  }
+
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String label,
+    String? hint,
+    String? helperText,
+    TextInputType? keyboardType,
+    int maxLines = 1,
+    int? maxLength,
+    Widget? prefixIcon,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _kScaffoldBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: TextField(
+        controller: controller,
+        keyboardType: keyboardType,
+        maxLines: maxLines,
+        maxLength: maxLength,
+        onChanged: (_) => setState(() {}), // refresh progress bar
+        decoration: InputDecoration(
+          labelText: label,
+          hintText: hint,
+          helperText: helperText,
+          helperMaxLines: 2,
+          prefixIcon: prefixIcon,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          border: InputBorder.none,
+          labelStyle: const TextStyle(fontSize: 14, color: _kMuted),
+          hintStyle: TextStyle(fontSize: 13, color: _kMuted.withValues(alpha: 0.6)),
+          helperStyle: const TextStyle(fontSize: 11, color: _kMuted),
+          counterStyle: const TextStyle(fontSize: 10, color: _kMuted),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUploadCard({
+    required String label,
+    required String? fileName,
+    required bool isUploading,
+    required VoidCallback onTap,
+    Uint8List? thumb,
+    bool required_ = false,
+  }) {
+    final hasFile = fileName != null;
+    return GestureDetector(
+      onTap: isUploading ? null : onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: hasFile ? _kGreen.withValues(alpha: 0.05) : _kScaffoldBg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: hasFile ? _kGreen : (required_ ? _kAmber.withValues(alpha: 0.5) : Colors.grey.shade200),
+            width: hasFile ? 1.5 : 1,
+          ),
         ),
         child: Row(
           children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              width: 22, height: 22,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: selected ? _kPurple : Colors.transparent,
-                border: Border.all(
-                  color: selected ? _kPurple : Colors.grey.shade300,
-                  width: 2,
+            // Thumbnail or icon
+            if (hasFile && thumb != null)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.memory(thumb, width: 44, height: 44, fit: BoxFit.cover),
+              )
+            else
+              Container(
+                width: 44, height: 44,
+                decoration: BoxDecoration(
+                  color: (hasFile ? _kGreen : _kPurple).withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(10),
                 ),
+                child: isUploading
+                    ? const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : Icon(
+                        hasFile ? Icons.check_circle_rounded : Icons.cloud_upload_outlined,
+                        size: 22,
+                        color: hasFile ? _kGreen : _kPurple,
+                      ),
               ),
-              child: selected
-                  ? const Icon(Icons.check_rounded, color: Colors.white, size: 14)
-                  : null,
-            ),
-            const SizedBox(width: 14),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: selected
-                    ? _kPurple.withValues(alpha: 0.1)
-                    : Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon,
-                  color: selected ? _kPurple : Colors.grey[600], size: 20),
-            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title,
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                          color: selected ? _kPurple : Colors.black87)),
-                  const SizedBox(height: 2),
-                  Text(subtitle,
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                  Text(label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: hasFile ? _kGreen : _kDarkText,
+                      fontWeight: FontWeight.w500,
+                    )),
+                  if (hasFile) ...[
+                    const SizedBox(height: 2),
+                    Text(fileName, style: const TextStyle(fontSize: 10, color: _kMuted),
+                      overflow: TextOverflow.ellipsis),
+                  ],
+                  if (required_ && !hasFile) ...[
+                    const SizedBox(height: 2),
+                    const Text('שדה חובה *', style: TextStyle(fontSize: 10, color: _kRed)),
+                  ],
                 ],
               ),
+            ),
+            Icon(
+              hasFile ? Icons.swap_horiz_rounded : Icons.arrow_forward_ios_rounded,
+              size: 16, color: _kMuted,
             ),
           ],
         ),

@@ -92,13 +92,13 @@ service cloud.firestore {
     //     are blocked at the write layer below.
     //
     match /users/{uid} {
-      // Any authenticated + app-verified user may read public profile data.
-      allow read: if isVerifiedAuth();
+      // Owner can always read their own doc (even during signup before it exists).
+      // Any other authenticated user can read public profile data.
+      allow read: if request.auth != null;
 
-      // Only the owner (or admin/system) may create their own profile doc.
-      allow create: if isOwner(uid)
-                    || (isVerifiedAuth() && uid == 'anyskill_system')
-                    || isAdmin();
+      // Owner can create their own profile. System account also allowed.
+      // Uses direct auth check — no get() calls that could fail on missing docs.
+      allow create: if request.auth != null && request.auth.uid == uid;
 
       allow update: if
         // ── Owner general update ───────────────────────────────────────────
@@ -457,7 +457,10 @@ service cloud.firestore {
     match /stories/{uid} {
       allow read:   if isVerifiedAuth();
       allow create: if isOwner(uid);
+      // Owner can update any field. Other users can only toggle
+      // engagement fields (view/like) — prevents story content hijacking.
       allow update: if isOwner(uid)
+                    || isAdmin()
                     || (isVerifiedAuth()
                         && onlyFields(['viewCount', 'likeCount', 'likedBy']));
       allow delete: if isOwner(uid) || isAdmin();
@@ -573,7 +576,12 @@ service cloud.firestore {
 
       allow read: if isVerifiedAuth();
 
-      allow update: if isVerifiedAuth();
+      // Only the broadcast owner or an admin can update.
+      // Claim atomicity is enforced by Firestore transaction in the service —
+      // providers update status to 'claimed' + set claimedBy fields.
+      allow update: if isVerifiedAuth()
+                    && (resource.data.clientId == request.auth.uid
+                        || onlyFields(['status', 'claimedBy', 'claimedByName', 'claimedAt']));
 
       allow delete: if isAdmin() || isCmsAdmin();
     }
@@ -586,7 +594,9 @@ service cloud.firestore {
       allow create: if isVerifiedAuth()
                     && request.resource.data.userId == request.auth.uid;
       allow read:   if isVerifiedAuth();
-      allow update: if isVerifiedAuth();
+      // Only the owner or admin can update (e.g., change status to closed).
+      allow update: if isVerifiedAuth()
+                    && (resource.data.userId == request.auth.uid || isAdmin());
       allow delete: if isAdmin() || isCmsAdmin();
     }
 

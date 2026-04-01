@@ -592,60 +592,51 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
   // ── Google Sign-In ──────────────────────────────────────────────────────
 
   Future<void> _loginGoogle() async {
+    if (_isLoading) return; // prevent double-tap
     setState(() => _isLoading = true);
     try {
-      if (kIsWeb) {
-        // On web (especially mobile Safari/Chrome): use redirect.
-        // Popups are blocked on iOS Safari. After redirect, the page
-        // reloads and _handleRedirectResult() processes the new user.
-        await FirebaseAuth.instance.signInWithRedirect(GoogleAuthProvider());
-        return; // page navigates away — no further code runs
-      }
+      // ── UNIFIED PATH: GoogleSignIn plugin for BOTH web and native ──
+      // On web: uses Google Identity Services (GIS) JS SDK — reads
+      //         client ID from <meta name="google-signin-client_id"> in index.html.
+      //         NO signInWithPopup, NO signInWithRedirect, NO /__/auth/handler.
+      // On native: uses platform OAuth (Android/iOS native SDK).
+      // ignore: avoid_print
+      print('🔍 [Google] Starting GoogleSignIn flow (unified)...');
 
-      // Native mobile: use GoogleSignIn plugin
-      final googleUser = await GoogleSignIn().signIn();
+      final googleSignIn = kIsWeb
+          ? GoogleSignIn(
+              // Explicit client ID for web — matches Firebase Console config.
+              // Also set in index.html meta tag, but explicit here is safer.
+              clientId: '281981409319-nck912ajndlmnagiiqm32mdahferap04.apps.googleusercontent.com',
+              scopes: ['email', 'profile'],
+            )
+          : GoogleSignIn();
+
+      final googleUser = await googleSignIn.signIn();
       if (googleUser == null) {
+        // ignore: avoid_print
+        print('ℹ️ [Google] User cancelled');
         if (mounted) setState(() => _isLoading = false);
         return;
       }
+
+      // ignore: avoid_print
+      print('✅ [Google] Got Google account: ${googleUser.email}');
+
       final googleAuth = await googleUser.authentication;
+      // ignore: avoid_print
+      print('✅ [Google] Got tokens: idToken=${googleAuth.idToken != null}, accessToken=${googleAuth.accessToken != null}');
+
       final cred = await FirebaseAuth.instance.signInWithCredential(
         GoogleAuthProvider.credential(
           accessToken: googleAuth.accessToken,
           idToken: googleAuth.idToken,
         ),
       );
+      // ignore: avoid_print
+      print('✅ [Google] Firebase signIn SUCCESS: uid=${cred.user?.uid}');
 
-      final user  = cred.user!;
-      final isNew = cred.additionalUserInfo?.isNewUser ?? false;
-
-      if (isNew) {
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'uid':            user.uid,
-          'name':           user.displayName ?? '',
-          'email':          user.email ?? '',
-          'phone':          '',
-          'balance':        0.0,
-          'rating':         5.0,
-          'reviewsCount':   0,
-          'pricePerHour':   0.0,
-          'serviceType':    '',
-          'aboutMe':        '',
-          'profileImage':   user.photoURL ?? '',
-          'gallery':        [],
-          'quickTags':      [],
-          'isOnline':       true,
-          'isAdmin':        false,
-          'isVerified':     false,
-          'isCustomer':     true,
-          'isProvider':     false,
-          'termsAccepted':  true,
-          'onboardingComplete': false,
-          'tourComplete':   false,
-          'createdAt':      FieldValue.serverTimestamp(),
-        });
-      }
-
+      await _createProfileIfNew(cred);
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const OnboardingGate()),
@@ -653,15 +644,16 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
         );
       }
     } on FirebaseAuthException catch (e) {
-      debugPrint('[GoogleLogin] FirebaseAuth: ${e.code} — ${e.message}');
-      if (mounted) _snack('Google: ${e.code}\n${e.message ?? ""}', _kRed);
+      // ignore: avoid_print
+      print('🔴 [Google] FirebaseAuthException: code=${e.code}, message=${e.message}');
+      if (mounted) _snack('שגיאת התחברות: ${e.code}', _kRed);
     } catch (e) {
-      debugPrint('[GoogleLogin] ${e.runtimeType}: $e');
-      if (mounted) {
-        final msg = e.toString();
-        if (!msg.contains('canceled') && !msg.contains('cancelled')) {
-          _snack('Google: ${e.runtimeType}\n${msg.length > 120 ? msg.substring(0, 120) : msg}', _kRed);
-        }
+      // ignore: avoid_print
+      print('🔴 [Google] Error: ${e.runtimeType}: $e');
+      final msg = e.toString();
+      if (mounted && !msg.contains('cancel') && !msg.contains('popup_closed')
+          && !msg.contains('popup-closed')) {
+        _snack(msg.length > 200 ? msg.substring(0, 200) : msg, _kRed);
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -671,20 +663,16 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
   // ── Apple Sign-In ───────────────────────────────────────────────────────
 
   Future<void> _loginApple() async {
+    if (_isLoading) return; // prevent double-tap
     setState(() => _isLoading = true);
     try {
-      if (kIsWeb) {
-        // On web: use Firebase's built-in OAuthProvider with redirect.
-        // Firebase Console has the Service ID + redirect URI configured,
-        // so we do NOT pass a manual clientId here — Firebase handles it.
-        final provider = OAuthProvider('apple.com')
-          ..addScope('email')
-          ..addScope('name');
-        await FirebaseAuth.instance.signInWithRedirect(provider);
-        return; // page reloads → main() getRedirectResult() picks up
-      }
+      // ── UNIFIED PATH: sign_in_with_apple for BOTH web and native ──
+      // On web: uses Apple JS SDK with redirect to Firebase's auth handler.
+      // On native: uses native Apple Sign-In (ASAuthorizationController).
+      // Both avoid Firebase's signInWithPopup entirely.
+      // ignore: avoid_print
+      print('🔍 [Apple] Starting Apple Sign-In (unified)...');
 
-      // Native iOS: use sign_in_with_apple package
       final rawNonce = _generateNonce();
       final hashedNonce = sha256.convert(utf8.encode(rawNonce)).toString();
 
@@ -694,6 +682,16 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           AppleIDAuthorizationScopes.fullName,
         ],
         nonce: hashedNonce,
+        // On web, Apple redirects here after authentication.
+        // Firebase's /__/auth/handler processes the Apple callback.
+        webAuthenticationOptions: kIsWeb
+            ? WebAuthenticationOptions(
+                clientId: 'com.example.anyskillFix.auth',
+                redirectUri: Uri.parse(
+                  'https://anyskill-6fdf3.firebaseapp.com/__/auth/handler',
+                ),
+              )
+            : null,
       );
 
       final oauthCredential = OAuthProvider('apple.com').credential(
@@ -702,11 +700,15 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
         accessToken: appleCredential.authorizationCode,
       );
 
+      // ignore: avoid_print
+      print('✅ [Apple] Got Apple credential');
+
       final cred = await FirebaseAuth.instance.signInWithCredential(oauthCredential);
-      final user  = cred.user!;
-      final isNew = cred.additionalUserInfo?.isNewUser ?? false;
+      // ignore: avoid_print
+      print('✅ [Apple] Firebase signIn SUCCESS: uid=${cred.user?.uid}');
 
       // Apple only provides name on FIRST sign-in
+      final user = cred.user!;
       String displayName = user.displayName ?? '';
       if (displayName.isEmpty) {
         final given  = appleCredential.givenName ?? '';
@@ -717,32 +719,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
         await user.updateDisplayName(displayName);
       }
 
-      if (isNew) {
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'uid':            user.uid,
-          'name':           displayName,
-          'email':          user.email ?? appleCredential.email ?? '',
-          'phone':          '',
-          'balance':        0.0,
-          'rating':         5.0,
-          'reviewsCount':   0,
-          'pricePerHour':   0.0,
-          'serviceType':    '',
-          'aboutMe':        '',
-          'profileImage':   '',
-          'gallery':        [],
-          'quickTags':      [],
-          'isOnline':       true,
-          'isAdmin':        false,
-          'isVerified':     false,
-          'isCustomer':     true,
-          'isProvider':     false,
-          'termsAccepted':  true,
-          'onboardingComplete': false,
-          'tourComplete':   false,
-          'createdAt':      FieldValue.serverTimestamp(),
-        });
-      }
+      await _createProfileIfNew(cred);
 
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
@@ -750,24 +727,81 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           (_) => false,
         );
       }
-    } on SignInWithAppleAuthorizationException catch (e) {
-      debugPrint('[AppleLogin] AppleAuth: ${e.code} — ${e.message}');
-      if (e.code != AuthorizationErrorCode.canceled && mounted) {
-        _snack('Apple: ${e.code.name}\n${e.message}', _kRed);
-      }
     } on FirebaseAuthException catch (e) {
-      debugPrint('[AppleLogin] FirebaseAuth: ${e.code} — ${e.message}');
-      if (mounted) _snack('Apple: ${e.code}\n${e.message ?? ""}', _kRed);
+      // ignore: avoid_print
+      print('🔴 [Apple] FirebaseAuthException: code=${e.code}, message=${e.message}');
+      if (mounted) _snack('שגיאת התחברות: ${e.code}', _kRed);
     } catch (e) {
-      debugPrint('[AppleLogin] ${e.runtimeType}: $e');
-      if (mounted) {
-        final msg = e.toString();
-        if (!msg.contains('canceled') && !msg.contains('cancelled')) {
-          _snack('Apple: ${e.runtimeType}\n${msg.length > 120 ? msg.substring(0, 120) : msg}', _kRed);
-        }
+      // ignore: avoid_print
+      print('🔴 [Apple] Error: ${e.runtimeType}: $e');
+      final msg = e.toString();
+      if (mounted && !msg.contains('cancel') && !msg.contains('AuthorizationErrorCode.canceled')) {
+        _snack(msg.length > 200 ? msg.substring(0, 200) : msg, _kRed);
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // ── Shared: create Firestore profile for new social users ─────────────
+
+  Future<void> _createProfileIfNew(UserCredential cred) async {
+    final user = cred.user!;
+
+    // ignore: avoid_print
+    print('📝 [Profile] uid=${user.uid}, email=${user.email}');
+
+    await user.getIdToken(true);
+    // ignore: avoid_print
+    print('📝 [Profile] Token refreshed');
+
+    final docRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+
+    // Always use set(merge: true):
+    //   - Doc doesn't exist → creates it (create rule)
+    //   - Doc already exists → merges only these fields (update rule)
+    // NEVER include server-only fields (xp, balance, isAdmin, isVerified,
+    // isPromoted, isVerifiedProvider) — doesNotTouch() blocks them.
+    for (int attempt = 1; attempt <= 3; attempt++) {
+      try {
+        // ignore: avoid_print
+        print('📝 [Profile] Attempt $attempt: set(merge:true) users/${user.uid}');
+        await docRef.set({
+          'uid':            user.uid,
+          'name':           user.displayName ?? '',
+          'email':          user.email ?? '',
+          'phone':          user.phoneNumber ?? '',
+          'rating':         5.0,
+          'reviewsCount':   0,
+          'pricePerHour':   0.0,
+          'serviceType':    '',
+          'aboutMe':        '',
+          'profileImage':   user.photoURL ?? '',
+          'gallery':        [],
+          'quickTags':      [],
+          'isOnline':       true,
+          'isCustomer':     true,
+          'isProvider':     false,
+          'termsAccepted':  true,
+          'onboardingComplete': false,
+          'tourComplete':   false,
+          'createdAt':      FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        // ignore: avoid_print
+        print('✅ [Profile] SUCCESS on attempt $attempt');
+        return;
+      } catch (e) {
+        // ignore: avoid_print
+        print('🔴 [Profile] Attempt $attempt FAILED: ${e.runtimeType}: $e');
+        if (attempt < 3) {
+          await Future.delayed(Duration(milliseconds: 800 * attempt));
+          await user.getIdToken(true);
+        } else {
+          // ignore: avoid_print
+          print('🔴 [Profile] All attempts failed — user will see onboarding');
+          // Don't throw — let OnboardingGate handle missing profile
+        }
+      }
     }
   }
 

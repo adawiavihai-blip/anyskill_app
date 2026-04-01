@@ -117,6 +117,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     // appear instantly on the home screen without any code deploy.
     _categoriesStream = FirebaseFirestore.instance
         .collection('categories')
+        .limit(100)
         .snapshots();
 
     // Urgent banner — providers see open job requests, customers see pending approvals
@@ -1667,6 +1668,7 @@ class _PromoCarouselState extends State<_PromoCarousel> {
     _bannerSub = FirebaseFirestore.instance
         .collection('banners')
         .where('placement', isEqualTo: 'home_carousel')
+        .limit(20)
         .snapshots()
         .listen(_onBannerSnapshot);
   }

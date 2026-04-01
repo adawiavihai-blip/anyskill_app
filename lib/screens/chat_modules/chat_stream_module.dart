@@ -17,6 +17,7 @@ class ChatStreamModule {
     return FirebaseFirestore.instance
         .collection('jobs')
         .where('chatRoomId', isEqualTo: chatRoomId)
+        .limit(10)
         .snapshots();
   }
 }
