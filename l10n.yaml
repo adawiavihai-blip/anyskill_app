@@ -10,3 +10,4 @@ preferred-supported-locales:
   - en
   - es
 nullable-getter: false
+synthetic-package: false

@@ -73,8 +73,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   bool _isOtherSubCategory = false;
   final _otherCategoryController = TextEditingController();
 
-  // Service details
-  final _priceController = TextEditingController();
+  // Price is set later from profile settings after approval
 
   // ── All users ─────────────────────────────────────────────────────────────
   String? _profileImageBase64;
@@ -126,7 +125,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _idController.dispose();
     _nameController.dispose();
     _otherCategoryController.dispose();
-    _priceController.dispose();
     _bioController.dispose();
     super.dispose();
   }
@@ -141,12 +139,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       return done / 4;
     }
     int done = 1; // role selected
-    const total = 10;
+    const total = 9;
     if (_businessType != null) done++;
     if (_idController.text.trim().isNotEmpty) done++;
     if (_idDocUrl != null) done++;
     if (_selectedCategory != null || _isOtherCategory) done++;
-    if (_priceController.text.trim().isNotEmpty) done++;
     if (_profileImageBase64 != null) done++;
     if (_bioController.text.trim().isNotEmpty) done++;
     if (_nameController.text.trim().isNotEmpty) done++;
@@ -184,11 +181,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         _snack('נא לפרט את תחום המומחיות שלך', _kRed);
         return;
       }
-      final price = double.tryParse(_priceController.text.trim()) ?? 0;
-      if (price <= 0) {
-        _snack('נא להזין מחיר לשעה', _kRed);
-        return;
-      }
     }
     if (!_termsAccepted) {
       _snack('יש לקרוא ולאשר את תנאי השימוש', _kRed);
@@ -223,7 +215,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
         updates['serviceType']    = effectiveCategory;
         updates['subCategory']    = effectiveSubCategory;
-        updates['pricePerHour']   = double.tryParse(_priceController.text.trim()) ?? 0.0;
         updates['businessType']   = _businessType;
         updates['idNumber']       = _idController.text.trim();
         updates['isPendingExpert'] = true;
@@ -898,14 +889,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           const SizedBox(height: 12),
         ],
 
-        // Price
-        _buildTextField(
-          controller: _priceController,
-          label: 'מחיר לשעה (₪)',
-          hint: 'לדוגמה: 150',
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          prefixIcon: const Icon(Icons.payments_outlined, size: 20, color: _kMuted),
-        ),
       ],
     );
   }
