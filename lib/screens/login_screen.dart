@@ -364,7 +364,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
                     // Submit
                     _buildLoginButton(),
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 20),
+
+                    // ── Quick summary card ─────────────────────────────
+                    _buildQuickSummary(),
+                    const SizedBox(height: 20),
 
                     // Sign-up link
                     Center(
@@ -648,6 +652,70 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  // ── Quick summary card ("חשוב לדעת") ────────────────────────────────────
+  Widget _buildQuickSummary() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F9FF),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE0E0FF), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              const Text('AnySkill בקיצור',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: _kPurple)),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _kPurple,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Text('חשוב לדעת',
+                  style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _summaryItem(
+            emoji: '🔒',
+            text: 'הכסף שלך בטוח: התשלום מוחזק בנאמנות ומשוחרר רק באישור שלך.',
+          ),
+          const SizedBox(height: 8),
+          _summaryItem(
+            emoji: '🤝',
+            text: 'תיווך בלבד: האחריות על ביצוע העבודה היא על הספק.',
+          ),
+          const SizedBox(height: 8),
+          _summaryItem(
+            emoji: '⏱️',
+            text: 'מדיניות ביטולים: שים לב למדיניות של כל ספק לפני ההזמנה.',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryItem({required String emoji, required String text}) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Text(text,
+            textAlign: TextAlign.right,
+            style: TextStyle(fontSize: 13, height: 1.5, color: Colors.grey[700])),
+        ),
+        const SizedBox(width: 8),
+        Text(emoji, style: const TextStyle(fontSize: 16)),
+      ],
     );
   }
 

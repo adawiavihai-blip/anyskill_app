@@ -8,7 +8,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import '../constants.dart';
+import '../services/category_service.dart';
 import 'home_screen.dart';
+import 'terms_of_service_screen.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const _kPurple      = Color(0xFF6366F1);
@@ -81,6 +83,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   bool _termsAccepted = false;
   bool _termsRead = false;
 
+  // ── Live categories from Firestore ─────────────────────────────────────
+  List<Map<String, dynamic>> _firestoreCategories = [];
+  List<Map<String, dynamic>> _firestoreSubCategories = [];
+  StreamSubscription<List<Map<String, dynamic>>>? _catSub;
+  StreamSubscription<List<Map<String, dynamic>>>? _subCatSub;
+
   // ── Progress ──────────────────────────────────────────────────────────────
   late AnimationController _progressAnimCtrl;
 
@@ -96,10 +104,23 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     if (user != null) {
       _nameController.text = user.displayName ?? '';
     }
+    // Stream live categories from Firestore
+    _catSub = CategoryService.streamMainCategories().listen((cats) {
+      if (mounted) setState(() => _firestoreCategories = cats);
+    });
+  }
+
+  void _loadSubCategories(String parentId) {
+    _subCatSub?.cancel();
+    _subCatSub = CategoryService.streamSubCategories(parentId).listen((subs) {
+      if (mounted) setState(() => _firestoreSubCategories = subs);
+    });
   }
 
   @override
   void dispose() {
+    _catSub?.cancel();
+    _subCatSub?.cancel();
     _progressAnimCtrl.dispose();
     _idController.dispose();
     _nameController.dispose();
@@ -774,9 +795,17 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // ══════════════════════════════════════════════════════════════════════════
 
   Widget _buildCategoryFields() {
-    final subCats = _selectedCategory != null && !_isOtherCategory
-        ? (APP_SUB_CATEGORIES[_selectedCategory] ?? <String>[])
-        : <String>[];
+    // Use live Firestore categories if available, fallback to hardcoded
+    final mainCatNames = _firestoreCategories.isNotEmpty
+        ? _firestoreCategories.map((c) => c['name'] as String).toList()
+        : APP_CATEGORIES.map((c) => c['name'] as String).toList();
+
+    // Sub-categories: use Firestore stream if loaded, else hardcoded fallback
+    final subCatNames = _firestoreSubCategories.isNotEmpty
+        ? _firestoreSubCategories.map((c) => c['name'] as String).toList()
+        : (_selectedCategory != null && !_isOtherCategory
+            ? (APP_SUB_CATEGORIES[_selectedCategory] ?? <String>[])
+            : <String>[]);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -784,31 +813,40 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         _buildDropdown(
           value: _isOtherCategory ? 'אחר / לא מצאתי' : _selectedCategory,
           hint: 'בחר קטגוריה ראשית',
-          items: [
-            ...APP_CATEGORIES.map((c) => c['name'] as String),
-            'אחר / לא מצאתי',
-          ],
-          onChanged: (v) => setState(() {
-            if (v == 'אחר / לא מצאתי') {
-              _isOtherCategory = true;
-              _selectedCategory = null;
-              _selectedSubCategory = null;
-              _isOtherSubCategory = false;
-            } else {
-              _isOtherCategory = false;
-              _selectedCategory = v;
-              _selectedSubCategory = null;
-              _isOtherSubCategory = false;
-            }
-          }),
+          items: [...mainCatNames, 'אחר / לא מצאתי'],
+          onChanged: (v) {
+            setState(() {
+              if (v == 'אחר / לא מצאתי') {
+                _isOtherCategory = true;
+                _selectedCategory = null;
+                _selectedSubCategory = null;
+                _isOtherSubCategory = false;
+                _firestoreSubCategories = [];
+              } else {
+                _isOtherCategory = false;
+                _selectedCategory = v;
+                _selectedSubCategory = null;
+                _isOtherSubCategory = false;
+                // Load sub-categories from Firestore for selected parent
+                final parentDoc = _firestoreCategories
+                    .where((c) => c['name'] == v)
+                    .toList();
+                if (parentDoc.isNotEmpty) {
+                  _loadSubCategories(parentDoc.first['id'] as String);
+                } else {
+                  _firestoreSubCategories = [];
+                }
+              }
+            });
+          },
         ),
         const SizedBox(height: 12),
 
-        if (!_isOtherCategory && _selectedCategory != null && subCats.isNotEmpty) ...[
+        if (!_isOtherCategory && _selectedCategory != null && subCatNames.isNotEmpty) ...[
           _buildDropdown(
             value: _isOtherSubCategory ? 'אחר / לא מצאתי' : _selectedSubCategory,
             hint: 'בחר תת-קטגוריה',
-            items: [...subCats, 'אחר / לא מצאתי'],
+            items: [...subCatNames, 'אחר / לא מצאתי'],
             onChanged: (v) => setState(() {
               if (v == 'אחר / לא מצאתי') {
                 _isOtherSubCategory = true; _selectedSubCategory = null;
@@ -938,53 +976,17 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         children: [
           InkWell(
             onTap: () async {
-              await showDialog(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                  title: const Row(
-                    children: [
-                      Icon(Icons.gavel_rounded, size: 22, color: _kPurple),
-                      SizedBox(width: 8),
-                      Text('תנאי שימוש ומדיניות פרטיות',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  content: const SingleChildScrollView(
-                    child: Text(
-                      'ברוכים הבאים ל-AnySkill.\n\n'
-                      'השימוש באפליקציה מותנה בהסכמתך לתנאים הבאים:\n\n'
-                      '1. AnySkill משמשת כפלטפורמה לחיבור בין לקוחות לנותני שירות.\n'
-                      '2. כל עסקה בין משתמשים כפופה לתנאי השימוש המלאים.\n'
-                      '3. מידע אישי נשמר בהתאם למדיניות הפרטיות שלנו.\n'
-                      '4. נותני שירות מחויבים לספק שירות מקצועי ואמין.\n'
-                      '5. AnySkill גובה עמלה על עסקאות שהושלמו בהצלחה.\n'
-                      '6. ביטול עסקה כפוף למדיניות הביטולים.\n'
-                      '7. כל המחלוקות יטופלו דרך מערכת הסכסוכים של AnySkill.\n'
-                      '8. AnySkill שומרת לעצמה את הזכות לעדכן תנאים אלה.\n\n'
-                      'מדיניות פרטיות:\n'
-                      'אנו אוספים מידע הנדרש להפעלת השירות בלבד. '
-                      'המידע שלך לא יימסר לצד שלישי ללא הסכמתך, '
-                      'למעט במקרים הנדרשים על-פי חוק.',
-                      style: TextStyle(fontSize: 13, height: 1.6),
-                    ),
-                  ),
-                  actions: [
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _kPurple,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      onPressed: () {
-                        setState(() => _termsRead = true);
-                        Navigator.pop(ctx);
-                      },
-                      child: const Text('קראתי והבנתי',
-                        style: TextStyle(color: Colors.white)),
-                    ),
-                  ],
+              // Open the SAME full TermsOfServiceScreen used in Email sign-up.
+              // It returns true when user taps "קראתי והבנתי".
+              final accepted = await Navigator.push<bool>(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const TermsOfServiceScreen(showAcceptButton: true),
                 ),
               );
+              if (accepted == true && mounted) {
+                setState(() => _termsRead = true);
+              }
             },
             borderRadius: BorderRadius.circular(8),
             child: Padding(
