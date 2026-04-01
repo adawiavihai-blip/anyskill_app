@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../models/service_provider.dart';
 
@@ -33,7 +32,6 @@ class SearchRepository {
   SearchRepository({FirebaseFirestore? firestore})
       : _db = firestore ?? FirebaseFirestore.instance;
 
-  @visibleForTesting
   SearchRepository.dummy();
 
   late final FirebaseFirestore _db;

@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../models/category.dart';
 
@@ -15,7 +15,6 @@ class CategoryRepository {
   })  : _db      = firestore ?? FirebaseFirestore.instance,
         _storage = storage;
 
-  @visibleForTesting
   CategoryRepository.dummy() : _storage = null;
 
   late final FirebaseFirestore _db;

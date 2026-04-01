@@ -10,6 +10,7 @@ import 'dart:typed_data';
 import '../constants.dart';
 import '../services/category_service.dart';
 import 'home_screen.dart';
+import 'pending_verification_screen.dart';
 import 'terms_of_service_screen.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -228,6 +229,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         updates['isPendingExpert'] = true;
         updates['isProvider']     = false;
         updates['isVerified']     = false;
+        updates['isApprovedProvider'] = false;
         updates['categoryReviewedByAdmin'] = false;
         if (_businessDocUrl != null) updates['businessDocUrl'] = _businessDocUrl;
         if (_idDocUrl != null) updates['idDocUrl'] = _idDocUrl;
@@ -295,10 +297,19 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       try { await _sendWelcomeMessage(uid, _isProvider); } catch (_) {}
 
       if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
-        );
+        if (_isProvider) {
+          // Provider: show pending approval screen (real-time listener
+          // auto-redirects to HomeScreen when admin approves)
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const PendingVerificationScreen()),
+          );
+        } else {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const HomeScreen()),
+          );
+        }
       }
     } catch (e) {
       if (mounted) _snack('שגיאה בשמירה: $e', _kRed);

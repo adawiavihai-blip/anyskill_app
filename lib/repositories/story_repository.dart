@@ -3,7 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../models/story.dart';
 
@@ -24,7 +24,6 @@ class StoryRepository {
 
   /// Test-only: creates an instance without touching Firebase singletons.
   /// Any method that accesses the fields will throw LateInitializationError.
-  @visibleForTesting
   StoryRepository.dummy();
 
   late final FirebaseFirestore  _db;
