@@ -171,6 +171,30 @@ void main() async {
     // rather than a permanent white screen.
   }
 
+  // ── Step 3a: Firestore web settings ──────────────────────────────────────
+  // On web, the default IndexedDB multi-tab persistence can hit
+  // "INTERNAL ASSERTION FAILED: Unexpected state" when tabs conflict
+  // or the cache is corrupted. We configure a 40 MB cache and catch
+  // any persistence init errors gracefully.
+  if (kIsWeb) {
+    try {
+      FirebaseFirestore.instance.settings = const Settings(
+        persistenceEnabled: true,
+        cacheSizeBytes: 40 * 1024 * 1024, // 40 MB
+      );
+      debugPrint('✅ Firestore Web: persistence configured (40 MB)');
+    } catch (e) {
+      debugPrint('⚠️ Firestore Web persistence config failed: $e');
+      // Fallback: disable persistence entirely to avoid assertion errors
+      try {
+        FirebaseFirestore.instance.settings = const Settings(
+          persistenceEnabled: false,
+        );
+        debugPrint('ℹ️ Firestore Web: persistence DISABLED (fallback)');
+      } catch (_) {}
+    }
+  }
+
   // ── Step 3b: Web Auth persistence ──────────────────────────────────────
   // MUST be the very first call on FirebaseAuth.instance — before
   // getRedirectResult(), before Stripe, before anything that could
