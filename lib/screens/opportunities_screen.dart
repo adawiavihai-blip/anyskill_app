@@ -163,6 +163,14 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
     bool isUrgent = false,
   }) async {
     if (_processingIds.contains(requestId)) return;
+    // Self-interest guard: never let a user express interest in their own post
+    if (clientId == _uid) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('לא ניתן להביע עניין בבקשה שלך'),
+        backgroundColor: Colors.orange,
+      ));
+      return;
+    }
     setState(() => _processingIds.add(requestId));
 
     final db     = FirebaseFirestore.instance;
@@ -490,7 +498,12 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
           return const SizedBox.shrink();
         }
 
-        final broadcasts = snap.data!.docs;
+        final broadcasts = snap.data!.docs.where((doc) {
+          final d = doc.data() as Map<String, dynamic>;
+          // Never show user their own broadcasts
+          return (d['clientId'] ?? '') != _uid;
+        }).toList();
+        if (broadcasts.isEmpty) return const SizedBox.shrink();
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -589,6 +602,8 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
               var filtered = docs.where((doc) {
                 final d   = doc.data() as Map<String, dynamic>;
                 if (d['isActive'] == false) return false;
+                // ── Self-filter: never show user their own requests ──
+                if ((d['clientId'] ?? '') == _uid) return false;
                 final ts  = d['createdAt'] as Timestamp?;
                 if (ts != null && ts.toDate().isBefore(cutoff)) return false;
                 // "דחוף" filter: only HOT cards (< 10 min)
