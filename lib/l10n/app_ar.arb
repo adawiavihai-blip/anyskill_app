@@ -1,88 +1,952 @@
 {
   "@@locale": "ar",
-  "@@last_modified": "2026-03-30",
+  "@@last_modified": "2026-04-01",
 
   "appName": "AnySkill",
+  "appSlogan": "محترفوك، بلمسة واحدة",
 
-  "greetingMorning":   "صباح الخير",
+  "greetingMorning": "صباح الخير",
   "greetingAfternoon": "مساء الخير",
-  "greetingEvening":   "مساء الخير",
-  "greetingNight":     "ليلة سعيدة",
+  "greetingEvening": "مساء الخير",
+  "greetingNight": "ليلة سعيدة",
+  "greetingSubMorning": "ماذا تريد أن تفعل اليوم؟",
+  "greetingSubAfternoon": "هل تحتاج مساعدة بشيء؟",
+  "greetingSubEvening": "هل لا تزال تبحث عن خدمة؟",
+  "greetingSubNight": "نراك غداً!",
 
-  "searchPlaceholder": "ابحث عن محترف، خدمة...",
-  "searchTitle":       "البحث",
-  "discoverCategories":"اكتشف الفئات",
-
-  "tabHome":     "الرئيسية",
+  "tabHome": "الرئيسية",
   "tabBookings": "الحجوزات",
-  "tabChat":     "الرسائل",
-  "tabWallet":   "المحفظة",
-  "tabProfile":  "الملف الشخصي",
+  "tabChat": "الرسائل",
+  "tabWallet": "المحفظة",
 
-  "statusPaidEscrow":       "بانتظار التأكيد",
-  "statusExpertCompleted":  "مكتمل — بانتظار موافقتك",
-  "statusCompleted":        "مكتمل",
-  "statusCancelled":        "ملغى",
-  "statusDispute":          "قيد النزاع",
-  "statusPendingPayment":   "بانتظار الدفع",
+  "bookNow": "احجز الآن",
+  "bookingCompleted": "تم إكمال الحجز بنجاح",
+  "close": "إغلاق",
+  "retryButton": "إعادة المحاولة",
+  "saveChanges": "حفظ التغييرات",
+  "saveSuccess": "تم الحفظ بنجاح",
+  "saveError": "خطأ في الحفظ: {error}",
+  "@saveError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
 
-  "bookNow":        "احجز الآن",
-  "quickRequest":   "طلب سريع",
-  "openChat":       "فتح المحادثة",
-  "cancel":         "إلغاء",
-  "confirm":        "تأكيد",
-  "submit":         "إرسال",
-  "save":           "حفظ",
-  "close":          "إغلاق",
-  "back":           "رجوع",
-  "next":           "التالي",
-
-  "walletBalance":      "الرصيد القابل للسحب",
-  "walletMinWithdraw":  "الحد الأدنى للسحب: ₪50",
-  "withdrawFunds":      "سحب الأموال",
-  "withdrawalPending":  "طلب السحب قيد المعالجة",
-
-  "loginTitle":    "مرحباً بكم في AnySkill",
-  "loginSubtitle": "منصة المحترفين الرائدة في إسرائيل",
-  "loginEmail":    "البريد الإلكتروني",
-  "loginPassword": "كلمة المرور",
-  "loginButton":   "تسجيل الدخول",
-  "signupButton":  "تسجيل",
-  "forgotPassword":"نسيت كلمة المرور",
-
-  "profileProvider": "مقدّم خدمة",
-  "profileCustomer": "عميل",
-  "profileRating":   "التقييم",
-  "profileReviews":  "المراجعات",
-  "profileOrders":   "الحجوزات",
-
-  "errorNetworkTitle":  "لا يوجد اتصال بالإنترنت",
-  "errorNetworkBody":   "تحقق من الاتصال بالشبكة وحاول مجدداً",
-  "errorGeneric":       "حدث خطأ. حاول مجدداً",
-  "errorProfileLoad":   "خطأ في تحميل الملف الشخصي",
-
-  "tosTitle":   "شروط الاستخدام",
-  "tosVersion": "الإصدار 2.0",
-  "tosAgree":   "قرأت وأوافق على الشروط",
-
-  "urgentProviderLabel": "Pulse",
-  "urgentCustomerLabel": "عاجل",
-  "urgentOpenButton":    "فتح",
-
-  "trendingBadge":       "رائج",
-  "subCategoryPrompt":   "اختر التخصص",
-
-  "emptyActivityTitle":  "لا توجد نشاطات بعد",
-  "emptyActivityCta":    "انشر طلبك الأول ←",
-
-  "onlineStatus":  "متاح",
+  "defaultUserName": "مستخدم",
+  "notLoggedIn": "غير مسجّل الدخول",
+  "linkCopied": "تم نسخ الرابط",
+  "errorEmptyFields": "يرجى ملء جميع الحقول",
+  "errorGeneric": "حدث خطأ. حاول مجدداً",
+  "errorInvalidEmail": "عنوان بريد إلكتروني غير صالح",
+  "whatsappError": "تعذّر فتح واتساب",
+  "markAllReadTooltip": "تحديد الكل كمقروء",
+  "onlineStatus": "متاح",
   "offlineStatus": "غير متاح",
+  "onlineToggleOn": "أنت متاح الآن",
+  "onlineToggleOff": "أنت غير متاح الآن",
 
-  "currencySymbol": "₪",
+  "roleCustomer": "عميل",
+  "roleProvider": "مقدّم خدمة",
 
-  "taxDeclarationText": "أُقرّ بمسؤوليتي الحصرية عن الإبلاغ الضريبي وفقاً للقانون (البند 6 في النظام). أعلم أن AnySkill ليست جهة توظيفي ولا تخصم ضرائب من المصدر.",
+  "loginAccountTitle": "سجّل الدخول إلى حسابك",
+  "loginButton": "تسجيل الدخول",
+  "loginEmail": "البريد الإلكتروني",
+  "loginForgotPassword": "نسيت كلمة المرور",
+  "loginNoAccount": "ليس لديك حساب؟ ",
+  "loginPassword": "كلمة المرور",
+  "loginRememberMe": "تذكرني",
+  "loginSignUpFree": "سجّل مجاناً",
+  "loginStats10k": "مستخدمون",
+  "loginStats50": "فئات",
+  "loginStats49": "متوسط التقييم",
+  "loginWelcomeBack": "مرحباً بعودتك!",
 
-  "reviewsPlaceholder":  "أخبرنا عن تجربتك...",
-  "reviewSubmit":        "إرسال التقييم",
-  "ratingLabel":         "قيّم الخدمة"
+  "signupAccountCreated": "تم إنشاء الحساب بنجاح!",
+  "signupEmailInUse": "البريد الإلكتروني مستخدم بالفعل",
+  "signupGenericError": "حدث خطأ أثناء التسجيل",
+  "signupGoogleError": "خطأ في تسجيل الدخول عبر Google",
+  "signupNetworkError": "خطأ في الشبكة. تحقق من الاتصال",
+  "signupNewCustomerBio": "عميل جديد في AnySkill",
+  "signupNewProviderBio": "مقدّم خدمة جديد في AnySkill",
+  "signupTosMustAgree": "يجب الموافقة على شروط الاستخدام",
+  "signupWeakPassword": "كلمة المرور ضعيفة جداً",
+
+  "forgotPasswordEmail": "البريد الإلكتروني",
+  "forgotPasswordError": "خطأ في إرسال رابط الاستعادة",
+  "forgotPasswordSubmit": "إرسال رابط الاستعادة",
+  "forgotPasswordSubtitle": "أدخل بريدك الإلكتروني وسنرسل لك رابطاً لاستعادة كلمة المرور",
+  "forgotPasswordSuccess": "تم إرسال رابط الاستعادة إلى بريدك",
+  "forgotPasswordTitle": "نسيت كلمة المرور",
+
+  "authError": "خطأ في المصادقة: {code}",
+  "@authError": {
+    "placeholders": {
+      "code": {"type": "String"}
+    }
+  },
+
+  "profileTitle": "ملفي الشخصي",
+  "profileFieldName": "الاسم الكامل",
+  "profileFieldNameHint": "أدخل اسمك الكامل",
+  "profileFieldRole": "نوع المستخدم",
+  "profileFieldCategoryMain": "المجال الرئيسي",
+  "profileFieldCategoryMainHint": "اختر مجالك الرئيسي",
+  "profileFieldCategorySub": "الفئة الفرعية",
+  "profileFieldCategorySubHint": "اختر تخصصاً محدداً",
+  "profileFieldPrice": "السعر بالساعة (₪)",
+  "profileFieldPriceHint": "أدخل سعرك بالساعة",
+  "profileFieldResponseTime": "وقت الاستجابة (دقائق)",
+  "profileFieldResponseTimeHint": "متوسط وقت الاستجابة",
+  "profileFieldTaxId": "رقم الترخيص التجاري",
+  "profileFieldTaxIdHint": "أدخل رقم الترخيص التجاري",
+  "profileFieldTaxIdHelp": "سيُستخدم هذا الرقم لإصدار الفواتير",
+
+  "editProfileAbout": "نبذة عني",
+  "editProfileAboutHint": "أخبر العملاء عن خبرتك...",
+  "editProfileCancellationPolicy": "سياسة الإلغاء",
+  "editProfileCancellationHint": "اختر سياسة إلغاء",
+  "editProfileGallery": "المعرض",
+  "editProfileQuickTags": "وسوم سريعة",
+  "editProfileTagsHint": "أضف وسوماً لملفك الشخصي",
+  "editProfileTagsSelected": "{count} محددة",
+  "@editProfileTagsSelected": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+
+  "editCategoryTitle": "تعديل الفئة",
+  "editCategoryNameLabel": "اسم الفئة",
+  "editCategoryChangePic": "تغيير الصورة",
+
+  "shareProfileTitle": "مشاركة الملف الشخصي",
+  "shareProfileTooltip": "شارك ملفك الشخصي",
+  "shareProfileCopyLink": "نسخ الرابط",
+  "shareProfileWhatsapp": "مشاركة عبر واتساب",
+
+  "statBalance": "الرصيد",
+
+  "searchHintExperts": "ابحث عن محترفين...",
+  "searchDefaultTitle": "البحث",
+  "searchDefaultCity": "إسرائيل",
+  "searchDefaultExpert": "محترف",
+  "searchSectionCategories": "الفئات",
+  "searchSectionResultsFor": "نتائج لـ \"{query}\"",
+  "@searchSectionResultsFor": {
+    "placeholders": {
+      "query": {"type": "String"}
+    }
+  },
+  "searchNoResultsFor": "لا توجد نتائج لـ \"{query}\"",
+  "@searchNoResultsFor": {
+    "placeholders": {
+      "query": {"type": "String"}
+    }
+  },
+  "searchNoCategoriesBody": "لم يتم العثور على فئات",
+  "searchPerHour": "₪/ساعة",
+  "searchRecommendedBadge": "موصى به",
+  "searchChipHomeVisit": "زيارة منزلية",
+  "searchChipWeekend": "متاح في عطلة نهاية الأسبوع",
+  "searchDatePickerHint": "اختر تاريخاً",
+  "searchTourSearchTitle": "البحث عن محترفين",
+  "searchTourSearchDesc": "ابحث بالاسم أو الخدمة أو الفئة",
+  "searchTourSuggestionsTitle": "اقتراحات ذكية",
+  "searchTourSuggestionsDesc": "اقتراحات مخصصة بناءً على عمليات بحثك",
+  "searchUrgencyMorning": "صباحاً",
+  "searchUrgencyAfternoon": "ظهراً",
+  "searchUrgencyEvening": "مساءً",
+
+  "catResultsSearchHint": "ابحث داخل الفئة...",
+  "catResultsNoExperts": "لا يوجد محترفون في {category}",
+  "@catResultsNoExperts": {
+    "placeholders": {
+      "category": {"type": "String"}
+    }
+  },
+  "catResultsNoResults": "لا توجد نتائج",
+  "catResultsNoResultsHint": "حاول تغيير بحثك",
+  "catResultsPerHour": "₪/ساعة",
+  "catResultsOrderCount": "{count} طلبات",
+  "@catResultsOrderCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "catResultsResponseTime": "يستجيب خلال {minutes} دقيقة",
+  "@catResultsResponseTime": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "catResultsRecommended": "موصى به",
+  "catResultsTopRated": "الأعلى تقييماً",
+  "catResultsUnder100": "أقل من ₪100",
+  "catResultsClearFilters": "مسح المرشحات",
+  "catResultsBeFirst": "كن الأول!",
+  "catResultsExpertDefault": "محترف",
+  "catResultsLoadMore": "تحميل المزيد",
+  "catResultsAvailableSlots": "مواعيد متاحة",
+  "catResultsNoAvailability": "غير متاح",
+  "catResultsFullBooking": "محجوز بالكامل",
+  "catResultsWhenFree": "متى يكون متاحاً؟",
+
+  "chatListTitle": "الرسائل",
+
+  "expertSectionAbout": "حول",
+  "expertSectionService": "الخدمة",
+  "expertSectionSchedule": "التوفر",
+  "expertBioPlaceholder": "لا توجد نبذة بعد",
+  "expertBioReadMore": "اقرأ المزيد",
+  "expertBioShowLess": "عرض أقل",
+  "expertNoReviews": "لا توجد مراجعات بعد",
+  "expertDefaultReviewer": "مستخدم",
+  "expertProviderResponse": "رد مقدّم الخدمة",
+  "expertAddReply": "أضف رداً",
+  "expertAddReplyTitle": "أضف رداً على المراجعة",
+  "expertReplyHint": "اكتب رداً...",
+  "expertPublishReply": "نشر الرد",
+  "expertReplyError": "خطأ في نشر الرد",
+  "expertSelectDateTime": "اختر التاريخ والوقت",
+  "expertSelectTime": "اختر الوقت",
+  "expertBookForTime": "احجز لـ {time}",
+  "@expertBookForTime": {
+    "placeholders": {
+      "time": {"type": "String"}
+    }
+  },
+  "expertStartingFrom": "ابتداءً من ₪{price}",
+  "@expertStartingFrom": {
+    "placeholders": {
+      "price": {"type": "String"}
+    }
+  },
+  "expertBookingSummaryTitle": "ملخص الحجز",
+  "expertSummaryRowService": "الخدمة",
+  "expertSummaryRowDate": "التاريخ",
+  "expertSummaryRowTime": "الوقت",
+  "expertSummaryRowPrice": "السعر",
+  "expertSummaryRowIncluded": "يشمل",
+  "expertSummaryRowProtection": "حماية المشتري",
+  "expertSummaryRowTotal": "الإجمالي",
+  "expertConfirmPaymentButton": "تأكيد والدفع",
+  "expertVerifiedBooking": "حجز مؤكد",
+  "expertInsufficientBalance": "رصيد غير كافٍ",
+  "expertEscrowSuccess": "تم تأكيد الدفع! الأموال محفوظة في الضمان",
+  "expertTransactionTitle": "دفع لـ {name}",
+  "@expertTransactionTitle": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "expertSystemMessage": "تم تأكيد الحجز لـ {date} الساعة {time}. ₪{amount} محفوظة في الضمان.",
+  "@expertSystemMessage": {
+    "placeholders": {
+      "date": {"type": "String"},
+      "time": {"type": "String"},
+      "amount": {"type": "String"}
+    }
+  },
+  "expertCancellationNotice": "سياسة {policy}: إلغاء مجاني حتى {deadline}. بعد ذلك {penalty}% غرامة.",
+  "@expertCancellationNotice": {
+    "placeholders": {
+      "policy": {"type": "String"},
+      "deadline": {"type": "String"},
+      "penalty": {"type": "String"}
+    }
+  },
+  "expertCancellationNoDeadline": "سياسة {policy}: {description}",
+  "@expertCancellationNoDeadline": {
+    "placeholders": {
+      "policy": {"type": "String"},
+      "description": {"type": "String"}
+    }
+  },
+
+  "financeTitle": "المالية",
+  "financeAvailableBalance": "الرصيد المتاح",
+  "financePending": "قيد الانتظار",
+  "financeProcessing": "قيد المعالجة",
+  "financeRecentActivity": "النشاط الأخير",
+  "financeNoTransactions": "لا توجد معاملات",
+  "financeWithdrawButton": "سحب الأموال",
+  "financeMinWithdraw": "الحد الأدنى للسحب: ₪50",
+  "financeTrustBadge": "أموالك محمية",
+  "financeReceivedFrom": "تم الاستلام من {name}",
+  "@financeReceivedFrom": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "financePaidTo": "تم الدفع لـ {name}",
+  "@financePaidTo": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "financeError": "خطأ: {error}",
+  "@financeError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+
+  "disputeConfirmRefund": "تأكيد الاسترداد",
+  "disputeConfirmRelease": "تأكيد تحرير الدفع",
+  "disputeConfirmSplit": "تأكيد التقسيم",
+  "disputePartyCustomer": "العميل",
+  "disputeRefundBody": "₪{amount} سيتم استردادها لـ {customerName}",
+  "@disputeRefundBody": {
+    "placeholders": {
+      "amount": {"type": "String"},
+      "customerName": {"type": "String"}
+    }
+  },
+  "disputeReleaseBody": "₪{netAmount} سيتم تحريرها لـ {expertName} (عمولة {feePercent}%)",
+  "@disputeReleaseBody": {
+    "placeholders": {
+      "netAmount": {"type": "String"},
+      "expertName": {"type": "String"},
+      "feePercent": {"type": "String"}
+    }
+  },
+  "disputeSplitBody": "تقسيم: ₪{halfAmount} لكل طرف. المقدّم يحصل على ₪{halfNet}، المنصة ₪{platformFee}",
+  "@disputeSplitBody": {
+    "placeholders": {
+      "halfAmount": {"type": "String"},
+      "halfNet": {"type": "String"},
+      "platformFee": {"type": "String"}
+    }
+  },
+  "disputeResolvedRefund": "تم حل النزاع — تم الاسترداد",
+  "disputeResolvedRelease": "تم حل النزاع — تم تحرير الدفع",
+  "disputeResolvedSplit": "تم حل النزاع — تم تقسيم المبلغ",
+  "disputeTypeAudio": "تسجيل صوتي",
+  "disputeTypeImage": "صورة",
+  "disputeTypeLocation": "موقع",
+
+  "releasePaymentError": "خطأ في تحرير الدفع",
+
+  "oppTitle": "الفرص",
+  "oppAllCategories": "جميع الفئات",
+  "oppEmptyAll": "لا توجد فرص حالياً",
+  "oppEmptyAllSubtitle": "تحقق مجدداً لاحقاً",
+  "oppEmptyCategory": "لا توجد فرص في هذه الفئة",
+  "oppEmptyCategorySubtitle": "جرّب فئة أخرى",
+  "oppTakeOpportunity": "اغتنم الفرصة",
+  "oppInterested": "مهتم",
+  "oppAlreadyInterested": "أبديت اهتمامك بالفعل",
+  "oppAlreadyExpressed": "لقد أبديت اهتمامك بهذا الطلب بالفعل",
+  "oppAlready3Interested": "يوجد بالفعل 3 مهتمين",
+  "oppInterestSuccess": "تم تسجيل اهتمامك بنجاح!",
+  "oppRequestClosed3": "تم إغلاق الطلب — 3 مهتمين",
+  "oppRequestClosedBtn": "الطلب مغلق",
+  "oppRequestUnavailable": "الطلب لم يعد متاحاً",
+  "oppDefaultClient": "عميل",
+  "oppHighDemand": "طلب مرتفع",
+  "oppQuickBid": "عرض سريع",
+  "oppQuickBidMessage": "مرحباً {clientName}، أنا {providerName} وأرغب بالمساعدة!",
+  "@oppQuickBidMessage": {
+    "placeholders": {
+      "clientName": {"type": "String"},
+      "providerName": {"type": "String"}
+    }
+  },
+  "oppEstimatedEarnings": "الأرباح المقدّرة",
+  "oppAfterFee": "بعد العمولة",
+  "oppWalletHint": "الأرباح تذهب إلى محفظتك",
+  "oppXpToNextLevel": "{xpNeeded} XP لمستوى {levelName}",
+  "@oppXpToNextLevel": {
+    "placeholders": {
+      "xpNeeded": {"type": "int"},
+      "levelName": {"type": "String"}
+    }
+  },
+  "oppMaxLevel": "المستوى الأقصى!",
+  "oppBoostEarned": "تم الحصول على تعزيز الملف الشخصي!",
+  "oppBoostProgress": "{count}/3 فرص للتعزيز",
+  "@oppBoostProgress": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "oppProfileBoosted": "ملفك الشخصي معزّز! متبقي {timeLabel}",
+  "@oppProfileBoosted": {
+    "placeholders": {
+      "timeLabel": {"type": "String"}
+    }
+  },
+  "oppError": "خطأ: {error}",
+  "@oppError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "oppTimeJustNow": "الآن",
+  "oppTimeMinAgo": "قبل {minutes} دقيقة",
+  "@oppTimeMinAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "oppTimeHourAgo": "قبل {hours} ساعات",
+  "@oppTimeHourAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "oppTimeDayAgo": "قبل {days} أيام",
+  "@oppTimeDayAgo": {
+    "placeholders": {
+      "days": {"type": "int"}
+    }
+  },
+  "oppTimeHours": "{hours} ساعات",
+  "@oppTimeHours": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "oppTimeMinutes": "{minutes} دقائق",
+  "@oppTimeMinutes": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "oppUnderReviewTitle": "ملفك الشخصي قيد المراجعة",
+  "oppUnderReviewSubtitle": "فريق AnySkill يراجع ملفك الشخصي",
+  "oppUnderReviewBody": "سنبلغك فور اكتمال التحقق",
+  "oppUnderReviewContact": "تواصل مع الدعم",
+  "oppUnderReviewStep1": "تم إرسال الملف الشخصي",
+  "oppUnderReviewStep2": "قيد المراجعة",
+  "oppUnderReviewStep3": "الموافقة النهائية",
+
+  "requestsEmpty": "لا توجد طلبات",
+  "requestsEmptySubtitle": "لم يتم نشر طلبات بعد",
+  "requestsChatNow": "إرسال رسالة",
+  "requestsClosed": "مغلق",
+  "requestsConfirmPay": "تأكيد والدفع",
+  "requestsDefaultExpert": "محترف",
+  "requestsEscrowTooltip": "الأموال محفوظة في الضمان حتى إتمام العمل",
+  "requestsMatchLabel": "تطابق",
+  "requestsTopMatch": "أفضل تطابق",
+  "requestsVerifiedBadge": "موثّق",
+  "requestsMoneyProtected": "أموالك محمية",
+  "requestsWaiting": "بالانتظار",
+  "requestsWaitingProviders": "بانتظار مقدّمي الخدمات...",
+  "requestsJustNow": "الآن",
+  "requestsMinutesAgo": "قبل {minutes} دقيقة",
+  "@requestsMinutesAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "requestsHoursAgo": "قبل {hours} ساعات",
+  "@requestsHoursAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "requestsDaysAgo": "قبل {days} أيام",
+  "@requestsDaysAgo": {
+    "placeholders": {
+      "days": {"type": "int"}
+    }
+  },
+  "requestsInterested": "{count} مهتمين",
+  "@requestsInterested": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "requestsViewInterested": "عرض {count} مهتمين",
+  "@requestsViewInterested": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "requestsOrderCount": "{count} طلبات",
+  "@requestsOrderCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "requestsHiredAgo": "تم التوظيف {label}",
+  "@requestsHiredAgo": {
+    "placeholders": {
+      "label": {"type": "String"}
+    }
+  },
+  "requestsPricePerHour": "₪{price}/ساعة",
+  "@requestsPricePerHour": {
+    "placeholders": {
+      "price": {"type": "String"}
+    }
+  },
+
+  "timeNow": "الآن",
+  "timeOneHour": "ساعة",
+  "timeMinutesAgo": "قبل {minutes} دقيقة",
+  "@timeMinutesAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "timeHoursAgo": "قبل {hours} ساعات",
+  "@timeHoursAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+
+  "urgentBannerRequests": "طلبات عاجلة",
+  "urgentBannerPending": "قيد الانتظار",
+  "urgentBannerServiceNeeded": "خدمة مطلوبة",
+  "urgentBannerCustomerWaiting": "عميل ينتظر",
+
+  "calendarTitle": "التقويم",
+  "calendarRefresh": "تحديث",
+  "calendarNoEvents": "لا توجد أحداث",
+  "calendarStatusCompleted": "مكتمل",
+  "calendarStatusPending": "قيد الانتظار",
+  "calendarStatusWaiting": "بالانتظار",
+
+  "creditsLabel": "رصيد النقاط",
+  "creditsDiscountAvailable": "خصم {discount}% متاح!",
+  "@creditsDiscountAvailable": {
+    "placeholders": {
+      "discount": {"type": "int"}
+    }
+  },
+  "creditsToNextDiscount": "{remaining} نقطة للخصم التالي",
+  "@creditsToNextDiscount": {
+    "placeholders": {
+      "remaining": {"type": "int"}
+    }
+  },
+
+  "serviceFullSession": "جلسة كاملة",
+  "serviceSingleLesson": "درس واحد",
+  "serviceExtendedLesson": "درس موسّع",
+
+  "validationNameRequired": "الاسم مطلوب",
+  "validationNameLength": "يجب أن يحتوي الاسم على حرفين على الأقل",
+  "validationNameTooLong": "الاسم طويل جداً",
+  "validationNameForbidden": "الاسم يحتوي على أحرف محظورة",
+  "validationCategoryRequired": "يرجى اختيار فئة",
+  "validationRoleRequired": "يرجى اختيار نوع المستخدم",
+  "validationPriceInvalid": "سعر غير صالح",
+  "validationPricePositive": "يجب أن يكون السعر إيجابياً",
+  "validationAboutTooLong": "الوصف طويل جداً",
+  "validationAboutForbidden": "الوصف يحتوي على أحرف محظورة",
+  "validationFieldForbidden": "الحقل يحتوي على أحرف محظورة",
+  "validationUrlHttps": "يجب أن يبدأ الرابط بـ https://",
+
+  "vipSheetHeader": "AnySkill VIP",
+  "vipPriceMonthly": "₪99/شهر",
+  "vipActivateButton": "تفعيل VIP",
+  "vipActivationSuccess": "تم تفعيل VIP بنجاح!",
+  "vipInsufficientBalance": "رصيد غير كافٍ لتفعيل VIP",
+  "vipInsufficientTooltip": "اشحن محفظتك لتفعيل VIP",
+  "vipBenefit1": "أولوية في نتائج البحث",
+  "vipBenefit2": "شارة VIP على الملف الشخصي",
+  "vipBenefit3": "أولوية في الفرص",
+  "vipBenefit4": "دعم مميز",
+
+  "withdrawMinBalance": "الحد الأدنى للسحب هو {amount} ₪",
+  "@withdrawMinBalance": {
+    "placeholders": {
+      "amount": {"type": "int"}
+    }
+  },
+  "withdrawAvailableBalance": "الرصيد المتاح للسحب",
+  "withdrawBankSection": "بيانات البنك",
+  "withdrawBankName": "اسم البنك",
+  "withdrawBankBranch": "الفرع",
+  "withdrawBankAccount": "رقم الحساب",
+  "withdrawBankRequired": "يجب إدخال اسم البنك",
+  "withdrawBranchRequired": "يجب إدخال الفرع",
+  "withdrawAccountMinDigits": "رقم الحساب يجب أن يحتوي على 5 أرقام على الأقل",
+  "withdrawBankEncryptedNotice": "البيانات مشفرة وآمنة",
+  "withdrawEncryptedNotice": "المعلومات مشفرة وآمنة",
+  "withdrawBankTransferPending": "التحويل البنكي قيد المعالجة",
+  "withdrawCertSection": "الشهادات",
+  "withdrawCertHint": "ارفع شهادة الترخيص التجاري / الإعفاء",
+  "withdrawCertUploadBtn": "رفع شهادة",
+  "withdrawCertReplace": "استبدال الشهادة",
+  "withdrawDeclarationSection": "الإقرار",
+  "withdrawDeclarationText": "أُقرّ بمسؤوليتي الحصرية عن الإبلاغ الضريبي وفقاً للقانون",
+  "withdrawDeclarationSuffix": "(البند 6 في النظام)",
+  "withdrawTaxStatusTitle": "نوع النشاط التجاري",
+  "withdrawTaxStatusSubtitle": "اختر نوع نشاطك التجاري",
+  "withdrawTaxIndividual": "معفى من الضرائب",
+  "withdrawTaxIndividualSub": "معفى من تحصيل ضريبة القيمة المضافة",
+  "withdrawTaxIndividualBadge": "معفى",
+  "withdrawTaxBusiness": "مرخّص تجارياً",
+  "withdrawTaxBusinessSub": "ملزم بتحصيل ضريبة القيمة المضافة",
+  "withdrawIndividualTitle": "بيانات المعفى",
+  "withdrawIndividualDesc": "أدخل بيانات الإعفاء الخاصة بك",
+  "withdrawIndividualFormTitle": "نموذج المعفى",
+  "withdrawBusinessFormTitle": "نموذج المرخّص تجارياً",
+  "withdrawNoCertError": "يرجى رفع شهادة تجارية",
+  "withdrawNoDeclarationError": "يرجى تأكيد الإقرار",
+  "withdrawSelectBankError": "يرجى اختيار بنك",
+  "withdrawSubmitButton": "سحب {amount}",
+  "@withdrawSubmitButton": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "withdrawSubmitError": "خطأ في إرسال الطلب",
+  "withdrawSuccessTitle": "تم إرسال الطلب!",
+  "withdrawSuccessSubtitle": "طلب سحب بمبلغ {amount} تم إرساله بنجاح",
+  "@withdrawSuccessSubtitle": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "withdrawSuccessNotice": "التحويل البنكي سيتم خلال 3-5 أيام عمل",
+  "withdrawTimeline1Title": "تم إرسال الطلب",
+  "withdrawTimeline1Sub": "تم استلام الطلب في النظام",
+  "withdrawTimeline2Title": "قيد المعالجة",
+  "withdrawTimeline2Sub": "الفريق يعالج طلبك",
+  "withdrawTimeline3Title": "مكتمل",
+  "withdrawTimeline3Sub": "تم تحويل الأموال إلى حسابك",
+
+  "pendingCatsApproved": "تمت الموافقة على الفئة",
+  "pendingCatsRejected": "تم رفض الفئة",
+
+  "helpCenterTitle": "مركز المساعدة",
+  "helpCenterTooltip": "مساعدة",
+  "helpCenterCustomerWelcome": "مرحباً بك في مركز المساعدة",
+  "helpCenterCustomerFaq": "الأسئلة الشائعة للعملاء",
+  "helpCenterCustomerSupport": "دعم العملاء",
+  "helpCenterProviderWelcome": "مرحباً بك في مركز مساعدة مقدّمي الخدمات",
+  "helpCenterProviderFaq": "الأسئلة الشائعة لمقدّمي الخدمات",
+  "helpCenterProviderSupport": "دعم مقدّمي الخدمات",
+
+  "languageTitle": "اللغة",
+  "languageSectionLabel": "اختر اللغة",
+  "languageHe": "עברית",
+  "languageEn": "English",
+  "languageEs": "Español",
+  "languageAr": "العربية",
+
+  "systemWalletEnterNumber": "أدخل رقماً صالحاً",
+
+  "updateBannerText": "إصدار جديد متاح",
+  "updateNowButton": "تحديث الآن",
+
+  "xpLevelBronze": "مبتدئ",
+  "xpLevelSilver": "محترف",
+  "xpLevelGold": "ذهبي",
+
+  "bizAiTitle": "الذكاء التجاري",
+  "bizAiSubtitle": "تحليل وتوقعات مدعومة بالذكاء الاصطناعي",
+  "bizAiLoading": "جارٍ تحميل البيانات...",
+  "bizAiRefreshData": "تحديث البيانات",
+  "bizAiNoData": "لا توجد بيانات متاحة",
+  "bizAiError": "خطأ: {error}",
+  "@bizAiError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "bizAiSectionFinancial": "المالية",
+  "bizAiSectionMarket": "السوق",
+  "bizAiSectionAlerts": "التنبيهات",
+  "bizAiSectionAiOps": "عمليات الذكاء الاصطناعي",
+  "bizAiDailyCommission": "العمولة اليومية",
+  "bizAiWeeklyProjection": "التوقعات الأسبوعية",
+  "bizAiWeeklyForecast": "التوقعات الأسبوعية",
+  "bizAiExpectedRevenue": "الإيرادات المتوقعة",
+  "bizAiForecastBadge": "توقعات",
+  "bizAiActualToDate": "الفعلي حتى الآن",
+  "bizAiAccuracy": "الدقة",
+  "bizAiModelAccuracy": "دقة النموذج",
+  "bizAiModelAccuracyDetail": "دقة توقع الإيرادات",
+  "bizAiNoChartData": "لا توجد بيانات للرسم البياني",
+  "bizAiNoOrderData": "لا توجد بيانات طلبات",
+  "bizAiSevenDays": "7 أيام",
+  "bizAiLast7Days": "آخر 7 أيام",
+  "bizAiExecSummary": "ملخص تنفيذي",
+  "bizAiActivityToday": "نشاط اليوم",
+  "bizAiApprovalQueue": "قائمة الموافقات",
+  "bizAiPending": "{count} قيد الانتظار",
+  "@bizAiPending": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiPendingLabel": "قيد الانتظار",
+  "bizAiApproved": "موافق عليه",
+  "bizAiRejected": "مرفوض",
+  "bizAiApprovedTotal": "إجمالي الموافقات",
+  "bizAiTapToReview": "اضغط للمراجعة",
+  "bizAiCategoriesApproved": "الفئات الموافق عليها",
+  "bizAiNewCategories": "فئات جديدة",
+  "bizAiMarketOpportunities": "فرص السوق",
+  "bizAiMarketOppsCard": "فرص السوق",
+  "bizAiHighValueCategories": "فئات عالية القيمة",
+  "bizAiHighValueHint": "فئات ذات إمكانات إيرادات عالية",
+  "bizAiProviders": "{count} مقدّمي خدمات",
+  "@bizAiProviders": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiPopularSearches": "عمليات البحث الشائعة",
+  "bizAiNoSearchData": "لا توجد بيانات بحث",
+  "bizAiNichesNoProviders": "تخصصات بدون مقدّمي خدمات",
+  "bizAiNoOpportunities": "لا توجد فرص حالياً",
+  "bizAiRecruitForQuery": "تجنيد مقدّمي خدمات لـ \"{query}\"",
+  "@bizAiRecruitForQuery": {
+    "placeholders": {
+      "query": {"type": "String"}
+    }
+  },
+  "bizAiZeroResultsHint": "عمليات بحث بدون نتائج — فرصة للتجنيد",
+  "bizAiSearches": "عمليات بحث: {count}+",
+  "@bizAiSearches": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiSearchCount": "{count} عملية بحث",
+  "@bizAiSearchCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiAlertHistory": "سجل التنبيهات",
+  "bizAiAlertThreshold": "حد التنبيه",
+  "bizAiAlertThresholdHint": "الحد الأدنى لعمليات البحث للتنبيه",
+  "bizAiSaveThreshold": "حفظ الحد",
+  "bizAiReset": "إعادة تعيين",
+  "bizAiNoAlerts": "لا توجد تنبيهات",
+  "bizAiAlertCount": "{count} تنبيهات",
+  "@bizAiAlertCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiMinutesAgo": "قبل {minutes} دقيقة",
+  "@bizAiMinutesAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "bizAiHoursAgo": "قبل {hours} ساعات",
+  "@bizAiHoursAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "bizAiDaysAgo": "قبل {days} أيام",
+  "@bizAiDaysAgo": {
+    "placeholders": {
+      "days": {"type": "int"}
+    }
+  },
+  "tabProfile": "الملف الشخصي", "searchPlaceholder": "ابحث عن محترف، خدمة...", "searchTitle": "بحث", "discoverCategories": "اكتشف الفئات", "confirm": "تأكيد", "cancel": "إلغاء", "save": "حفظ", "submit": "إرسال", "next": "التالي", "back": "رجوع", "delete": "حذف", "currencySymbol": "₪", "statusPaidEscrow": "في انتظار الموافقة", "statusExpertCompleted": "مكتمل — في انتظار موافقتك", "statusCompleted": "مكتمل", "statusCancelled": "ملغي", "statusDispute": "في نزاع", "statusPendingPayment": "في انتظار الدفع", "profileCustomer": "عميل", "profileProvider": "مزود خدمة", "profileOrders": "الطلبات", "profileRating": "التقييم", "profileReviews": "المراجعات", "reviewsPlaceholder": "أخبرنا عن تجربتك...", "reviewSubmit": "إرسال مراجعة", "ratingLabel": "قيّم الخدمة", "walletBalance": "الرصيد", "openChat": "فتح المحادثة", "quickRequest": "طلب سريع", "trendingBadge": "رائج", "isCurrentRtl": "true", "taxDeclarationText": "أتحمل المسؤولية الكاملة عن الإبلاغ الضريبي وفقاً للقانون.", "loginTitle": "تسجيل الدخول", "loginSubtitle": "سجل الدخول إلى حسابك", "loginWelcomeBack": "مرحباً بعودتك!", "loginForgotPassword": "نسيت كلمة المرور؟", "loginSignUpFree": "سجل مجاناً", "loginNoAccount": "ليس لديك حساب؟ ", "loginRememberMe": "تذكرني", "loginAccountTitle": "دخول الحساب", "loginEmail": "البريد الإلكتروني", "loginPassword": "كلمة المرور", "loginButton": "دخول", "loginStats10k": "10K+", "loginStats50": "50+", "loginStats49": "4.9★", "errorGenericLogin": "خطأ في تسجيل الدخول", "subCategoryPrompt": "اختر فئة فرعية", "emptyActivityTitle": "لا يوجد نشاط", "emptyActivityCta": "ابدأ الآن", "errorNetworkTitle": "خطأ في الشبكة", "errorNetworkBody": "تحقق من اتصالك بالإنترنت", "errorProfileLoad": "خطأ في تحميل الملف الشخصي", "forgotPassword": "نسيت كلمة المرور؟", "signupButton": "التسجيل", "tosAgree": "أوافق على شروط الخدمة", "tosTitle": "شروط الخدمة", "tosVersion": "الإصدار 1.0", "urgentCustomerLabel": "خدمة عاجلة", "urgentProviderLabel": "فرص عاجلة", "urgentOpenButton": "فتح", "walletMinWithdraw": "الحد الأدنى للسحب", "withdrawalPending": "سحب قيد المعالجة", "withdrawFunds": "سحب الأموال",
+  "onboardingError": "خطأ: {error}", "@onboardingError": {"placeholders": {"error": {"type": "String"}}},
+  "onboardingUploadError": "خطأ في الرفع: {error}", "@onboardingUploadError": {"placeholders": {"error": {"type": "String"}}},
+  "onboardingWelcome": "!مرحباً",
+  "authError": "خطأ في المصادقة: {code}", "@authError": {"placeholders": {"code": {"type": "String"}}},
+
+  "availabilityUpdated": "تم تحديث التوفر",
+  "bizAiRecruitNow": "جنّد الآن",
+  "chatEmptyState": "لا توجد رسائل بعد",
+  "chatLastMessageDefault": "لا توجد رسالة أخيرة",
+  "chatSearchHint": "ابحث في المحادثات...",
+  "chatUserDefault": "مستخدم",
+  "deleteChatConfirm": "تأكيد",
+  "deleteChatContent": "هل أنت متأكد من حذف هذه المحادثة؟",
+  "deleteChatSuccess": "تم حذف المحادثة بنجاح",
+  "deleteChatTitle": "حذف المحادثة",
+  "disputeActionsSection": "إجراءات",
+  "disputeAdminNote": "ملاحظة المسؤول",
+  "disputeAdminNoteHint": "أضف ملاحظة (اختياري)",
+  "disputeArbitrationCenter": "مركز التحكيم",
+  "disputeChatHistory": "سجل المحادثة",
+  "disputeDescription": "الوصف",
+  "disputeEmptySubtitle": "لا توجد نزاعات مفتوحة حالياً",
+  "disputeEmptyTitle": "لا توجد نزاعات",
+  "disputeHint": "صف المشكلة بالتفصيل",
+  "disputeIdPrefix": "نزاع #",
+  "disputeIrreversible": "لا يمكن التراجع عن هذا الإجراء",
+  "disputeLockedEscrow": "محجوز في الضمان",
+  "disputeLockedSuffix": "₪",
+  "disputeNoChatId": "لا يوجد معرف محادثة",
+  "disputeNoMessages": "لا توجد رسائل",
+  "disputeNoReason": "لم يتم تقديم سبب",
+  "disputeOpenDisputes": "النزاعات المفتوحة",
+  "disputePartiesSection": "الأطراف",
+  "disputePartyProvider": "مقدّم الخدمة",
+  "disputeReasonSection": "سبب النزاع",
+  "disputeRefundLabel": "استرداد",
+  "disputeReleaseLabel": "تحرير الدفع",
+  "disputeResolving": "جاري المعالجة...",
+  "disputeSplitLabel": "تقسيم",
+  "disputeSystemSender": "النظام",
+  "disputeTapForDetails": "اضغط للتفاصيل",
+  "disputeTitle": "نزاع",
+  "editProfileTitle": "تعديل الملف الشخصي",
+  "helpCenterInputHint": "اكتب سؤالك هنا...",
+  "logoutButton": "تسجيل الخروج",
+  "markAllReadSuccess": "تم تحديد جميع الإشعارات كمقروءة",
+  "markedDoneSuccess": "تم التحديد كمنجز بنجاح",
+  "noCategoriesYet": "لا توجد فئات بعد",
+  "notifClearAll": "مسح الكل",
+  "notifEmptySubtitle": "ليس لديك إشعارات جديدة",
+  "notifEmptyTitle": "لا توجد إشعارات",
+  "notifOpen": "فتح",
+  "notificationsTitle": "الإشعارات",
+  "oppNotifTitle": "اهتمام جديد",
+  "pendingCatsApprove": "موافقة",
+  "pendingCatsEmptySubtitle": "لا توجد طلبات فئات معلقة",
+  "pendingCatsEmptyTitle": "لا توجد طلبات",
+  "pendingCatsImagePrompt": "ارفع صورة للفئة",
+  "pendingCatsProviderDesc": "وصف مقدّم الخدمة",
+  "pendingCatsReject": "رفض",
+  "pendingCatsSectionPending": "معلقة",
+  "pendingCatsSectionReviewed": "تمت المراجعة",
+  "pendingCatsStatusApproved": "تمت الموافقة",
+  "pendingCatsStatusRejected": "مرفوض",
+  "pendingCatsTitle": "طلبات الفئات",
+  "pendingCatsAiReason": "سبب الذكاء الاصطناعي",
+  "profileLoadError": "خطأ في تحميل الملف الشخصي",
+  "requestsBestValue": "أفضل قيمة",
+  "requestsFastResponse": "استجابة سريعة",
+  "requestsInterestedTitle": "المهتمون",
+  "requestsNoInterested": "لا يوجد مهتمون بعد",
+  "requestsTitle": "الطلبات",
+  "submitDispute": "إرسال النزاع",
+  "systemWalletFeePanel": "رسوم المنصة",
+  "systemWalletInvalidNumber": "رقم غير صالح",
+  "systemWalletUpdateFee": "تحديث الرسوم",
+  "tosAcceptButton": "أوافق",
+  "tosBindingNotice": "بالضغط على تأكيد، أنت توافق على شروط الخدمة",
+  "tosFullTitle": "شروط الخدمة الكاملة",
+  "tosLastUpdated": "آخر تحديث",
+  "withdrawExistingCert": "شهادة موجودة",
+  "withdrawUploadError": "خطأ في رفع الملف",
+  "xpAddAction": "إضافة",
+  "xpAddEventButton": "إضافة حدث",
+  "xpAddEventTitle": "إضافة حدث XP",
+  "xpDeleteEventTitle": "حذف الحدث",
+  "xpEditEventTitle": "تعديل حدث XP",
+  "xpEventAdded": "تمت إضافة الحدث بنجاح",
+  "xpEventDeleted": "تم حذف الحدث بنجاح",
+  "xpEventUpdated": "تم تحديث الحدث بنجاح",
+  "xpEventsEmpty": "لا توجد أحداث XP",
+  "xpEventsSection": "أحداث XP",
+  "xpFieldDesc": "الوصف",
+  "xpFieldId": "المعرف",
+  "xpFieldIdHint": "أدخل معرفاً فريداً",
+  "xpFieldName": "الاسم",
+  "xpFieldPoints": "النقاط",
+  "xpLevelsError": "خطأ في حفظ المستويات",
+  "xpLevelsSaved": "تم حفظ المستويات بنجاح",
+  "xpLevelsSubtitle": "حدد عتبات XP لكل مستوى",
+  "xpLevelsTitle": "مستويات XP",
+  "xpManagerSubtitle": "إدارة أحداث ومستويات XP",
+  "xpManagerTitle": "مدير XP",
+  "xpReservedId": "معرف محجوز",
+  "xpSaveAction": "حفظ",
+  "xpSaveLevels": "حفظ المستويات",
+  "xpTooltipDelete": "حذف",
+  "xpTooltipEdit": "تعديل",
+
+  "bizAiThresholdUpdated": "تم تحديث الحد إلى {value}",
+  "@bizAiThresholdUpdated": {
+    "placeholders": {
+      "value": {"type": "int"}
+    }
+  },
+  "disputeErrorPrefix": "خطأ: {error}",
+  "@disputeErrorPrefix": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "disputeExistingNote": "ملاحظة المسؤول: {note}",
+  "@disputeExistingNote": {
+    "placeholders": {
+      "note": {"type": "String"}
+    }
+  },
+  "disputeOpenedAt": "تم الفتح في {date}",
+  "@disputeOpenedAt": {
+    "placeholders": {
+      "date": {"type": "String"}
+    }
+  },
+  "disputeRefundSublabel": "استرداد كامل — {amount} ₪ للعميل",
+  "@disputeRefundSublabel": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "disputeReleaseSublabel": "تحرير — {amount} ₪ لمقدّم الخدمة",
+  "@disputeReleaseSublabel": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "disputeSplitSublabel": "تقسيم — {amount} ₪ لكل طرف",
+  "@disputeSplitSublabel": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "editCategorySaveError": "خطأ في الحفظ: {error}",
+  "@editCategorySaveError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "oppInterestChatMessage": "مرحباً، أنا {providerName} وأحب أن أساعد: {description}",
+  "@oppInterestChatMessage": {
+    "placeholders": {
+      "providerName": {"type": "String"},
+      "description": {"type": "String"}
+    }
+  },
+  "oppNotifBody": "{providerName} مهتم بفرصتك",
+  "@oppNotifBody": {
+    "placeholders": {
+      "providerName": {"type": "String"}
+    }
+  },
+  "pendingCatsErrorPrefix": "خطأ: {error}",
+  "@pendingCatsErrorPrefix": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "pendingCatsSubCategory": "فئة فرعية: {name}",
+  "@pendingCatsSubCategory": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "xpDeleteEventConfirm": "حذف {name}؟",
+  "@xpDeleteEventConfirm": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "xpErrorPrefix": "خطأ: {error}",
+  "@xpErrorPrefix": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "xpEventsCount": "{count} أحداث",
+  "@xpEventsCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  }
 }

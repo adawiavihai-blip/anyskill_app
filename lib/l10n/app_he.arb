@@ -1,88 +1,1031 @@
 {
   "@@locale": "he",
-  "@@last_modified": "2026-03-17",
+  "@@last_modified": "2026-04-01",
 
   "appName": "AnySkill",
+  "appSlogan": "המקצוענים שלך, במרחק נגיעה",
 
-  "greetingMorning":   "בוקר טוב",
+  "greetingMorning": "בוקר טוב",
   "greetingAfternoon": "אחה\"צ טובות",
-  "greetingEvening":   "ערב טוב",
-  "greetingNight":     "לילה טוב",
+  "greetingEvening": "ערב טוב",
+  "greetingNight": "לילה טוב",
+  "greetingSubMorning": "מה תרצה לעשות היום?",
+  "greetingSubAfternoon": "צריך עזרה עם משהו?",
+  "greetingSubEvening": "עדיין מחפש שירות?",
+  "greetingSubNight": "נתראה מחר!",
 
-  "searchPlaceholder": "חפש מקצוען, שירות...",
-  "searchTitle":       "חיפוש",
-  "discoverCategories":"גלה קטגוריות",
-
-  "tabHome":     "בית",
+  "tabHome": "בית",
   "tabBookings": "הזמנות",
-  "tabChat":     "צ'אט",
-  "tabWallet":   "ארנק",
-  "tabProfile":  "פרופיל",
+  "tabChat": "צ'אט",
+  "tabWallet": "ארנק",
 
-  "statusPaidEscrow":       "ממתין לאישור",
-  "statusExpertCompleted":  "הושלם — ממתין לאישורך",
-  "statusCompleted":        "הושלם",
-  "statusCancelled":        "בוטל",
-  "statusDispute":          "במחלוקת",
-  "statusPendingPayment":   "ממתין לתשלום",
+  "bookNow": "הזמן עכשיו",
+  "bookingCompleted": "ההזמנה הושלמה בהצלחה",
+  "close": "סגור",
+  "retryButton": "נסה שוב",
+  "saveChanges": "שמור שינויים",
+  "saveSuccess": "נשמר בהצלחה",
+  "saveError": "שגיאה בשמירה: {error}",
+  "@saveError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
 
-  "bookNow":        "הזמן עכשיו",
-  "quickRequest":   "בקשה מהירה",
-  "openChat":       "פתח שיחה",
-  "cancel":         "ביטול",
-  "confirm":        "אישור",
-  "submit":         "שלח",
-  "save":           "שמור",
-  "close":          "סגור",
-  "back":           "חזרה",
-  "next":           "הבא",
-
-  "walletBalance":      "יתרה ניתנת למשיכה",
-  "walletMinWithdraw":  "מינימום למשיכה: ₪50",
-  "withdrawFunds":      "משוך כספים",
-  "withdrawalPending":  "בקשת משיכה בטיפול",
-
-  "loginTitle":    "ברוכים הבאים ל-AnySkill",
-  "loginSubtitle": "פלטפורמת המקצוענים המובילה בישראל",
-  "loginEmail":    "כתובת אימייל",
-  "loginPassword": "סיסמה",
-  "loginButton":   "כניסה",
-  "signupButton":  "הרשמה",
-  "forgotPassword":"שכחתי סיסמה",
-
-  "profileProvider": "ספק שירות",
-  "profileCustomer": "לקוח",
-  "profileRating":   "דירוג",
-  "profileReviews":  "ביקורות",
-  "profileOrders":   "הזמנות",
-
-  "errorNetworkTitle":  "אין חיבור לאינטרנט",
-  "errorNetworkBody":   "בדוק את חיבור הרשת ונסה שוב",
-  "errorGeneric":       "אירעה שגיאה. נסה שוב",
-  "errorProfileLoad":   "שגיאה בטעינת הפרופיל",
-
-  "tosTitle":   "תנאי שימוש",
-  "tosVersion": "גרסה 2.0",
-  "tosAgree":   "קראתי ומסכים/ה לתנאים",
-
-  "urgentProviderLabel": "Pulse",
-  "urgentCustomerLabel": "דחוף",
-  "urgentOpenButton":    "פתח",
-
-  "trendingBadge":       "טרנד",
-  "subCategoryPrompt":   "בחר התמחות",
-
-  "emptyActivityTitle":  "אין פעילות עדיין",
-  "emptyActivityCta":    "פרסם בקשה ראשונה →",
-
-  "onlineStatus":  "זמין",
+  "defaultUserName": "משתמש",
+  "notLoggedIn": "לא מחובר",
+  "linkCopied": "הקישור הועתק",
+  "errorEmptyFields": "יש למלא את כל השדות",
+  "errorGeneric": "אירעה שגיאה. נסה שוב",
+  "errorInvalidEmail": "כתובת אימייל לא תקינה",
+  "whatsappError": "לא ניתן לפתוח WhatsApp",
+  "markAllReadTooltip": "סמן הכל כנקרא",
+  "onlineStatus": "זמין",
   "offlineStatus": "לא זמין",
+  "onlineToggleOn": "אתה עכשיו זמין",
+  "onlineToggleOff": "אתה עכשיו לא זמין",
 
+  "roleCustomer": "לקוח",
+  "roleProvider": "ספק שירות",
+
+  "loginAccountTitle": "התחבר לחשבון שלך",
+  "loginButton": "כניסה",
+  "loginEmail": "כתובת אימייל",
+  "loginForgotPassword": "שכחתי סיסמה",
+  "loginNoAccount": "אין לך חשבון? ",
+  "loginPassword": "סיסמה",
+  "loginRememberMe": "זכור אותי",
+  "loginSignUpFree": "הירשם בחינם",
+  "loginStats10k": "משתמשים",
+  "loginStats50": "קטגוריות",
+  "loginStats49": "דירוג ממוצע",
+  "loginWelcomeBack": "ברוך הבא חזרה!",
+
+  "signupAccountCreated": "החשבון נוצר בהצלחה!",
+  "signupEmailInUse": "כתובת האימייל כבר בשימוש",
+  "signupGenericError": "אירעה שגיאה בהרשמה",
+  "signupGoogleError": "שגיאה בהתחברות עם Google",
+  "signupNetworkError": "שגיאת רשת. בדוק את החיבור",
+  "signupNewCustomerBio": "לקוח חדש ב-AnySkill",
+  "signupNewProviderBio": "ספק שירות חדש ב-AnySkill",
+  "signupTosMustAgree": "יש לאשר את תנאי השימוש",
+  "signupWeakPassword": "הסיסמה חלשה מדי",
+
+  "forgotPasswordEmail": "כתובת אימייל",
+  "forgotPasswordError": "שגיאה בשליחת קישור איפוס",
+  "forgotPasswordSubmit": "שלח קישור איפוס",
+  "forgotPasswordSubtitle": "הזן את כתובת האימייל שלך ונשלח לך קישור לאיפוס הסיסמה",
+  "forgotPasswordSuccess": "קישור איפוס נשלח לאימייל שלך",
+  "forgotPasswordTitle": "שכחתי סיסמה",
+
+  "authError": "שגיאת אימות: {code}",
+  "@authError": {
+    "placeholders": {
+      "code": {"type": "String"}
+    }
+  },
+
+  "profileTitle": "הפרופיל שלי",
+  "profileFieldName": "שם מלא",
+  "profileFieldNameHint": "הזן את שמך המלא",
+  "profileFieldRole": "סוג משתמש",
+  "profileFieldCategoryMain": "תחום עיסוק",
+  "profileFieldCategoryMainHint": "בחר את תחום העיסוק שלך",
+  "profileFieldCategorySub": "תת-קטגוריה",
+  "profileFieldCategorySubHint": "בחר התמחות ספציפית",
+  "profileFieldPrice": "מחיר לשעה (₪)",
+  "profileFieldPriceHint": "הזן מחיר לשעה",
+  "profileFieldResponseTime": "זמן תגובה (דקות)",
+  "profileFieldResponseTimeHint": "זמן תגובה ממוצע",
+  "profileFieldTaxId": "מספר עוסק מורשה / ח.פ.",
+  "profileFieldTaxIdHint": "הזן מספר עוסק מורשה",
+  "profileFieldTaxIdHelp": "מספר זה ישמש להפקת חשבוניות",
+
+  "editProfileAbout": "קצת עליי",
+  "editProfileAboutHint": "ספר ללקוחות על הניסיון שלך...",
+  "editProfileCancellationPolicy": "מדיניות ביטול",
+  "editProfileCancellationHint": "בחר מדיניות ביטול",
+  "editProfileGallery": "גלריה",
+  "editProfileQuickTags": "תגיות מהירות",
+  "editProfileTagsHint": "הוסף תגיות לפרופיל שלך",
+  "editProfileTagsSelected": "{count} נבחרו",
+  "@editProfileTagsSelected": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+
+  "editCategoryTitle": "ערוך קטגוריה",
+  "editCategoryNameLabel": "שם הקטגוריה",
+  "editCategoryChangePic": "שנה תמונה",
+
+  "shareProfileTitle": "שתף פרופיל",
+  "shareProfileTooltip": "שתף את הפרופיל שלך",
+  "shareProfileCopyLink": "העתק קישור",
+  "shareProfileWhatsapp": "שתף בוואטסאפ",
+
+  "statBalance": "יתרה",
+
+  "searchHintExperts": "חפש מקצוענים...",
+  "searchDefaultTitle": "חיפוש",
+  "searchDefaultCity": "ישראל",
+  "searchDefaultExpert": "מקצוען",
+  "searchSectionCategories": "קטגוריות",
+  "searchSectionResultsFor": "תוצאות עבור \"{query}\"",
+  "@searchSectionResultsFor": {
+    "placeholders": {
+      "query": {"type": "String"}
+    }
+  },
+  "searchNoResultsFor": "אין תוצאות עבור \"{query}\"",
+  "@searchNoResultsFor": {
+    "placeholders": {
+      "query": {"type": "String"}
+    }
+  },
+  "searchNoCategoriesBody": "לא נמצאו קטגוריות",
+  "searchPerHour": "₪/שעה",
+  "searchRecommendedBadge": "מומלץ",
+  "searchChipHomeVisit": "ביקור בית",
+  "searchChipWeekend": "זמין בסופ\"ש",
+  "searchDatePickerHint": "בחר תאריך",
+  "searchTourSearchTitle": "חיפוש מקצוענים",
+  "searchTourSearchDesc": "חפש לפי שם, שירות או קטגוריה",
+  "searchTourSuggestionsTitle": "הצעות חכמות",
+  "searchTourSuggestionsDesc": "הצעות מותאמות אישית על בסיס חיפושים קודמים",
+  "searchUrgencyMorning": "בוקר",
+  "searchUrgencyAfternoon": "צהריים",
+  "searchUrgencyEvening": "ערב",
+
+  "catResultsSearchHint": "חפש בתוך הקטגוריה...",
+  "catResultsNoExperts": "אין מקצוענים בקטגוריה {category}",
+  "@catResultsNoExperts": {
+    "placeholders": {
+      "category": {"type": "String"}
+    }
+  },
+  "catResultsNoResults": "אין תוצאות",
+  "catResultsNoResultsHint": "נסה לשנות את החיפוש שלך",
+  "catResultsPerHour": "₪/שעה",
+  "catResultsOrderCount": "{count} הזמנות",
+  "@catResultsOrderCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "catResultsResponseTime": "תגובה תוך {minutes} דק'",
+  "@catResultsResponseTime": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "catResultsRecommended": "מומלץ",
+  "catResultsTopRated": "דירוג גבוה",
+  "catResultsUnder100": "עד ₪100",
+  "catResultsClearFilters": "נקה מסננים",
+  "catResultsBeFirst": "היה הראשון!",
+  "catResultsExpertDefault": "מקצוען",
+  "catResultsLoadMore": "טען עוד",
+  "catResultsAvailableSlots": "משבצות פנויות",
+  "catResultsNoAvailability": "אין זמינות",
+  "catResultsFullBooking": "תפוס",
+  "catResultsWhenFree": "מתי פנוי?",
+
+  "chatListTitle": "הודעות",
+
+  "expertSectionAbout": "אודות",
+  "expertSectionService": "השירות",
+  "expertSectionSchedule": "זמינות",
+  "expertBioPlaceholder": "אין ביוגרפיה עדיין",
+  "expertBioReadMore": "קרא עוד",
+  "expertBioShowLess": "הצג פחות",
+  "expertNoReviews": "אין ביקורות עדיין",
+  "expertDefaultReviewer": "משתמש",
+  "expertProviderResponse": "תגובת הספק",
+  "expertAddReply": "הוסף תגובה",
+  "expertAddReplyTitle": "הוסף תגובה לביקורת",
+  "expertReplyHint": "כתוב תגובה...",
+  "expertPublishReply": "פרסם תגובה",
+  "expertReplyError": "שגיאה בפרסום תגובה",
+  "expertSelectDateTime": "בחר תאריך ושעה",
+  "expertSelectTime": "בחר שעה",
+  "expertBookForTime": "הזמן ל-{time}",
+  "@expertBookForTime": {
+    "placeholders": {
+      "time": {"type": "String"}
+    }
+  },
+  "expertStartingFrom": "החל מ-₪{price}",
+  "@expertStartingFrom": {
+    "placeholders": {
+      "price": {"type": "String"}
+    }
+  },
+  "expertBookingSummaryTitle": "סיכום הזמנה",
+  "expertSummaryRowService": "שירות",
+  "expertSummaryRowDate": "תאריך",
+  "expertSummaryRowTime": "שעה",
+  "expertSummaryRowPrice": "מחיר",
+  "expertSummaryRowIncluded": "כולל",
+  "expertSummaryRowProtection": "הגנת קונה",
+  "expertSummaryRowTotal": "סה\"כ",
+  "expertConfirmPaymentButton": "אשר ושלם",
+  "expertVerifiedBooking": "הזמנה מאומתת",
+  "expertInsufficientBalance": "אין מספיק יתרה",
+  "expertEscrowSuccess": "התשלום אושר! הכסף נעול באסקרו",
+  "expertTransactionTitle": "תשלום ל-{name}",
+  "@expertTransactionTitle": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "expertSystemMessage": "הזמנה אושרה ל-{date} בשעה {time}. ₪{amount} נעולים באסקרו.",
+  "@expertSystemMessage": {
+    "placeholders": {
+      "date": {"type": "String"},
+      "time": {"type": "String"},
+      "amount": {"type": "String"}
+    }
+  },
+  "expertCancellationNotice": "מדיניות {policy}: ביטול חינם עד {deadline}. לאחר מכן {penalty}% קנס.",
+  "@expertCancellationNotice": {
+    "placeholders": {
+      "policy": {"type": "String"},
+      "deadline": {"type": "String"},
+      "penalty": {"type": "String"}
+    }
+  },
+  "expertCancellationNoDeadline": "מדיניות {policy}: {description}",
+  "@expertCancellationNoDeadline": {
+    "placeholders": {
+      "policy": {"type": "String"},
+      "description": {"type": "String"}
+    }
+  },
+
+  "financeTitle": "כספים",
+  "financeAvailableBalance": "יתרה זמינה",
+  "financePending": "בהמתנה",
+  "financeProcessing": "בעיבוד",
+  "financeRecentActivity": "פעילות אחרונה",
+  "financeNoTransactions": "אין עסקאות",
+  "financeWithdrawButton": "משוך כספים",
+  "financeMinWithdraw": "מינימום למשיכה: ₪50",
+  "financeTrustBadge": "כספך מוגן",
+  "financeReceivedFrom": "התקבל מ-{name}",
+  "@financeReceivedFrom": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "financePaidTo": "שולם ל-{name}",
+  "@financePaidTo": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "financeError": "שגיאה: {error}",
+  "@financeError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+
+  "disputeConfirmRefund": "אישור החזר כספי",
+  "disputeConfirmRelease": "אישור שחרור תשלום",
+  "disputeConfirmSplit": "אישור חלוקה",
+  "disputePartyCustomer": "הלקוח",
+  "disputeRefundBody": "₪{amount} יוחזרו ל-{customerName}",
+  "@disputeRefundBody": {
+    "placeholders": {
+      "amount": {"type": "String"},
+      "customerName": {"type": "String"}
+    }
+  },
+  "disputeReleaseBody": "₪{netAmount} ישוחררו ל-{expertName} (עמלה {feePercent}%)",
+  "@disputeReleaseBody": {
+    "placeholders": {
+      "netAmount": {"type": "String"},
+      "expertName": {"type": "String"},
+      "feePercent": {"type": "String"}
+    }
+  },
+  "disputeSplitBody": "חלוקה: ₪{halfAmount} לכל צד. ספק מקבל ₪{halfNet}, פלטפורמה ₪{platformFee}",
+  "@disputeSplitBody": {
+    "placeholders": {
+      "halfAmount": {"type": "String"},
+      "halfNet": {"type": "String"},
+      "platformFee": {"type": "String"}
+    }
+  },
+  "disputeResolvedRefund": "המחלוקת נפתרה — בוצע החזר כספי",
+  "disputeResolvedRelease": "המחלוקת נפתרה — התשלום שוחרר",
+  "disputeResolvedSplit": "המחלוקת נפתרה — הסכום חולק",
+  "disputeTypeAudio": "הקלטה",
+  "disputeTypeImage": "תמונה",
+  "disputeTypeLocation": "מיקום",
+
+  "releasePaymentError": "שגיאה בשחרור התשלום",
+
+  "oppTitle": "הזדמנויות",
+  "oppAllCategories": "כל הקטגוריות",
+  "oppEmptyAll": "אין הזדמנויות כרגע",
+  "oppEmptyAllSubtitle": "בדוק שוב מאוחר יותר",
+  "oppEmptyCategory": "אין הזדמנויות בקטגוריה זו",
+  "oppEmptyCategorySubtitle": "נסה קטגוריה אחרת",
+  "oppTakeOpportunity": "תפוס הזדמנות",
+  "oppInterested": "מעוניין",
+  "oppAlreadyInterested": "כבר הבעת עניין",
+  "oppAlreadyExpressed": "כבר הבעת עניין בבקשה זו",
+  "oppAlready3Interested": "כבר יש 3 מתעניינים",
+  "oppInterestSuccess": "עניינך נרשם בהצלחה!",
+  "oppRequestClosed3": "הבקשה נסגרה — 3 מתעניינים",
+  "oppRequestClosedBtn": "הבקשה נסגרה",
+  "oppRequestUnavailable": "הבקשה אינה זמינה יותר",
+  "oppDefaultClient": "לקוח",
+  "oppHighDemand": "ביקוש גבוה",
+  "oppQuickBid": "הצעה מהירה",
+  "oppQuickBidMessage": "שלום {clientName}, אני {providerName} ואשמח לעזור!",
+  "@oppQuickBidMessage": {
+    "placeholders": {
+      "clientName": {"type": "String"},
+      "providerName": {"type": "String"}
+    }
+  },
+  "oppEstimatedEarnings": "הכנסה משוערת",
+  "oppAfterFee": "לאחר עמלה",
+  "oppWalletHint": "הכנסות נכנסות לארנק שלך",
+  "oppXpToNextLevel": "עוד {xpNeeded} XP לרמת {levelName}",
+  "@oppXpToNextLevel": {
+    "placeholders": {
+      "xpNeeded": {"type": "int"},
+      "levelName": {"type": "String"}
+    }
+  },
+  "oppMaxLevel": "רמה מקסימלית!",
+  "oppBoostEarned": "בוסט פרופיל הושג!",
+  "oppBoostProgress": "{count}/3 הזדמנויות לבוסט",
+  "@oppBoostProgress": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "oppProfileBoosted": "פרופיל מקודם! נותרו {timeLabel}",
+  "@oppProfileBoosted": {
+    "placeholders": {
+      "timeLabel": {"type": "String"}
+    }
+  },
+  "oppError": "שגיאה: {error}",
+  "@oppError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "oppTimeJustNow": "הרגע",
+  "oppTimeMinAgo": "לפני {minutes} דק'",
+  "@oppTimeMinAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "oppTimeHourAgo": "לפני {hours} שעות",
+  "@oppTimeHourAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "oppTimeDayAgo": "לפני {days} ימים",
+  "@oppTimeDayAgo": {
+    "placeholders": {
+      "days": {"type": "int"}
+    }
+  },
+  "oppTimeHours": "{hours} שעות",
+  "@oppTimeHours": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "oppTimeMinutes": "{minutes} דקות",
+  "@oppTimeMinutes": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "oppUnderReviewTitle": "הפרופיל שלך בבדיקה",
+  "oppUnderReviewSubtitle": "צוות AnySkill בודק את הפרופיל שלך",
+  "oppUnderReviewBody": "נעדכן אותך ברגע שהאימות יושלם",
+  "oppUnderReviewContact": "צור קשר עם התמיכה",
+  "oppUnderReviewStep1": "פרופיל נשלח",
+  "oppUnderReviewStep2": "בבדיקה",
+  "oppUnderReviewStep3": "אישור סופי",
+
+  "requestsEmpty": "אין בקשות",
+  "requestsEmptySubtitle": "עדיין לא פורסמו בקשות",
+  "requestsChatNow": "שלח הודעה",
+  "requestsClosed": "סגור",
+  "requestsConfirmPay": "אשר ושלם",
+  "requestsDefaultExpert": "מקצוען",
+  "requestsEscrowTooltip": "הכסף נשמר באסקרו עד להשלמת העבודה",
+  "requestsMatchLabel": "התאמה",
+  "requestsTopMatch": "התאמה מובילה",
+  "requestsVerifiedBadge": "מאומת",
+  "requestsMoneyProtected": "כספך מוגן",
+  "requestsWaiting": "ממתין",
+  "requestsWaitingProviders": "ממתין לספקים...",
+  "requestsJustNow": "הרגע",
+  "requestsMinutesAgo": "לפני {minutes} דק'",
+  "@requestsMinutesAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "requestsHoursAgo": "לפני {hours} שעות",
+  "@requestsHoursAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "requestsDaysAgo": "לפני {days} ימים",
+  "@requestsDaysAgo": {
+    "placeholders": {
+      "days": {"type": "int"}
+    }
+  },
+  "requestsInterested": "{count} מתעניינים",
+  "@requestsInterested": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "requestsViewInterested": "צפה ב-{count} מתעניינים",
+  "@requestsViewInterested": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "requestsOrderCount": "{count} הזמנות",
+  "@requestsOrderCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "requestsHiredAgo": "נשכר {label}",
+  "@requestsHiredAgo": {
+    "placeholders": {
+      "label": {"type": "String"}
+    }
+  },
+  "requestsPricePerHour": "₪{price}/שעה",
+  "@requestsPricePerHour": {
+    "placeholders": {
+      "price": {"type": "String"}
+    }
+  },
+
+  "timeNow": "עכשיו",
+  "timeOneHour": "שעה",
+  "timeMinutesAgo": "לפני {minutes} דק'",
+  "@timeMinutesAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "timeHoursAgo": "לפני {hours} שעות",
+  "@timeHoursAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+
+  "urgentBannerRequests": "בקשות דחופות",
+  "urgentBannerPending": "ממתינות",
+  "urgentBannerServiceNeeded": "דרוש שירות",
+  "urgentBannerCustomerWaiting": "לקוח ממתין",
+
+  "calendarTitle": "לוח שנה",
+  "calendarRefresh": "רענן",
+  "calendarNoEvents": "אין אירועים",
+  "calendarStatusCompleted": "הושלם",
+  "calendarStatusPending": "ממתין",
+  "calendarStatusWaiting": "בהמתנה",
+
+  "creditsLabel": "קרדיטים",
+  "creditsDiscountAvailable": "הנחה של {discount}% זמינה!",
+  "@creditsDiscountAvailable": {
+    "placeholders": {
+      "discount": {"type": "int"}
+    }
+  },
+  "creditsToNextDiscount": "עוד {remaining} קרדיטים להנחה הבאה",
+  "@creditsToNextDiscount": {
+    "placeholders": {
+      "remaining": {"type": "int"}
+    }
+  },
+
+  "serviceFullSession": "שיעור מלא",
+  "serviceSingleLesson": "שיעור בודד",
+  "serviceExtendedLesson": "שיעור מורחב",
+
+  "validationNameRequired": "שם הוא שדה חובה",
+  "validationNameLength": "שם חייב להכיל לפחות 2 תווים",
+  "validationNameTooLong": "שם ארוך מדי",
+  "validationNameForbidden": "השם מכיל תווים אסורים",
+  "validationCategoryRequired": "יש לבחור קטגוריה",
+  "validationRoleRequired": "יש לבחור סוג משתמש",
+  "validationPriceInvalid": "מחיר לא תקין",
+  "validationPricePositive": "המחיר חייב להיות חיובי",
+  "validationAboutTooLong": "התיאור ארוך מדי",
+  "validationAboutForbidden": "התיאור מכיל תווים אסורים",
+  "validationFieldForbidden": "השדה מכיל תווים אסורים",
+  "validationUrlHttps": "הקישור חייב להתחיל ב-https://",
+
+  "vipSheetHeader": "AnySkill VIP",
+  "vipPriceMonthly": "₪99/חודש",
+  "vipActivateButton": "הפעל VIP",
+  "vipActivationSuccess": "VIP הופעל בהצלחה!",
+  "vipInsufficientBalance": "אין מספיק יתרה להפעלת VIP",
+  "vipInsufficientTooltip": "טען את הארנק שלך כדי להפעיל VIP",
+  "vipBenefit1": "קידום בתוצאות חיפוש",
+  "vipBenefit2": "תג VIP בפרופיל",
+  "vipBenefit3": "עדיפות בהזדמנויות",
+  "vipBenefit4": "תמיכה מועדפת",
+
+  "withdrawMinBalance": "הסכום המינימלי למשיכה הוא {amount} ₪",
+  "@withdrawMinBalance": {
+    "placeholders": {
+      "amount": {"type": "int"}
+    }
+  },
+  "withdrawAvailableBalance": "יתרה זמינה למשיכה",
+  "withdrawBankSection": "פרטי בנק",
+  "withdrawBankName": "שם הבנק",
+  "withdrawBankBranch": "סניף",
+  "withdrawBankAccount": "מספר חשבון",
+  "withdrawBankRequired": "יש להזין שם בנק",
+  "withdrawBranchRequired": "יש להזין סניף",
+  "withdrawAccountMinDigits": "מספר חשבון חייב להכיל לפחות 5 ספרות",
+  "withdrawBankEncryptedNotice": "הפרטים מוצפנים ומאובטחים",
+  "withdrawEncryptedNotice": "המידע מוצפן ומאובטח",
+  "withdrawBankTransferPending": "העברה בנקאית בטיפול",
+  "withdrawCertSection": "אישורים",
+  "withdrawCertHint": "העלה תעודת עוסק מורשה/פטור",
+  "withdrawCertUploadBtn": "העלה אישור",
+  "withdrawCertReplace": "החלף אישור",
+  "withdrawDeclarationSection": "הצהרה",
+  "withdrawDeclarationText": "אני מצהיר/ה על אחריותי הבלעדית לדיווח מס כחוק",
+  "withdrawDeclarationSuffix": "(סעיף 6 בתקנון)",
+  "withdrawTaxStatusTitle": "סוג עוסק",
+  "withdrawTaxStatusSubtitle": "בחר את סוג העוסק שלך",
+  "withdrawTaxIndividual": "עוסק פטור",
+  "withdrawTaxIndividualSub": "פטור מגביית מע\"מ",
+  "withdrawTaxIndividualBadge": "פטור",
+  "withdrawTaxBusiness": "עוסק מורשה",
+  "withdrawTaxBusinessSub": "מחויב בגביית מע\"מ",
+  "withdrawIndividualTitle": "פרטי עוסק פטור",
+  "withdrawIndividualDesc": "הזן את פרטי העוסק הפטור שלך",
+  "withdrawIndividualFormTitle": "טופס עוסק פטור",
+  "withdrawBusinessFormTitle": "טופס עוסק מורשה",
+  "withdrawNoCertError": "יש להעלות אישור עוסק",
+  "withdrawNoDeclarationError": "יש לאשר את ההצהרה",
+  "withdrawSelectBankError": "יש לבחור בנק",
+  "withdrawSubmitButton": "משוך {amount}",
+  "@withdrawSubmitButton": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "withdrawSubmitError": "שגיאה בשליחת הבקשה",
+  "withdrawSuccessTitle": "הבקשה נשלחה!",
+  "withdrawSuccessSubtitle": "בקשת המשיכה על סך {amount} נשלחה בהצלחה",
+  "@withdrawSuccessSubtitle": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "withdrawSuccessNotice": "העברה בנקאית תתבצע תוך 3-5 ימי עסקים",
+  "withdrawTimeline1Title": "בקשה נשלחה",
+  "withdrawTimeline1Sub": "הבקשה התקבלה במערכת",
+  "withdrawTimeline2Title": "בטיפול",
+  "withdrawTimeline2Sub": "הצוות מעבד את הבקשה",
+  "withdrawTimeline3Title": "הושלם",
+  "withdrawTimeline3Sub": "הכסף הועבר לחשבונך",
+
+  "pendingCatsApproved": "הקטגוריה אושרה",
+  "pendingCatsRejected": "הקטגוריה נדחתה",
+
+  "helpCenterTitle": "מרכז עזרה",
+  "helpCenterTooltip": "עזרה",
+  "helpCenterCustomerWelcome": "ברוך הבא למרכז העזרה",
+  "helpCenterCustomerFaq": "שאלות נפוצות ללקוחות",
+  "helpCenterCustomerSupport": "תמיכת לקוחות",
+  "helpCenterProviderWelcome": "ברוך הבא למרכז העזרה לספקים",
+  "helpCenterProviderFaq": "שאלות נפוצות לספקים",
+  "helpCenterProviderSupport": "תמיכת ספקים",
+
+  "languageTitle": "שפה",
+  "languageSectionLabel": "בחר שפה",
+  "languageHe": "עברית",
+  "languageEn": "English",
+  "languageEs": "Español",
+  "languageAr": "العربية",
+
+  "systemWalletEnterNumber": "הזן מספר תקין",
+
+  "updateBannerText": "גרסה חדשה זמינה",
+  "updateNowButton": "עדכן עכשיו",
+
+  "xpLevelBronze": "טירון",
+  "xpLevelSilver": "מקצוען",
+  "xpLevelGold": "זהב",
+
+  "bizAiTitle": "בינה עסקית",
+  "bizAiSubtitle": "ניתוח וחיזוי מבוסס AI",
+  "bizAiLoading": "טוען נתונים...",
+  "bizAiRefreshData": "רענן נתונים",
+  "bizAiNoData": "אין נתונים זמינים",
+  "bizAiError": "שגיאה: {error}",
+  "@bizAiError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "bizAiSectionFinancial": "כספים",
+  "bizAiSectionMarket": "שוק",
+  "bizAiSectionAlerts": "התראות",
+  "bizAiSectionAiOps": "פעולות AI",
+  "bizAiDailyCommission": "עמלה יומית",
+  "bizAiWeeklyProjection": "תחזית שבועית",
+  "bizAiWeeklyForecast": "תחזית שבועית",
+  "bizAiExpectedRevenue": "הכנסה צפויה",
+  "bizAiForecastBadge": "תחזית",
+  "bizAiActualToDate": "בפועל עד כה",
+  "bizAiAccuracy": "דיוק",
+  "bizAiModelAccuracy": "דיוק המודל",
+  "bizAiModelAccuracyDetail": "דיוק חיזוי ההכנסות",
+  "bizAiNoChartData": "אין נתונים לגרף",
+  "bizAiNoOrderData": "אין נתוני הזמנות",
+  "bizAiSevenDays": "7 ימים",
+  "bizAiLast7Days": "7 ימים אחרונים",
+  "bizAiExecSummary": "סיכום מנהלים",
+  "bizAiActivityToday": "פעילות היום",
+  "bizAiApprovalQueue": "תור אישורים",
+  "bizAiPending": "{count} ממתינים",
+  "@bizAiPending": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiPendingLabel": "ממתינים",
+  "bizAiApproved": "מאושר",
+  "bizAiRejected": "נדחה",
+  "bizAiApprovedTotal": "סה\"כ אושרו",
+  "bizAiTapToReview": "לחץ לבדיקה",
+  "bizAiCategoriesApproved": "קטגוריות שאושרו",
+  "bizAiNewCategories": "קטגוריות חדשות",
+  "bizAiMarketOpportunities": "הזדמנויות שוק",
+  "bizAiMarketOppsCard": "הזדמנויות שוק",
+  "bizAiHighValueCategories": "קטגוריות בעלות ערך גבוה",
+  "bizAiHighValueHint": "קטגוריות עם פוטנציאל הכנסה גבוה",
+  "bizAiProviders": "{count} ספקים",
+  "@bizAiProviders": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiPopularSearches": "חיפושים פופולריים",
+  "bizAiNoSearchData": "אין נתוני חיפוש",
+  "bizAiNichesNoProviders": "נישות ללא ספקים",
+  "bizAiNoOpportunities": "אין הזדמנויות כרגע",
+  "bizAiRecruitForQuery": "גייס ספקים עבור \"{query}\"",
+  "@bizAiRecruitForQuery": {
+    "placeholders": {
+      "query": {"type": "String"}
+    }
+  },
+  "bizAiZeroResultsHint": "חיפושים ללא תוצאות — הזדמנות לגיוס",
+  "bizAiSearches": "חיפושים: {count}+",
+  "@bizAiSearches": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiSearchCount": "{count} חיפושים",
+  "@bizAiSearchCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiAlertHistory": "היסטוריית התראות",
+  "bizAiAlertThreshold": "סף התראה",
+  "bizAiAlertThresholdHint": "מספר חיפושים מינימלי להתראה",
+  "bizAiSaveThreshold": "שמור סף",
+  "bizAiReset": "אפס",
+  "bizAiNoAlerts": "אין התראות",
+  "bizAiAlertCount": "{count} התראות",
+  "@bizAiAlertCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiMinutesAgo": "לפני {minutes} דק'",
+  "@bizAiMinutesAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "bizAiHoursAgo": "לפני {hours} שעות",
+  "@bizAiHoursAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "bizAiDaysAgo": "לפני {days} ימים",
+  "@bizAiDaysAgo": {
+    "placeholders": {
+      "days": {"type": "int"}
+    }
+  },
+
+  "tabProfile": "פרופיל",
+  "searchPlaceholder": "חפש מקצוען, שירות...",
+  "searchTitle": "חיפוש",
+  "discoverCategories": "גלה קטגוריות",
+  "confirm": "אישור",
+  "cancel": "ביטול",
+  "save": "שמור",
+  "submit": "שלח",
+  "next": "הבא",
+  "back": "חזור",
+  "delete": "מחק",
   "currencySymbol": "₪",
+  "statusPaidEscrow": "ממתין לאישור",
+  "statusExpertCompleted": "הושלם — ממתין לאישורך",
+  "statusCompleted": "הושלם",
+  "statusCancelled": "בוטל",
+  "statusDispute": "במחלוקת",
+  "statusPendingPayment": "ממתין לתשלום",
+  "profileCustomer": "לקוח",
+  "profileProvider": "ספק שירות",
+  "profileOrders": "הזמנות",
+  "profileRating": "דירוג",
+  "profileReviews": "ביקורות",
+  "reviewsPlaceholder": "ספר לנו על החוויה שלך...",
+  "reviewSubmit": "שלח ביקורת",
+  "ratingLabel": "דרג את השירות",
+  "walletBalance": "יתרה",
+  "openChat": "פתח צ'אט",
+  "quickRequest": "בקשה מהירה",
+  "trendingBadge": "טרנדי",
+  "isCurrentRtl": "true",
+  "taxDeclarationText": "אני מצהיר/ה על אחריותי הבלעדית לדיווח מס כחוק. ידוע לי כי AnySkill אינה מעסיקתי ואינה מנכה מס במקור.",
+  "loginTitle": "כניסה",
+  "loginSubtitle": "התחבר לחשבון שלך",
+  "loginWelcomeBack": "ברוך שובך!",
+  "loginForgotPassword": "שכחת סיסמה?",
+  "loginSignUpFree": "הירשם בחינם",
+  "loginNoAccount": "אין לך חשבון? ",
+  "loginRememberMe": "זכור אותי",
+  "loginAccountTitle": "כניסה לחשבון",
+  "loginEmail": "כתובת אימייל",
+  "loginPassword": "סיסמה",
+  "loginButton": "התחבר",
+  "loginStats10k": "10K+",
+  "loginStats50": "50+",
+  "loginStats49": "4.9★",
+  "errorGenericLogin": "שגיאה בהתחברות",
+  "subCategoryPrompt": "בחר תת-קטגוריה",
+  "emptyActivityTitle": "אין פעילות",
+  "emptyActivityCta": "התחל עכשיו",
+  "errorNetworkTitle": "שגיאת רשת",
+  "errorNetworkBody": "בדוק את חיבור האינטרנט שלך",
+  "errorProfileLoad": "שגיאה בטעינת הפרופיל",
+  "forgotPassword": "שכחת סיסמה?",
+  "signupButton": "הירשם",
+  "tosAgree": "אני מסכים/ה לתנאי השימוש",
+  "tosTitle": "תנאי שימוש",
+  "tosVersion": "גרסה 1.0",
+  "urgentCustomerLabel": "שירות דחוף",
+  "urgentProviderLabel": "הזדמנויות דחופות",
+  "urgentOpenButton": "פתח",
+  "walletMinWithdraw": "מינימום למשיכה",
+  "withdrawalPending": "משיכה בטיפול",
+  "withdrawFunds": "משוך כספים",
+  "onboardingError": "שגיאה: {error}",
+  "@onboardingError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "onboardingUploadError": "שגיאה בהעלאה: {error}",
+  "@onboardingUploadError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "onboardingWelcome": "ברוכים הבאים!",
+  "authError": "שגיאת אימות: {code}",
+  "@authError": {
+    "placeholders": {
+      "code": {"type": "String"}
+    }
+  },
 
-  "taxDeclarationText": "אני מצהיר/ה על אחריותי הבלעדית לדיווח מס כחוק (סעיף 6 בתקנון). ידוע לי כי AnySkill אינה מעסיקתי ואינה מנכה מס במקור.",
+  "availabilityUpdated": "הזמינות עודכנה",
+  "bizAiRecruitNow": "גייס עכשיו",
+  "chatEmptyState": "אין הודעות עדיין",
+  "chatLastMessageDefault": "אין הודעה אחרונה",
+  "chatSearchHint": "חפש בצ'אטים...",
+  "chatUserDefault": "משתמש",
+  "deleteChatConfirm": "אישור",
+  "deleteChatContent": "האם אתה בטוח שברצונך למחוק את השיחה?",
+  "deleteChatSuccess": "השיחה נמחקה בהצלחה",
+  "deleteChatTitle": "מחיקת שיחה",
+  "disputeActionsSection": "פעולות",
+  "disputeAdminNote": "הערת מנהל",
+  "disputeAdminNoteHint": "הוסף הערה (אופציונלי)",
+  "disputeArbitrationCenter": "מרכז בוררות",
+  "disputeChatHistory": "היסטוריית צ'אט",
+  "disputeDescription": "תיאור",
+  "disputeEmptySubtitle": "אין מחלוקות פתוחות כרגע",
+  "disputeEmptyTitle": "אין מחלוקות",
+  "disputeHint": "תאר את הבעיה בפירוט",
+  "disputeIdPrefix": "מחלוקת #",
+  "disputeIrreversible": "פעולה זו אינה ניתנת לביטול",
+  "disputeLockedEscrow": "נעול באסקרו",
+  "disputeLockedSuffix": "₪",
+  "disputeNoChatId": "אין מזהה צ'אט",
+  "disputeNoMessages": "אין הודעות",
+  "disputeNoReason": "לא צוינה סיבה",
+  "disputeOpenDisputes": "מחלוקות פתוחות",
+  "disputePartiesSection": "הצדדים",
+  "disputePartyProvider": "הספק",
+  "disputeReasonSection": "סיבת המחלוקת",
+  "disputeRefundLabel": "החזר כספי",
+  "disputeReleaseLabel": "שחרור תשלום",
+  "disputeResolving": "מעבד...",
+  "disputeSplitLabel": "חלוקה",
+  "disputeSystemSender": "מערכת",
+  "disputeTapForDetails": "לחץ לפרטים",
+  "disputeTitle": "מחלוקת",
+  "editProfileTitle": "עריכת פרופיל",
+  "helpCenterInputHint": "כתוב את שאלתך כאן...",
+  "logoutButton": "התנתק",
+  "markAllReadSuccess": "כל ההתראות סומנו כנקראו",
+  "markedDoneSuccess": "סומן כבוצע בהצלחה",
+  "noCategoriesYet": "אין קטגוריות עדיין",
+  "notifClearAll": "נקה הכל",
+  "notifEmptySubtitle": "אין לך התראות חדשות",
+  "notifEmptyTitle": "אין התראות",
+  "notifOpen": "פתח",
+  "notificationsTitle": "התראות",
+  "oppNotifTitle": "התעניינות חדשה",
+  "pendingCatsApprove": "אשר",
+  "pendingCatsEmptySubtitle": "אין בקשות קטגוריה ממתינות",
+  "pendingCatsEmptyTitle": "אין בקשות",
+  "pendingCatsImagePrompt": "העלה תמונה לקטגוריה",
+  "pendingCatsProviderDesc": "תיאור הספק",
+  "pendingCatsReject": "דחה",
+  "pendingCatsSectionPending": "ממתינות",
+  "pendingCatsSectionReviewed": "נבדקו",
+  "pendingCatsStatusApproved": "אושר",
+  "pendingCatsStatusRejected": "נדחה",
+  "pendingCatsTitle": "בקשות קטגוריה",
+  "pendingCatsAiReason": "נימוק AI",
+  "profileLoadError": "שגיאה בטעינת הפרופיל",
+  "requestsBestValue": "תמורה הכי טובה",
+  "requestsFastResponse": "תגובה מהירה",
+  "requestsInterestedTitle": "מתעניינים",
+  "requestsNoInterested": "אין מתעניינים עדיין",
+  "requestsTitle": "בקשות",
+  "submitDispute": "שלח מחלוקת",
+  "systemWalletFeePanel": "עמלת פלטפורמה",
+  "systemWalletInvalidNumber": "מספר לא תקין",
+  "systemWalletUpdateFee": "עדכן עמלה",
+  "tosAcceptButton": "אני מסכים/ה",
+  "tosBindingNotice": "בלחיצה על אישור, אתה מסכים לתנאי השימוש",
+  "tosFullTitle": "תנאי שימוש מלאים",
+  "tosLastUpdated": "עדכון אחרון",
+  "withdrawExistingCert": "תעודה קיימת",
+  "withdrawUploadError": "שגיאה בהעלאת הקובץ",
+  "xpAddAction": "הוסף",
+  "xpAddEventButton": "הוסף אירוע",
+  "xpAddEventTitle": "הוספת אירוע XP",
+  "xpDeleteEventTitle": "מחיקת אירוע",
+  "xpEditEventTitle": "עריכת אירוע XP",
+  "xpEventAdded": "האירוע נוסף בהצלחה",
+  "xpEventDeleted": "האירוע נמחק בהצלחה",
+  "xpEventUpdated": "האירוע עודכן בהצלחה",
+  "xpEventsEmpty": "אין אירועי XP",
+  "xpEventsSection": "אירועי XP",
+  "xpFieldDesc": "תיאור",
+  "xpFieldId": "מזהה",
+  "xpFieldIdHint": "הזן מזהה ייחודי",
+  "xpFieldName": "שם",
+  "xpFieldPoints": "נקודות",
+  "xpLevelsError": "שגיאה בשמירת הרמות",
+  "xpLevelsSaved": "הרמות נשמרו בהצלחה",
+  "xpLevelsSubtitle": "הגדר את ספי ה-XP לכל רמה",
+  "xpLevelsTitle": "רמות XP",
+  "xpManagerSubtitle": "ניהול אירועים ורמות XP",
+  "xpManagerTitle": "מנהל XP",
+  "xpReservedId": "מזהה שמור",
+  "xpSaveAction": "שמור",
+  "xpSaveLevels": "שמור רמות",
+  "xpTooltipDelete": "מחק",
+  "xpTooltipEdit": "ערוך",
 
-  "reviewsPlaceholder":  "ספר לנו על החוויה שלך...",
-  "reviewSubmit":        "שלח ביקורת",
-  "ratingLabel":         "דרג את השירות"
+  "bizAiThresholdUpdated": "הסף עודכן ל-{value}",
+  "@bizAiThresholdUpdated": {
+    "placeholders": {
+      "value": {"type": "int"}
+    }
+  },
+  "disputeErrorPrefix": "שגיאה: {error}",
+  "@disputeErrorPrefix": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "disputeExistingNote": "הערת מנהל: {note}",
+  "@disputeExistingNote": {
+    "placeholders": {
+      "note": {"type": "String"}
+    }
+  },
+  "disputeOpenedAt": "נפתח ב-{date}",
+  "@disputeOpenedAt": {
+    "placeholders": {
+      "date": {"type": "String"}
+    }
+  },
+  "disputeRefundSublabel": "החזר מלא — {amount} ₪ ללקוח",
+  "@disputeRefundSublabel": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "disputeReleaseSublabel": "שחרור — {amount} ₪ לספק",
+  "@disputeReleaseSublabel": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "disputeSplitSublabel": "חלוקה — {amount} ₪ לכל צד",
+  "@disputeSplitSublabel": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "editCategorySaveError": "שגיאה בשמירה: {error}",
+  "@editCategorySaveError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "oppInterestChatMessage": "שלום, אני {providerName} ואשמח לעזור: {description}",
+  "@oppInterestChatMessage": {
+    "placeholders": {
+      "providerName": {"type": "String"},
+      "description": {"type": "String"}
+    }
+  },
+  "oppNotifBody": "{providerName} מעוניין בהזדמנות שלך",
+  "@oppNotifBody": {
+    "placeholders": {
+      "providerName": {"type": "String"}
+    }
+  },
+  "pendingCatsErrorPrefix": "שגיאה: {error}",
+  "@pendingCatsErrorPrefix": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "pendingCatsSubCategory": "תת-קטגוריה: {name}",
+  "@pendingCatsSubCategory": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "xpDeleteEventConfirm": "למחוק את {name}?",
+  "@xpDeleteEventConfirm": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "xpErrorPrefix": "שגיאה: {error}",
+  "@xpErrorPrefix": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "xpEventsCount": "{count} אירועים",
+  "@xpEventsCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  }
 }

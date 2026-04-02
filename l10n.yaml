@@ -9,5 +9,6 @@ preferred-supported-locales:
   - he
   - en
   - es
+  - ar
 nullable-getter: false
 synthetic-package: false

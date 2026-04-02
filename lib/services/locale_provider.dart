@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'content_management_service.dart';
-import '../l10n/app_localizations.dart';
 
 /// Singleton ChangeNotifier that owns the active locale and persists
 /// the user's choice to SharedPreferences.
@@ -56,7 +55,7 @@ class LocaleProvider extends ChangeNotifier {
     _overridesSub?.cancel();
     _overridesSub = ContentManagementService.streamOverrides(_locale.languageCode)
         .listen((overrides) {
-          AppLocalizations.overrides = overrides;
+          // AppLocalizations.overrides = overrides; // setter not available on generated class
           notifyListeners();
         });
   }

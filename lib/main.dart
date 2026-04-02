@@ -448,7 +448,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
                 final l10n = AppLocalizations.of(ctx);
                 return Directionality(
                   textDirection:
-                      l10n.isCurrentRtl ? TextDirection.rtl : TextDirection.ltr,
+                      l10n.isCurrentRtl == 'true' ? TextDirection.rtl : TextDirection.ltr,
                   child: Row(
                     children: [
                       const Icon(

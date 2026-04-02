@@ -1158,7 +1158,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   final text = ctrl.text.trim();
                   if (text.isEmpty) return;
                   // Capture l10n error formatter before await
-                  final replyErrorFn = l10n.expertReplyError; // ignore: prefer_function_declarations_over_variables
+                  final replyErrorText = l10n.expertReplyError;
                   try {
                     await FirebaseFirestore.instance
                         .collection('reviews')
@@ -1171,7 +1171,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                     if (ctx.mounted) {
                       ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
                         backgroundColor: Colors.red,
-                        content: Text(replyErrorFn('$e')),
+                        content: Text(replyErrorText),
                       ));
                     }
                   }
@@ -1479,7 +1479,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                           ? l10n.expertCancellationNotice(
                               CancellationPolicyService.label(policy),
                               dlStr,
-                              penaltyPct)
+                              penaltyPct.toString())
                           : l10n.expertCancellationNoDeadline(
                               CancellationPolicyService.label(policy),
                               CancellationPolicyService.description(policy)),

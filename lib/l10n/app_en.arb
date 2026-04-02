@@ -1,88 +1,1030 @@
 {
   "@@locale": "en",
-  "@@last_modified": "2026-03-17",
+  "@@last_modified": "2026-04-01",
 
   "appName": "AnySkill",
+  "appSlogan": "Your professionals, one tap away",
 
-  "greetingMorning":   "Good Morning",
+  "greetingMorning": "Good Morning",
   "greetingAfternoon": "Good Afternoon",
-  "greetingEvening":   "Good Evening",
-  "greetingNight":     "Good Night",
+  "greetingEvening": "Good Evening",
+  "greetingNight": "Good Night",
+  "greetingSubMorning": "What would you like to do today?",
+  "greetingSubAfternoon": "Need help with something?",
+  "greetingSubEvening": "Still looking for a service?",
+  "greetingSubNight": "See you tomorrow!",
 
-  "searchPlaceholder": "Search for a professional, service...",
-  "searchTitle":       "Search",
-  "discoverCategories":"Discover Categories",
-
-  "tabHome":     "Home",
+  "tabHome": "Home",
   "tabBookings": "Bookings",
-  "tabChat":     "Chat",
-  "tabWallet":   "Wallet",
-  "tabProfile":  "Profile",
+  "tabChat": "Chat",
+  "tabWallet": "Wallet",
 
-  "statusPaidEscrow":       "Awaiting Approval",
-  "statusExpertCompleted":  "Completed — Awaiting Your Approval",
-  "statusCompleted":        "Completed",
-  "statusCancelled":        "Cancelled",
-  "statusDispute":          "In Dispute",
-  "statusPendingPayment":   "Pending Payment",
+  "bookNow": "Book Now",
+  "bookingCompleted": "Booking completed successfully",
+  "close": "Close",
+  "retryButton": "Retry",
+  "saveChanges": "Save Changes",
+  "saveSuccess": "Saved successfully",
+  "saveError": "Error saving: {error}",
+  "@saveError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
 
-  "bookNow":        "Book Now",
-  "quickRequest":   "Quick Request",
-  "openChat":       "Open Chat",
-  "cancel":         "Cancel",
-  "confirm":        "Confirm",
-  "submit":         "Submit",
-  "save":           "Save",
-  "close":          "Close",
-  "back":           "Back",
-  "next":           "Next",
-
-  "walletBalance":      "Available Balance",
-  "walletMinWithdraw":  "Minimum withdrawal: ₪50",
-  "withdrawFunds":      "Withdraw Funds",
-  "withdrawalPending":  "Withdrawal Request Pending",
-
-  "loginTitle":    "Welcome to AnySkill",
-  "loginSubtitle": "Israel's Leading Professionals Platform",
-  "loginEmail":    "Email Address",
-  "loginPassword": "Password",
-  "loginButton":   "Sign In",
-  "signupButton":  "Sign Up",
-  "forgotPassword":"Forgot Password",
-
-  "profileProvider": "Service Provider",
-  "profileCustomer": "Customer",
-  "profileRating":   "Rating",
-  "profileReviews":  "Reviews",
-  "profileOrders":   "Orders",
-
-  "errorNetworkTitle":  "No Internet Connection",
-  "errorNetworkBody":   "Check your network connection and try again",
-  "errorGeneric":       "An error occurred. Please try again",
-  "errorProfileLoad":   "Error loading profile",
-
-  "tosTitle":   "Terms of Service",
-  "tosVersion": "Version 2.0",
-  "tosAgree":   "I have read and agree to the Terms",
-
-  "urgentProviderLabel": "Pulse",
-  "urgentCustomerLabel": "Urgent",
-  "urgentOpenButton":    "Open",
-
-  "trendingBadge":       "Trending",
-  "subCategoryPrompt":   "Choose Specialty",
-
-  "emptyActivityTitle":  "No activity yet",
-  "emptyActivityCta":    "Post your first request →",
-
-  "onlineStatus":  "Available",
+  "defaultUserName": "User",
+  "notLoggedIn": "Not logged in",
+  "linkCopied": "Link copied",
+  "errorEmptyFields": "Please fill in all fields",
+  "errorGeneric": "An error occurred. Please try again",
+  "errorInvalidEmail": "Invalid email address",
+  "whatsappError": "Unable to open WhatsApp",
+  "markAllReadTooltip": "Mark all as read",
+  "onlineStatus": "Available",
   "offlineStatus": "Unavailable",
+  "onlineToggleOn": "You are now available",
+  "onlineToggleOff": "You are now unavailable",
 
+  "roleCustomer": "Customer",
+  "roleProvider": "Service Provider",
+
+  "loginAccountTitle": "Sign in to your account",
+  "loginButton": "Sign In",
+  "loginEmail": "Email Address",
+  "loginForgotPassword": "Forgot Password",
+  "loginNoAccount": "Don't have an account? ",
+  "loginPassword": "Password",
+  "loginRememberMe": "Remember me",
+  "loginSignUpFree": "Sign up free",
+  "loginStats10k": "Users",
+  "loginStats50": "Categories",
+  "loginStats49": "Average Rating",
+  "loginWelcomeBack": "Welcome back!",
+
+  "signupAccountCreated": "Account created successfully!",
+  "signupEmailInUse": "Email already in use",
+  "signupGenericError": "An error occurred during signup",
+  "signupGoogleError": "Error signing in with Google",
+  "signupNetworkError": "Network error. Check your connection",
+  "signupNewCustomerBio": "New customer on AnySkill",
+  "signupNewProviderBio": "New service provider on AnySkill",
+  "signupTosMustAgree": "You must agree to the Terms of Service",
+  "signupWeakPassword": "Password is too weak",
+
+  "forgotPasswordEmail": "Email address",
+  "forgotPasswordError": "Error sending reset link",
+  "forgotPasswordSubmit": "Send Reset Link",
+  "forgotPasswordSubtitle": "Enter your email and we'll send you a password reset link",
+  "forgotPasswordSuccess": "Reset link sent to your email",
+  "forgotPasswordTitle": "Forgot Password",
+
+  "authError": "Authentication error: {code}",
+  "@authError": {
+    "placeholders": {
+      "code": {"type": "String"}
+    }
+  },
+
+  "profileTitle": "My Profile",
+  "profileFieldName": "Full Name",
+  "profileFieldNameHint": "Enter your full name",
+  "profileFieldRole": "User Type",
+  "profileFieldCategoryMain": "Main Category",
+  "profileFieldCategoryMainHint": "Choose your main category",
+  "profileFieldCategorySub": "Sub-Category",
+  "profileFieldCategorySubHint": "Choose a specific specialty",
+  "profileFieldPrice": "Price per Hour (₪)",
+  "profileFieldPriceHint": "Enter your hourly rate",
+  "profileFieldResponseTime": "Response Time (minutes)",
+  "profileFieldResponseTimeHint": "Average response time",
+  "profileFieldTaxId": "Business License Number",
+  "profileFieldTaxIdHint": "Enter business license number",
+  "profileFieldTaxIdHelp": "This number will be used for invoicing",
+
+  "editProfileAbout": "About Me",
+  "editProfileAboutHint": "Tell clients about your experience...",
+  "editProfileCancellationPolicy": "Cancellation Policy",
+  "editProfileCancellationHint": "Choose a cancellation policy",
+  "editProfileGallery": "Gallery",
+  "editProfileQuickTags": "Quick Tags",
+  "editProfileTagsHint": "Add tags to your profile",
+  "editProfileTagsSelected": "{count} selected",
+  "@editProfileTagsSelected": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+
+  "editCategoryTitle": "Edit Category",
+  "editCategoryNameLabel": "Category Name",
+  "editCategoryChangePic": "Change Picture",
+
+  "shareProfileTitle": "Share Profile",
+  "shareProfileTooltip": "Share your profile",
+  "shareProfileCopyLink": "Copy Link",
+  "shareProfileWhatsapp": "Share on WhatsApp",
+
+  "statBalance": "Balance",
+
+  "searchHintExperts": "Search professionals...",
+  "searchDefaultTitle": "Search",
+  "searchDefaultCity": "Israel",
+  "searchDefaultExpert": "Professional",
+  "searchSectionCategories": "Categories",
+  "searchSectionResultsFor": "Results for \"{query}\"",
+  "@searchSectionResultsFor": {
+    "placeholders": {
+      "query": {"type": "String"}
+    }
+  },
+  "searchNoResultsFor": "No results for \"{query}\"",
+  "@searchNoResultsFor": {
+    "placeholders": {
+      "query": {"type": "String"}
+    }
+  },
+  "searchNoCategoriesBody": "No categories found",
+  "searchPerHour": "₪/hr",
+  "searchRecommendedBadge": "Recommended",
+  "searchChipHomeVisit": "Home Visit",
+  "searchChipWeekend": "Available on Weekends",
+  "searchDatePickerHint": "Select a date",
+  "searchTourSearchTitle": "Search Professionals",
+  "searchTourSearchDesc": "Search by name, service, or category",
+  "searchTourSuggestionsTitle": "Smart Suggestions",
+  "searchTourSuggestionsDesc": "Personalized suggestions based on your searches",
+  "searchUrgencyMorning": "Morning",
+  "searchUrgencyAfternoon": "Afternoon",
+  "searchUrgencyEvening": "Evening",
+
+  "catResultsSearchHint": "Search within category...",
+  "catResultsNoExperts": "No professionals in {category}",
+  "@catResultsNoExperts": {
+    "placeholders": {
+      "category": {"type": "String"}
+    }
+  },
+  "catResultsNoResults": "No results",
+  "catResultsNoResultsHint": "Try changing your search",
+  "catResultsPerHour": "₪/hr",
+  "catResultsOrderCount": "{count} orders",
+  "@catResultsOrderCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "catResultsResponseTime": "Responds in {minutes} min",
+  "@catResultsResponseTime": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "catResultsRecommended": "Recommended",
+  "catResultsTopRated": "Top Rated",
+  "catResultsUnder100": "Under ₪100",
+  "catResultsClearFilters": "Clear Filters",
+  "catResultsBeFirst": "Be the first!",
+  "catResultsExpertDefault": "Professional",
+  "catResultsLoadMore": "Load More",
+  "catResultsAvailableSlots": "Available Slots",
+  "catResultsNoAvailability": "No Availability",
+  "catResultsFullBooking": "Fully Booked",
+  "catResultsWhenFree": "When available?",
+
+  "chatListTitle": "Messages",
+
+  "expertSectionAbout": "About",
+  "expertSectionService": "Service",
+  "expertSectionSchedule": "Availability",
+  "expertBioPlaceholder": "No bio yet",
+  "expertBioReadMore": "Read more",
+  "expertBioShowLess": "Show less",
+  "expertNoReviews": "No reviews yet",
+  "expertDefaultReviewer": "User",
+  "expertProviderResponse": "Provider response",
+  "expertAddReply": "Add reply",
+  "expertAddReplyTitle": "Add reply to review",
+  "expertReplyHint": "Write a reply...",
+  "expertPublishReply": "Publish reply",
+  "expertReplyError": "Error publishing reply",
+  "expertSelectDateTime": "Select date and time",
+  "expertSelectTime": "Select time",
+  "expertBookForTime": "Book for {time}",
+  "@expertBookForTime": {
+    "placeholders": {
+      "time": {"type": "String"}
+    }
+  },
+  "expertStartingFrom": "Starting from ₪{price}",
+  "@expertStartingFrom": {
+    "placeholders": {
+      "price": {"type": "String"}
+    }
+  },
+  "expertBookingSummaryTitle": "Booking Summary",
+  "expertSummaryRowService": "Service",
+  "expertSummaryRowDate": "Date",
+  "expertSummaryRowTime": "Time",
+  "expertSummaryRowPrice": "Price",
+  "expertSummaryRowIncluded": "Included",
+  "expertSummaryRowProtection": "Buyer Protection",
+  "expertSummaryRowTotal": "Total",
+  "expertConfirmPaymentButton": "Confirm & Pay",
+  "expertVerifiedBooking": "Verified Booking",
+  "expertInsufficientBalance": "Insufficient balance",
+  "expertEscrowSuccess": "Payment confirmed! Funds locked in escrow",
+  "expertTransactionTitle": "Payment to {name}",
+  "@expertTransactionTitle": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "expertSystemMessage": "Booking confirmed for {date} at {time}. ₪{amount} locked in escrow.",
+  "@expertSystemMessage": {
+    "placeholders": {
+      "date": {"type": "String"},
+      "time": {"type": "String"},
+      "amount": {"type": "String"}
+    }
+  },
+  "expertCancellationNotice": "{policy} policy: Free cancellation until {deadline}. After that {penalty}% penalty.",
+  "@expertCancellationNotice": {
+    "placeholders": {
+      "policy": {"type": "String"},
+      "deadline": {"type": "String"},
+      "penalty": {"type": "String"}
+    }
+  },
+  "expertCancellationNoDeadline": "{policy} policy: {description}",
+  "@expertCancellationNoDeadline": {
+    "placeholders": {
+      "policy": {"type": "String"},
+      "description": {"type": "String"}
+    }
+  },
+
+  "financeTitle": "Finances",
+  "financeAvailableBalance": "Available Balance",
+  "financePending": "Pending",
+  "financeProcessing": "Processing",
+  "financeRecentActivity": "Recent Activity",
+  "financeNoTransactions": "No transactions",
+  "financeWithdrawButton": "Withdraw Funds",
+  "financeMinWithdraw": "Minimum withdrawal: ₪50",
+  "financeTrustBadge": "Your money is protected",
+  "financeReceivedFrom": "Received from {name}",
+  "@financeReceivedFrom": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "financePaidTo": "Paid to {name}",
+  "@financePaidTo": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "financeError": "Error: {error}",
+  "@financeError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+
+  "disputeConfirmRefund": "Confirm Refund",
+  "disputeConfirmRelease": "Confirm Payment Release",
+  "disputeConfirmSplit": "Confirm Split",
+  "disputePartyCustomer": "the customer",
+  "disputeRefundBody": "₪{amount} will be refunded to {customerName}",
+  "@disputeRefundBody": {
+    "placeholders": {
+      "amount": {"type": "String"},
+      "customerName": {"type": "String"}
+    }
+  },
+  "disputeReleaseBody": "₪{netAmount} will be released to {expertName} ({feePercent}% fee)",
+  "@disputeReleaseBody": {
+    "placeholders": {
+      "netAmount": {"type": "String"},
+      "expertName": {"type": "String"},
+      "feePercent": {"type": "String"}
+    }
+  },
+  "disputeSplitBody": "Split: ₪{halfAmount} each side. Provider gets ₪{halfNet}, platform ₪{platformFee}",
+  "@disputeSplitBody": {
+    "placeholders": {
+      "halfAmount": {"type": "String"},
+      "halfNet": {"type": "String"},
+      "platformFee": {"type": "String"}
+    }
+  },
+  "disputeResolvedRefund": "Dispute resolved — refund issued",
+  "disputeResolvedRelease": "Dispute resolved — payment released",
+  "disputeResolvedSplit": "Dispute resolved — amount split",
+  "disputeTypeAudio": "Audio",
+  "disputeTypeImage": "Image",
+  "disputeTypeLocation": "Location",
+
+  "releasePaymentError": "Error releasing payment",
+
+  "oppTitle": "Opportunities",
+  "oppAllCategories": "All Categories",
+  "oppEmptyAll": "No opportunities right now",
+  "oppEmptyAllSubtitle": "Check back later",
+  "oppEmptyCategory": "No opportunities in this category",
+  "oppEmptyCategorySubtitle": "Try a different category",
+  "oppTakeOpportunity": "Take Opportunity",
+  "oppInterested": "Interested",
+  "oppAlreadyInterested": "Already expressed interest",
+  "oppAlreadyExpressed": "You already expressed interest in this request",
+  "oppAlready3Interested": "Already has 3 interested providers",
+  "oppInterestSuccess": "Your interest has been registered!",
+  "oppRequestClosed3": "Request closed — 3 interested",
+  "oppRequestClosedBtn": "Request Closed",
+  "oppRequestUnavailable": "Request is no longer available",
+  "oppDefaultClient": "Client",
+  "oppHighDemand": "High Demand",
+  "oppQuickBid": "Quick Bid",
+  "oppQuickBidMessage": "Hi {clientName}, I'm {providerName} and I'd love to help!",
+  "@oppQuickBidMessage": {
+    "placeholders": {
+      "clientName": {"type": "String"},
+      "providerName": {"type": "String"}
+    }
+  },
+  "oppEstimatedEarnings": "Estimated Earnings",
+  "oppAfterFee": "After fee",
+  "oppWalletHint": "Earnings go to your wallet",
+  "oppXpToNextLevel": "{xpNeeded} XP to {levelName} level",
+  "@oppXpToNextLevel": {
+    "placeholders": {
+      "xpNeeded": {"type": "int"},
+      "levelName": {"type": "String"}
+    }
+  },
+  "oppMaxLevel": "Max level!",
+  "oppBoostEarned": "Profile boost earned!",
+  "oppBoostProgress": "{count}/3 opportunities to boost",
+  "@oppBoostProgress": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "oppProfileBoosted": "Profile boosted! {timeLabel} remaining",
+  "@oppProfileBoosted": {
+    "placeholders": {
+      "timeLabel": {"type": "String"}
+    }
+  },
+  "oppError": "Error: {error}",
+  "@oppError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "oppTimeJustNow": "Just now",
+  "oppTimeMinAgo": "{minutes} min ago",
+  "@oppTimeMinAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "oppTimeHourAgo": "{hours} hours ago",
+  "@oppTimeHourAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "oppTimeDayAgo": "{days} days ago",
+  "@oppTimeDayAgo": {
+    "placeholders": {
+      "days": {"type": "int"}
+    }
+  },
+  "oppTimeHours": "{hours} hours",
+  "@oppTimeHours": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "oppTimeMinutes": "{minutes} minutes",
+  "@oppTimeMinutes": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "oppUnderReviewTitle": "Your profile is under review",
+  "oppUnderReviewSubtitle": "The AnySkill team is reviewing your profile",
+  "oppUnderReviewBody": "We'll notify you once verification is complete",
+  "oppUnderReviewContact": "Contact Support",
+  "oppUnderReviewStep1": "Profile submitted",
+  "oppUnderReviewStep2": "Under review",
+  "oppUnderReviewStep3": "Final approval",
+
+  "requestsEmpty": "No requests",
+  "requestsEmptySubtitle": "No requests posted yet",
+  "requestsChatNow": "Send Message",
+  "requestsClosed": "Closed",
+  "requestsConfirmPay": "Confirm & Pay",
+  "requestsDefaultExpert": "Professional",
+  "requestsEscrowTooltip": "Funds are held in escrow until the job is done",
+  "requestsMatchLabel": "Match",
+  "requestsTopMatch": "Top Match",
+  "requestsVerifiedBadge": "Verified",
+  "requestsMoneyProtected": "Your money is protected",
+  "requestsWaiting": "Waiting",
+  "requestsWaitingProviders": "Waiting for providers...",
+  "requestsJustNow": "Just now",
+  "requestsMinutesAgo": "{minutes} min ago",
+  "@requestsMinutesAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "requestsHoursAgo": "{hours} hours ago",
+  "@requestsHoursAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "requestsDaysAgo": "{days} days ago",
+  "@requestsDaysAgo": {
+    "placeholders": {
+      "days": {"type": "int"}
+    }
+  },
+  "requestsInterested": "{count} interested",
+  "@requestsInterested": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "requestsViewInterested": "View {count} interested",
+  "@requestsViewInterested": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "requestsOrderCount": "{count} orders",
+  "@requestsOrderCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "requestsHiredAgo": "Hired {label}",
+  "@requestsHiredAgo": {
+    "placeholders": {
+      "label": {"type": "String"}
+    }
+  },
+  "requestsPricePerHour": "₪{price}/hr",
+  "@requestsPricePerHour": {
+    "placeholders": {
+      "price": {"type": "String"}
+    }
+  },
+
+  "timeNow": "Now",
+  "timeOneHour": "Hour",
+  "timeMinutesAgo": "{minutes} min ago",
+  "@timeMinutesAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "timeHoursAgo": "{hours} hours ago",
+  "@timeHoursAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+
+  "urgentBannerRequests": "Urgent Requests",
+  "urgentBannerPending": "Pending",
+  "urgentBannerServiceNeeded": "Service Needed",
+  "urgentBannerCustomerWaiting": "Customer Waiting",
+
+  "calendarTitle": "Calendar",
+  "calendarRefresh": "Refresh",
+  "calendarNoEvents": "No events",
+  "calendarStatusCompleted": "Completed",
+  "calendarStatusPending": "Pending",
+  "calendarStatusWaiting": "Waiting",
+
+  "creditsLabel": "Credits",
+  "creditsDiscountAvailable": "{discount}% discount available!",
+  "@creditsDiscountAvailable": {
+    "placeholders": {
+      "discount": {"type": "int"}
+    }
+  },
+  "creditsToNextDiscount": "{remaining} credits to next discount",
+  "@creditsToNextDiscount": {
+    "placeholders": {
+      "remaining": {"type": "int"}
+    }
+  },
+
+  "serviceFullSession": "Full Session",
+  "serviceSingleLesson": "Single Lesson",
+  "serviceExtendedLesson": "Extended Lesson",
+
+  "validationNameRequired": "Name is required",
+  "validationNameLength": "Name must be at least 2 characters",
+  "validationNameTooLong": "Name is too long",
+  "validationNameForbidden": "Name contains forbidden characters",
+  "validationCategoryRequired": "Please select a category",
+  "validationRoleRequired": "Please select a user type",
+  "validationPriceInvalid": "Invalid price",
+  "validationPricePositive": "Price must be positive",
+  "validationAboutTooLong": "Description is too long",
+  "validationAboutForbidden": "Description contains forbidden characters",
+  "validationFieldForbidden": "Field contains forbidden characters",
+  "validationUrlHttps": "URL must start with https://",
+
+  "vipSheetHeader": "AnySkill VIP",
+  "vipPriceMonthly": "₪99/month",
+  "vipActivateButton": "Activate VIP",
+  "vipActivationSuccess": "VIP activated successfully!",
+  "vipInsufficientBalance": "Insufficient balance to activate VIP",
+  "vipInsufficientTooltip": "Top up your wallet to activate VIP",
+  "vipBenefit1": "Priority in search results",
+  "vipBenefit2": "VIP badge on profile",
+  "vipBenefit3": "Priority in opportunities",
+  "vipBenefit4": "Premium support",
+
+  "withdrawMinBalance": "Minimum withdrawal amount is {amount} ₪",
+  "@withdrawMinBalance": {
+    "placeholders": {
+      "amount": {"type": "int"}
+    }
+  },
+  "withdrawAvailableBalance": "Available balance for withdrawal",
+  "withdrawBankSection": "Bank Details",
+  "withdrawBankName": "Bank Name",
+  "withdrawBankBranch": "Branch",
+  "withdrawBankAccount": "Account Number",
+  "withdrawBankRequired": "Bank name is required",
+  "withdrawBranchRequired": "Branch is required",
+  "withdrawAccountMinDigits": "Account number must be at least 5 digits",
+  "withdrawBankEncryptedNotice": "Details are encrypted and secure",
+  "withdrawEncryptedNotice": "Information is encrypted and secure",
+  "withdrawBankTransferPending": "Bank transfer in progress",
+  "withdrawCertSection": "Certificates",
+  "withdrawCertHint": "Upload business license / exemption certificate",
+  "withdrawCertUploadBtn": "Upload Certificate",
+  "withdrawCertReplace": "Replace Certificate",
+  "withdrawDeclarationSection": "Declaration",
+  "withdrawDeclarationText": "I declare sole responsibility for reporting my income taxes as required by law",
+  "withdrawDeclarationSuffix": "(Section 6 of the Terms)",
+  "withdrawTaxStatusTitle": "Business Type",
+  "withdrawTaxStatusSubtitle": "Select your business type",
+  "withdrawTaxIndividual": "Exempt Dealer",
+  "withdrawTaxIndividualSub": "Exempt from VAT collection",
+  "withdrawTaxIndividualBadge": "Exempt",
+  "withdrawTaxBusiness": "Licensed Dealer",
+  "withdrawTaxBusinessSub": "Required to collect VAT",
+  "withdrawIndividualTitle": "Exempt Dealer Details",
+  "withdrawIndividualDesc": "Enter your exempt dealer details",
+  "withdrawIndividualFormTitle": "Exempt Dealer Form",
+  "withdrawBusinessFormTitle": "Licensed Dealer Form",
+  "withdrawNoCertError": "Please upload a business certificate",
+  "withdrawNoDeclarationError": "Please confirm the declaration",
+  "withdrawSelectBankError": "Please select a bank",
+  "withdrawSubmitButton": "Withdraw {amount}",
+  "@withdrawSubmitButton": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "withdrawSubmitError": "Error submitting request",
+  "withdrawSuccessTitle": "Request Submitted!",
+  "withdrawSuccessSubtitle": "Withdrawal request for {amount} submitted successfully",
+  "@withdrawSuccessSubtitle": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "withdrawSuccessNotice": "Bank transfer will be processed within 3-5 business days",
+  "withdrawTimeline1Title": "Request Submitted",
+  "withdrawTimeline1Sub": "Request received by the system",
+  "withdrawTimeline2Title": "Processing",
+  "withdrawTimeline2Sub": "Team is processing your request",
+  "withdrawTimeline3Title": "Completed",
+  "withdrawTimeline3Sub": "Funds transferred to your account",
+
+  "pendingCatsApproved": "Category approved",
+  "pendingCatsRejected": "Category rejected",
+
+  "helpCenterTitle": "Help Center",
+  "helpCenterTooltip": "Help",
+  "helpCenterCustomerWelcome": "Welcome to the Help Center",
+  "helpCenterCustomerFaq": "Customer FAQ",
+  "helpCenterCustomerSupport": "Customer Support",
+  "helpCenterProviderWelcome": "Welcome to the Provider Help Center",
+  "helpCenterProviderFaq": "Provider FAQ",
+  "helpCenterProviderSupport": "Provider Support",
+
+  "languageTitle": "Language",
+  "languageSectionLabel": "Select Language",
+  "languageHe": "עברית",
+  "languageEn": "English",
+  "languageEs": "Español",
+  "languageAr": "العربية",
+
+  "systemWalletEnterNumber": "Enter a valid number",
+
+  "updateBannerText": "New version available",
+  "updateNowButton": "Update Now",
+
+  "xpLevelBronze": "Rookie",
+  "xpLevelSilver": "Pro",
+  "xpLevelGold": "Gold",
+
+  "bizAiTitle": "Business Intelligence",
+  "bizAiSubtitle": "AI-powered analysis and forecasting",
+  "bizAiLoading": "Loading data...",
+  "bizAiRefreshData": "Refresh Data",
+  "bizAiNoData": "No data available",
+  "bizAiError": "Error: {error}",
+  "@bizAiError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "bizAiSectionFinancial": "Financial",
+  "bizAiSectionMarket": "Market",
+  "bizAiSectionAlerts": "Alerts",
+  "bizAiSectionAiOps": "AI Operations",
+  "bizAiDailyCommission": "Daily Commission",
+  "bizAiWeeklyProjection": "Weekly Projection",
+  "bizAiWeeklyForecast": "Weekly Forecast",
+  "bizAiExpectedRevenue": "Expected Revenue",
+  "bizAiForecastBadge": "Forecast",
+  "bizAiActualToDate": "Actual to Date",
+  "bizAiAccuracy": "Accuracy",
+  "bizAiModelAccuracy": "Model Accuracy",
+  "bizAiModelAccuracyDetail": "Revenue prediction accuracy",
+  "bizAiNoChartData": "No chart data",
+  "bizAiNoOrderData": "No order data",
+  "bizAiSevenDays": "7 Days",
+  "bizAiLast7Days": "Last 7 Days",
+  "bizAiExecSummary": "Executive Summary",
+  "bizAiActivityToday": "Today's Activity",
+  "bizAiApprovalQueue": "Approval Queue",
+  "bizAiPending": "{count} pending",
+  "@bizAiPending": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiPendingLabel": "Pending",
+  "bizAiApproved": "Approved",
+  "bizAiRejected": "Rejected",
+  "bizAiApprovedTotal": "Total Approved",
+  "bizAiTapToReview": "Tap to review",
+  "bizAiCategoriesApproved": "Approved Categories",
+  "bizAiNewCategories": "New Categories",
+  "bizAiMarketOpportunities": "Market Opportunities",
+  "bizAiMarketOppsCard": "Market Opportunities",
+  "bizAiHighValueCategories": "High-Value Categories",
+  "bizAiHighValueHint": "Categories with high revenue potential",
+  "bizAiProviders": "{count} providers",
+  "@bizAiProviders": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiPopularSearches": "Popular Searches",
+  "bizAiNoSearchData": "No search data",
+  "bizAiNichesNoProviders": "Niches Without Providers",
+  "bizAiNoOpportunities": "No opportunities at this time",
+  "bizAiRecruitForQuery": "Recruit providers for \"{query}\"",
+  "@bizAiRecruitForQuery": {
+    "placeholders": {
+      "query": {"type": "String"}
+    }
+  },
+  "bizAiZeroResultsHint": "Searches with no results — recruitment opportunity",
+  "bizAiSearches": "Searches: {count}+",
+  "@bizAiSearches": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiSearchCount": "{count} searches",
+  "@bizAiSearchCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiAlertHistory": "Alert History",
+  "bizAiAlertThreshold": "Alert Threshold",
+  "bizAiAlertThresholdHint": "Minimum searches for alert",
+  "bizAiSaveThreshold": "Save Threshold",
+  "bizAiReset": "Reset",
+  "bizAiNoAlerts": "No alerts",
+  "bizAiAlertCount": "{count} alerts",
+  "@bizAiAlertCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiMinutesAgo": "{minutes} min ago",
+  "@bizAiMinutesAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "bizAiHoursAgo": "{hours} hours ago",
+  "@bizAiHoursAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "bizAiDaysAgo": "{days} days ago",
+  "@bizAiDaysAgo": {
+    "placeholders": {
+      "days": {"type": "int"}
+    }
+  },
+  "tabProfile": "Profile",
+  "searchPlaceholder": "Search for a professional, service...",
+  "searchTitle": "Search",
+  "discoverCategories": "Discover Categories",
+  "confirm": "Confirm",
+  "cancel": "Cancel",
+  "save": "Save",
+  "submit": "Submit",
+  "next": "Next",
+  "back": "Back",
+  "delete": "Delete",
   "currencySymbol": "₪",
+  "statusPaidEscrow": "Pending Approval",
+  "statusExpertCompleted": "Completed — Awaiting Your Approval",
+  "statusCompleted": "Completed",
+  "statusCancelled": "Cancelled",
+  "statusDispute": "In Dispute",
+  "statusPendingPayment": "Pending Payment",
+  "profileCustomer": "Customer",
+  "profileProvider": "Service Provider",
+  "profileOrders": "Orders",
+  "profileRating": "Rating",
+  "profileReviews": "Reviews",
+  "reviewsPlaceholder": "Tell us about your experience...",
+  "reviewSubmit": "Submit Review",
+  "ratingLabel": "Rate the Service",
+  "walletBalance": "Balance",
+  "openChat": "Open Chat",
+  "quickRequest": "Quick Request",
+  "trendingBadge": "Trending",
+  "isCurrentRtl": "false",
+  "taxDeclarationText": "I declare sole responsibility for tax reporting as required by law.",
+  "loginTitle": "Login",
+  "loginSubtitle": "Sign in to your account",
+  "loginWelcomeBack": "Welcome back!",
+  "loginForgotPassword": "Forgot password?",
+  "loginSignUpFree": "Sign up for free",
+  "loginNoAccount": "Don't have an account? ",
+  "loginRememberMe": "Remember me",
+  "loginAccountTitle": "Account Login",
+  "loginEmail": "Email",
+  "loginPassword": "Password",
+  "loginButton": "Sign In",
+  "loginStats10k": "10K+",
+  "loginStats50": "50+",
+  "loginStats49": "4.9★",
+  "errorGenericLogin": "Login error",
+  "subCategoryPrompt": "Choose a sub-category",
+  "emptyActivityTitle": "No activity",
+  "emptyActivityCta": "Get started",
+  "errorNetworkTitle": "Network Error",
+  "errorNetworkBody": "Check your internet connection",
+  "errorProfileLoad": "Error loading profile",
+  "forgotPassword": "Forgot password?",
+  "signupButton": "Sign Up",
+  "tosAgree": "I agree to the Terms of Service",
+  "tosTitle": "Terms of Service",
+  "tosVersion": "Version 1.0",
+  "urgentCustomerLabel": "Urgent Service",
+  "urgentProviderLabel": "Urgent Opportunities",
+  "urgentOpenButton": "Open",
+  "walletMinWithdraw": "Minimum withdrawal",
+  "withdrawalPending": "Withdrawal pending",
+  "withdrawFunds": "Withdraw Funds",
+  "onboardingError": "Error: {error}",
+  "@onboardingError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "onboardingUploadError": "Upload error: {error}",
+  "@onboardingUploadError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "onboardingWelcome": "Welcome!",
+  "authError": "Auth error: {code}",
+  "@authError": {
+    "placeholders": {
+      "code": {"type": "String"}
+    }
+  },
 
-  "taxDeclarationText": "I declare sole responsibility for reporting my income taxes as required by law (Section 6 of the Terms). I understand that AnySkill is not my employer and does not withhold taxes.",
+  "availabilityUpdated": "Availability updated",
+  "bizAiRecruitNow": "Recruit Now",
+  "chatEmptyState": "No messages yet",
+  "chatLastMessageDefault": "No last message",
+  "chatSearchHint": "Search chats...",
+  "chatUserDefault": "User",
+  "deleteChatConfirm": "Confirm",
+  "deleteChatContent": "Are you sure you want to delete this chat?",
+  "deleteChatSuccess": "Chat deleted successfully",
+  "deleteChatTitle": "Delete Chat",
+  "disputeActionsSection": "Actions",
+  "disputeAdminNote": "Admin Note",
+  "disputeAdminNoteHint": "Add a note (optional)",
+  "disputeArbitrationCenter": "Arbitration Center",
+  "disputeChatHistory": "Chat History",
+  "disputeDescription": "Description",
+  "disputeEmptySubtitle": "No open disputes at this time",
+  "disputeEmptyTitle": "No Disputes",
+  "disputeHint": "Describe the issue in detail",
+  "disputeIdPrefix": "Dispute #",
+  "disputeIrreversible": "This action cannot be undone",
+  "disputeLockedEscrow": "Locked in Escrow",
+  "disputeLockedSuffix": "₪",
+  "disputeNoChatId": "No chat ID",
+  "disputeNoMessages": "No messages",
+  "disputeNoReason": "No reason provided",
+  "disputeOpenDisputes": "Open Disputes",
+  "disputePartiesSection": "Parties",
+  "disputePartyProvider": "the provider",
+  "disputeReasonSection": "Dispute Reason",
+  "disputeRefundLabel": "Refund",
+  "disputeReleaseLabel": "Release Payment",
+  "disputeResolving": "Processing...",
+  "disputeSplitLabel": "Split",
+  "disputeSystemSender": "System",
+  "disputeTapForDetails": "Tap for details",
+  "disputeTitle": "Dispute",
+  "editProfileTitle": "Edit Profile",
+  "helpCenterInputHint": "Write your question here...",
+  "logoutButton": "Log Out",
+  "markAllReadSuccess": "All notifications marked as read",
+  "markedDoneSuccess": "Marked as done successfully",
+  "noCategoriesYet": "No categories yet",
+  "notifClearAll": "Clear All",
+  "notifEmptySubtitle": "You have no new notifications",
+  "notifEmptyTitle": "No Notifications",
+  "notifOpen": "Open",
+  "notificationsTitle": "Notifications",
+  "oppNotifTitle": "New Interest",
+  "pendingCatsApprove": "Approve",
+  "pendingCatsEmptySubtitle": "No pending category requests",
+  "pendingCatsEmptyTitle": "No Requests",
+  "pendingCatsImagePrompt": "Upload category image",
+  "pendingCatsProviderDesc": "Provider description",
+  "pendingCatsReject": "Reject",
+  "pendingCatsSectionPending": "Pending",
+  "pendingCatsSectionReviewed": "Reviewed",
+  "pendingCatsStatusApproved": "Approved",
+  "pendingCatsStatusRejected": "Rejected",
+  "pendingCatsTitle": "Category Requests",
+  "pendingCatsAiReason": "AI Reason",
+  "profileLoadError": "Error loading profile",
+  "requestsBestValue": "Best Value",
+  "requestsFastResponse": "Fast Response",
+  "requestsInterestedTitle": "Interested",
+  "requestsNoInterested": "No one interested yet",
+  "requestsTitle": "Requests",
+  "submitDispute": "Submit Dispute",
+  "systemWalletFeePanel": "Platform Fee",
+  "systemWalletInvalidNumber": "Invalid number",
+  "systemWalletUpdateFee": "Update Fee",
+  "tosAcceptButton": "I Agree",
+  "tosBindingNotice": "By clicking confirm, you agree to the Terms of Service",
+  "tosFullTitle": "Full Terms of Service",
+  "tosLastUpdated": "Last Updated",
+  "withdrawExistingCert": "Existing certificate",
+  "withdrawUploadError": "Error uploading file",
+  "xpAddAction": "Add",
+  "xpAddEventButton": "Add Event",
+  "xpAddEventTitle": "Add XP Event",
+  "xpDeleteEventTitle": "Delete Event",
+  "xpEditEventTitle": "Edit XP Event",
+  "xpEventAdded": "Event added successfully",
+  "xpEventDeleted": "Event deleted successfully",
+  "xpEventUpdated": "Event updated successfully",
+  "xpEventsEmpty": "No XP events",
+  "xpEventsSection": "XP Events",
+  "xpFieldDesc": "Description",
+  "xpFieldId": "ID",
+  "xpFieldIdHint": "Enter a unique ID",
+  "xpFieldName": "Name",
+  "xpFieldPoints": "Points",
+  "xpLevelsError": "Error saving levels",
+  "xpLevelsSaved": "Levels saved successfully",
+  "xpLevelsSubtitle": "Set the XP thresholds for each level",
+  "xpLevelsTitle": "XP Levels",
+  "xpManagerSubtitle": "Manage XP events and levels",
+  "xpManagerTitle": "XP Manager",
+  "xpReservedId": "Reserved ID",
+  "xpSaveAction": "Save",
+  "xpSaveLevels": "Save Levels",
+  "xpTooltipDelete": "Delete",
+  "xpTooltipEdit": "Edit",
 
-  "reviewsPlaceholder":  "Tell us about your experience...",
-  "reviewSubmit":        "Submit Review",
-  "ratingLabel":         "Rate this service"
+  "bizAiThresholdUpdated": "Threshold updated to {value}",
+  "@bizAiThresholdUpdated": {
+    "placeholders": {
+      "value": {"type": "int"}
+    }
+  },
+  "disputeErrorPrefix": "Error: {error}",
+  "@disputeErrorPrefix": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "disputeExistingNote": "Admin note: {note}",
+  "@disputeExistingNote": {
+    "placeholders": {
+      "note": {"type": "String"}
+    }
+  },
+  "disputeOpenedAt": "Opened on {date}",
+  "@disputeOpenedAt": {
+    "placeholders": {
+      "date": {"type": "String"}
+    }
+  },
+  "disputeRefundSublabel": "Full refund — {amount} ₪ to customer",
+  "@disputeRefundSublabel": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "disputeReleaseSublabel": "Release — {amount} ₪ to provider",
+  "@disputeReleaseSublabel": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "disputeSplitSublabel": "Split — {amount} ₪ to each side",
+  "@disputeSplitSublabel": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "editCategorySaveError": "Error saving: {error}",
+  "@editCategorySaveError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "oppInterestChatMessage": "Hi, I'm {providerName} and I'd love to help: {description}",
+  "@oppInterestChatMessage": {
+    "placeholders": {
+      "providerName": {"type": "String"},
+      "description": {"type": "String"}
+    }
+  },
+  "oppNotifBody": "{providerName} is interested in your opportunity",
+  "@oppNotifBody": {
+    "placeholders": {
+      "providerName": {"type": "String"}
+    }
+  },
+  "pendingCatsErrorPrefix": "Error: {error}",
+  "@pendingCatsErrorPrefix": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "pendingCatsSubCategory": "Sub-category: {name}",
+  "@pendingCatsSubCategory": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "xpDeleteEventConfirm": "Delete {name}?",
+  "@xpDeleteEventConfirm": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "xpErrorPrefix": "Error: {error}",
+  "@xpErrorPrefix": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "xpEventsCount": "{count} events",
+  "@xpEventsCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  }
 }

@@ -1,88 +1,952 @@
 {
   "@@locale": "es",
-  "@@last_modified": "2026-03-17",
+  "@@last_modified": "2026-04-01",
 
   "appName": "AnySkill",
+  "appSlogan": "Tus profesionales, a un toque",
 
-  "greetingMorning":   "Buenos Días",
+  "greetingMorning": "Buenos Días",
   "greetingAfternoon": "Buenas Tardes",
-  "greetingEvening":   "Buenas Noches",
-  "greetingNight":     "Buenas Noches",
+  "greetingEvening": "Buenas Noches",
+  "greetingNight": "Buenas Noches",
+  "greetingSubMorning": "¿Qué te gustaría hacer hoy?",
+  "greetingSubAfternoon": "¿Necesitas ayuda con algo?",
+  "greetingSubEvening": "¿Sigues buscando un servicio?",
+  "greetingSubNight": "¡Nos vemos mañana!",
 
-  "searchPlaceholder": "Busca un profesional, servicio...",
-  "searchTitle":       "Buscar",
-  "discoverCategories":"Descubrir Categorías",
-
-  "tabHome":     "Inicio",
+  "tabHome": "Inicio",
   "tabBookings": "Reservas",
-  "tabChat":     "Chat",
-  "tabWallet":   "Cartera",
-  "tabProfile":  "Perfil",
+  "tabChat": "Chat",
+  "tabWallet": "Cartera",
 
-  "statusPaidEscrow":       "En Espera de Aprobación",
-  "statusExpertCompleted":  "Completado — Esperando Tu Aprobación",
-  "statusCompleted":        "Completado",
-  "statusCancelled":        "Cancelado",
-  "statusDispute":          "En Disputa",
-  "statusPendingPayment":   "Pago Pendiente",
+  "bookNow": "Reservar Ahora",
+  "bookingCompleted": "Reserva completada exitosamente",
+  "close": "Cerrar",
+  "retryButton": "Reintentar",
+  "saveChanges": "Guardar Cambios",
+  "saveSuccess": "Guardado exitosamente",
+  "saveError": "Error al guardar: {error}",
+  "@saveError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
 
-  "bookNow":        "Reservar Ahora",
-  "quickRequest":   "Solicitud Rápida",
-  "openChat":       "Abrir Chat",
-  "cancel":         "Cancelar",
-  "confirm":        "Confirmar",
-  "submit":         "Enviar",
-  "save":           "Guardar",
-  "close":          "Cerrar",
-  "back":           "Atrás",
-  "next":           "Siguiente",
-
-  "walletBalance":      "Saldo Disponible",
-  "walletMinWithdraw":  "Retiro mínimo: ₪50",
-  "withdrawFunds":      "Retirar Fondos",
-  "withdrawalPending":  "Solicitud de Retiro Pendiente",
-
-  "loginTitle":    "Bienvenido a AnySkill",
-  "loginSubtitle": "La Plataforma Líder de Profesionales",
-  "loginEmail":    "Correo Electrónico",
-  "loginPassword": "Contraseña",
-  "loginButton":   "Iniciar Sesión",
-  "signupButton":  "Registrarse",
-  "forgotPassword":"Olvidé mi Contraseña",
-
-  "profileProvider": "Proveedor de Servicios",
-  "profileCustomer": "Cliente",
-  "profileRating":   "Calificación",
-  "profileReviews":  "Reseñas",
-  "profileOrders":   "Pedidos",
-
-  "errorNetworkTitle":  "Sin Conexión a Internet",
-  "errorNetworkBody":   "Verifica tu conexión y vuelve a intentarlo",
-  "errorGeneric":       "Ocurrió un error. Inténtalo de nuevo",
-  "errorProfileLoad":   "Error al cargar el perfil",
-
-  "tosTitle":   "Términos de Servicio",
-  "tosVersion": "Versión 2.0",
-  "tosAgree":   "He leído y acepto los Términos",
-
-  "urgentProviderLabel": "Pulse",
-  "urgentCustomerLabel": "Urgente",
-  "urgentOpenButton":    "Abrir",
-
-  "trendingBadge":       "Tendencia",
-  "subCategoryPrompt":   "Elegir Especialidad",
-
-  "emptyActivityTitle":  "Aún no hay actividad",
-  "emptyActivityCta":    "Publica tu primera solicitud →",
-
-  "onlineStatus":  "Disponible",
+  "defaultUserName": "Usuario",
+  "notLoggedIn": "No conectado",
+  "linkCopied": "Enlace copiado",
+  "errorEmptyFields": "Por favor completa todos los campos",
+  "errorGeneric": "Ocurrió un error. Inténtalo de nuevo",
+  "errorInvalidEmail": "Dirección de correo no válida",
+  "whatsappError": "No se puede abrir WhatsApp",
+  "markAllReadTooltip": "Marcar todo como leído",
+  "onlineStatus": "Disponible",
   "offlineStatus": "No Disponible",
+  "onlineToggleOn": "Ahora estás disponible",
+  "onlineToggleOff": "Ahora no estás disponible",
 
-  "currencySymbol": "₪",
+  "roleCustomer": "Cliente",
+  "roleProvider": "Proveedor de Servicios",
 
-  "taxDeclarationText": "Declaro responsabilidad exclusiva por declarar mis impuestos conforme a la ley. Entiendo que AnySkill no es mi empleador y no retiene impuestos.",
+  "loginAccountTitle": "Inicia sesión en tu cuenta",
+  "loginButton": "Iniciar Sesión",
+  "loginEmail": "Correo Electrónico",
+  "loginForgotPassword": "Olvidé mi Contraseña",
+  "loginNoAccount": "¿No tienes cuenta? ",
+  "loginPassword": "Contraseña",
+  "loginRememberMe": "Recordarme",
+  "loginSignUpFree": "Regístrate gratis",
+  "loginStats10k": "Usuarios",
+  "loginStats50": "Categorías",
+  "loginStats49": "Calificación Promedio",
+  "loginWelcomeBack": "¡Bienvenido de vuelta!",
 
-  "reviewsPlaceholder":  "Cuéntanos sobre tu experiencia...",
-  "reviewSubmit":        "Enviar Reseña",
-  "ratingLabel":         "Califica este servicio"
+  "signupAccountCreated": "¡Cuenta creada exitosamente!",
+  "signupEmailInUse": "El correo ya está en uso",
+  "signupGenericError": "Ocurrió un error durante el registro",
+  "signupGoogleError": "Error al iniciar sesión con Google",
+  "signupNetworkError": "Error de red. Verifica tu conexión",
+  "signupNewCustomerBio": "Nuevo cliente en AnySkill",
+  "signupNewProviderBio": "Nuevo proveedor en AnySkill",
+  "signupTosMustAgree": "Debes aceptar los Términos de Servicio",
+  "signupWeakPassword": "La contraseña es muy débil",
+
+  "forgotPasswordEmail": "Correo electrónico",
+  "forgotPasswordError": "Error al enviar enlace de restablecimiento",
+  "forgotPasswordSubmit": "Enviar Enlace",
+  "forgotPasswordSubtitle": "Ingresa tu correo y te enviaremos un enlace para restablecer tu contraseña",
+  "forgotPasswordSuccess": "Enlace de restablecimiento enviado a tu correo",
+  "forgotPasswordTitle": "Olvidé mi Contraseña",
+
+  "authError": "Error de autenticación: {code}",
+  "@authError": {
+    "placeholders": {
+      "code": {"type": "String"}
+    }
+  },
+
+  "profileTitle": "Mi Perfil",
+  "profileFieldName": "Nombre Completo",
+  "profileFieldNameHint": "Ingresa tu nombre completo",
+  "profileFieldRole": "Tipo de Usuario",
+  "profileFieldCategoryMain": "Categoría Principal",
+  "profileFieldCategoryMainHint": "Elige tu categoría principal",
+  "profileFieldCategorySub": "Sub-Categoría",
+  "profileFieldCategorySubHint": "Elige una especialidad específica",
+  "profileFieldPrice": "Precio por Hora (₪)",
+  "profileFieldPriceHint": "Ingresa tu tarifa por hora",
+  "profileFieldResponseTime": "Tiempo de Respuesta (minutos)",
+  "profileFieldResponseTimeHint": "Tiempo de respuesta promedio",
+  "profileFieldTaxId": "Número de Licencia Comercial",
+  "profileFieldTaxIdHint": "Ingresa número de licencia",
+  "profileFieldTaxIdHelp": "Este número se usará para facturación",
+
+  "editProfileAbout": "Sobre Mí",
+  "editProfileAboutHint": "Cuéntales a los clientes sobre tu experiencia...",
+  "editProfileCancellationPolicy": "Política de Cancelación",
+  "editProfileCancellationHint": "Elige una política de cancelación",
+  "editProfileGallery": "Galería",
+  "editProfileQuickTags": "Etiquetas Rápidas",
+  "editProfileTagsHint": "Agrega etiquetas a tu perfil",
+  "editProfileTagsSelected": "{count} seleccionados",
+  "@editProfileTagsSelected": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+
+  "editCategoryTitle": "Editar Categoría",
+  "editCategoryNameLabel": "Nombre de Categoría",
+  "editCategoryChangePic": "Cambiar Imagen",
+
+  "shareProfileTitle": "Compartir Perfil",
+  "shareProfileTooltip": "Comparte tu perfil",
+  "shareProfileCopyLink": "Copiar Enlace",
+  "shareProfileWhatsapp": "Compartir en WhatsApp",
+
+  "statBalance": "Saldo",
+
+  "searchHintExperts": "Buscar profesionales...",
+  "searchDefaultTitle": "Buscar",
+  "searchDefaultCity": "Israel",
+  "searchDefaultExpert": "Profesional",
+  "searchSectionCategories": "Categorías",
+  "searchSectionResultsFor": "Resultados para \"{query}\"",
+  "@searchSectionResultsFor": {
+    "placeholders": {
+      "query": {"type": "String"}
+    }
+  },
+  "searchNoResultsFor": "Sin resultados para \"{query}\"",
+  "@searchNoResultsFor": {
+    "placeholders": {
+      "query": {"type": "String"}
+    }
+  },
+  "searchNoCategoriesBody": "No se encontraron categorías",
+  "searchPerHour": "₪/hora",
+  "searchRecommendedBadge": "Recomendado",
+  "searchChipHomeVisit": "Visita a Domicilio",
+  "searchChipWeekend": "Disponible Fines de Semana",
+  "searchDatePickerHint": "Selecciona una fecha",
+  "searchTourSearchTitle": "Buscar Profesionales",
+  "searchTourSearchDesc": "Busca por nombre, servicio o categoría",
+  "searchTourSuggestionsTitle": "Sugerencias Inteligentes",
+  "searchTourSuggestionsDesc": "Sugerencias personalizadas basadas en tus búsquedas",
+  "searchUrgencyMorning": "Mañana",
+  "searchUrgencyAfternoon": "Tarde",
+  "searchUrgencyEvening": "Noche",
+
+  "catResultsSearchHint": "Buscar en la categoría...",
+  "catResultsNoExperts": "No hay profesionales en {category}",
+  "@catResultsNoExperts": {
+    "placeholders": {
+      "category": {"type": "String"}
+    }
+  },
+  "catResultsNoResults": "Sin resultados",
+  "catResultsNoResultsHint": "Intenta cambiar tu búsqueda",
+  "catResultsPerHour": "₪/hora",
+  "catResultsOrderCount": "{count} pedidos",
+  "@catResultsOrderCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "catResultsResponseTime": "Responde en {minutes} min",
+  "@catResultsResponseTime": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "catResultsRecommended": "Recomendado",
+  "catResultsTopRated": "Mejor Calificado",
+  "catResultsUnder100": "Menos de ₪100",
+  "catResultsClearFilters": "Limpiar Filtros",
+  "catResultsBeFirst": "¡Sé el primero!",
+  "catResultsExpertDefault": "Profesional",
+  "catResultsLoadMore": "Cargar Más",
+  "catResultsAvailableSlots": "Horarios Disponibles",
+  "catResultsNoAvailability": "Sin Disponibilidad",
+  "catResultsFullBooking": "Completo",
+  "catResultsWhenFree": "¿Cuándo disponible?",
+
+  "chatListTitle": "Mensajes",
+
+  "expertSectionAbout": "Acerca de",
+  "expertSectionService": "Servicio",
+  "expertSectionSchedule": "Disponibilidad",
+  "expertBioPlaceholder": "Sin biografía aún",
+  "expertBioReadMore": "Leer más",
+  "expertBioShowLess": "Mostrar menos",
+  "expertNoReviews": "Sin reseñas aún",
+  "expertDefaultReviewer": "Usuario",
+  "expertProviderResponse": "Respuesta del proveedor",
+  "expertAddReply": "Agregar respuesta",
+  "expertAddReplyTitle": "Agregar respuesta a la reseña",
+  "expertReplyHint": "Escribe una respuesta...",
+  "expertPublishReply": "Publicar respuesta",
+  "expertReplyError": "Error al publicar respuesta",
+  "expertSelectDateTime": "Selecciona fecha y hora",
+  "expertSelectTime": "Selecciona hora",
+  "expertBookForTime": "Reservar para {time}",
+  "@expertBookForTime": {
+    "placeholders": {
+      "time": {"type": "String"}
+    }
+  },
+  "expertStartingFrom": "Desde ₪{price}",
+  "@expertStartingFrom": {
+    "placeholders": {
+      "price": {"type": "String"}
+    }
+  },
+  "expertBookingSummaryTitle": "Resumen de Reserva",
+  "expertSummaryRowService": "Servicio",
+  "expertSummaryRowDate": "Fecha",
+  "expertSummaryRowTime": "Hora",
+  "expertSummaryRowPrice": "Precio",
+  "expertSummaryRowIncluded": "Incluido",
+  "expertSummaryRowProtection": "Protección al Comprador",
+  "expertSummaryRowTotal": "Total",
+  "expertConfirmPaymentButton": "Confirmar y Pagar",
+  "expertVerifiedBooking": "Reserva Verificada",
+  "expertInsufficientBalance": "Saldo insuficiente",
+  "expertEscrowSuccess": "¡Pago confirmado! Fondos asegurados en depósito",
+  "expertTransactionTitle": "Pago a {name}",
+  "@expertTransactionTitle": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "expertSystemMessage": "Reserva confirmada para {date} a las {time}. ₪{amount} asegurados en depósito.",
+  "@expertSystemMessage": {
+    "placeholders": {
+      "date": {"type": "String"},
+      "time": {"type": "String"},
+      "amount": {"type": "String"}
+    }
+  },
+  "expertCancellationNotice": "Política {policy}: Cancelación gratuita hasta {deadline}. Después {penalty}% de penalización.",
+  "@expertCancellationNotice": {
+    "placeholders": {
+      "policy": {"type": "String"},
+      "deadline": {"type": "String"},
+      "penalty": {"type": "String"}
+    }
+  },
+  "expertCancellationNoDeadline": "Política {policy}: {description}",
+  "@expertCancellationNoDeadline": {
+    "placeholders": {
+      "policy": {"type": "String"},
+      "description": {"type": "String"}
+    }
+  },
+
+  "financeTitle": "Finanzas",
+  "financeAvailableBalance": "Saldo Disponible",
+  "financePending": "Pendiente",
+  "financeProcessing": "Procesando",
+  "financeRecentActivity": "Actividad Reciente",
+  "financeNoTransactions": "Sin transacciones",
+  "financeWithdrawButton": "Retirar Fondos",
+  "financeMinWithdraw": "Retiro mínimo: ₪50",
+  "financeTrustBadge": "Tu dinero está protegido",
+  "financeReceivedFrom": "Recibido de {name}",
+  "@financeReceivedFrom": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "financePaidTo": "Pagado a {name}",
+  "@financePaidTo": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "financeError": "Error: {error}",
+  "@financeError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+
+  "disputeConfirmRefund": "Confirmar Reembolso",
+  "disputeConfirmRelease": "Confirmar Liberación de Pago",
+  "disputeConfirmSplit": "Confirmar División",
+  "disputePartyCustomer": "el cliente",
+  "disputeRefundBody": "₪{amount} serán reembolsados a {customerName}",
+  "@disputeRefundBody": {
+    "placeholders": {
+      "amount": {"type": "String"},
+      "customerName": {"type": "String"}
+    }
+  },
+  "disputeReleaseBody": "₪{netAmount} serán liberados a {expertName} (comisión {feePercent}%)",
+  "@disputeReleaseBody": {
+    "placeholders": {
+      "netAmount": {"type": "String"},
+      "expertName": {"type": "String"},
+      "feePercent": {"type": "String"}
+    }
+  },
+  "disputeSplitBody": "División: ₪{halfAmount} por lado. Proveedor recibe ₪{halfNet}, plataforma ₪{platformFee}",
+  "@disputeSplitBody": {
+    "placeholders": {
+      "halfAmount": {"type": "String"},
+      "halfNet": {"type": "String"},
+      "platformFee": {"type": "String"}
+    }
+  },
+  "disputeResolvedRefund": "Disputa resuelta — reembolso emitido",
+  "disputeResolvedRelease": "Disputa resuelta — pago liberado",
+  "disputeResolvedSplit": "Disputa resuelta — monto dividido",
+  "disputeTypeAudio": "Audio",
+  "disputeTypeImage": "Imagen",
+  "disputeTypeLocation": "Ubicación",
+
+  "releasePaymentError": "Error al liberar el pago",
+
+  "oppTitle": "Oportunidades",
+  "oppAllCategories": "Todas las Categorías",
+  "oppEmptyAll": "No hay oportunidades ahora",
+  "oppEmptyAllSubtitle": "Vuelve más tarde",
+  "oppEmptyCategory": "No hay oportunidades en esta categoría",
+  "oppEmptyCategorySubtitle": "Prueba otra categoría",
+  "oppTakeOpportunity": "Tomar Oportunidad",
+  "oppInterested": "Interesado",
+  "oppAlreadyInterested": "Ya expresaste interés",
+  "oppAlreadyExpressed": "Ya expresaste interés en esta solicitud",
+  "oppAlready3Interested": "Ya hay 3 interesados",
+  "oppInterestSuccess": "¡Tu interés ha sido registrado!",
+  "oppRequestClosed3": "Solicitud cerrada — 3 interesados",
+  "oppRequestClosedBtn": "Solicitud Cerrada",
+  "oppRequestUnavailable": "La solicitud ya no está disponible",
+  "oppDefaultClient": "Cliente",
+  "oppHighDemand": "Alta Demanda",
+  "oppQuickBid": "Oferta Rápida",
+  "oppQuickBidMessage": "Hola {clientName}, soy {providerName} y me encantaría ayudar.",
+  "@oppQuickBidMessage": {
+    "placeholders": {
+      "clientName": {"type": "String"},
+      "providerName": {"type": "String"}
+    }
+  },
+  "oppEstimatedEarnings": "Ganancias Estimadas",
+  "oppAfterFee": "Después de comisión",
+  "oppWalletHint": "Las ganancias van a tu cartera",
+  "oppXpToNextLevel": "{xpNeeded} XP para nivel {levelName}",
+  "@oppXpToNextLevel": {
+    "placeholders": {
+      "xpNeeded": {"type": "int"},
+      "levelName": {"type": "String"}
+    }
+  },
+  "oppMaxLevel": "¡Nivel máximo!",
+  "oppBoostEarned": "¡Impulso de perfil obtenido!",
+  "oppBoostProgress": "{count}/3 oportunidades para impulso",
+  "@oppBoostProgress": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "oppProfileBoosted": "¡Perfil impulsado! Quedan {timeLabel}",
+  "@oppProfileBoosted": {
+    "placeholders": {
+      "timeLabel": {"type": "String"}
+    }
+  },
+  "oppError": "Error: {error}",
+  "@oppError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "oppTimeJustNow": "Ahora mismo",
+  "oppTimeMinAgo": "hace {minutes} min",
+  "@oppTimeMinAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "oppTimeHourAgo": "hace {hours} horas",
+  "@oppTimeHourAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "oppTimeDayAgo": "hace {days} días",
+  "@oppTimeDayAgo": {
+    "placeholders": {
+      "days": {"type": "int"}
+    }
+  },
+  "oppTimeHours": "{hours} horas",
+  "@oppTimeHours": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "oppTimeMinutes": "{minutes} minutos",
+  "@oppTimeMinutes": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "oppUnderReviewTitle": "Tu perfil está en revisión",
+  "oppUnderReviewSubtitle": "El equipo de AnySkill está revisando tu perfil",
+  "oppUnderReviewBody": "Te notificaremos cuando la verificación esté completa",
+  "oppUnderReviewContact": "Contactar Soporte",
+  "oppUnderReviewStep1": "Perfil enviado",
+  "oppUnderReviewStep2": "En revisión",
+  "oppUnderReviewStep3": "Aprobación final",
+
+  "requestsEmpty": "Sin solicitudes",
+  "requestsEmptySubtitle": "Aún no se han publicado solicitudes",
+  "requestsChatNow": "Enviar Mensaje",
+  "requestsClosed": "Cerrada",
+  "requestsConfirmPay": "Confirmar y Pagar",
+  "requestsDefaultExpert": "Profesional",
+  "requestsEscrowTooltip": "Los fondos se mantienen en depósito hasta completar el trabajo",
+  "requestsMatchLabel": "Coincidencia",
+  "requestsTopMatch": "Mejor Coincidencia",
+  "requestsVerifiedBadge": "Verificado",
+  "requestsMoneyProtected": "Tu dinero está protegido",
+  "requestsWaiting": "Esperando",
+  "requestsWaitingProviders": "Esperando proveedores...",
+  "requestsJustNow": "Ahora mismo",
+  "requestsMinutesAgo": "hace {minutes} min",
+  "@requestsMinutesAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "requestsHoursAgo": "hace {hours} horas",
+  "@requestsHoursAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "requestsDaysAgo": "hace {days} días",
+  "@requestsDaysAgo": {
+    "placeholders": {
+      "days": {"type": "int"}
+    }
+  },
+  "requestsInterested": "{count} interesados",
+  "@requestsInterested": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "requestsViewInterested": "Ver {count} interesados",
+  "@requestsViewInterested": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "requestsOrderCount": "{count} pedidos",
+  "@requestsOrderCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "requestsHiredAgo": "Contratado {label}",
+  "@requestsHiredAgo": {
+    "placeholders": {
+      "label": {"type": "String"}
+    }
+  },
+  "requestsPricePerHour": "₪{price}/hora",
+  "@requestsPricePerHour": {
+    "placeholders": {
+      "price": {"type": "String"}
+    }
+  },
+
+  "timeNow": "Ahora",
+  "timeOneHour": "Hora",
+  "timeMinutesAgo": "hace {minutes} min",
+  "@timeMinutesAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "timeHoursAgo": "hace {hours} horas",
+  "@timeHoursAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+
+  "urgentBannerRequests": "Solicitudes Urgentes",
+  "urgentBannerPending": "Pendientes",
+  "urgentBannerServiceNeeded": "Se Necesita Servicio",
+  "urgentBannerCustomerWaiting": "Cliente Esperando",
+
+  "calendarTitle": "Calendario",
+  "calendarRefresh": "Actualizar",
+  "calendarNoEvents": "Sin eventos",
+  "calendarStatusCompleted": "Completado",
+  "calendarStatusPending": "Pendiente",
+  "calendarStatusWaiting": "En Espera",
+
+  "creditsLabel": "Créditos",
+  "creditsDiscountAvailable": "¡Descuento del {discount}% disponible!",
+  "@creditsDiscountAvailable": {
+    "placeholders": {
+      "discount": {"type": "int"}
+    }
+  },
+  "creditsToNextDiscount": "{remaining} créditos para el próximo descuento",
+  "@creditsToNextDiscount": {
+    "placeholders": {
+      "remaining": {"type": "int"}
+    }
+  },
+
+  "serviceFullSession": "Sesión Completa",
+  "serviceSingleLesson": "Clase Individual",
+  "serviceExtendedLesson": "Clase Extendida",
+
+  "validationNameRequired": "El nombre es obligatorio",
+  "validationNameLength": "El nombre debe tener al menos 2 caracteres",
+  "validationNameTooLong": "El nombre es demasiado largo",
+  "validationNameForbidden": "El nombre contiene caracteres prohibidos",
+  "validationCategoryRequired": "Por favor selecciona una categoría",
+  "validationRoleRequired": "Por favor selecciona un tipo de usuario",
+  "validationPriceInvalid": "Precio no válido",
+  "validationPricePositive": "El precio debe ser positivo",
+  "validationAboutTooLong": "La descripción es demasiado larga",
+  "validationAboutForbidden": "La descripción contiene caracteres prohibidos",
+  "validationFieldForbidden": "El campo contiene caracteres prohibidos",
+  "validationUrlHttps": "La URL debe comenzar con https://",
+
+  "vipSheetHeader": "AnySkill VIP",
+  "vipPriceMonthly": "₪99/mes",
+  "vipActivateButton": "Activar VIP",
+  "vipActivationSuccess": "¡VIP activado exitosamente!",
+  "vipInsufficientBalance": "Saldo insuficiente para activar VIP",
+  "vipInsufficientTooltip": "Recarga tu cartera para activar VIP",
+  "vipBenefit1": "Prioridad en resultados de búsqueda",
+  "vipBenefit2": "Insignia VIP en el perfil",
+  "vipBenefit3": "Prioridad en oportunidades",
+  "vipBenefit4": "Soporte premium",
+
+  "withdrawMinBalance": "El monto mínimo de retiro es {amount} ₪",
+  "@withdrawMinBalance": {
+    "placeholders": {
+      "amount": {"type": "int"}
+    }
+  },
+  "withdrawAvailableBalance": "Saldo disponible para retiro",
+  "withdrawBankSection": "Datos Bancarios",
+  "withdrawBankName": "Nombre del Banco",
+  "withdrawBankBranch": "Sucursal",
+  "withdrawBankAccount": "Número de Cuenta",
+  "withdrawBankRequired": "El nombre del banco es obligatorio",
+  "withdrawBranchRequired": "La sucursal es obligatoria",
+  "withdrawAccountMinDigits": "El número de cuenta debe tener al menos 5 dígitos",
+  "withdrawBankEncryptedNotice": "Los datos están encriptados y seguros",
+  "withdrawEncryptedNotice": "La información está encriptada y segura",
+  "withdrawBankTransferPending": "Transferencia bancaria en proceso",
+  "withdrawCertSection": "Certificados",
+  "withdrawCertHint": "Sube licencia comercial / certificado de exención",
+  "withdrawCertUploadBtn": "Subir Certificado",
+  "withdrawCertReplace": "Reemplazar Certificado",
+  "withdrawDeclarationSection": "Declaración",
+  "withdrawDeclarationText": "Declaro responsabilidad exclusiva por declarar mis impuestos conforme a la ley",
+  "withdrawDeclarationSuffix": "(Sección 6 de los Términos)",
+  "withdrawTaxStatusTitle": "Tipo de Negocio",
+  "withdrawTaxStatusSubtitle": "Selecciona tu tipo de negocio",
+  "withdrawTaxIndividual": "Comerciante Exento",
+  "withdrawTaxIndividualSub": "Exento de cobro de IVA",
+  "withdrawTaxIndividualBadge": "Exento",
+  "withdrawTaxBusiness": "Comerciante Autorizado",
+  "withdrawTaxBusinessSub": "Obligado a cobrar IVA",
+  "withdrawIndividualTitle": "Datos de Comerciante Exento",
+  "withdrawIndividualDesc": "Ingresa los datos de comerciante exento",
+  "withdrawIndividualFormTitle": "Formulario Comerciante Exento",
+  "withdrawBusinessFormTitle": "Formulario Comerciante Autorizado",
+  "withdrawNoCertError": "Por favor sube un certificado comercial",
+  "withdrawNoDeclarationError": "Por favor confirma la declaración",
+  "withdrawSelectBankError": "Por favor selecciona un banco",
+  "withdrawSubmitButton": "Retirar {amount}",
+  "@withdrawSubmitButton": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "withdrawSubmitError": "Error al enviar la solicitud",
+  "withdrawSuccessTitle": "¡Solicitud Enviada!",
+  "withdrawSuccessSubtitle": "Solicitud de retiro por {amount} enviada exitosamente",
+  "@withdrawSuccessSubtitle": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "withdrawSuccessNotice": "La transferencia bancaria se procesará en 3-5 días hábiles",
+  "withdrawTimeline1Title": "Solicitud Enviada",
+  "withdrawTimeline1Sub": "Solicitud recibida por el sistema",
+  "withdrawTimeline2Title": "En Proceso",
+  "withdrawTimeline2Sub": "El equipo está procesando tu solicitud",
+  "withdrawTimeline3Title": "Completado",
+  "withdrawTimeline3Sub": "Fondos transferidos a tu cuenta",
+
+  "pendingCatsApproved": "Categoría aprobada",
+  "pendingCatsRejected": "Categoría rechazada",
+
+  "helpCenterTitle": "Centro de Ayuda",
+  "helpCenterTooltip": "Ayuda",
+  "helpCenterCustomerWelcome": "Bienvenido al Centro de Ayuda",
+  "helpCenterCustomerFaq": "Preguntas Frecuentes para Clientes",
+  "helpCenterCustomerSupport": "Soporte al Cliente",
+  "helpCenterProviderWelcome": "Bienvenido al Centro de Ayuda para Proveedores",
+  "helpCenterProviderFaq": "Preguntas Frecuentes para Proveedores",
+  "helpCenterProviderSupport": "Soporte al Proveedor",
+
+  "languageTitle": "Idioma",
+  "languageSectionLabel": "Seleccionar Idioma",
+  "languageHe": "עברית",
+  "languageEn": "English",
+  "languageEs": "Español",
+  "languageAr": "العربية",
+
+  "systemWalletEnterNumber": "Ingresa un número válido",
+
+  "updateBannerText": "Nueva versión disponible",
+  "updateNowButton": "Actualizar Ahora",
+
+  "xpLevelBronze": "Novato",
+  "xpLevelSilver": "Profesional",
+  "xpLevelGold": "Oro",
+
+  "bizAiTitle": "Inteligencia de Negocios",
+  "bizAiSubtitle": "Análisis y pronóstico con IA",
+  "bizAiLoading": "Cargando datos...",
+  "bizAiRefreshData": "Actualizar Datos",
+  "bizAiNoData": "No hay datos disponibles",
+  "bizAiError": "Error: {error}",
+  "@bizAiError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "bizAiSectionFinancial": "Finanzas",
+  "bizAiSectionMarket": "Mercado",
+  "bizAiSectionAlerts": "Alertas",
+  "bizAiSectionAiOps": "Operaciones IA",
+  "bizAiDailyCommission": "Comisión Diaria",
+  "bizAiWeeklyProjection": "Proyección Semanal",
+  "bizAiWeeklyForecast": "Pronóstico Semanal",
+  "bizAiExpectedRevenue": "Ingresos Esperados",
+  "bizAiForecastBadge": "Pronóstico",
+  "bizAiActualToDate": "Real a la Fecha",
+  "bizAiAccuracy": "Precisión",
+  "bizAiModelAccuracy": "Precisión del Modelo",
+  "bizAiModelAccuracyDetail": "Precisión de predicción de ingresos",
+  "bizAiNoChartData": "Sin datos para gráfico",
+  "bizAiNoOrderData": "Sin datos de pedidos",
+  "bizAiSevenDays": "7 Días",
+  "bizAiLast7Days": "Últimos 7 Días",
+  "bizAiExecSummary": "Resumen Ejecutivo",
+  "bizAiActivityToday": "Actividad de Hoy",
+  "bizAiApprovalQueue": "Cola de Aprobación",
+  "bizAiPending": "{count} pendientes",
+  "@bizAiPending": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiPendingLabel": "Pendientes",
+  "bizAiApproved": "Aprobado",
+  "bizAiRejected": "Rechazado",
+  "bizAiApprovedTotal": "Total Aprobados",
+  "bizAiTapToReview": "Toca para revisar",
+  "bizAiCategoriesApproved": "Categorías Aprobadas",
+  "bizAiNewCategories": "Nuevas Categorías",
+  "bizAiMarketOpportunities": "Oportunidades de Mercado",
+  "bizAiMarketOppsCard": "Oportunidades de Mercado",
+  "bizAiHighValueCategories": "Categorías de Alto Valor",
+  "bizAiHighValueHint": "Categorías con alto potencial de ingresos",
+  "bizAiProviders": "{count} proveedores",
+  "@bizAiProviders": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiPopularSearches": "Búsquedas Populares",
+  "bizAiNoSearchData": "Sin datos de búsqueda",
+  "bizAiNichesNoProviders": "Nichos Sin Proveedores",
+  "bizAiNoOpportunities": "Sin oportunidades en este momento",
+  "bizAiRecruitForQuery": "Reclutar proveedores para \"{query}\"",
+  "@bizAiRecruitForQuery": {
+    "placeholders": {
+      "query": {"type": "String"}
+    }
+  },
+  "bizAiZeroResultsHint": "Búsquedas sin resultados — oportunidad de reclutamiento",
+  "bizAiSearches": "Búsquedas: {count}+",
+  "@bizAiSearches": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiSearchCount": "{count} búsquedas",
+  "@bizAiSearchCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiAlertHistory": "Historial de Alertas",
+  "bizAiAlertThreshold": "Umbral de Alerta",
+  "bizAiAlertThresholdHint": "Búsquedas mínimas para alerta",
+  "bizAiSaveThreshold": "Guardar Umbral",
+  "bizAiReset": "Restablecer",
+  "bizAiNoAlerts": "Sin alertas",
+  "bizAiAlertCount": "{count} alertas",
+  "@bizAiAlertCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "bizAiMinutesAgo": "hace {minutes} min",
+  "@bizAiMinutesAgo": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
+  "bizAiHoursAgo": "hace {hours} horas",
+  "@bizAiHoursAgo": {
+    "placeholders": {
+      "hours": {"type": "int"}
+    }
+  },
+  "bizAiDaysAgo": "hace {days} días",
+  "@bizAiDaysAgo": {
+    "placeholders": {
+      "days": {"type": "int"}
+    }
+  },
+  "tabProfile": "Perfil", "searchPlaceholder": "Buscar profesional, servicio...", "searchTitle": "Buscar", "discoverCategories": "Descubrir categorías", "confirm": "Confirmar", "cancel": "Cancelar", "save": "Guardar", "submit": "Enviar", "next": "Siguiente", "back": "Atrás", "delete": "Eliminar", "currencySymbol": "₪", "statusPaidEscrow": "Pendiente", "statusExpertCompleted": "Completado — Pendiente de aprobación", "statusCompleted": "Completado", "statusCancelled": "Cancelado", "statusDispute": "En disputa", "statusPendingPayment": "Pago pendiente", "profileCustomer": "Cliente", "profileProvider": "Proveedor", "profileOrders": "Pedidos", "profileRating": "Calificación", "profileReviews": "Reseñas", "reviewsPlaceholder": "Cuéntanos tu experiencia...", "reviewSubmit": "Enviar reseña", "ratingLabel": "Califica el servicio", "walletBalance": "Saldo", "openChat": "Abrir chat", "quickRequest": "Solicitud rápida", "trendingBadge": "Tendencia", "isCurrentRtl": "false", "taxDeclarationText": "Declaro responsabilidad exclusiva de reporte fiscal.", "loginTitle": "Iniciar sesión", "loginSubtitle": "Inicia sesión en tu cuenta", "loginWelcomeBack": "¡Bienvenido de vuelta!", "loginForgotPassword": "¿Olvidaste tu contraseña?", "loginSignUpFree": "Regístrate gratis", "loginNoAccount": "¿No tienes cuenta? ", "loginRememberMe": "Recuérdame", "loginAccountTitle": "Inicio de sesión", "loginEmail": "Correo electrónico", "loginPassword": "Contraseña", "loginButton": "Entrar", "loginStats10k": "10K+", "loginStats50": "50+", "loginStats49": "4.9★", "errorGenericLogin": "Error al iniciar sesión", "subCategoryPrompt": "Elige subcategoría", "emptyActivityTitle": "Sin actividad", "emptyActivityCta": "Comenzar", "errorNetworkTitle": "Error de red", "errorNetworkBody": "Revisa tu conexión", "errorProfileLoad": "Error al cargar perfil", "forgotPassword": "¿Olvidaste tu contraseña?", "signupButton": "Registrarse", "tosAgree": "Acepto los Términos de Servicio", "tosTitle": "Términos de Servicio", "tosVersion": "Versión 1.0", "urgentCustomerLabel": "Servicio urgente", "urgentProviderLabel": "Oportunidades urgentes", "urgentOpenButton": "Abrir", "walletMinWithdraw": "Mínimo para retirar", "withdrawalPending": "Retiro pendiente", "withdrawFunds": "Retirar fondos",
+  "onboardingError": "Error: {error}", "@onboardingError": {"placeholders": {"error": {"type": "String"}}},
+  "onboardingUploadError": "Error de subida: {error}", "@onboardingUploadError": {"placeholders": {"error": {"type": "String"}}},
+  "onboardingWelcome": "¡Bienvenido!",
+  "authError": "Error de autenticación: {code}", "@authError": {"placeholders": {"code": {"type": "String"}}},
+
+  "availabilityUpdated": "Disponibilidad actualizada",
+  "bizAiRecruitNow": "Reclutar Ahora",
+  "chatEmptyState": "No hay mensajes aún",
+  "chatLastMessageDefault": "Sin último mensaje",
+  "chatSearchHint": "Buscar en chats...",
+  "chatUserDefault": "Usuario",
+  "deleteChatConfirm": "Confirmar",
+  "deleteChatContent": "¿Estás seguro de que deseas eliminar este chat?",
+  "deleteChatSuccess": "Chat eliminado exitosamente",
+  "deleteChatTitle": "Eliminar Chat",
+  "disputeActionsSection": "Acciones",
+  "disputeAdminNote": "Nota del Administrador",
+  "disputeAdminNoteHint": "Agregar nota (opcional)",
+  "disputeArbitrationCenter": "Centro de Arbitraje",
+  "disputeChatHistory": "Historial de Chat",
+  "disputeDescription": "Descripción",
+  "disputeEmptySubtitle": "No hay disputas abiertas en este momento",
+  "disputeEmptyTitle": "Sin Disputas",
+  "disputeHint": "Describe el problema en detalle",
+  "disputeIdPrefix": "Disputa #",
+  "disputeIrreversible": "Esta acción no se puede deshacer",
+  "disputeLockedEscrow": "Bloqueado en Escrow",
+  "disputeLockedSuffix": "₪",
+  "disputeNoChatId": "Sin ID de chat",
+  "disputeNoMessages": "Sin mensajes",
+  "disputeNoReason": "Sin razón proporcionada",
+  "disputeOpenDisputes": "Disputas Abiertas",
+  "disputePartiesSection": "Partes",
+  "disputePartyProvider": "el proveedor",
+  "disputeReasonSection": "Razón de la Disputa",
+  "disputeRefundLabel": "Reembolso",
+  "disputeReleaseLabel": "Liberar Pago",
+  "disputeResolving": "Procesando...",
+  "disputeSplitLabel": "División",
+  "disputeSystemSender": "Sistema",
+  "disputeTapForDetails": "Toca para ver detalles",
+  "disputeTitle": "Disputa",
+  "editProfileTitle": "Editar Perfil",
+  "helpCenterInputHint": "Escribe tu pregunta aquí...",
+  "logoutButton": "Cerrar Sesión",
+  "markAllReadSuccess": "Todas las notificaciones marcadas como leídas",
+  "markedDoneSuccess": "Marcado como hecho exitosamente",
+  "noCategoriesYet": "Sin categorías aún",
+  "notifClearAll": "Limpiar Todo",
+  "notifEmptySubtitle": "No tienes notificaciones nuevas",
+  "notifEmptyTitle": "Sin Notificaciones",
+  "notifOpen": "Abrir",
+  "notificationsTitle": "Notificaciones",
+  "oppNotifTitle": "Nuevo Interés",
+  "pendingCatsApprove": "Aprobar",
+  "pendingCatsEmptySubtitle": "No hay solicitudes de categoría pendientes",
+  "pendingCatsEmptyTitle": "Sin Solicitudes",
+  "pendingCatsImagePrompt": "Subir imagen de categoría",
+  "pendingCatsProviderDesc": "Descripción del proveedor",
+  "pendingCatsReject": "Rechazar",
+  "pendingCatsSectionPending": "Pendientes",
+  "pendingCatsSectionReviewed": "Revisadas",
+  "pendingCatsStatusApproved": "Aprobado",
+  "pendingCatsStatusRejected": "Rechazado",
+  "pendingCatsTitle": "Solicitudes de Categoría",
+  "pendingCatsAiReason": "Razón de IA",
+  "profileLoadError": "Error al cargar perfil",
+  "requestsBestValue": "Mejor Valor",
+  "requestsFastResponse": "Respuesta Rápida",
+  "requestsInterestedTitle": "Interesados",
+  "requestsNoInterested": "Nadie interesado aún",
+  "requestsTitle": "Solicitudes",
+  "submitDispute": "Enviar Disputa",
+  "systemWalletFeePanel": "Comisión de Plataforma",
+  "systemWalletInvalidNumber": "Número no válido",
+  "systemWalletUpdateFee": "Actualizar Comisión",
+  "tosAcceptButton": "Acepto",
+  "tosBindingNotice": "Al confirmar, aceptas los Términos de Servicio",
+  "tosFullTitle": "Términos de Servicio Completos",
+  "tosLastUpdated": "Última Actualización",
+  "withdrawExistingCert": "Certificado existente",
+  "withdrawUploadError": "Error al subir archivo",
+  "xpAddAction": "Agregar",
+  "xpAddEventButton": "Agregar Evento",
+  "xpAddEventTitle": "Agregar Evento XP",
+  "xpDeleteEventTitle": "Eliminar Evento",
+  "xpEditEventTitle": "Editar Evento XP",
+  "xpEventAdded": "Evento agregado exitosamente",
+  "xpEventDeleted": "Evento eliminado exitosamente",
+  "xpEventUpdated": "Evento actualizado exitosamente",
+  "xpEventsEmpty": "Sin eventos XP",
+  "xpEventsSection": "Eventos XP",
+  "xpFieldDesc": "Descripción",
+  "xpFieldId": "ID",
+  "xpFieldIdHint": "Ingresa un ID único",
+  "xpFieldName": "Nombre",
+  "xpFieldPoints": "Puntos",
+  "xpLevelsError": "Error al guardar niveles",
+  "xpLevelsSaved": "Niveles guardados exitosamente",
+  "xpLevelsSubtitle": "Establece los umbrales de XP para cada nivel",
+  "xpLevelsTitle": "Niveles XP",
+  "xpManagerSubtitle": "Administrar eventos y niveles de XP",
+  "xpManagerTitle": "Administrador XP",
+  "xpReservedId": "ID reservado",
+  "xpSaveAction": "Guardar",
+  "xpSaveLevels": "Guardar Niveles",
+  "xpTooltipDelete": "Eliminar",
+  "xpTooltipEdit": "Editar",
+
+  "bizAiThresholdUpdated": "Umbral actualizado a {value}",
+  "@bizAiThresholdUpdated": {
+    "placeholders": {
+      "value": {"type": "int"}
+    }
+  },
+  "disputeErrorPrefix": "Error: {error}",
+  "@disputeErrorPrefix": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "disputeExistingNote": "Nota del administrador: {note}",
+  "@disputeExistingNote": {
+    "placeholders": {
+      "note": {"type": "String"}
+    }
+  },
+  "disputeOpenedAt": "Abierto el {date}",
+  "@disputeOpenedAt": {
+    "placeholders": {
+      "date": {"type": "String"}
+    }
+  },
+  "disputeRefundSublabel": "Reembolso completo — {amount} ₪ al cliente",
+  "@disputeRefundSublabel": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "disputeReleaseSublabel": "Liberar — {amount} ₪ al proveedor",
+  "@disputeReleaseSublabel": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "disputeSplitSublabel": "División — {amount} ₪ a cada parte",
+  "@disputeSplitSublabel": {
+    "placeholders": {
+      "amount": {"type": "String"}
+    }
+  },
+  "editCategorySaveError": "Error al guardar: {error}",
+  "@editCategorySaveError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "oppInterestChatMessage": "Hola, soy {providerName} y me encantaría ayudar: {description}",
+  "@oppInterestChatMessage": {
+    "placeholders": {
+      "providerName": {"type": "String"},
+      "description": {"type": "String"}
+    }
+  },
+  "oppNotifBody": "{providerName} está interesado en tu oportunidad",
+  "@oppNotifBody": {
+    "placeholders": {
+      "providerName": {"type": "String"}
+    }
+  },
+  "pendingCatsErrorPrefix": "Error: {error}",
+  "@pendingCatsErrorPrefix": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "pendingCatsSubCategory": "Sub-categoría: {name}",
+  "@pendingCatsSubCategory": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "xpDeleteEventConfirm": "¿Eliminar {name}?",
+  "@xpDeleteEventConfirm": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "xpErrorPrefix": "Error: {error}",
+  "@xpErrorPrefix": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "xpEventsCount": "{count} eventos",
+  "@xpEventsCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  }
 }

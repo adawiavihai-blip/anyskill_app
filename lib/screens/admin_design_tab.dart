@@ -55,6 +55,73 @@ class _AdminDesignTabState extends State<AdminDesignTab> {
         });
   }
 
+  /// Look up the default (hardcoded) translation for a given key + locale.
+  /// Uses the generated locale class and a key→getter map.
+  String _getDefaultTranslation(String key, String locale) {
+    final l10n = lookupAppLocalizations(Locale(locale));
+    // Simple key→getter dispatch. Returns the key name as fallback.
+    try {
+      // Use a map of all known simple-getter keys.
+      // For the CMS editor, we only need the keys listed in screenGroups.
+      final map = _l10nToMap(l10n);
+      return map[key] ?? key;
+    } catch (_) {
+      return key;
+    }
+  }
+
+  /// Converts an AppLocalizations instance to a String map for key lookup.
+  static Map<String, String> _l10nToMap(AppLocalizations l) {
+    return {
+      'tabHome': l.tabHome,
+      'tabBookings': l.tabBookings,
+      'tabChat': l.tabChat,
+      'tabWallet': l.tabWallet,
+      'tabProfile': l.tabProfile,
+      'appName': l.appName,
+      'searchPlaceholder': l.searchPlaceholder,
+      'searchTitle': l.searchTitle,
+      'discoverCategories': l.discoverCategories,
+      'bookNow': l.bookNow,
+      'close': l.close,
+      'confirm': l.confirm,
+      'cancel': l.cancel,
+      'save': l.save,
+      'submit': l.submit,
+      'next': l.next,
+      'back': l.back,
+      'delete': l.delete,
+      'greetingMorning': l.greetingMorning,
+      'greetingAfternoon': l.greetingAfternoon,
+      'greetingEvening': l.greetingEvening,
+      'greetingNight': l.greetingNight,
+      'onlineStatus': l.onlineStatus,
+      'offlineStatus': l.offlineStatus,
+      'currencySymbol': l.currencySymbol,
+      'statusPaidEscrow': l.statusPaidEscrow,
+      'statusExpertCompleted': l.statusExpertCompleted,
+      'statusCompleted': l.statusCompleted,
+      'statusCancelled': l.statusCancelled,
+      'statusDispute': l.statusDispute,
+      'statusPendingPayment': l.statusPendingPayment,
+      'loginButton': l.loginButton,
+      'loginEmail': l.loginEmail,
+      'loginPassword': l.loginPassword,
+      'profileCustomer': l.profileCustomer,
+      'profileProvider': l.profileProvider,
+      'profileOrders': l.profileOrders,
+      'profileRating': l.profileRating,
+      'profileReviews': l.profileReviews,
+      'reviewsPlaceholder': l.reviewsPlaceholder,
+      'reviewSubmit': l.reviewSubmit,
+      'ratingLabel': l.ratingLabel,
+      'walletBalance': l.walletBalance,
+      'openChat': l.openChat,
+      'quickRequest': l.quickRequest,
+      'trendingBadge': l.trendingBadge,
+    };
+  }
+
   void _refreshControllers() {
     // Special case: "ניהול קטלוג" has no text keys
     if (_selectedScreen == 'ניהול קטלוג') {
@@ -71,7 +138,7 @@ class _AdminDesignTabState extends State<AdminDesignTab> {
     final keys = ContentManagementService.screenGroups[_selectedScreen] ?? [];
     for (final key in keys) {
       final override = _currentOverrides[key];
-      final original = AppLocalizations.getDefault(key, _selectedLocale);
+      final original = _getDefaultTranslation(key, _selectedLocale);
 
       _originalValues[key] = original;
       final ctrl = TextEditingController(text: override ?? original);
