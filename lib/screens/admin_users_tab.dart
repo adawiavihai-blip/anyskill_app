@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -573,10 +574,17 @@ class _UserCard extends StatelessWidget {
     final joinDate =
         (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
 
-    // Extract profile image URL safely as String (dynamic → String?)
+    // Extract profile image — supports both HTTP URLs and base64 data URIs.
+    // Onboarding stores base64 (`data:image/png;base64,...`), Google Sign-In
+    // stores HTTP URLs. Must handle both like edit_profile_screen.dart does.
     final rawImg = data['profileImage'];
-    final String? imageUrl =
+    final String? imgStr =
         (rawImg is String && rawImg.isNotEmpty) ? rawImg : null;
+    final ImageProvider? avatarImage = imgStr != null
+        ? (imgStr.startsWith('http')
+            ? NetworkImage(imgStr)
+            : MemoryImage(base64Decode(imgStr.split(',').last)))
+        : null;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 6),
@@ -618,13 +626,11 @@ class _UserCard extends StatelessWidget {
               children: [
                 CircleAvatar(
                   radius: 25,
-                  backgroundImage: imageUrl != null
-                      ? NetworkImage(imageUrl)
-                      : null,
-                  onBackgroundImageError: imageUrl != null
+                  backgroundImage: avatarImage,
+                  onBackgroundImageError: avatarImage != null
                       ? (_, __) {}
                       : null,
-                  child: imageUrl == null
+                  child: avatarImage == null
                       ? const Icon(Icons.person)
                       : null,
                 ),
