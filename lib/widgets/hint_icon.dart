@@ -9,16 +9,34 @@ import 'package:firebase_auth/firebase_auth.dart';
 ///
 /// Usage:
 ///   actions: [HintIcon(screenKey: 'opportunities')],
-class HintIcon extends StatelessWidget {
+class HintIcon extends StatefulWidget {
   final String screenKey;
   const HintIcon({super.key, required this.screenKey});
 
-  static const _adminEmail = 'adawiavihai@gmail.com';
+  @override
+  State<HintIcon> createState() => _HintIconState();
+}
+
+class _HintIconState extends State<HintIcon> {
+  bool _isAdmin = false;
+  String get screenKey => widget.screenKey;
+
+  @override
+  void initState() {
+    super.initState();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      FirebaseFirestore.instance.collection('users').doc(uid).get().then((snap) {
+        if ((snap.data()?['isAdmin'] == true) && mounted) {
+          setState(() => _isAdmin = true);
+        }
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isAdmin =
-        FirebaseAuth.instance.currentUser?.email == _adminEmail;
+    final isAdmin = _isAdmin;
 
     return StreamBuilder<DocumentSnapshot>(
       stream: FirebaseFirestore.instance

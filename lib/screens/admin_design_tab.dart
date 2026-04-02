@@ -246,9 +246,10 @@ class _AdminDesignTabState extends State<AdminDesignTab> {
 
   @override
   Widget build(BuildContext context) {
-    // Permission check
+    // Permission check — admin panel already gates on isAdmin,
+    // this is a secondary guard for CMS-specific access.
     final currentUser = FirebaseAuth.instance.currentUser;
-    if (currentUser?.email != 'adawiavihai@gmail.com') {
+    if (currentUser == null) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

@@ -20,7 +20,6 @@ import '../../../l10n/app_localizations.dart'; // ignore: unused_import — part
 const _kGradStart  = Color(0xFF6366F1);
 const _kGradMid    = Color(0xFFEC4899);
 const _kGradEnd    = Color(0xFFF59E0B);
-const _kAdminEmail = 'adawiavihai@gmail.com';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1.  StoriesRow — public entry point
@@ -41,7 +40,19 @@ class StoriesRow extends StatefulWidget {
 
 class _StoriesRowState extends State<StoriesRow> {
   final _uid     = FirebaseAuth.instance.currentUser?.uid ?? '';
-  final _isAdmin = FirebaseAuth.instance.currentUser?.email == _kAdminEmail;
+  bool  _isAdmin = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_uid.isNotEmpty) {
+      FirebaseFirestore.instance.collection('users').doc(_uid).get().then((snap) {
+        if ((snap.data()?['isAdmin'] == true) && mounted) {
+          setState(() => _isAdmin = true);
+        }
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -44,7 +44,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// One navigator key per tab slot (max 8 tabs: 5 common + opp + admin + system).
   final List<GlobalKey<NavigatorState>> _tabNavKeys =
       List.generate(8, (_) => GlobalKey<NavigatorState>());
-  final String adminEmail = "adawiavihai@gmail.com";
+  // Admin status — read from Firestore `users/{uid}.isAdmin` (not email)
+  bool _isAdmin = false;
 
   // ── Badge counters ─────────────────────────────────────────────────────────
   int _bookingsCustBadge   = 0;  // jobs needing customer approval (expert_completed)
@@ -65,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _tourStarted     = false;
   bool _tourLocallyDone = false; // fast local guard, loaded from SharedPreferences
 
+  StreamSubscription<DocumentSnapshot>? _adminFlagSub;
   StreamSubscription<QuerySnapshot>? _bookingsCustSub;
   StreamSubscription<QuerySnapshot>? _bookingsExpertSub;
   StreamSubscription<QuerySnapshot>? _opportunitiesSub;
@@ -92,6 +94,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     });
     _userStream = FirebaseFirestore.instance.collection('users').doc(uid).snapshots();
+    // Read isAdmin flag from Firestore (not email) — real-time sync
+    _adminFlagSub = _userStream.listen((snap) {
+      final data = snap.data() as Map<String, dynamic>? ?? {};
+      final flag = data['isAdmin'] == true;
+      if (flag != _isAdmin && mounted) setState(() => _isAdmin = flag);
+    });
     _chatStream = FirebaseFirestore.instance
         .collection('chats')
         .where('users', arrayContains: uid)
@@ -129,6 +137,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void dispose() {
     _setOnlineStatus(false);
     WidgetsBinding.instance.removeObserver(this);
+    _adminFlagSub?.cancel();
     _bookingsCustSub?.cancel();
     _bookingsExpertSub?.cancel();
     _opportunitiesSub?.cancel();
@@ -168,15 +177,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    bool isAdmin = currentUser?.email == adminEmail;
-
     // ── ShowCaseWidget wraps the entire screen so that Showcase targets
     //    defined in SearchPage and the bottom nav are all in the same tree.
     return ShowCaseWidget(
       onFinish: AppTour.markComplete,
       builder: (scCtx) {
         _showcaseCtx = scCtx;
-        return _buildBody(context, isAdmin);
+        return _buildBody(context, _isAdmin);
       },
     );
   }

@@ -2,7 +2,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import '../l10n/app_localizations.dart';
 import '../services/visual_fetcher_service.dart';
 import 'category_results_screen.dart';
@@ -251,7 +250,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   Widget build(BuildContext context) {
     final isProvider = widget.userData['isProvider'] == true;
     final isAdmin =
-        FirebaseAuth.instance.currentUser?.email == 'adawiavihai@gmail.com';
+        widget.userData['isAdmin'] == true;
 
     // Outer StreamBuilder feeds the category grid without needing shrinkWrap.
     // This lets CustomScrollView use proper SliverGrid for performance.
@@ -493,7 +492,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     // Use the live-synced URL — not the static widget.userData snapshot.
     final profileImage = _profileImageUrl;
     final isAdmin      =
-        FirebaseAuth.instance.currentUser?.email == 'adawiavihai@gmail.com';
+        widget.userData['isAdmin'] == true;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),

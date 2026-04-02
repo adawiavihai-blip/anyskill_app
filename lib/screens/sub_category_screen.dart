@@ -9,7 +9,7 @@ import '../widgets/category_edit_sheet.dart';
 import 'category_results_screen.dart';
 import '../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
 
-class SubCategoryScreen extends StatelessWidget {
+class SubCategoryScreen extends StatefulWidget {
   final String parentId;
   final String parentName;
 
@@ -20,9 +20,31 @@ class SubCategoryScreen extends StatelessWidget {
   });
 
   @override
+  State<SubCategoryScreen> createState() => _SubCategoryScreenState();
+}
+
+class _SubCategoryScreenState extends State<SubCategoryScreen> {
+  bool _isAdmin = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      FirebaseFirestore.instance.collection('users').doc(uid).get().then((snap) {
+        if ((snap.data()?['isAdmin'] == true) && mounted) {
+          setState(() => _isAdmin = true);
+        }
+      });
+    }
+  }
+
+  String get parentId => widget.parentId;
+  String get parentName => widget.parentName;
+
+  @override
   Widget build(BuildContext context) {
-    final isAdmin =
-        FirebaseAuth.instance.currentUser?.email == 'adawiavihai@gmail.com';
+    final isAdmin = _isAdmin;
 
     return Scaffold(
       backgroundColor: Colors.white,

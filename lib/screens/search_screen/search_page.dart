@@ -42,6 +42,7 @@ class _SearchPageState extends State<SearchPage> {
   Timer? _searchLogTimer;
   String _lastLoggedQuery   = '';
   String _lastZeroQuery     = '';
+  bool   _cachedIsAdmin     = false;
 
   @override
   void dispose() {
@@ -245,6 +246,16 @@ class _SearchPageState extends State<SearchPage> {
   void initState() {
     super.initState();
     _loadProviderStatus();
+    // Load admin flag from Firestore (one-time cached read)
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      FirebaseFirestore.instance.collection('users').doc(uid).get().then((snap) {
+        final data = snap.data() ?? {};
+        if (data['isAdmin'] == true && mounted) {
+          setState(() => _cachedIsAdmin = true);
+        }
+      });
+    }
     if (widget.initialCategory != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -271,8 +282,7 @@ class _SearchPageState extends State<SearchPage> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    final bool isAdmin =
-        FirebaseAuth.instance.currentUser?.email == 'adawiavihai@gmail.com';
+    final bool isAdmin = _cachedIsAdmin;
 
     return Scaffold(
       backgroundColor: Colors.white,
