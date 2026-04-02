@@ -13,6 +13,7 @@ import '../widgets/vip_confetti.dart';
 import '../l10n/app_localizations.dart';
 import '../services/locale_provider.dart';
 import '../services/account_deletion_service.dart';
+import '../services/private_data_service.dart';
 import '../services/volunteer_service.dart';
 import '../widgets/xp_progress_bar.dart';
 import '../widgets/streak_badge.dart';
@@ -39,6 +40,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
+    // Migrate sensitive fields to private subcollection (one-time, idempotent)
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) PrivateDataService.migrateIfNeeded(uid);
   }
 
   // ── Logout ────────────────────────────────────────────────────────────────

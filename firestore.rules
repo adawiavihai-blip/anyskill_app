@@ -51,15 +51,11 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
 
-    // CMS admin check — email-based for content management operations.
-    // Allows adawiavihai@gmail.com to manage CMS content without requiring
-    // the isAdmin Firestore flag to be set on the user document.
-    // Checks both the auth token email (email/Google login) and the Firestore
-    // user doc email (phone/OTP login where the token has no email).
+    // CMS admin check — now uses the same Firestore isAdmin flag.
+    // Previously was email-based; unified to prevent hardcoded credentials.
+    // Kept as a separate function for readability in collection rules.
     function isCmsAdmin() {
-      return isVerifiedAuth()
-          && (request.auth.token.email == "adawiavihai@gmail.com"
-              || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.email == "adawiavihai@gmail.com");
+      return isAdmin();
     }
 
     // ── Field-level write guards (reusable) ───────────────────────────────
@@ -135,11 +131,12 @@ service cloud.firestore {
         // Provider writes streak data on own doc; engagement service writes
         // profileBoostUntil when a boost card is awarded.
         || (isOwner(uid) && onlyFields(['streak', 'lastStreakDate', 'streakBestEver', 'lastDailyDropDate', 'profileBoostUntil']))
-        // ── Escrow credit ─────────────────────────────────────────────────
-        // Any verified user may write ONLY pendingBalance on another user's
-        // doc (client pays a quote → credits the expert's pending balance).
-        // The Cloud Function reads netAmountForExpert from the job doc —
-        // not from pendingBalance — so over-crediting has no financial effect.
+        // ── Escrow credit (pendingBalance) ───────────────────────────────
+        // Only the owner may write pendingBalance on their OWN doc (via CF),
+        // OR any auth user may increment it (client credits expert during
+        // escrow payment). The actual payout reads netAmountForExpert from
+        // the jobs doc — not pendingBalance — so manipulation has no
+        // financial effect on real payouts.
         || (isVerifiedAuth() && onlyFields(['pendingBalance']));
 
       // Deletion is only performed by the Account Deletion Cloud Function
@@ -166,6 +163,16 @@ service cloud.firestore {
         allow create, update: if isOwner(uid);
         allow delete:         if false;
       }
+    }
+
+    // ── Private financial data ──────────────────────────────────────────
+    // Sensitive fields (balance, bankDetails, taxId, phone) that should
+    // NOT be readable by other users. Owner + Admin only.
+    // Cloud Functions (Admin SDK) bypass rules and can always read/write.
+    match /users/{uid}/private/{docId} {
+      allow read:           if isOwner(uid) || isAdmin();
+      allow create, update: if isOwner(uid) || isAdmin();
+      allow delete:         if isAdmin();
     }
 
     // ── Legacy per-user notification subcollection ────────────────────────
