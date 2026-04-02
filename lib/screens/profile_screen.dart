@@ -248,6 +248,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Builder(builder: (_) {
                 final profileImg  = data['profileImage'] as String? ?? '';
                 final hasImg      = profileImg.isNotEmpty;
+                final ImageProvider? avatarImg = hasImg
+                    ? (profileImg.startsWith('http')
+                        ? NetworkImage(profileImg)
+                        : MemoryImage(base64Decode(profileImg.split(',').last)))
+                    : null;
                 final name        = data['name'] as String? ?? l10n.defaultUserName;
                 final isVerified  = data['isVerified'] as bool? ?? false;
                 final serviceType = data['serviceType'] as String? ?? '';
@@ -359,11 +364,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   CircleAvatar(
                                     radius: 52,
                                     backgroundColor: const Color(0xFFEEEBFF),
-                                    backgroundImage: hasImg ? NetworkImage(profileImg) : null,
-                                    child: hasImg
-                                        ? null
-                                        : Icon(Icons.person, size: 44,
-                                            color: const Color(0xFF6366F1).withValues(alpha: 0.5)),
+                                    backgroundImage: avatarImg,
+                                    onBackgroundImageError: avatarImg != null ? (_, __) {} : null,
+                                    child: avatarImg == null
+                                        ? Icon(Icons.person, size: 44,
+                                            color: const Color(0xFF6366F1).withValues(alpha: 0.5))
+                                        : null,
                                   ),
                                   Positioned(
                                     bottom: 2,
@@ -860,6 +866,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final uid        = user?.uid ?? '';
     final profileImg = data['profileImage'] as String? ?? '';
     final hasImg     = profileImg.isNotEmpty;
+    final ImageProvider? custAvatarImg = hasImg
+        ? (profileImg.startsWith('http')
+            ? NetworkImage(profileImg)
+            : MemoryImage(base64Decode(profileImg.split(',').last)))
+        : null;
     final name       = data['name'] as String? ?? l10n.defaultUserName;
 
     // Years in AnySkill — derived from the createdAt timestamp on the user doc.
@@ -877,12 +888,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         CircleAvatar(
           radius: 52,
           backgroundColor: const Color(0xFFEEEBFF),
-          backgroundImage: hasImg ? NetworkImage(profileImg) : null,
-          child: hasImg
-              ? null
-              : Icon(Icons.person,
+          backgroundImage: custAvatarImg,
+          onBackgroundImageError: custAvatarImg != null ? (_, __) {} : null,
+          child: custAvatarImg == null
+              ? Icon(Icons.person,
                   size: 44,
-                  color: const Color(0xFF6366F1).withValues(alpha: 0.5)),
+                  color: const Color(0xFF6366F1).withValues(alpha: 0.5))
+              : null,
         ),
         // AnySkill brand badge — bottom-right of avatar circle
         Positioned(
