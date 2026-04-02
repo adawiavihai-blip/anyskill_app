@@ -41,6 +41,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.initState();
   }
 
+  /// Safely converts a profileImage string (HTTP URL or base64 data URI)
+  /// into an ImageProvider. Returns null if empty or malformed.
+  static ImageProvider? _safeImageProvider(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    if (raw.startsWith('http')) return NetworkImage(raw);
+    try {
+      final b64 = raw.contains(',') ? raw.split(',').last : raw;
+      return MemoryImage(base64Decode(b64));
+    } catch (_) {
+      debugPrint('[Profile] Failed to decode base64 image (${raw.length} chars)');
+      return null;
+    }
+  }
+
   // ── Logout ────────────────────────────────────────────────────────────────
   Future<void> _logout() async {
     await FirebaseAuth.instance.signOut();
@@ -247,12 +261,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 // ── Airbnb-style specialist header ──────────────────────────────
               Builder(builder: (_) {
                 final profileImg  = data['profileImage'] as String? ?? '';
-                final hasImg      = profileImg.isNotEmpty;
-                final ImageProvider? avatarImg = hasImg
-                    ? (profileImg.startsWith('http')
-                        ? NetworkImage(profileImg)
-                        : MemoryImage(base64Decode(profileImg.split(',').last)))
-                    : null;
+                debugPrint('[Profile] profileImage field: ${profileImg.isEmpty ? "EMPTY" : profileImg.length > 80 ? "${profileImg.substring(0, 80)}... (${profileImg.length} chars)" : profileImg}');
+                final ImageProvider? avatarImg = _safeImageProvider(profileImg);
                 final name        = data['name'] as String? ?? l10n.defaultUserName;
                 final isVerified  = data['isVerified'] as bool? ?? false;
                 final serviceType = data['serviceType'] as String? ?? '';
@@ -865,12 +875,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildCustomerView(Map<String, dynamic> data, AppLocalizations l10n) {
     final uid        = user?.uid ?? '';
     final profileImg = data['profileImage'] as String? ?? '';
-    final hasImg     = profileImg.isNotEmpty;
-    final ImageProvider? custAvatarImg = hasImg
-        ? (profileImg.startsWith('http')
-            ? NetworkImage(profileImg)
-            : MemoryImage(base64Decode(profileImg.split(',').last)))
-        : null;
+    final ImageProvider? custAvatarImg = _safeImageProvider(profileImg);
     final name       = data['name'] as String? ?? l10n.defaultUserName;
 
     // Years in AnySkill — derived from the createdAt timestamp on the user doc.

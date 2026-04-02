@@ -48,8 +48,11 @@ jobs:
       - name: Generate l10n
         run: flutter gen-l10n
 
+      - name: Generate Riverpod providers
+        run: dart run build_runner build --delete-conflicting-outputs
+
       - name: Analyze (must be 0 errors)
-        run: flutter analyze --no-fatal-warnings
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Run unit tests
         run: flutter test test/unit/ --reporter expanded
@@ -78,6 +81,9 @@ jobs:
 
       - name: Generate l10n
         run: flutter gen-l10n
+
+      - name: Generate Riverpod providers
+        run: dart run build_runner build --delete-conflicting-outputs
 
       - name: Build web release
         run: |
