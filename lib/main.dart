@@ -23,6 +23,7 @@ import 'screens/home_screen.dart';
 import 'screens/phone_login_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'constants.dart' show appVersion;
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'services/stripe_service.dart';
 import 'screens/pending_verification_screen.dart';
 import 'screens/permission_request_screen.dart';
@@ -246,7 +247,7 @@ void main() async {
     return true;
   };
 
-  runApp(const AnySkillApp());
+  runApp(const ProviderScope(child: AnySkillApp()));
 }
 
 // ── Root widget ───────────────────────────────────────────────────────────────
