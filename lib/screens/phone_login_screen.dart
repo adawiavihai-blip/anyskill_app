@@ -666,12 +666,38 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     if (_isLoading) return; // prevent double-tap
     setState(() => _isLoading = true);
     try {
-      // ── UNIFIED PATH: sign_in_with_apple for BOTH web and native ──
-      // On web: uses Apple JS SDK with redirect to Firebase's auth handler.
-      // On native: uses native Apple Sign-In (ASAuthorizationController).
-      // Both avoid Firebase's signInWithPopup entirely.
+      if (kIsWeb) {
+        // ── WEB: Use Firebase signInWithPopup with OAuthProvider ──
+        // sign_in_with_apple package has type-mismatch bugs on Flutter web
+        // (minified:Pc is not a subtype of minified:aL). signInWithPopup
+        // uses Firebase's /__/auth/handler which handles Apple's OAuth
+        // flow correctly without any JS SDK type issues.
+        // ignore: avoid_print
+        print('🔍 [Apple] Web: calling signInWithPopup(apple.com)...');
+        // ignore: avoid_print
+        print('   authDomain: ${FirebaseAuth.instance.app.options.authDomain}');
+
+        final provider = OAuthProvider('apple.com')
+          ..addScope('email')
+          ..addScope('name');
+
+        final cred = await FirebaseAuth.instance.signInWithPopup(provider);
+        // ignore: avoid_print
+        print('✅ [Apple] signInWithPopup SUCCESS: uid=${cred.user?.uid}');
+
+        await _createProfileIfNew(cred);
+        if (mounted) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const OnboardingGate()),
+            (_) => false,
+          );
+        }
+        return;
+      }
+
+      // ── NATIVE iOS: sign_in_with_apple package ──
       // ignore: avoid_print
-      print('🔍 [Apple] Starting Apple Sign-In (unified)...');
+      print('🔍 [Apple] Native: starting Apple Sign-In...');
 
       final rawNonce = _generateNonce();
       final hashedNonce = sha256.convert(utf8.encode(rawNonce)).toString();
@@ -682,16 +708,6 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           AppleIDAuthorizationScopes.fullName,
         ],
         nonce: hashedNonce,
-        // On web, Apple redirects here after authentication.
-        // Firebase's /__/auth/handler processes the Apple callback.
-        webAuthenticationOptions: kIsWeb
-            ? WebAuthenticationOptions(
-                clientId: 'com.example.anyskillFix.auth',
-                redirectUri: Uri.parse(
-                  'https://anyskill-6fdf3.firebaseapp.com/__/auth/handler',
-                ),
-              )
-            : null,
       );
 
       final oauthCredential = OAuthProvider('apple.com').credential(
