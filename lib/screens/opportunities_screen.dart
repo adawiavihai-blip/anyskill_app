@@ -963,6 +963,150 @@ class _RequestCardState extends State<_RequestCard>
     return l10n.oppTimeDayAgo(diff.inDays);
   }
 
+  void _showCounterOfferSheet(BuildContext ctx) {
+    final priceCtrl = TextEditingController();
+    final noteCtrl  = TextEditingController();
+    showModalBottomSheet(
+      context: ctx,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(sheetCtx).viewInsets.bottom,
+        ),
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 28),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(child: Container(width: 40, height: 4,
+                decoration: BoxDecoration(color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(10)))),
+              const SizedBox(height: 20),
+              const Text('שלח הצעת מחיר',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
+                    color: Color(0xFF1E1B4B))),
+              const SizedBox(height: 6),
+              Text('הצע מחיר שונה ללקוח — הוא יצטרך לאשר לפני שהעבודה תתחיל',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+              const SizedBox(height: 20),
+              TextField(
+                controller: priceCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                textAlign: TextAlign.right,
+                decoration: InputDecoration(
+                  labelText: 'המחיר שלך (₪)',
+                  prefixIcon: const Icon(Icons.payments_outlined),
+                  filled: true,
+                  fillColor: const Color(0xFFF5F6FA),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: noteCtrl,
+                maxLines: 2,
+                textAlign: TextAlign.right,
+                textDirection: TextDirection.rtl,
+                decoration: InputDecoration(
+                  labelText: 'הערה ללקוח (אופציונלי)',
+                  prefixIcon: const Icon(Icons.note_outlined),
+                  filled: true,
+                  fillColor: const Color(0xFFF5F6FA),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _kIndigo,
+                  minimumSize: const Size(double.infinity, 52),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                onPressed: () async {
+                  final price = double.tryParse(priceCtrl.text.trim());
+                  if (price == null || price <= 0) {
+                    ScaffoldMessenger.of(sheetCtx).showSnackBar(const SnackBar(
+                      content: Text('נא להזין מחיר תקין'),
+                      backgroundColor: Colors.orange,
+                    ));
+                    return;
+                  }
+                  Navigator.pop(sheetCtx);
+                  // Write counter-offer to Firestore
+                  try {
+                    await FirebaseFirestore.instance
+                        .collection('job_requests')
+                        .doc(widget.requestId)
+                        .collection('counter_offers')
+                        .add({
+                      'providerId':   widget.currentUid,
+                      'providerName': widget.providerName,
+                      'price':        price,
+                      'note':         noteCtrl.text.trim(),
+                      'status':       'pending',
+                      'createdAt':    FieldValue.serverTimestamp(),
+                    });
+                    // Notify client
+                    await FirebaseFirestore.instance
+                        .collection('notifications')
+                        .add({
+                      'userId':    widget.data['clientId'] ?? '',
+                      'title':     'הצעת מחיר חדשה!',
+                      'body':      '${widget.providerName} הציע ₪${price.toStringAsFixed(0)} עבור הבקשה שלך',
+                      'type':      'counter_offer',
+                      'relatedUserId': widget.currentUid,
+                      'isRead':    false,
+                      'createdAt': FieldValue.serverTimestamp(),
+                    });
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+                        content: Text('ההצעה נשלחה בהצלחה!'),
+                        backgroundColor: Color(0xFF10B981),
+                      ));
+                    }
+                  } catch (e) {
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                        content: Text('שגיאה: $e'),
+                        backgroundColor: Colors.red,
+                      ));
+                    }
+                  }
+                },
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.send_rounded, size: 18, color: Colors.white),
+                    SizedBox(width: 8),
+                    Text('שלח הצעה',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold,
+                          color: Colors.white)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n            = AppLocalizations.of(context);
@@ -1246,6 +1390,28 @@ class _RequestCardState extends State<_RequestCard>
                           style: const TextStyle(
                               fontSize: 15, height: 1.55, color: Colors.black87)),
 
+                      // ── Attached photos ───────────────────────────────
+                      if (d['photoUrls'] != null &&
+                          (d['photoUrls'] as List).isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          height: 72,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: (d['photoUrls'] as List).length,
+                            separatorBuilder: (_, __) => const SizedBox(width: 8),
+                            itemBuilder: (_, i) {
+                              final url = (d['photoUrls'] as List)[i] as String;
+                              return ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.network(url,
+                                    width: 72, height: 72, fit: BoxFit.cover),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+
                       // Location + distance + proximity badge + map button
                       Builder(builder: (_) {
                         final hasLoc    = location.isNotEmpty;
@@ -1475,6 +1641,39 @@ class _RequestCardState extends State<_RequestCard>
                                 const SizedBox(width: 7),
                                 Text(l10n.oppQuickBid,
                                     style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 13)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+
+                      // ── Counter-offer: appears 60+ min after posting ─────────
+                      if (!isClosed && !alreadyInterested && ageMin >= 60) ...[
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 44,
+                          child: OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _kIndigo,
+                              side: BorderSide(
+                                  color: _kIndigo.withValues(alpha: 0.4),
+                                  width: 1.5),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
+                            ),
+                            onPressed: widget.isProcessing
+                                ? null
+                                : () => _showCounterOfferSheet(context),
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.local_offer_rounded, size: 16),
+                                SizedBox(width: 7),
+                                Text('שלח הצעת מחיר',
+                                    style: TextStyle(
                                         fontWeight: FontWeight.w600,
                                         fontSize: 13)),
                               ],

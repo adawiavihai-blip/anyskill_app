@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:showcaseview/showcaseview.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'profile_screen.dart';
@@ -676,8 +678,13 @@ class _QuickRequestSheet extends StatefulWidget {
 }
 
 class _QuickRequestSheetState extends State<_QuickRequestSheet> {
-  final _descCtrl = TextEditingController();
-  final _locCtrl  = TextEditingController();
+  final _descCtrl   = TextEditingController();
+  final _locCtrl    = TextEditingController();
+  final _budgetCtrl = TextEditingController();
+
+  // Photos attached to the job request (base64 encoded for preview, URLs for Firestore)
+  final List<String> _photoUrls = [];
+  bool _isUploadingPhoto = false;
 
   RequestAnalysis  _analysis          = const RequestAnalysis();
   _SheetPhase      _phase             = _SheetPhase.input;
@@ -701,6 +708,7 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
     _descCtrl.removeListener(_onTextChanged);
     _descCtrl.dispose();
     _locCtrl.dispose();
+    _budgetCtrl.dispose();
     _dotsTimer?.cancel();
     super.dispose();
   }
@@ -719,6 +727,35 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
         .limit(10)
         .get();
     if (mounted) setState(() => _activeRequestCount = snap.docs.length);
+  }
+
+  Future<void> _pickAndUploadJobPhoto() async {
+    final image = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1200,
+      imageQuality: 70,
+    );
+    if (image == null) return;
+    setState(() => _isUploadingPhoto = true);
+    try {
+      final uid = widget.clientUid;
+      final ext = image.name.split('.').last;
+      final bytes = await image.readAsBytes();
+      final ref = FirebaseStorage.instance.ref().child(
+          'job_photos/$uid/${DateTime.now().millisecondsSinceEpoch}.$ext');
+      await ref.putData(bytes, SettableMetadata(contentType: 'image/$ext'));
+      final url = await ref.getDownloadURL();
+      if (mounted) setState(() => _photoUrls.add(url));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('שגיאה בהעלאת תמונה: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingPhoto = false);
+    }
   }
 
   void _startDotsTimer() {
@@ -783,6 +820,11 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
           'urgency':                _analysis.urgency,
           if (isUrgent) 'urgencyFeePercentage': urgencyFeePct,
           if (isUrgent) 'surgeMultiplier': 1.2,
+          if (_budgetCtrl.text.trim().isNotEmpty)
+            'budgetMax': double.tryParse(_budgetCtrl.text.trim()) ?? 0,
+          if (_budgetCtrl.text.trim().isNotEmpty)
+            'budgetMin': (double.tryParse(_budgetCtrl.text.trim()) ?? 0) * 0.8,
+          if (_photoUrls.isNotEmpty) 'photoUrls': _photoUrls,
           'interestedProviders':    [],
           'interestedProviderNames': [],
           'interestedCount':        0,
@@ -1027,6 +1069,99 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
                         horizontal: 16, vertical: 14),
                   ),
                 ),
+              ),
+              const SizedBox(height: 14),
+
+              // ── Budget field ──────────────────────────────────────
+              Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F6FA),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: TextField(
+                  controller: _budgetCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  textAlign: TextAlign.right,
+                  textDirection: TextDirection.rtl,
+                  decoration: const InputDecoration(
+                    hintText: 'תקציב משוער (₪) — אופציונלי',
+                    hintStyle: TextStyle(color: Colors.grey, fontSize: 13),
+                    prefixIcon: Icon(Icons.payments_outlined, color: Colors.grey),
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // ── Photo upload ──────────────────────────────────────
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.photo_camera_outlined, size: 16, color: Colors.grey),
+                      const SizedBox(width: 6),
+                      Text('צרף תמונות (אופציונלי)',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                      const Spacer(),
+                      if (_isUploadingPhoto)
+                        const SizedBox(
+                          width: 16, height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: _photoUrls.isEmpty ? 50 : 80,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        // Existing photos
+                        ..._photoUrls.map((url) => Padding(
+                          padding: const EdgeInsetsDirectional.only(end: 8),
+                          child: Stack(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.network(url, width: 70, height: 70, fit: BoxFit.cover),
+                              ),
+                              Positioned(
+                                top: 2, left: 2,
+                                child: GestureDetector(
+                                  onTap: () => setState(() => _photoUrls.remove(url)),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(2),
+                                    decoration: const BoxDecoration(
+                                      color: Colors.red, shape: BoxShape.circle),
+                                    child: const Icon(Icons.close, size: 12, color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )),
+                        // Add button
+                        if (_photoUrls.length < 5)
+                          GestureDetector(
+                            onTap: _pickAndUploadJobPhoto,
+                            child: Container(
+                              width: _photoUrls.isEmpty ? 50 : 70,
+                              height: _photoUrls.isEmpty ? 50 : 70,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF0F0FF),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: const Color(0xFF6366F1).withValues(alpha: 0.3)),
+                              ),
+                              child: const Icon(Icons.add_photo_alternate_outlined,
+                                color: Color(0xFF6366F1), size: 22),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 20),
 

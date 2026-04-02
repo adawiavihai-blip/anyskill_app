@@ -170,7 +170,12 @@
       "Bash(find /c/Users/aviha/Desktop/anyskill_app -maxdepth 2 \\\\\\(-name .github -o -name Makefile -o -name *.yaml -o -name *.yml -o -name .gitlab-ci.yml -o -name .drone.yml -o -name azure-pipelines.yml \\\\\\))",
       "Bash(wc -l /c/Users/aviha/Desktop/anyskill_app/lib/repositories/*.dart)",
       "Bash(find c:UsersavihaDesktopanyskill_appandroidappsrcmainres -type f \\\\\\(-name *.png -o -name *.xml -o -name *.webp -o -name *.jpg \\\\\\))",
-      "Bash(grep -r \"\\\\.snapshots\\(\\)\" /c/Users/aviha/Desktop/anyskill_app/lib/screens/*.dart)"
+      "Bash(grep -r \"\\\\.snapshots\\(\\)\" /c/Users/aviha/Desktop/anyskill_app/lib/screens/*.dart)",
+      "Read(//tmp/**)",
+      "Bash(flutter gen-l10n:*)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(grep -roh l10n.\\\\\\([a-zA-Z_]*\\\\\\) c:/Users/aviha/Desktop/anyskill_app/lib/screens/ c:/Users/aviha/Desktop/anyskill_app/lib/services/ c:/Users/aviha/Desktop/anyskill_app/lib/widgets/)",
+      "Bash(gh run:*)"
     ]
   }
 }
