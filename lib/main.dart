@@ -762,18 +762,27 @@ class _OnboardingGateState extends State<OnboardingGate> {
     String uid,
   ) async {
     final results = await Future.wait([
+      // Force server read to get fresh isAdmin flag (not stale cache)
       FirebaseFirestore.instance
           .collection('users')
           .doc(uid)
-          .get()
+          .get(const GetOptions(source: Source.server))
           .timeout(
             const Duration(seconds: 8),
-            onTimeout: () => throw Exception('timeout'),
+            // On timeout, fall back to cache — better than showing error
+            onTimeout: () => FirebaseFirestore.instance
+                .collection('users')
+                .doc(uid)
+                .get(const GetOptions(source: Source.cache)),
           ),
       PermissionService.hasSeenPermissions(),
     ]);
-    final data =
-        (results[0] as DocumentSnapshot).data() as Map<String, dynamic>? ?? {};
+    final snap = results[0] as DocumentSnapshot;
+    final data = snap.data() as Map<String, dynamic>? ?? {};
+    // ignore: avoid_print
+    print('🔍 [OnboardingGate] uid=$uid, exists=${snap.exists}, '
+        'isAdmin=${data['isAdmin']}, onboardingComplete=${data['onboardingComplete']}, '
+        'isProvider=${data['isProvider']}, isPendingExpert=${data['isPendingExpert']}');
     final hasSeenPerms = results[1] as bool;
     return (data: data, hasSeenPerms: hasSeenPerms);
   }
@@ -800,6 +809,15 @@ class _OnboardingGateState extends State<OnboardingGate> {
           return const PhoneLoginScreen();
         }
         final (:data, :hasSeenPerms) = snapshot.data!;
+
+        // ── ADMIN PRIORITY: bypass ALL gates ──────────────────────────────
+        // Admins go straight to HomeScreen regardless of onboarding state,
+        // pending verification, or permission screens.
+        if (data['isAdmin'] == true) {
+          // ignore: avoid_print
+          print('✅ [OnboardingGate] Admin detected — bypassing all gates');
+          return const HomeScreen();
+        }
 
         // Anyone pending admin approval lands on the waiting screen —
         // covers both new signups (isProvider=false, isPendingExpert=true)

@@ -196,8 +196,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (!snapshot.hasData) return const Scaffold(body: Center(child: CircularProgressIndicator()));
 
         var data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
+
+        // Read isAdmin directly from stream data (avoids race with _adminFlagSub)
+        final isAdminFromData = data['isAdmin'] == true;
+        if (isAdminFromData != _isAdmin) {
+          // Sync the state variable so admin tabs appear immediately
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _isAdmin != isAdminFromData) {
+              setState(() => _isAdmin = isAdminFromData);
+            }
+          });
+        }
+        // Use the freshest value (from data, not the potentially-stale state var)
+        final effectiveAdmin = isAdmin || isAdminFromData;
+
         bool isBanned = data['isBanned'] ?? false;
-        if (isBanned && !isAdmin) return _buildBannedScreen();
+        if (isBanned && !effectiveAdmin) return _buildBannedScreen();
 
         bool isOnline = data['isOnline'] ?? false;
 
@@ -275,7 +289,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             key: ValueKey(serviceType),
             serviceType: serviceType,
             providerName: userName,
-            isAdmin: isAdmin,
+            isAdmin: effectiveAdmin,
           )));
         }
 
@@ -283,7 +297,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         // Strict isAdmin guard: these tabs are NEVER added to the list for
         // non-admin users, so there is no possible list index that maps to
         // AdminScreen or SystemWalletScreen for a regular user.
-        if (isAdmin) {
+        if (effectiveAdmin) {
           tabs.add(_nestedTab(6, const AdminScreen()));
           tabs.add(_nestedTab(7, const SystemWalletScreen()));
         }
