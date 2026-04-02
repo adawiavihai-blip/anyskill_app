@@ -17,15 +17,23 @@ class AdminUsersRepository {
   // ── Paginated fetch ────────────────────────────────────────────────────
 
   /// Fetch one page of users (cursor-based pagination).
-  /// Returns the raw [QuerySnapshot] so the provider can extract both the
-  /// docs AND the cursor for the next page.
+  ///
+  /// Forces a **server read** (`GetOptions(source: Source.server)`) to avoid
+  /// stale IndexedDB cache that may be missing fields like `profileImage`.
+  /// Falls back to cache if the device is offline.
   Future<QuerySnapshot<Map<String, dynamic>>> fetchUsersPage({
     DocumentSnapshot? startAfter,
     int limit = 50,
-  }) {
+  }) async {
     Query<Map<String, dynamic>> q = _users.limit(limit);
     if (startAfter != null) q = q.startAfterDocument(startAfter);
-    return q.get();
+
+    try {
+      return await q.get(const GetOptions(source: Source.server));
+    } catch (_) {
+      // Offline fallback — read from cache
+      return q.get(const GetOptions(source: Source.cache));
+    }
   }
 
   // ── Single-user stream ─────────────────────────────────────────────────

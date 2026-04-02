@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -5,10 +6,11 @@ import '../repositories/admin_users_repository.dart';
 
 part 'admin_users_provider.g.dart';
 
-// ── Repository provider (singleton) ──────────────────────────────────────────
+// ── Repository provider (singleton — survives tab switches) ──────────────────
 
 @Riverpod(keepAlive: true)
 AdminUsersRepository adminUsersRepository(AdminUsersRepositoryRef ref) {
+  debugPrint('[Riverpod] AdminUsersRepository created');
   return AdminUsersRepository();
 }
 
@@ -86,7 +88,7 @@ class AdminUsersNotifier extends _$AdminUsersNotifier {
 
   @override
   AdminUsersState build() {
-    // Load first page immediately on creation.
+    debugPrint('[Riverpod] AdminUsersNotifier.build() — loading first page');
     Future.microtask(_loadInitialPage);
     return const AdminUsersState(isLoading: true);
   }
@@ -97,19 +99,23 @@ class AdminUsersNotifier extends _$AdminUsersNotifier {
   Future<void> _loadInitialPage() async {
     try {
       final snap = await _repo.fetchUsersPage(limit: 50);
-      final users = snap.docs;
-      _cursor = users.isNotEmpty ? users.last : null;
+      final docs = snap.docs;
+      _cursor = docs.isNotEmpty ? docs.last : null;
+
+      debugPrint('[Riverpod] AdminUsers loaded ${docs.length} users '
+          '(first: ${docs.isNotEmpty ? (docs.first.data()['name'] ?? "?") : "none"})');
 
       state = AdminUsersState(
-        users: users,
+        users: docs,
         isLoading: false,
-        hasMore: users.length == 50,
+        hasMore: docs.length == 50,
         totalCustomers:
-            users.where((d) => d.data()['isCustomer'] == true).length,
+            docs.where((d) => d.data()['isCustomer'] == true).length,
         totalProviders:
-            users.where((d) => d.data()['isProvider'] == true).length,
+            docs.where((d) => d.data()['isProvider'] == true).length,
       );
     } catch (e) {
+      debugPrint('[Riverpod] AdminUsers load error: $e');
       state = AdminUsersState(isLoading: false, error: e.toString());
     }
   }
@@ -151,7 +157,7 @@ class AdminUsersNotifier extends _$AdminUsersNotifier {
   Future<void> refresh() async {
     _cursor = null;
     state = const AdminUsersState(isLoading: true);
-    await loadNextPage();
+    await _loadInitialPage();
   }
 
   // ── Admin actions (delegate to repository) ─────────────────────────────

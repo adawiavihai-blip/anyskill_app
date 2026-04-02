@@ -7,7 +7,7 @@ part of 'admin_users_provider.dart';
 // **************************************************************************
 
 String _$adminUsersRepositoryHash() =>
-    r'd3e0620d59b4d12e505b0646fb3598c247bc0a2d';
+    r'5fb969f3f0e0dcf8b475f9047a2a12f291d81200';
 
 /// See also [adminUsersRepository].
 @ProviderFor(adminUsersRepository)
@@ -26,7 +26,7 @@ final adminUsersRepositoryProvider = Provider<AdminUsersRepository>.internal(
 // ignore: unused_element
 typedef AdminUsersRepositoryRef = ProviderRef<AdminUsersRepository>;
 String _$adminUsersNotifierHash() =>
-    r'9717d61977a3dbe7d9f720fc67abcc61c6b5829f';
+    r'084316a59e519c7cfdd9b4f247bd9b615e568140';
 
 /// See also [AdminUsersNotifier].
 @ProviderFor(AdminUsersNotifier)

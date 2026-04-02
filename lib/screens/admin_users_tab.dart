@@ -573,6 +573,11 @@ class _UserCard extends StatelessWidget {
     final joinDate =
         (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
 
+    // Extract profile image URL safely as String (dynamic → String?)
+    final rawImg = data['profileImage'];
+    final String? imageUrl =
+        (rawImg is String && rawImg.isNotEmpty) ? rawImg : null;
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 6),
       elevation: 0,
@@ -613,12 +618,13 @@ class _UserCard extends StatelessWidget {
               children: [
                 CircleAvatar(
                   radius: 25,
-                  backgroundImage:
-                      (data['profileImage'] != null &&
-                              data['profileImage'] != '')
-                          ? NetworkImage(data['profileImage'])
-                          : null,
-                  child: data['profileImage'] == null
+                  backgroundImage: imageUrl != null
+                      ? NetworkImage(imageUrl)
+                      : null,
+                  onBackgroundImageError: imageUrl != null
+                      ? (_, __) {}
+                      : null,
+                  child: imageUrl == null
                       ? const Icon(Icons.person)
                       : null,
                 ),
