@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../providers/admin_user_detail_provider.dart';
 import '../providers/admin_users_provider.dart';
@@ -62,6 +63,9 @@ class _AdminUserDetailScreenState
         error: (e, _) => Center(child: Text('שגיאה: $e')),
         data: (data) => _buildBody(data),
       ),
+      floatingActionButton: userAsync.whenOrNull(
+        data: (data) => _buildSpeedDial(data),
+      ),
     );
   }
 
@@ -97,8 +101,12 @@ class _AdminUserDetailScreenState
     final isOnline = data['isOnline'] == true;
     final isAdmin = data['isAdmin'] == true;
     final isPro = data['isAnySkillPro'] == true;
-    final rating = (data['rating'] as num? ?? 0).toDouble();
-    final reviewsCount = (data['reviewsCount'] as num? ?? 0).toInt();
+    final firestoreRating = (data['rating'] as num? ?? 0).toDouble();
+    final firestoreReviewsCount = (data['reviewsCount'] as num? ?? 0).toInt();
+    // Live reviews for fallback rating calculation
+    final liveReviews = ref.watch(userReviewsProvider(widget.userId)).valueOrNull ?? [];
+    final rating = firestoreRating > 0 ? firestoreRating : _liveRating(liveReviews);
+    final reviewsCount = firestoreReviewsCount > 0 ? firestoreReviewsCount : liveReviews.length;
     final balance = (data['balance'] as num? ?? 0).toDouble();
     final pendingBalance =
         (data['pendingBalance'] as num? ?? 0).toDouble();
@@ -442,18 +450,61 @@ class _AdminUserDetailScreenState
     );
   }
 
+  // ── Compute live rating from reviews (fallback when user doc is stale) ──
+
+  double _liveRating(List<Map<String, dynamic>> reviews) {
+    if (reviews.isEmpty) return 0;
+    double total = 0;
+    int count = 0;
+    for (final r in reviews) {
+      final v = (r['overallRating'] ?? r['rating']) as num?;
+      if (v != null && v > 0) {
+        total += v.toDouble();
+        count++;
+      }
+    }
+    return count > 0 ? total / count : 0;
+  }
+
+  // ── Trust score from jobs ─────────────────────────────────────────────
+
+  /// Returns (completedCount, cancelledCount, trustPercent).
+  (int, int, double) _trustScore(List<Map<String, dynamic>> jobs) {
+    int completed = 0, cancelled = 0;
+    for (final j in jobs) {
+      final s = j['status'] as String? ?? '';
+      if (s == 'completed') completed++;
+      if (s.startsWith('cancelled')) cancelled++;
+    }
+    final total = completed + cancelled;
+    final pct = total > 0 ? (completed / total * 100) : -1.0; // -1 = no data
+    return (completed, cancelled, pct);
+  }
+
+  Color _trustColor(double pct) {
+    if (pct < 0) return _kMuted;
+    if (pct >= 90) return _kGreen;
+    if (pct >= 70) return _kAmber;
+    return _kRed;
+  }
+
   // ── Provider stats — Earning Power ──────────────────────────────────
 
   Widget _buildProviderStats(Map<String, dynamic> data) {
-    final rating = (data['rating'] as num? ?? 0).toDouble();
+    final firestoreRating = (data['rating'] as num? ?? 0).toDouble();
     final xp = (data['xp'] as num? ?? 0).toInt();
 
     final txAsync = ref.watch(userTransactionsProvider(widget.userId));
     final jobsAsync = ref.watch(userJobsProvider(widget.userId));
     final reviewsAsync = ref.watch(userReviewsProvider(widget.userId));
 
-    final jobCount = jobsAsync.valueOrNull?.length ?? 0;
-    final reviewCount = reviewsAsync.valueOrNull?.length ?? 0;
+    final reviews = reviewsAsync.valueOrNull ?? [];
+    final jobs = jobsAsync.valueOrNull ?? [];
+    final jobCount = jobs.length;
+    final reviewCount = reviews.length;
+    final rating = firestoreRating > 0 ? firestoreRating : _liveRating(reviews);
+    final (_, _, trustPct) = _trustScore(jobs);
+
     final totalEarned = txAsync.valueOrNull
             ?.where((tx) => tx['receiverId'] == widget.userId)
             .fold<double>(
@@ -487,6 +538,11 @@ class _AdminUserDetailScreenState
                   'דירוג',
                   rating > 0 ? rating.toStringAsFixed(1) : '—',
                   Icons.star_rounded, _kAmber),
+              _miniStatCard(
+                  'אמינות',
+                  trustPct < 0 ? '—' : '${trustPct.toStringAsFixed(0)}%',
+                  Icons.verified_user_rounded,
+                  _trustColor(trustPct)),
               GestureDetector(
                 onTap: _showReviewsSheet,
                 child: _miniStatCard(
@@ -504,15 +560,22 @@ class _AdminUserDetailScreenState
   // ── Customer stats — Buying Power ─────────────────────────────────────
 
   Widget _buildCustomerStats(Map<String, dynamic> data) {
-    final customerRating =
+    final firestoreCustRating =
         (data['customerRating'] as num? ?? 0).toDouble();
 
     final txAsync = ref.watch(userTransactionsProvider(widget.userId));
     final jobsAsync = ref.watch(userJobsProvider(widget.userId));
     final reviewsAsync = ref.watch(userReviewsProvider(widget.userId));
 
-    final bookingCount = jobsAsync.valueOrNull?.length ?? 0;
-    final reviewCount = reviewsAsync.valueOrNull?.length ?? 0;
+    final reviews = reviewsAsync.valueOrNull ?? [];
+    final jobs = jobsAsync.valueOrNull ?? [];
+    final bookingCount = jobs.length;
+    final reviewCount = reviews.length;
+    final customerRating = firestoreCustRating > 0
+        ? firestoreCustRating
+        : _liveRating(reviews);
+    final (_, _, trustPct) = _trustScore(jobs);
+
     final totalSpent = txAsync.valueOrNull
             ?.where((tx) => tx['senderId'] == widget.userId)
             .fold<double>(
@@ -548,6 +611,11 @@ class _AdminUserDetailScreenState
                       ? customerRating.toStringAsFixed(1)
                       : '—',
                   Icons.star_rounded, _kAmber),
+              _miniStatCard(
+                  'אמינות',
+                  trustPct < 0 ? '—' : '${trustPct.toStringAsFixed(0)}%',
+                  Icons.verified_user_rounded,
+                  _trustColor(trustPct)),
               GestureDetector(
                 onTap: _showReviewsSheet,
                 child: _miniStatCard(
@@ -1717,6 +1785,123 @@ class _AdminUserDetailScreenState
       content: Text('תמונת פרופיל עודכנה'),
       backgroundColor: Color(0xFF10B981),
     ));
+  }
+
+  // ── Speed Dial FAB ──────────────────────────────────────────────────────
+
+  bool _fabOpen = false;
+
+  Widget _buildSpeedDial(Map<String, dynamic> data) {
+    final phone = _pickString(data, ['phone', 'phoneNumber', 'mobile']);
+    final adminNote = _pickString(data, ['adminNote']);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        // Expandable actions
+        if (_fabOpen) ...[
+          // WhatsApp
+          if (phone.isNotEmpty)
+            _fabAction(
+              icon: Icons.chat_rounded,
+              label: 'WhatsApp',
+              color: const Color(0xFF25D366),
+              onTap: () {
+                final cleaned = phone.replaceAll(RegExp(r'[^0-9+]'), '');
+                final waNum = cleaned.startsWith('+')
+                    ? cleaned.substring(1)
+                    : cleaned.startsWith('0')
+                        ? '972${cleaned.substring(1)}'
+                        : cleaned;
+                launchUrl(Uri.parse('https://wa.me/$waNum'));
+              },
+            ),
+          // Call
+          if (phone.isNotEmpty)
+            _fabAction(
+              icon: Icons.phone_rounded,
+              label: 'חייג',
+              color: _kGreen,
+              onTap: () => launchUrl(Uri.parse('tel:$phone')),
+            ),
+          // Internal note
+          _fabAction(
+            icon: Icons.edit_note_rounded,
+            label: 'הערה פנימית',
+            color: _kAmber,
+            onTap: () {
+              setState(() => _fabOpen = false);
+              _showEditNoteDialog(adminNote);
+            },
+          ),
+          // Send notification
+          _fabAction(
+            icon: Icons.notifications_active_rounded,
+            label: 'שלח התראה',
+            color: _kIndigo,
+            onTap: () {
+              setState(() => _fabOpen = false);
+              _showSendNotificationDialog(data);
+            },
+          ),
+          const SizedBox(height: 8),
+        ],
+        // Main FAB
+        FloatingActionButton(
+          backgroundColor: _fabOpen ? _kRed : _kIndigo,
+          onPressed: () => setState(() => _fabOpen = !_fabOpen),
+          child: AnimatedRotation(
+            turns: _fabOpen ? 0.125 : 0,
+            duration: const Duration(milliseconds: 200),
+            child: Icon(
+              _fabOpen ? Icons.close_rounded : Icons.bolt_rounded,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _fabAction({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.1),
+                    blurRadius: 6),
+              ],
+            ),
+            child: Text(label,
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: color)),
+          ),
+          const SizedBox(width: 8),
+          FloatingActionButton.small(
+            heroTag: 'fab_$label',
+            backgroundColor: color,
+            onPressed: onTap,
+            child: Icon(icon, color: Colors.white, size: 20),
+          ),
+        ],
+      ),
+    );
   }
 
   // ── Audit log writer ───────────────────────────────────────────────────
