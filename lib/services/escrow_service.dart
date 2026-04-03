@@ -21,6 +21,11 @@ class EscrowService {
     required double amount,
     required String description,
   }) async {
+    // ── Anti-fraud: block self-booking ─────────────────────────────────
+    if (clientId == providerId) {
+      return 'לא ניתן להזמין שירות מעצמך';
+    }
+
     try {
       final adminSettingsRef = _db
           .collection('admin')

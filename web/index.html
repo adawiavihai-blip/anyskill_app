@@ -99,8 +99,8 @@
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>AnySkill Elite</title>
   <!-- app version — bump this string on every release to bust browser cache -->
-  <meta name="app-version" content="8.9.4">
-  <meta name="build-id" content="20260531-v4">
+  <meta name="app-version" content="8.9.9">
+  <meta name="build-id" content="20260604-v5-nuclear">
 
   <!-- ── Google Sign-In client ID (used by google_sign_in web plugin) ──── -->
   <meta name="google-signin-client_id" 
@@ -133,11 +133,31 @@
        The CSP above whitelists js.stripe.com for both script-src and frame-src. -->
   <script src="https://js.stripe.com/v3/" async></script>
 
-  <!-- Flutter engine — חייב להיטען לפני app_init.js -->
-  <script src="flutter.js?v=1748700000" defer></script>
-
-  <!-- אתחול Flutter + רישום Service Worker -->
-  <script src="app_init.js?v=1748700000" defer></script>
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- BFCACHE BUSTER — MUST be inline (not deferred) so it survives        -->
+  <!-- browser back-forward cache restoration.  Deferred scripts inside     -->
+  <!-- app_init.js do NOT reliably fire on bfcache pageshow.                -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <script>
+    // 1. Force reload when browser restores page from bfcache (Back button)
+    window.addEventListener('pageshow', function(e) {
+      if (e.persisted) { location.reload(); }
+    });
+    // 2. Prevent bfcache storage entirely (unload listener presence)
+    window.addEventListener('unload', function() {});
+    // 3. Dynamic cache-bust loader for flutter.js + app_init.js
+    (function() {
+      var t = Date.now();
+      var f = document.createElement('script');
+      f.src = 'flutter.js?v=' + t;
+      f.defer = true;
+      document.head.appendChild(f);
+      var a = document.createElement('script');
+      a.src = 'app_init.js?v=' + t;
+      a.defer = true;
+      document.head.appendChild(a);
+    })();
+  </script>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f4f7f9;">
 </body>

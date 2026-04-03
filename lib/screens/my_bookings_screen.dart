@@ -84,10 +84,14 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   static const _activeStatuses  = {
     'paid_escrow', 'expert_completed', 'disputed',
     'pending', 'accepted', 'in_progress',
+    'awaiting_payment',
   };
+  // History uses catch-all (!_activeStatuses) in _buildFilteredCustomerList,
+  // but this set is kept for reference and potential direct use.
   static const _historyStatuses = {
     'completed', 'cancelled', 'refunded',
     'split_resolved', 'cancelled_with_penalty',
+    'payment_failed',
   };
 
   @override
@@ -95,24 +99,25 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     super.initState();
     // No orderBy — avoids composite index requirement.
     // Documents are sorted client-side in the list builders.
+    // Limit raised to 200 to prevent "ghost" bookings where older jobs
+    // silently fall off the 50-doc window and reappear on next stream event.
+    // No orderBy — avoids composite index. Sorted client-side in builders.
     _expertStream = FirebaseFirestore.instance
         .collection('jobs')
         .where('expertId', isEqualTo: currentUserId)
-        .limit(50)
+        .limit(200)
         .snapshots();
     _customerStream = FirebaseFirestore.instance
         .collection('jobs')
         .where('customerId', isEqualTo: currentUserId)
-        .limit(50)
+        .limit(200)
         .snapshots();
     _subscribeProviderStatus();
     _loadUnavailableDates();
-    // Fallback: if the expert stream hasn't delivered data after 10 s
-    // (e.g. index still building, offline), stop showing the shimmer
-    // and show the empty state instead so the UI is never stuck.
-    _tasksTimeoutTimer = Timer(const Duration(seconds: 10), () {
-      if (mounted) setState(() => _tasksTimedOut = true);
-    });
+    // NOTE: timeout timer moved to _buildProviderTasksTab — it must start
+    // when the StreamBuilder actually begins listening, not at initState
+    // (where it races against the _providerLoaded fetch and may expire
+    // before the tasks tab even renders).
   }
 
   @override
@@ -730,7 +735,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     }
 
     return DefaultTabController(
-      length: _isProvider ? 2 : 3,
+      length: 2, // Both provider (יומן + משימות) and customer (פעילות + היסטוריה) have 2 tabs
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F5F7),
         appBar: AppBar(
@@ -854,19 +859,56 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   }
 
   // ── Provider tasks list ────────────────────────────────────────────────────
+  /// Tracks job IDs for which we already auto-opened the review popup,
+  /// so we don't re-trigger on every stream rebuild.
+  final Set<String> _reviewTriggeredFor = {};
+
+  /// Auto-opens ReviewScreen for completed jobs the provider hasn't reviewed.
+  void _autoTriggerProviderReview(BuildContext ctx, List<QueryDocumentSnapshot> docs) {
+    for (final doc in docs) {
+      final d = doc.data() as Map<String, dynamic>;
+      if (d['status'] != 'completed') continue;
+      if (d['providerReviewDone'] == true) continue;
+      if (_reviewTriggeredFor.contains(doc.id)) continue;
+
+      _reviewTriggeredFor.add(doc.id);
+      // Defer so the current build finishes before pushing a route
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.push(ctx, MaterialPageRoute(
+          builder: (_) => ReviewScreen(
+            jobId:          doc.id,
+            revieweeId:     d['customerId']?.toString()   ?? '',
+            revieweeName:   d['customerName']?.toString() ?? 'לקוח',
+            revieweeAvatar: '',
+            isClientReview: false,
+          ),
+        ));
+      });
+      break; // only one popup at a time
+    }
+  }
+
+  /// Tracks whether the tasks StreamBuilder has received its first snapshot.
+  /// Used to show shimmer vs empty state correctly.
+  bool _tasksFirstSnapshotReceived = false;
+
   Widget _buildProviderTasksTab() {
+    // Start the timeout WHEN the tab renders (not in initState which races
+    // against _providerLoaded). This gives the full 10 seconds for the
+    // expert stream to deliver data.
+    _tasksTimeoutTimer ??= Timer(const Duration(seconds: 10), () {
+      if (mounted && !_tasksFirstSnapshotReceived) {
+        setState(() => _tasksTimedOut = true);
+      }
+    });
+
     return StreamBuilder<QuerySnapshot>(
       stream: _expertStream,
       builder: (context, snapshot) {
-        // Show shimmer while waiting — but give up after 10 s so the UI is
-        // never permanently stuck (e.g. index building or offline).
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData &&
-            !_tasksTimedOut) {
-          return const _BookingsShimmer();
-        }
-
+        // ── Error state ─────────────────────────────────────────────────
         if (snapshot.hasError) {
+          debugPrint('[Tasks] ERROR: ${snapshot.error}');
           final err = snapshot.error.toString().toLowerCase();
           final isPermission =
               err.contains('permission') || err.contains('insufficient');
@@ -897,14 +939,36 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
           );
         }
 
+        // ── Waiting for first snapshot ───────────────────────────────────
+        // Show shimmer while the stream hasn't delivered anything yet.
+        // After the timeout, fall through to the data/empty check below
+        // so we don't show a shimmer forever.
+        if (!snapshot.hasData && !_tasksTimedOut) {
+          return const _BookingsShimmer();
+        }
+
         final docs = snapshot.data?.docs ?? [];
-        // Debug: print how many jobs the stream returned for this expert.
+        _tasksFirstSnapshotReceived = true;
+        _tasksTimeoutTimer?.cancel();
+
+        // Debug: log what the stream returned
+        debugPrint('[Tasks] expertStream returned ${docs.length} docs for uid=$currentUserId');
+        for (final d in docs) {
+          final m = d.data() as Map<String, dynamic>;
+          debugPrint('  • job=${d.id} status=${m['status']} '
+              'expertId=${m['expertId']} customerId=${m['customerId']}');
+        }
+
         if (docs.isEmpty) {
+          debugPrint('[Tasks] EMPTY — showing empty state');
           return _buildEmptyState(isExpert: true, isHistory: false);
         }
 
-        // Cancel the timeout timer — data arrived successfully.
-        _tasksTimeoutTimer?.cancel();
+        // ── Auto-trigger review popup for newly completed jobs ──────
+        // If a job just transitioned to 'completed' and the provider
+        // hasn't reviewed yet, open the ReviewScreen automatically.
+        _autoTriggerProviderReview(context, docs);
+
         return _buildExpertTasksList(docs);
       },
     );
@@ -921,13 +985,13 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     final sorted = [...docs]
       ..sort((a, b) => _jobTimestamp(b).compareTo(_jobTimestamp(a)));
 
-    const activeStatuses = {'paid_escrow', 'expert_completed'};
+    // Use the class-level _activeStatuses set for consistency
     final activeDocs  = sorted
-        .where((d) => activeStatuses.contains(
+        .where((d) => _activeStatuses.contains(
             (d.data() as Map<String, dynamic>)['status'] as String? ?? ''))
         .toList();
     final historyDocs = sorted
-        .where((d) => !activeStatuses.contains(
+        .where((d) => !_activeStatuses.contains(
             (d.data() as Map<String, dynamic>)['status'] as String? ?? ''))
         .toList();
 

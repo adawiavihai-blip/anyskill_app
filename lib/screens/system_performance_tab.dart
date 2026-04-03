@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 
 // ── Health enum ───────────────────────────────────────────────────────────────
 
@@ -192,6 +193,8 @@ class _SystemPerformanceTabState extends State<SystemPerformanceTab>
           _buildCapacityCard(),
           const SizedBox(height: 14),
           _buildErrorFeed(),
+          const SizedBox(height: 14),
+          _buildSentryTestCard(),
           const SizedBox(height: 14),
           _buildInfoFooter(),
         ],
@@ -788,6 +791,59 @@ class _SystemPerformanceTabState extends State<SystemPerformanceTab>
       );
 
   // ── Footer ────────────────────────────────────────────────────────────────
+
+  Widget _buildSentryTestCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFCA5A5)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                const Text('Sentry Crash Test',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                const SizedBox(height: 4),
+                Text('שולח שגיאת טסט ל-Sentry לאימות חיבור',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            ),
+            icon: const Icon(Icons.bug_report_rounded, size: 18),
+            label: const Text('Test Crash', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            onPressed: () async {
+              try {
+                throw Exception('Sentry Test — AnySkill Admin Panel');
+              } catch (e, stack) {
+                await Sentry.captureException(e, stackTrace: stack);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ שגיאת טסט נשלחה ל-Sentry בהצלחה'),
+                      backgroundColor: Color(0xFF22C55E),
+                    ),
+                  );
+                }
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildInfoFooter() {
     return Container(

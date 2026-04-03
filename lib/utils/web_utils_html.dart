@@ -23,6 +23,18 @@ void openUrl(String url) {
   html.window.open(url, '_blank');
 }
 
+/// Disables the browser's back-forward cache (bfcache) for this page.
+/// Called once at app startup. When the user navigates away and presses Back,
+/// the browser will do a fresh load instead of restoring a frozen snapshot.
+void disableBfcache() {
+  // The `unload` listener prevents the browser from storing the page in bfcache.
+  // This is intentional — Flutter SPA state cannot survive bfcache restoration.
+  html.window.addEventListener('unload', (event) {
+    // Intentionally empty — the mere presence of this listener
+    // tells the browser NOT to put the page in bfcache.
+  });
+}
+
 /// Clears browser caches (IndexedDB + Cache API) to force fresh Firestore
 /// and service-worker data after a version upgrade.
 /// Returns a Future that completes when cleanup is done (best-effort).

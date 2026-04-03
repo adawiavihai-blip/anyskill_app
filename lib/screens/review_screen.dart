@@ -26,23 +26,37 @@ class ReviewScreen extends StatefulWidget {
 }
 
 class _ReviewScreenState extends State<ReviewScreen> {
-  final Map<String, double> _ratings = {
-    'professional':  0,
-    'timing':        0,
-    'communication': 0,
-    'value':         0,
-  };
+  late final Map<String, double> _ratings;
   final TextEditingController _publicCtrl  = TextEditingController();
   final TextEditingController _privateCtrl = TextEditingController();
   bool _submitting = false;
   bool _submitted  = false;
 
-  static const _categories = [
-    ('professional',  'מקצועיות',        Icons.workspace_premium_rounded),
-    ('timing',        'דיוק בזמנים',     Icons.schedule_rounded),
-    ('communication', 'תקשורת',          Icons.chat_bubble_outline_rounded),
-    ('value',         'תמורה למחיר',     Icons.price_check_rounded),
+  /// Criteria when a CUSTOMER reviews an EXPERT (isClientReview == true)
+  static const _clientCategories = [
+    ('professional',  'מקצועיות',             Icons.workspace_premium_rounded),
+    ('timing',        'דיוק בזמנים',          Icons.schedule_rounded),
+    ('communication', 'תקשורת',               Icons.chat_bubble_outline_rounded),
+    ('value',         'תמורה למחיר',          Icons.price_check_rounded),
   ];
+
+  /// Criteria when an EXPERT reviews a CUSTOMER (isClientReview == false)
+  static const _expertCategories = [
+    ('communication', 'תקשורת',               Icons.chat_bubble_outline_rounded),
+    ('timing',        'דיוק בזמנים',          Icons.schedule_rounded),
+    ('workspace',     'סביבת עבודה / נוחות',  Icons.home_work_rounded),
+    ('fairness',      'הוגנות',               Icons.handshake_rounded),
+  ];
+
+  List<(String, String, IconData)> get _categories =>
+      widget.isClientReview ? _clientCategories : _expertCategories;
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize rating keys based on the review direction
+    _ratings = {for (final c in _categories) c.$1: 0};
+  }
 
   @override
   void dispose() {
@@ -98,9 +112,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        title: const Text(
-          'שתף חוות דעת',
-          style: TextStyle(
+        title: Text(
+          widget.isClientReview ? 'דרג את המומחה' : 'דרג את הלקוח',
+          style: const TextStyle(
             color:      Color(0xFF1A1A2E),
             fontWeight: FontWeight.bold,
             fontSize:   18,
@@ -200,7 +214,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
           _buildTextField(
             controller: _publicCtrl,
             label:      '💬 חוות דעת פומבית',
-            hint:       'ספר על החוויה שלך... (אופציונלי)',
+            hint:       widget.isClientReview
+                ? 'ספר על החוויה שלך עם המומחה... (אופציונלי)'
+                : 'ספר על החוויה שלך עם הלקוח... (אופציונלי)',
             maxLines:   4,
             bgColor:    Colors.white,
           ),
@@ -224,16 +240,18 @@ class _ReviewScreenState extends State<ReviewScreen> {
               borderRadius: BorderRadius.circular(12),
               border:       Border.all(color: const Color(0xFFFCD34D)),
             ),
-            child: const Row(
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('ℹ️', style: TextStyle(fontSize: 16)),
-                SizedBox(width: 8),
+                const Text('ℹ️', style: TextStyle(fontSize: 16)),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'חוות דעתך תפורסם רק לאחר שגם הצד השני ישתף חוות דעתו, או לאחר 7 ימים.',
+                    widget.isClientReview
+                        ? 'חוות דעתך תפורסם רק לאחר שגם הצד השני ישתף חוות דעתו, או לאחר 7 ימים.'
+                        : 'הדירוג שלך בונה את המוניטין של הלקוח ועוזר למומחים אחרים. יפורסם לאחר שגם הלקוח ישתף חוות דעת, או לאחר 7 ימים.',
                     textAlign: TextAlign.right,
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontSize: 13,
                       color:    Color(0xFF92400E),
                     ),

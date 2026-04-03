@@ -10,6 +10,7 @@ import '../models/pricing_model.dart';
 import '../services/volunteer_service.dart';
 import '../widgets/xp_progress_bar.dart';
 import '../widgets/category_specs_widget.dart';
+import '../utils/safe_image_provider.dart';
 
 class PublicProfileScreen extends StatefulWidget {
   final String userId;
@@ -384,7 +385,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
 
   Widget _buildSpecialistCard(Map<String, dynamic> data) {
     final profileImg = data['profileImage'] as String? ?? '';
-    final hasImg = profileImg.isNotEmpty && profileImg.startsWith('http');
+    // hasImg check removed — safeImageProvider handles both HTTPS + base64
     final name = data['name'] as String? ?? '';
     final isVerified = data['isVerified'] == true;
     final isVolunteer = data['isVolunteer'] == true;
@@ -507,14 +508,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
               CircleAvatar(
                 radius: 52,
                 backgroundColor: const Color(0xFFEEEBFF),
-                backgroundImage:
-                    hasImg ? NetworkImage(profileImg) : null,
-                child: hasImg
-                    ? null
-                    : Icon(Icons.person,
+                backgroundImage: safeImageProvider(profileImg),
+                child: safeImageProvider(profileImg) == null
+                    ? Icon(Icons.person,
                         size: 44,
                         color: const Color(0xFF6366F1)
-                            .withValues(alpha: 0.5)),
+                            .withValues(alpha: 0.5))
+                    : null,
               ),
             ],
           ),

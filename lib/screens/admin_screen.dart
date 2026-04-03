@@ -4347,13 +4347,39 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
     );
   }
 
+  Widget _verificationPlaceholder(String label) {
+    return Container(
+      height: 120,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.image_not_supported_outlined,
+                color: Colors.grey.shade400, size: 28),
+            const SizedBox(height: 4),
+            Text(label, style: TextStyle(
+                fontSize: 11, color: Colors.grey.shade500)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildIdVerificationCard(
       BuildContext context, DocumentSnapshot doc) {
     final data  = doc.data() as Map<String, dynamic>;
     final uid   = doc.id;
     final name  = data['name']  as String? ?? 'ללא שם';
     final email = data['email'] as String? ?? '';
-    final idUrl = data['idVerificationUrl'] as String?;
+    final idUrl      = data['idVerificationUrl'] as String?;
+    final selfieUrl  = data['selfieVerificationUrl'] as String?;
+    final idDocUrl   = data['idDocUrl'] as String?;
+    // Use whichever ID image is available
+    final effectiveIdUrl = idUrl ?? idDocUrl;
 
     return Card(
       elevation: 2,
@@ -4410,38 +4436,57 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
               ],
             ),
 
-            // ID photo
-            if (idUrl != null) ...[
-              const SizedBox(height: 12),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: CachedNetworkImage(
-                  imageUrl: idUrl,
-                  height: 160,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  errorWidget: (_, __, ___) => Container(
-                    height: 80,
-                    color: Colors.grey.shade100,
-                    child: const Center(
-                        child: Icon(Icons.broken_image_outlined,
-                            color: Colors.grey)),
+            // ── ID + Selfie side-by-side comparison ──────────────────────
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                // Selfie (left in RTL = right visually)
+                Expanded(
+                  child: Column(
+                    children: [
+                      Text('סלפי חי', style: TextStyle(
+                          fontSize: 11, fontWeight: FontWeight.w600,
+                          color: Colors.grey[700])),
+                      const SizedBox(height: 4),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: selfieUrl != null
+                            ? CachedNetworkImage(
+                                imageUrl: selfieUrl,
+                                height: 120, width: double.infinity,
+                                fit: BoxFit.cover,
+                                errorWidget: (_, __, ___) => _verificationPlaceholder('אין סלפי'),
+                              )
+                            : _verificationPlaceholder('אין סלפי'),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-            ] else ...[
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade50,
-                  borderRadius: BorderRadius.circular(8),
+                const SizedBox(width: 8),
+                // ID document (right in RTL = left visually)
+                Expanded(
+                  child: Column(
+                    children: [
+                      Text('תעודה מזהה', style: TextStyle(
+                          fontSize: 11, fontWeight: FontWeight.w600,
+                          color: Colors.grey[700])),
+                      const SizedBox(height: 4),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: effectiveIdUrl != null
+                            ? CachedNetworkImage(
+                                imageUrl: effectiveIdUrl,
+                                height: 120, width: double.infinity,
+                                fit: BoxFit.cover,
+                                errorWidget: (_, __, ___) => _verificationPlaceholder('אין מסמך'),
+                              )
+                            : _verificationPlaceholder('אין מסמך'),
+                      ),
+                    ],
+                  ),
                 ),
-                child: const Text('לא הועלתה תמונת מסמך',
-                    textAlign: TextAlign.right,
-                    style: TextStyle(color: Colors.red, fontSize: 12)),
-              ),
-            ],
+              ],
+            ),
 
             const SizedBox(height: 12),
 

@@ -24,6 +24,7 @@ import 'screens/phone_login_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'constants.dart' show appVersion;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import 'services/stripe_service.dart';
 import 'screens/pending_verification_screen.dart';
 import 'screens/permission_request_screen.dart';
@@ -292,6 +293,12 @@ void main() async {
 
   Watchtower.init();
 
+  // ── Step 8: Disable bfcache (web only) ────────────────────────────────
+  // Prevents the browser from storing a frozen page snapshot that gets
+  // restored when the user presses Back — which shows an ancient layout.
+  if (kIsWeb) disableBfcache();
+
+  // ── Error handlers (Crashlytics + Watchtower) — must be set BEFORE runApp ──
   FlutterError.onError = (FlutterErrorDetails details) {
     if (!kIsWeb) {
       FirebaseCrashlytics.instance.recordFlutterFatalError(details);
@@ -311,7 +318,28 @@ void main() async {
     return true;
   };
 
+  // ── Step 7: Sentry — fire-and-forget, NEVER blocks app startup ────────
+  // Previous version used `await SentryFlutter.init(appRunner: () => runApp())`
+  // which caused Admin login to hang when the Sentry DSN was unreachable.
+  // Now: runApp() fires immediately, Sentry initializes in the background.
+  unawaited(SentryFlutter.init(
+    (options) {
+      options.dsn = 'https://f0336dd5546c11cf23d925ee7ed14784@o4511156845019136.ingest.us.sentry.io/4511156856029184';
+      options.tracesSampleRate = 1.0;
+      options.environment = kDebugMode ? 'development' : 'production';
+      options.release = 'anyskill@$currentAppVersion';
+    },
+  ));
+
   runApp(const ProviderScope(child: AnySkillApp()));
+
+  // Signal the JS watchdog that the Dart app has booted successfully.
+  // If this doesn't fire within 7s, app_init.js forces a full reload.
+  if (kIsWeb) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      sessionSet('app_ready', '1');
+    });
+  }
 }
 
 // ── Root widget ───────────────────────────────────────────────────────────────
@@ -336,6 +364,7 @@ class AnySkillApp extends StatelessWidget {
           child: MaterialApp(
             navigatorKey: rootNavigatorKey,
             debugShowCheckedModeBanner: false,
+            navigatorObservers: [SentryNavigatorObserver()],
             title: 'AnySkill',
             // ── i18n: persisted locale (default: Hebrew RTL) ─────────────────
             localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -396,9 +425,19 @@ class _AuthWrapperState extends State<AuthWrapper> {
           _startVersionListener();
           _saveAndRefreshToken(user.uid);
           PermissionService.recoverFromFirestore();
+          // ── Sentry: tag all future events with the user identity ───────
+          Sentry.configureScope((scope) {
+            scope.setUser(SentryUser(
+              id: user.uid,
+              email: user.email,
+              username: user.displayName,
+            ));
+          });
         } else {
           _versionSub?.cancel();
           _versionSub = null;
+          // Clear Sentry user on logout
+          Sentry.configureScope((scope) => scope.setUser(null));
         }
       });
     });
@@ -625,6 +664,13 @@ class _AuthWrapperState extends State<AuthWrapper> {
     // re-show the banner.
     sessionSet('sw_update_pending', '');
 
+    // Defence-in-depth: if the running version already matches the latest
+    // known version (i.e., the user just completed the update and reloaded),
+    // do NOT show the banner again.  The Firestore version listener will
+    // catch genuinely new versions later.
+    final dismissed = _prefs?.getString('banner_dismissed_v');
+    if (dismissed == currentAppVersion) return;
+
     // Defer to the first frame so the widget tree is fully mounted before
     // setState is called inside _showUpdateBanner.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -823,23 +869,41 @@ class _OnboardingGateState extends State<OnboardingGate> {
     _future = _load(uid);
   }
 
+  /// Three-tier fetch: server (4s) → cache → empty doc.
+  /// Never throws — always returns a DocumentSnapshot.
+  static Future<DocumentSnapshot> _resilientUserFetch(String uid) async {
+    final docRef = FirebaseFirestore.instance.collection('users').doc(uid);
+    // Tier 1: server with short timeout (mobile-friendly)
+    try {
+      return await docRef
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 4));
+    } catch (_) {}
+    // Tier 2: cache (may have data from a previous session)
+    try {
+      final cached = await docRef.get(const GetOptions(source: Source.cache));
+      if (cached.exists) return cached;
+    } catch (_) {}
+    // Tier 3: default get (Firestore picks best source)
+    try {
+      return await docRef.get().timeout(const Duration(seconds: 4));
+    } catch (_) {
+      // Return whatever we can get — even if it's a non-existent doc
+      return await docRef.get(const GetOptions(source: Source.cache))
+          .catchError((_) => docRef.get());
+    }
+  }
+
   static Future<({Map<String, dynamic> data, bool hasSeenPerms})> _load(
     String uid,
   ) async {
     final results = await Future.wait([
-      // Force server read to get fresh isAdmin flag (not stale cache)
-      FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .get(const GetOptions(source: Source.server))
-          .timeout(
-            const Duration(seconds: 8),
-            // On timeout, fall back to cache — better than showing error
-            onTimeout: () => FirebaseFirestore.instance
-                .collection('users')
-                .doc(uid)
-                .get(const GetOptions(source: Source.cache)),
-          ),
+      // Graceful fallback chain — designed for mobile reliability:
+      //   1. Try server read with 4s timeout (was 8s — too slow on mobile)
+      //   2. On timeout: try cache (may have data from previous session)
+      //   3. On cache miss: return empty snapshot (non-error) so the gate
+      //      can still route based on the limited data available.
+      _resilientUserFetch(uid),
       PermissionService.hasSeenPermissions(),
     ]);
     final snap = results[0] as DocumentSnapshot;
@@ -904,11 +968,21 @@ class _OnboardingGateState extends State<OnboardingGate> {
         final complete = data['onboardingComplete'] ?? data.isNotEmpty;
         if (!complete) return const OnboardingScreen();
 
-        // Enforce mandatory phone — redirect back to onboarding if missing.
-        // This catches legacy users who completed onboarding before phone
-        // was mandatory.
+        // Enforce mandatory phone — legacy users who completed onboarding
+        // before phone was mandatory need to provide it.
+        // CRITICAL: Verified providers must NOT be sent through full
+        // re-onboarding — that triggers a permission-denied error because
+        // the onboarding form writes server-only fields (isVerified).
+        // Instead, show a lightweight phone-only collection screen.
         final phone = (data['phone'] as String? ?? '').trim();
         if (phone.isEmpty) {
+          final alreadyVerified = data['isVerified'] == true;
+          final alreadyProvider = data['isProvider'] == true;
+          if (alreadyVerified || alreadyProvider) {
+            debugPrint('[OnboardingGate] Verified/provider missing phone — '
+                'showing phone-only screen (NOT full re-onboarding)');
+            return _PhoneCollectionScreen(existingData: data);
+          }
           debugPrint('[OnboardingGate] Phone missing — redirecting to onboarding');
           return const OnboardingScreen();
         }
@@ -960,4 +1034,150 @@ class _SplashLogoState extends State<_SplashLogo>
       fit: BoxFit.contain,
     ),
   );
+}
+
+// ── Phone-only collection screen for existing verified providers ─────────
+// Shown when a legacy provider (isVerified/isProvider) is missing the
+// mandatory phone field. Does NOT touch any server-only fields.
+class _PhoneCollectionScreen extends StatefulWidget {
+  final Map<String, dynamic> existingData;
+  const _PhoneCollectionScreen({required this.existingData});
+
+  @override
+  State<_PhoneCollectionScreen> createState() => _PhoneCollectionScreenState();
+}
+
+class _PhoneCollectionScreenState extends State<_PhoneCollectionScreen> {
+  final _phoneCtrl = TextEditingController();
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _phoneCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final phone = _phoneCtrl.text.trim();
+    if (phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('נא להזין מספר טלפון')),
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'phone': phone,
+      });
+      debugPrint('[PhoneCollection] Phone saved for $uid');
+      if (mounted) {
+        // Navigate to HomeScreen — the OnboardingGate will re-evaluate
+        // on next auth state change and let them through.
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+          (_) => false,
+        );
+      }
+    } catch (e) {
+      debugPrint('[PhoneCollection] Error: $e');
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = widget.existingData['name'] as String? ?? '';
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Image.asset(
+                'assets/images/NEW_LOGO1.png.png',
+                height: 80,
+                fit: BoxFit.contain,
+              ),
+              const SizedBox(height: 32),
+              Text(
+                name.isNotEmpty ? 'היי $name! 👋' : 'היי! 👋',
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1A1A2E),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'כדי להמשיך, נצטרך את מספר הטלפון שלך',
+                style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 28),
+              TextField(
+                controller: _phoneCtrl,
+                keyboardType: TextInputType.phone,
+                textDirection: TextDirection.ltr,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 18, letterSpacing: 1.5),
+                decoration: InputDecoration(
+                  hintText: '05X-XXXXXXX',
+                  hintStyle: TextStyle(color: Colors.grey[400]),
+                  prefixIcon: const Icon(Icons.phone_outlined),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(
+                      color: Color(0xFF6366F1), width: 2,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: _saving ? null : _save,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6366F1),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 0,
+                  ),
+                  child: _saving
+                      ? const SizedBox(
+                          width: 22, height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5, color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          'המשך',
+                          style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

@@ -1,7 +1,7 @@
 name: anyskill_app
 description: "A new Flutter project for AnySkill."
 publish_to: 'none'
-version: 8.9.4+1
+version: 8.9.9+1
 
 environment:
   sdk: ^3.7.0
@@ -49,6 +49,7 @@ dependencies:
   webview_flutter: ^4.10.0         # Stripe Express onboarding WebView
   flutter_riverpod: ^2.6.1         # State management (Riverpod 2.x)
   riverpod_annotation: ^2.6.1      # @riverpod code-gen annotations
+  sentry_flutter: ^8.0.0           # Crash reporting + performance tracing
 
 dependency_overrides:
   # fl_chart 1.x calls translateByDouble/scaleByDouble which were added

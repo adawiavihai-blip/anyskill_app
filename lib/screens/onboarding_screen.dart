@@ -66,6 +66,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   Uint8List? _idDocThumb;
   bool _isUploadingIdDoc = false;
 
+  // Live selfie verification
+  String? _selfieUrl;
+  Uint8List? _selfieThumb;
+  bool _isUploadingSelfie = false;
+
   // Category selection
   String? _selectedCategory;
   String? _selectedSubCategory;
@@ -219,14 +224,38 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
 
     try {
+      // ── Check if user doc already exists (legacy provider re-onboarding) ──
+      // Existing verified providers who are only here because of a missing
+      // phone field must NOT have their verification status overwritten.
+      // Server-only fields (isVerified, isAdmin, balance, xp) are blocked
+      // by Firestore rules on update — writing them would cause permission-denied.
+      final existingSnap = await FirebaseFirestore.instance
+          .collection('users').doc(uid).get();
+      final existingData = existingSnap.data() ?? {};
+      final isExistingUser = existingSnap.exists && existingData.isNotEmpty;
+      final isAlreadyVerified = existingData['isVerified'] == true;
+      final isAlreadyProvider = existingData['isProvider'] == true;
+
+      if (isExistingUser) {
+        debugPrint('[Onboarding] Existing user detected: uid=$uid, '
+            'isProvider=$isAlreadyProvider, isVerified=$isAlreadyVerified, '
+            'isPendingExpert=${existingData['isPendingExpert']}');
+      }
+
       final updates = <String, dynamic>{
         'isCustomer':         _isCustomer,
-        'isProvider':         _isProvider,
         'onboardingComplete': true,
         'termsAccepted':      true,
         'name':               _nameController.text.trim(),
         'phone':              _phoneController.text.trim(),
       };
+
+      // Only set isProvider for truly new users. For existing providers
+      // returning through re-onboarding (e.g., missing phone), don't
+      // downgrade their provider status.
+      if (!isAlreadyProvider) {
+        updates['isProvider'] = _isProvider;
+      }
 
       if (_emailController.text.trim().isNotEmpty) {
         updates['email'] = _emailController.text.trim();
@@ -244,14 +273,22 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         updates['subCategory']    = effectiveSubCategory;
         updates['businessType']   = _businessType;
         updates['idNumber']       = _idController.text.trim();
-        updates['isPendingExpert'] = true;
-        updates['isProvider']     = false;
-        updates['isVerified']     = false;
-        updates['isApprovedProvider'] = false;
         updates['categoryReviewedByAdmin'] = false;
         if (_businessDocUrl != null) updates['businessDocUrl'] = _businessDocUrl;
         if (_idDocUrl != null) updates['idDocUrl'] = _idDocUrl;
+        if (_selfieUrl != null) updates['selfieVerificationUrl'] = _selfieUrl;
         if (_isOtherCategory) updates['pendingCategoryApproval'] = true;
+
+        // ── CRITICAL: Never write server-only fields on existing users ────
+        // isVerified, isApprovedProvider are managed by admin. Writing them
+        // on an update() call triggers Firestore permission-denied.
+        // Only set pending status for genuinely NEW provider applications.
+        if (!isAlreadyVerified && !isAlreadyProvider) {
+          updates['isPendingExpert']    = true;
+          updates['isProvider']         = false;
+          updates['isApprovedProvider'] = false;
+          // isVerified is ONLY safe on create, never on update
+        }
 
         updates['expertApplicationData'] = {
           'submittedAt':      FieldValue.serverTimestamp(),
@@ -272,6 +309,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         updates['profileImage'] = 'data:image/png;base64,$_profileImageBase64';
       }
 
+      debugPrint('[Onboarding] Writing fields: ${updates.keys.toList()}');
       await FirebaseFirestore.instance.collection('users').doc(uid).update(updates);
 
       // "Other" category request
@@ -816,8 +854,143 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             setUploading: (v) => setState(() => _isUploadingIdDoc = v),
           ),
         ),
+        const SizedBox(height: 16),
+
+        // ── Live Selfie Verification ──────────────────────────────────────
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: _selfieUrl != null ? const Color(0xFFF0FDF4) : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: _selfieUrl != null
+                  ? const Color(0xFF22C55E)
+                  : Colors.grey.shade300,
+            ),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  if (_selfieThumb != null)
+                    ClipOval(
+                      child: Image.memory(_selfieThumb!,
+                          width: 48, height: 48, fit: BoxFit.cover),
+                    )
+                  else
+                    Container(
+                      width: 48, height: 48,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0F0FF),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.face_rounded,
+                          color: Color(0xFF6366F1), size: 24),
+                    ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            if (_selfieUrl != null)
+                              const Icon(Icons.check_circle_rounded,
+                                  size: 16, color: Color(0xFF22C55E)),
+                            if (_selfieUrl != null) const SizedBox(width: 4),
+                            const Text('סלפי לאימות זהות',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 14)),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _selfieUrl != null
+                              ? 'תמונה צולמה בהצלחה ✓'
+                              : 'צלם תמונה חיה של הפנים שלך',
+                          textAlign: TextAlign.end,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: _selfieUrl != null
+                                ? const Color(0xFF22C55E)
+                                : Colors.grey[500],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _isUploadingSelfie ? null : _takeLiveSelfie,
+                  icon: _isUploadingSelfie
+                      ? const SizedBox(
+                          width: 16, height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : Icon(
+                          _selfieUrl != null
+                              ? Icons.refresh_rounded
+                              : Icons.camera_alt_rounded,
+                          size: 18),
+                  label: Text(
+                    _selfieUrl != null ? 'צלם שוב' : 'צלם סלפי',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6366F1),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ],
     );
+  }
+
+  /// Opens the camera for a live selfie, compresses, uploads to Storage.
+  Future<void> _takeLiveSelfie() async {
+    final picker = ImagePicker();
+    final photo = await picker.pickImage(
+      source: ImageSource.camera,
+      preferredCameraDevice: CameraDevice.front,
+      maxWidth: 600,
+      maxHeight: 600,
+      imageQuality: 70,
+    );
+    if (photo == null) return;
+
+    setState(() => _isUploadingSelfie = true);
+    try {
+      final bytes = await photo.readAsBytes();
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      final ref = FirebaseStorage.instance
+          .ref('verification_selfies/$uid.jpg');
+      await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
+      final url = await ref.getDownloadURL();
+
+      if (mounted) {
+        setState(() {
+          _selfieUrl = url;
+          _selfieThumb = bytes;
+          _isUploadingSelfie = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isUploadingSelfie = false);
+        _snack('שגיאה בצילום: $e', _kRed);
+      }
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════

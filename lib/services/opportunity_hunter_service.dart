@@ -61,6 +61,15 @@ class OpportunityHunterService {
       final data     = snap.data() ?? {};
       final headline = data['headline'] as String? ?? '';
       if (headline.isEmpty) return null;
+      // ── Strict same-day expiry check ────────────────────────────────
+      // Only show the deal if its validDate matches today's key exactly.
+      // This prevents stale "storm" / weather banners from persisting
+      // if the CF regenerates with the same doc key but a past date.
+      final validDate = data['validDate'] as String? ?? snap.id;
+      if (validDate != key) return null;
+      // Also respect an explicit expiresAt timestamp if present
+      final expiresAt = (data['expiresAt'] as Timestamp?)?.toDate();
+      if (expiresAt != null && expiresAt.isBefore(DateTime.now())) return null;
       return DailyOpportunity.fromMap(data, snap.id);
     });
   }

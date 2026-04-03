@@ -257,57 +257,87 @@ exports.sendchatnotification = onDocumentCreated(
     return null;
 });
 
-// ── New booking → notify expert ───────────────────────────────────────────
+// ── New booking → notify expert + customer ────────────────────────────────
 exports.sendbookingnotification = onDocumentCreated("jobs/{jobId}", async (event) => {
-    const jobData = event.data.data();
+    const jobData  = event.data.data();
     const expertId = jobData.expertId;
+    const customerId = jobData.customerId;
     if (!expertId) return null;
 
     const customerName = jobData.customerName || 'לקוח';
+    const expertName   = jobData.expertName   || 'המומחה';
+    const totalAmount  = jobData.totalAmount   || 0;
     let dateInfo = '';
     if (jobData.appointmentDate && jobData.appointmentTime) {
         const d = jobData.appointmentDate.toDate();
         dateInfo = ` — ${d.getDate()}/${d.getMonth() + 1} בשעה ${jobData.appointmentTime}`;
     }
 
-    try {
-        const expertSnap = await admin.firestore().collection('users').doc(expertId).get();
-        if (!expertSnap.exists) return null;
-        const token = expertSnap.data().fcmToken || expertSnap.data().deviceToken;
-        if (!token) return null;
+    const jobId = event.params.jobId;
 
-        const bookingTitle = 'הזמנה חדשה! 🎉';
-        const bookingBody = `${customerName} הזמין/ה שירות${dateInfo}`;
-        await admin.messaging().send({
-            token,
-            notification: { title: bookingTitle, body: bookingBody },
-            android: {
-                priority: "high",
-                notification: { channelId: "anyskill_default" },
-            },
-            apns: {
-                headers: { "apns-priority": "10" },
-                payload: { aps: { sound: "default", contentAvailable: 1 } },
-            },
-            webpush: {
-                notification: { icon: '/icons/Icon-192.png' },
-                fcm_options: { link: 'https://anyskill-6fdf3.web.app' },
-            },
-            data: { type: 'new_booking', jobId: event.params.jobId },
-        });
-        await admin.firestore().collection('notifications').add({
-            userId: expertId,
-            title: bookingTitle,
-            body: bookingBody,
-            type: 'new_booking',
-            data: { jobId: event.params.jobId },
-            isRead: false,
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        console.log(`Booking notification sent to expert ${expertId}`);
-    } catch (error) {
-        console.error('Error sending booking notification:', error);
+    // ── Helper: send push + write in-app notification ───────────────────
+    async function notifyUser(userId, title, body, type) {
+        try {
+            const userSnap = await admin.firestore().collection('users').doc(userId).get();
+            if (!userSnap.exists) return;
+            const token = userSnap.data().fcmToken || userSnap.data().deviceToken;
+
+            // Push notification (skip if no token — user may have denied permissions)
+            if (token) {
+                await admin.messaging().send({
+                    token,
+                    notification: { title, body },
+                    android: {
+                        priority: "high",
+                        notification: { channelId: "anyskill_default" },
+                    },
+                    apns: {
+                        headers: { "apns-priority": "10" },
+                        payload: { aps: { sound: "default", contentAvailable: 1 } },
+                    },
+                    webpush: {
+                        notification: { icon: '/icons/Icon-192.png' },
+                        fcm_options: { link: 'https://anyskill-6fdf3.web.app' },
+                    },
+                    data: { type, jobId },
+                });
+            }
+
+            // In-app notification (always written, even if push fails)
+            await admin.firestore().collection('notifications').add({
+                userId,
+                title,
+                body,
+                type,
+                data: { jobId },
+                isRead: false,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            console.log(`${type} notification sent to ${userId}`);
+        } catch (error) {
+            console.error(`Error sending ${type} notification to ${userId}:`, error);
+        }
     }
+
+    // ── 1. Notify expert: "You have a new booking!" ─────────────────────
+    await notifyUser(
+        expertId,
+        'הזמנה חדשה! 🎉',
+        `${customerName} הזמין/ה שירות${dateInfo}`,
+        'new_booking'
+    );
+
+    // ── 2. Notify customer: "Your booking is confirmed!" ────────────────
+    if (customerId) {
+        const amountStr = totalAmount > 0 ? ` בסך ₪${Number(totalAmount).toFixed(0)}` : '';
+        await notifyUser(
+            customerId,
+            'ההזמנה אושרה! ✅',
+            `השירות עם ${expertName}${dateInfo} אושר${amountStr}. הכסף נעול באסקרו עד לסיום.`,
+            'booking_confirmed'
+        );
+    }
+
     return null;
 });
 
@@ -374,6 +404,78 @@ exports.sendjobstatusnotification = onDocumentUpdated("jobs/{jobId}", async (eve
     }
     return null;
 });
+
+// ── Support ticket message → notify all admins ──────────────────────────────
+// Fires when a user (non-admin) sends a message in a support ticket.
+// Pushes a notification to every admin user so they can respond quickly.
+exports.notifyAdminOnSupportMessage = onDocumentCreated(
+    "support_tickets/{ticketId}/messages/{messageId}",
+    async (event) => {
+        const msgData  = event.data.data();
+        // Skip if the message was sent by an admin (avoid notify-self loop)
+        if (msgData.isAdmin === true) return null;
+
+        const ticketId   = event.params.ticketId;
+        const senderName = msgData.senderName || 'משתמש';
+        const msgText    = (msgData.message || '').substring(0, 100);
+
+        try {
+            // Fetch all admin users
+            const adminSnaps = await admin.firestore()
+                .collection('users')
+                .where('isAdmin', '==', true)
+                .limit(10)
+                .get();
+
+            for (const adminDoc of adminSnaps.docs) {
+                const token = adminDoc.data().fcmToken || adminDoc.data().deviceToken;
+
+                // Push notification
+                if (token) {
+                    try {
+                        await admin.messaging().send({
+                            token,
+                            notification: {
+                                title: `📮 פנייה חדשה מ-${senderName}`,
+                                body: msgText,
+                            },
+                            android: {
+                                priority: "high",
+                                notification: { channelId: "anyskill_default" },
+                            },
+                            apns: {
+                                headers: { "apns-priority": "10" },
+                                payload: { aps: { sound: "default", contentAvailable: 1 } },
+                            },
+                            webpush: {
+                                notification: { icon: '/icons/Icon-192.png' },
+                                fcm_options: { link: 'https://anyskill-6fdf3.web.app' },
+                            },
+                            data: { type: 'support_ticket', ticketId },
+                        });
+                    } catch (pushErr) {
+                        console.warn(`Push failed for admin ${adminDoc.id}:`, pushErr.message);
+                    }
+                }
+
+                // In-app notification
+                await admin.firestore().collection('notifications').add({
+                    userId:    adminDoc.id,
+                    title:     `📮 פנייה חדשה מ-${senderName}`,
+                    body:      msgText,
+                    type:      'support_ticket',
+                    data:      { ticketId },
+                    isRead:    false,
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+            console.log(`Support notification sent to ${adminSnaps.docs.length} admins for ticket ${ticketId}`);
+        } catch (error) {
+            console.error('Error sending support notification:', error);
+        }
+        return null;
+    }
+);
 
 // ── Callable: שחרור תשלום מאסקרו (Admin SDK — עוקף חוקי Firestore) ──────────
 exports.processPaymentRelease = onCall(async (request) => {
@@ -5028,4 +5130,73 @@ exports.generateCeoInsight = onCall(
         redFlags:        Array.isArray(parsed.redFlags) ? parsed.redFlags : [],
       };
     }
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SCHEDULED FIRESTORE BACKUP — Daily at 02:00 IST
+// ═════════════════════════════════════════════════════════════════════════════
+// Exports the entire Firestore database to a GCS bucket every night.
+// Bucket: gs://anyskill-6fdf3-backups  (must be created once in GCP Console)
+// Retention: managed by GCS lifecycle rules (set to 30 days recommended).
+//
+// Setup (one-time):
+//   1. Create the bucket:
+//      gsutil mb -l me-west1 gs://anyskill-6fdf3-backups
+//   2. Grant Firestore export permission to the default service account:
+//      gcloud projects add-iam-policy-binding anyskill-6fdf3 \
+//        --member="serviceAccount:anyskill-6fdf3@appspot.gserviceaccount.com" \
+//        --role="roles/datastore.importExportAdmin"
+//   3. Grant bucket write access:
+//      gsutil iam ch serviceAccount:anyskill-6fdf3@appspot.gserviceaccount.com:objectAdmin \
+//        gs://anyskill-6fdf3-backups
+//   4. Deploy:
+//      firebase deploy --only functions:scheduledFirestoreBackup
+// ═════════════════════════════════════════════════════════════════════════════
+exports.scheduledFirestoreBackup = onSchedule(
+  {
+    schedule:   "0 2 * * *",       // 02:00 every day
+    timeZone:   "Asia/Jerusalem",
+    retryCount: 2,
+  },
+  async () => {
+    const projectId = process.env.GCLOUD_PROJECT || "anyskill-6fdf3";
+    const bucket    = `gs://anyskill-6fdf3-backups`;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const outputUri = `${bucket}/backups/${timestamp}`;
+
+    console.log(`[Backup] Starting Firestore export → ${outputUri}`);
+
+    try {
+      const client = new admin.firestore.v1.FirestoreAdminClient();
+      const databaseName = client.databasePath(projectId, "(default)");
+
+      const [response] = await client.exportDocuments({
+        name:                 databaseName,
+        outputUriPrefix:      outputUri,
+        // Empty collectionIds = export ALL collections
+        collectionIds:        [],
+      });
+
+      console.log(`[Backup] Export started: ${response.name}`);
+
+      // Log success to Firestore for admin visibility
+      await admin.firestore().collection("admin_audit_log").add({
+        action:    "firestore_backup",
+        status:    "started",
+        outputUri,
+        operationName: response.name,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (error) {
+      console.error("[Backup] Export FAILED:", error);
+
+      // Log failure for admin visibility
+      await admin.firestore().collection("admin_audit_log").add({
+        action:    "firestore_backup",
+        status:    "failed",
+        error:     (error.message || "unknown").substring(0, 500),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+  }
 );

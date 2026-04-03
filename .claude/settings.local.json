@@ -178,7 +178,8 @@
       "Bash(gh run:*)",
       "Bash(wc -l lib/screens/*.dart)",
       "Bash(ls \"c:/Users/aviha/Desktop/anyskill_app/lib/providers/\"*.g.dart)",
-      "Bash(ls -la /c/Users/aviha/Desktop/anyskill_app/functions/*.js)"
+      "Bash(ls -la /c/Users/aviha/Desktop/anyskill_app/functions/*.js)",
+      "Bash(gcloud --version)"
     ]
   }
 }

@@ -19,6 +19,7 @@ import '../widgets/favorite_button.dart';
 import '../services/service_architect.dart';
 import '../models/pricing_model.dart';
 import '../widgets/xp_progress_bar.dart';
+import '../utils/safe_image_provider.dart';
 
 // Brand tokens
 const _kPurple     = Color(0xFF6366F1);
@@ -143,6 +144,19 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     }
 
     if (_isProcessing) return false;
+
+    // ── Anti-fraud: block self-booking ───────────────────────────────────
+    final selfUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (selfUid == widget.expertId) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('לא ניתן להזמין שירות מעצמך'),
+          backgroundColor: Color(0xFFEF4444),
+        ));
+      }
+      return false;
+    }
+
     setState(() => _isProcessing = true);
 
     // Capture l10n strings before any await (context may be gone after await)
@@ -785,7 +799,45 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // UI: Time slots
   // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildTimeSlots(AppLocalizations l10n) {
+  /// Generates time slots from the provider's `workingHours` for [_selectedDay].
+  /// Falls back to hardcoded [_timeSlots] if the provider hasn't set hours.
+  List<String> _resolveTimeSlots(Map<String, dynamic> expertData) {
+    final rawHours = expertData['workingHours'] as Map<String, dynamic>?;
+    if (rawHours == null || rawHours.isEmpty || _selectedDay == null) {
+      return _timeSlots; // legacy fallback
+    }
+    // DateTime.weekday: 1=Monday..7=Sunday. Our schema: 0=Sunday..6=Saturday.
+    final dayIndex = _selectedDay!.weekday == 7 ? 0 : _selectedDay!.weekday;
+    final dayEntry = rawHours['$dayIndex'] as Map<String, dynamic>?;
+    if (dayEntry == null) return []; // provider doesn't work this day
+    final from = dayEntry['from']?.toString() ?? '09:00';
+    final to   = dayEntry['to']?.toString()   ?? '17:00';
+    final fromHour = int.tryParse(from.split(':').first) ?? 9;
+    final toHour   = int.tryParse(to.split(':').first)   ?? 17;
+    return [
+      for (int h = fromHour; h < toHour; h++)
+        '${h.toString().padLeft(2, '0')}:00',
+    ];
+  }
+
+  Widget _buildTimeSlots(AppLocalizations l10n, Map<String, dynamic> expertData) {
+    final slots = _resolveTimeSlots(expertData);
+    if (slots.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text(
+          'הספק לא עובד ביום הזה',
+          style: TextStyle(color: Colors.grey[500], fontSize: 14),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    // Reset selection if it's no longer in the available slots
+    if (_selectedTimeSlot != null && !slots.contains(_selectedTimeSlot)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _selectedTimeSlot = null);
+      });
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -797,9 +849,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             reverse: true,
-            itemCount: _timeSlots.length,
+            itemCount: slots.length,
             itemBuilder: (context, index) {
-              final slot       = _timeSlots[index];
+              final slot       = slots[index];
               final isSelected = _selectedTimeSlot == slot;
               return GestureDetector(
                 onTap: () => setState(() => _selectedTimeSlot = slot),
@@ -1199,6 +1251,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         0.0, (acc, idx) => acc + (idx < pricing.addOns.length ? pricing.addOns[idx].price : 0.0));
     final totalPrice = svcPrice + addOnTotal;
     final isReady    = _selectedDay != null && _selectedTimeSlot != null;
+    final isOnline   = data['isOnline'] as bool? ?? false;
+    final isSelf     = (FirebaseAuth.instance.currentUser?.uid ?? '') == widget.expertId;
 
     return Positioned(
       bottom: 0,
@@ -1257,10 +1311,38 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                       elevation: 0,
                     ),
                     onPressed:
-                        isReady ? () => _showBookingSummary(context, data, totalPrice, addOns: pricing.addOns, selectedAddOns: _selectedAddOnIndices) : null,
+                        (isReady && isOnline && !isSelf) ? () => _showBookingSummary(context, data, totalPrice, addOns: pricing.addOns, selectedAddOns: _selectedAddOnIndices) : null,
                     child: _isProcessing
                         ? const CircularProgressIndicator(
                             color: Colors.white, strokeWidth: 2.5)
+                        : isSelf
+                            ? const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.block_rounded,
+                                      color: Colors.white, size: 16),
+                                  SizedBox(width: 6),
+                                  Text('לא ניתן להזמין שירות מעצמך',
+                                      style: TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 13)),
+                                ],
+                              )
+                        : (!isOnline)
+                            ? const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.do_not_disturb_rounded,
+                                      color: Colors.white, size: 16),
+                                  SizedBox(width: 6),
+                                  Text('לא זמין להזמנות כרגע',
+                                      style: TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 14)),
+                                ],
+                              )
                         : isReady
                             ? Row(
                                 mainAxisAlignment:
@@ -1685,7 +1767,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                       ?? data['photoUrl']    as String?
                       ?? data['photoURL']    as String?  // Firebase Auth field name
                       ?? '';
-    final hasImg       = profileImg.isNotEmpty && profileImg.startsWith('http');
+    final imgProvider  = safeImageProvider(profileImg);
     final name         = data['name'] as String? ?? widget.expertName;
     final isVerified   = data['isVerified'] == true;
     final isVolunteer  = data['isVolunteer'] == true;
@@ -1803,11 +1885,11 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
               // ── RIGHT: profile photo ─────────────────────────────────────
               CircleAvatar(
                 radius: 52,
-                backgroundColor: hasImg
+                backgroundColor: imgProvider != null
                     ? _kPurpleSoft
                     : const Color(0xFFE5E7EB),
-                backgroundImage: hasImg ? CachedNetworkImageProvider(profileImg) : null,
-                child: hasImg
+                backgroundImage: imgProvider,
+                child: imgProvider != null
                     ? null
                     : Text(
                         name.isNotEmpty ? name[0].toUpperCase() : '?',
@@ -2144,7 +2226,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                 _buildCalendar(unavail),
                                 if (_selectedDay != null) ...[
                                   const SizedBox(height: 16),
-                                  _buildTimeSlots(l10n),
+                                  _buildTimeSlots(l10n, data),
                                 ],
                                 const SizedBox(height: 24),
 

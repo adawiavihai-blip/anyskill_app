@@ -15,7 +15,6 @@ import '../widgets/skeleton_loader.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../widgets/anyskill_logo.dart';
 import '../widgets/category_edit_sheet.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../services/opportunity_hunter_service.dart';
 import '../services/engagement_service.dart';
 import '../services/auth_service.dart';
@@ -59,10 +58,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   late final Stream<QuerySnapshot>                          _urgentStream;
   late final Stream<QuerySnapshot>                          _notificationsStream;
   late final Stream<QuerySnapshot>                          _remindersStream;
-  late final Stream<DailyOpportunity?>                      _dealStream;
-
-  // ── Deal-of-day dismissal ─────────────────────────────────────────────────
-  bool _dealDismissed = false;
+  // (AI Deal of the Day banner — REMOVED in v8.9.6, caused navigation/cache loops)
 
   // ── Avatar press feedback ─────────────────────────────────────────────────
   bool _avatarTapped = false;
@@ -131,7 +127,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       _urgentStream        = const Stream.empty();
       _notificationsStream = const Stream.empty();
       _remindersStream     = const Stream.empty();
-      _dealStream          = const Stream.empty();
+      // _dealStream removed in v8.9.6
     } else {
 
     if (isProvider && category.isNotEmpty) {
@@ -168,18 +164,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             .limit(3)
             .snapshots();
 
-    // AI Deal of the Day — today's opportunity from generateDailyOpportunity CF
-    _dealStream = OpportunityHunterService.streamToday();
-
     } // end uid.isNotEmpty else block
-
-    // Restore today's dismissal preference from SharedPreferences
-    SharedPreferences.getInstance().then((p) {
-      final key = 'dismissed_deal_${OpportunityHunterService.todayKey()}';
-      if (p.getBool(key) == true && mounted) {
-        setState(() => _dealDismissed = true);
-      }
-    });
 
     // Back-fill missing category images once per app session
     VisualFetcherService.backfillAll();
@@ -324,13 +309,13 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   child: _buildSearchBar(),
                 ),
 
-                // ── Urgent / Pulse banner (only when there is data) ────────
+                // ── Urgent / Pulse banner (error-safe) ────────────────────
                 SliverToBoxAdapter(
                   child: StreamBuilder<QuerySnapshot>(
                     stream: _urgentStream,
                     builder: (context, urgSnap) {
+                      if (urgSnap.hasError) return const SizedBox.shrink();
                       // Offline providers don't receive the urgent pulse
-                      // (aligns with FCM topic logic — no notifications while offline)
                       if (isProvider && !_isOnline) {
                         if (_pulseCtrl.isAnimating) _pulseCtrl.stop();
                         return const SizedBox.shrink();
@@ -346,6 +331,13 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                       return _buildUrgentBanner(docs, isProvider);
                     },
                   ),
+                ),
+
+                // ── Story Carousel (ALWAYS rendered — stable key prevents
+                //    state loss when parent StreamBuilder rebuilds) ───────────
+                SliverToBoxAdapter(
+                  key: const ValueKey('stories_row_slot'),
+                  child: StoriesRow(key: const ValueKey('stories_row'), isProvider: isProvider),
                 ),
 
                 // ── Loading shimmer ────────────────────────────────────────
@@ -392,16 +384,12 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
                 // ── Full visual category grid ──────────────────────────────
                 else ...[
-                  // ── Story Carousel strip (primary slot — must stay above categories) ──
-                  SliverToBoxAdapter(
-                    child: StoriesRow(isProvider: isProvider),
-                  ),
-
-                  // ── AI Re-Engagement offer card ────────────────────────
+                  // ── AI Re-Engagement offer card (error-safe) ──────────
                   SliverToBoxAdapter(
                     child: StreamBuilder<QuerySnapshot>(
                       stream: _remindersStream,
                       builder: (context, remSnap) {
+                        if (remSnap.hasError) return const SizedBox.shrink();
                         final remDocs = remSnap.data?.docs ?? [];
                         if (remDocs.isEmpty) return const SizedBox.shrink();
                         final data  = remDocs.first.data() as Map<String, dynamic>;
@@ -427,25 +415,14 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     ),
 
                   // ── Airbnb-style horizontal category rows ──────────────
+                  // AI Deal banner is injected INSIDE the rows (after 1st row)
+                  // ── Airbnb-style horizontal category rows ──────────────
                   ..._buildAirbnbRows(
                     context: context,
                     filteredDocs: filteredDocs,
                     allDocs: allDocs,
                     isAdmin: isAdmin,
                   ),
-
-                  // ── AI Deal of the Day banner (below categories) ───────
-                  if (!_dealDismissed)
-                    SliverToBoxAdapter(
-                      child: StreamBuilder<DailyOpportunity?>(
-                        stream: _dealStream,
-                        builder: (context, dealSnap) {
-                          final deal = dealSnap.data;
-                          if (deal == null) return const SizedBox.shrink();
-                          return _buildDealBanner(deal);
-                        },
-                      ),
-                    ),
                 ], // end else [...] community + grid
 
                 // ── Footer: logout + version ────────────────────────────────
@@ -741,7 +718,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
     final slivers       = <Widget>[];
     bool promoInserted  = false;
-
     for (int i = 0; i < filteredDocs.length; i++) {
       // Inject promo carousel between 2nd and 3rd parent sections.
       if (!promoInserted && i == 2) {
@@ -1369,106 +1345,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  // ── AI Deal of the Day banner ──────────────────────────────────────────────
-
-  Widget _buildDealBanner(DailyOpportunity deal) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
-      child: GestureDetector(
-        onTap: () => _openSearch(preselectedCategory: deal.category),
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFFB45309), Color(0xFFF59E0B)],
-              begin: Alignment.centerRight,
-              end: Alignment.centerLeft,
-            ),
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFFF59E0B).withValues(alpha: 0.30),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // Dismiss button (left in RTL)
-                GestureDetector(
-                  onTap: () async {
-                    setState(() => _dealDismissed = true);
-                    final p = await SharedPreferences.getInstance();
-                    await p.setBool(
-                        'dismissed_deal_${OpportunityHunterService.todayKey()}',
-                        true);
-                  },
-                  child: Container(
-                    width: 26,
-                    height: 26,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.18),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.close_rounded,
-                        color: Colors.white, size: 14),
-                  ),
-                ),
-                const SizedBox(width: 8),
-
-                // Headline text
-                Expanded(
-                  child: Text(
-                    '${deal.emoji}  ${deal.headline}',
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-
-                // "AI Deal" badge (right in RTL = leading side)
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.22),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: const Text(
-                        'AI Deal',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text('🤖',
-                        style: TextStyle(fontSize: 18)),
-                  ],
-                ),
-              ],
-            ),
-          ),
         ),
       ),
     );

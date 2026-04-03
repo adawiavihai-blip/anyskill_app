@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/stripe_service.dart';
+import '../../utils/safe_image_provider.dart';
 
 class ChatUIHelper {
   // ── Main entry point ──────────────────────────────────────────────────────
@@ -261,22 +262,20 @@ class _SenderAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasImage = imageUrl.isNotEmpty && imageUrl.startsWith('http');
+    final imgProvider = safeImageProvider(imageUrl);
     return CircleAvatar(
       radius: 16,
       backgroundColor: const Color(0xFFEDE9FE),
-      backgroundImage: hasImage
-          ? CachedNetworkImageProvider(imageUrl, maxWidth: 64, maxHeight: 64)
-          : null,
-      child: hasImage
-          ? null
-          : Text(
+      backgroundImage: imgProvider,
+      child: imgProvider == null
+          ? Text(
               name.isNotEmpty ? name[0].toUpperCase() : '?',
               style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
                   color: Color(0xFF6366F1)),
-            ),
+            )
+          : null,
     );
   }
 }

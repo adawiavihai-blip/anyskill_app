@@ -311,6 +311,7 @@ exports.handleStripeWebhook = onRequest(
     // ── payment_intent.payment_failed ──────────────────────────────────────
     if (event.type === "payment_intent.payment_failed") {
       const pi = event.data.object;
+      const failureReason = pi.last_payment_error?.message || "unknown";
 
       const jobSnaps = await db()
         .collection("jobs")
@@ -319,10 +320,46 @@ exports.handleStripeWebhook = onRequest(
         .get();
 
       if (!jobSnaps.empty) {
-        await jobSnaps.docs[0].ref.update({
+        const jobDoc  = jobSnaps.docs[0];
+        const jobData = jobDoc.data();
+        await jobDoc.ref.update({
           status:        "payment_failed",
-          failureReason: pi.last_payment_error?.message || "unknown",
+          failureReason,
         });
+
+        // ── Alert customer: payment failed ──────────────────────────────
+        if (jobData.customerId) {
+          await db().collection("notifications").add({
+            userId:    jobData.customerId,
+            title:     "התשלום נכשל ❌",
+            body:      "התשלום לא עבר. נסה שוב או השתמש באמצעי תשלום אחר.",
+            type:      "payment_failed",
+            data:      { jobId: jobDoc.id },
+            isRead:    false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+
+        // ── Alert admins: payment failure ────────────────────────────────
+        // Query all admin users and notify them (max 10 admins)
+        const adminSnaps = await db()
+          .collection("users")
+          .where("isAdmin", "==", true)
+          .limit(10)
+          .get();
+
+        for (const adminDoc of adminSnaps.docs) {
+          await db().collection("notifications").add({
+            userId:    adminDoc.id,
+            title:     "🔴 תשלום נכשל",
+            body:      `תשלום נכשל עבור ${jobData.customerName || "לקוח"} — ₪${Number(jobData.totalAmount || 0).toFixed(0)}. סיבה: ${failureReason}`,
+            type:      "admin_payment_alert",
+            data:      { jobId: jobDoc.id },
+            isRead:    false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+        console.log(`Payment failure alerts sent for job ${jobDoc.id}`);
       }
     }
 

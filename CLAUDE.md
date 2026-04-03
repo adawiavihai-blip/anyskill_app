@@ -23,6 +23,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | AI | Anthropic Claude API, Vertex AI, Google Generative AI |
 | Maps | flutter_map + Geolocator |
 | i18n | 4 locales: Hebrew (he), English (en), Spanish (es), Arabic (ar) -- 942 keys each |
+| Monitoring | Sentry (sentry_flutter ^8.0.0), Firebase Crashlytics, Watchtower |
 | Hosting | Firebase Hosting (SPA) |
 
 **Version:** 8.9.4 &bull; **Firebase Project:** anyskill-6fdf3
@@ -718,11 +719,327 @@ showSnackBar(confirmText);         // safe to use
 
 ---
 
+## 9b. HomeTab Architectural Laws (MANDATORY)
+
+> **These rules exist because we debugged painful regressions. Do NOT relax them
+> without updating this section in the same commit.**
+
+### Law 1: Persistent StoriesRow -- NEVER Zero Height
+
+`StoriesRow` must **always** render at a fixed `height: 98` between the search
+bar and the category grid. It must NEVER return `SizedBox.shrink()`.
+
+| State | Provider view | Customer view |
+|-------|---------------|---------------|
+| Stories exist | "Add Story" circle (slot 0) + other experts | Other experts' circles |
+| No stories | "Add Story" circle alone | "אין סטוריז עדיין" placeholder (icon + text, 98px) |
+| Stream error | "Add Story" circle alone | Placeholder |
+| Auth loading | Placeholder shell | Placeholder shell |
+
+**Why:** `SizedBox.shrink()` caused a vanishing-row bug where the outer
+`_categoriesStream` StreamBuilder rebuild triggered a re-evaluation of
+`DateTime.now()` in the expiry filter, borderline stories flipped in/out,
+and the row collapsed to zero height on every other frame.
+
+**Files:** `lib/screens/search_screen/widgets/stories_row.dart`
+
+### Law 2: Provider "Add Story" Entry Point
+
+The **first slot** (index 0) in StoriesRow is always the current provider's
+upload button. It shows:
+- Their profile image (from `users/{uid}.profileImage`)
+- A blue `+` icon overlay (bottom-left, `_kGradStart` color)
+- Tapping opens the upload sheet; long-press deletes existing story
+
+The provider's own story doc is extracted from the raw Firestore snapshot
+**before** the 25-hour expiry filter runs. The provider's entry point must
+never be filtered out by the time window.
+
+**Widget:** `_MyStorySlot` in `stories_row.dart`
+
+### Law 3: 25-Hour Stable Expiry Buffer
+
+Other experts' stories use a **25-hour** window (not 24) for the client-side
+expiry filter. This 1-hour grace period prevents borderline flicker when
+parent `StreamBuilder` rebuilds shift `DateTime.now()` by milliseconds.
+
+```dart
+// CORRECT — 25h tolerance, own doc excluded from filter
+final otherDocs = rawDocs.where((d) {
+  if (d.id == _uid) return false; // own doc handled separately
+  ...
+  return ts != null && now.difference(ts).inHours < 25;
+}).toList();
+```
+
+### Law 4: HomeTab Stream Error Resilience
+
+Every `StreamBuilder` inside the `CustomScrollView.slivers` list MUST have
+an `if (snap.hasError) return const SizedBox.shrink();` guard as its first
+line. A Firestore permission error or Gemini 404 must collapse to zero
+height, never throw or leave a broken sliver.
+
+**Current protected streams (4):**
+| Stream | File | Purpose |
+|--------|------|---------|
+| `_urgentStream` | `home_tab.dart` | Job request pulse banner |
+| `_remindersStream` | `home_tab.dart` | AI re-engagement card |
+| `_dealStream` | `home_tab.dart` (via `_buildAirbnbRows`) | AI Deal of the Day |
+| `_storiesStream` | `stories_row.dart` | Skills Stories row |
+
+### Law 5: Version Update Loop Prevention
+
+Two-layer defence prevents the "infinite update banner" loop:
+
+**Layer 1 — `web/app_init.js`:**
+- `_swUpdateSignalled` flag ensures `sw_update_pending` is set at most once
+  per page load.
+- If `sessionStorage['v5_purged']` is already set (= cache-bust just ran),
+  the flag is NOT re-set. This breaks the SW-fires-again-after-reload cycle.
+
+**Layer 2 — `lib/main.dart` `_handleWebUpdates()`:**
+- Before showing the banner, checks `_prefs.getString('banner_dismissed_v')`.
+- If the dismissed version equals `currentAppVersion`, the banner is suppressed.
+- This catches edge cases where the JS layer still sets the flag.
+
+**Layer 3 — `_startVersionListener()` (Firestore path):**
+- Compares `latestVersion` vs `currentAppVersion` with `_isNewerVersion()`.
+- Checks `banner_dismissed_v` in SharedPreferences.
+- `_updateNotified` flag prevents re-showing within the same session.
+
+### Law 6: HomeTab Sliver Order (Fixed Layout)
+
+```
+SliverToBoxAdapter  →  _buildHeader()
+SliverToBoxAdapter  →  _buildSearchBar()
+SliverToBoxAdapter  →  Urgent pulse banner (StreamBuilder, error-safe)
+SliverToBoxAdapter  →  StoriesRow (key: 'stories_row_slot')   ← ALWAYS HERE
+if/else chain       →  Loading shimmer / Empty / No results / Grid:
+                        ├─ AI Re-Engagement card (error-safe)
+                        ├─ 1st category row
+                        ├─ AI Deal of the Day banner (injected by _buildAirbnbRows)
+                        ├─ 2nd category row
+                        ├─ _PromoCarousel
+                        └─ Remaining categories
+SliverToBoxAdapter  →  Footer (logout + version)
+```
+
+StoriesRow is **outside** the `if/else` conditional chain. It uses
+`ValueKey('stories_row')` on both the `SliverToBoxAdapter` and the widget
+to preserve state across parent `_categoriesStream` rebuilds.
+
+### Law 7: Sentry Monitoring (MANDATORY for Production)
+
+Sentry must remain enabled for all production builds. It is the primary
+crash-reporting and performance-tracing layer, complementing Crashlytics
+(native-only) and Watchtower (Firestore logs).
+
+**Configuration (`main.dart`):**
+```dart
+await SentryFlutter.init((options) {
+  options.dsn = 'https://...@....ingest.us.sentry.io/...';
+  options.tracesSampleRate = 1.0;
+  options.environment = kDebugMode ? 'development' : 'production';
+  options.release = 'anyskill@$currentAppVersion';
+}, appRunner: () { ... runApp(...) });
+```
+
+**Three error-reporting channels (all active simultaneously):**
+
+| Channel | Scope | Dashboard |
+|---------|-------|-----------|
+| **Sentry** | All platforms (web + iOS + Android) | sentry.io |
+| **Firebase Crashlytics** | Native only (iOS + Android) | Firebase Console |
+| **Watchtower** | All platforms (Firestore `error_logs`) | Admin → ביצועים |
+
+**Sentry user context:** Set in `AuthWrapper._authSub` listener —
+`Sentry.configureScope()` tags every event with `user.uid`, `email`,
+and `displayName`. Cleared on logout.
+
+**Navigator tracing:** `SentryNavigatorObserver()` added to
+`MaterialApp.navigatorObservers` — tracks page navigation as Sentry
+transactions for performance monitoring.
+
+**Admin test:** "Test Crash" button in `SystemPerformanceTab` sends a
+captured exception to Sentry and shows a success snackbar.
+
+**Rules:**
+- Never remove or disable Sentry in production builds
+- Never lower `tracesSampleRate` below `0.2` without team discussion
+- The DSN is a public ingest key (safe in client code, like Firebase API keys)
+- If Sentry init fails, the app MUST still launch (it's inside `SentryFlutter.init`'s error handling)
+
+### Law 8: Live Selfie Identity Verification
+
+Provider onboarding includes a **mandatory live selfie step** after the ID
+document upload. The selfie is captured from the front camera and uploaded
+to `verification_selfies/{uid}.jpg` in Firebase Storage.
+
+**Onboarding flow (providers):**
+1. Business fields (type, ID number)
+2. ID document upload (`id_docs/{uid}`)
+3. **Live selfie** (front camera, 600px, `verification_selfies/{uid}.jpg`)
+4. Category selection
+5. Contact info + profile
+6. Terms → Submit
+
+**Admin verification panel:** Shows the selfie and ID document **side-by-side**
+in `_buildIdVerificationCard()` for visual identity matching. The admin sees
+both images before tapping "Approve" or "Reject".
+
+**Firestore:** `users/{uid}.selfieVerificationUrl` — download URL from Storage.
+
+**Rules:**
+- Selfie MUST use `ImageSource.camera` (not gallery) — prevents uploading fake photos
+- `CameraDevice.front` ensures it's a self-portrait
+- The selfie field is NOT in the `doesNotTouch` blocked list — owner can write it
+
+### Law 9: Provider Active/Inactive Status & Booking Gate
+
+The existing `isOnline` field controls provider availability. When a provider
+is **offline** (`isOnline: false`):
+
+| Area | Behaviour |
+|------|-----------|
+| **Search cards** | Shows grey "לא זמין כעת" badge (instead of green "Online") |
+| **Expert profile** | Booking button disabled with "לא זמין להזמנות כרגע" message |
+| **Search ranking** | -100 points (Online Add removed from score) |
+| **Job broadcasts** | Excluded from notification recipients |
+
+The toggle lives in the `HomeTab` header (green/grey pill) and is persisted
+to `users/{uid}.isOnline`. It auto-sets `true` on app resume and `false` on
+dispose via `home_screen.dart._setOnlineStatus()`.
+
+**Files:** `home_tab.dart` (toggle UI), `home_screen.dart` (lifecycle sync),
+`category_results_screen.dart` (badge), `expert_profile_screen.dart` (booking gate)
+
+### Law 10: Friendly Error Handling + Internal Support Chat
+
+**All user-facing catch blocks** should use `ErrorMapper.show(context, e)`
+instead of raw `SnackBar(content: Text('$e'))`.
+
+**File:** `lib/utils/error_mapper.dart`
+
+**Behaviour:**
+- Maps Firebase error codes to Hebrew messages (e.g., `permission-denied` →
+  "היי, נראה שיש לנו תקלה קטנה בחיבור הפרופיל שלך...")
+- Maps network/timeout/Stripe errors to appropriate Hebrew messages
+- Shows a red floating SnackBar with the friendly message
+- "לחץ כאן לדבר עם תמיכה" opens the **internal Support Chat** (NOT WhatsApp)
+- Generic fallback: "משהו השתבש. אנא נסה שוב או פנה לתמיכה."
+
+**Support flow when user taps "לדבר עם תמיכה":**
+1. `ErrorMapper._createErrorTicket()` creates a `support_tickets` doc
+   with `category: 'error_report'` and `subject: 'שגיאה אוטומטית: {code}'`
+2. First message is auto-written with error code, friendly message, and context
+3. User is navigated to `TicketChatScreen` where they can add details
+4. CF `notifyAdminOnSupportMessage` pushes a notification to all admins
+5. Admin sees the ticket in "תיבת פניות 📮" tab (AdminSupportInboxTab)
+
+**Cloud Function:** `notifyAdminOnSupportMessage`
+- Trigger: `onDocumentCreated("support_tickets/{ticketId}/messages/{messageId}")`
+- Skips admin-sent messages (prevents notify-self loop)
+- Sends FCM push + in-app notification to all `isAdmin: true` users
+
+**Rules:**
+- Never show raw English exception text to users
+- Never use WhatsApp or external links for support — all support is internal
+- New Firebase error codes should be added to the `switch` in `messageFor()`
+- The auto-created ticket includes the error code so the admin immediately knows the issue
+
+### Law 11: Single Source of Truth for Profile Images
+
+**All profile image display** must use `safeImageProvider()` from
+`lib/utils/safe_image_provider.dart`. Never use `NetworkImage()` or
+`CachedNetworkImageProvider()` directly for user profile images.
+
+**Why:** Profile images are stored in two formats:
+- **HTTPS URLs** — from Google Sign-In or Firebase Storage uploads
+- **Base64 data URIs** (`data:image/png;base64,...`) — from onboarding camera capture
+
+`NetworkImage` and `CachedNetworkImage` crash silently on base64 strings,
+causing blank/missing avatars. `safeImageProvider()` handles both formats
+and returns `null` for malformed data so callers show a proper placeholder.
+
+**Utility:** `lib/utils/safe_image_provider.dart`
+```dart
+// Returns ImageProvider for HTTPS URLs or base64, null if empty/broken.
+ImageProvider? safeImageProvider(String? raw);
+
+// Complete avatar widget with initials fallback.
+Widget buildProfileAvatar({required String? imageUrl, required String name, ...});
+```
+
+**Fixed screens (must stay using `safeImageProvider`):**
+
+| Screen | File | What was broken |
+|--------|------|----------------|
+| Expert cards (search) | `category_results_screen.dart` | `NetworkImage(profileImg)` → base64 crash |
+| Story circles | `stories_row.dart` | `Image.network(avatar)` → base64 crash |
+| Public profile | `public_profile_screen.dart` | `NetworkImage(profileImg)` → base64 crash |
+| Chat bubbles | `chat_ui_helper.dart` | `startsWith('http')` check excluded base64 |
+
+**Rules:**
+- Never use `NetworkImage()` directly for `profileImage` fields
+- Never check `startsWith('http')` to decide if an image exists — use `safeImageProvider() != null`
+- New screens displaying user avatars MUST import and use `safeImageProvider`
+- The `stories` collection stores `providerAvatar` (a snapshot) — it may be base64
+
+### Law 12: Zero-Tolerance for Stale UI
+
+**AI Deal Banner** must never persist beyond its valid date. The
+`OpportunityHunterService.streamToday()` applies a strict same-day check:
+- `validDate` must equal `todayKey()` (YYYY-MM-DD) — stale docs return `null`
+- `expiresAt` timestamp (if present) must be in the future
+- If the Gemini CF fails (404), the stream returns `null` → `SizedBox.shrink()`
+
+**Bottom-nav badges must reflect the actual list:**
+
+| Badge | Query | Screen |
+|-------|-------|--------|
+| Orders (provider) | `expertId == uid && status == 'paid_escrow'` | `home_screen.dart:136-142` |
+| Orders (customer) | `customerId == uid && status == 'expert_completed'` | `home_screen.dart:127-133` |
+
+The badge query and the list query MUST read from the same `jobs` collection
+with the same uid. The `my_bookings_screen.dart` provider tasks tab streams
+**all** expert jobs (no status filter) and splits client-side into
+active (`paid_escrow`, `expert_completed`) and history.
+
+**Debug:** `[Tasks] expertStream returned N docs` logs are present in
+`_buildProviderTasksTab()` to diagnose any badge/list mismatch.
+
+**Tab controller:** `DefaultTabController(length: 2)` — both provider and
+customer paths have exactly 2 tabs. Using `3` for customers was a bug that
+caused the tab content to not render.
+
+### Law 13: Self-Booking Prevention (Anti-Fraud)
+
+Providers are **strictly prohibited** from creating jobs/bookings where
+`customerId == expertId`. This prevents fake reviews and circular money flows.
+
+**Three-layer enforcement:**
+
+| Layer | File | Check |
+|-------|------|-------|
+| **UI (button)** | `expert_profile_screen.dart` | `isSelf = currentUser.uid == widget.expertId` → button disabled, shows "לא ניתן להזמין שירות מעצמך" |
+| **Service (logic)** | `escrow_service.dart` | `if (clientId == providerId) return error` — before any Firestore transaction |
+| **Search (visual)** | `category_results_screen.dart` | Purple "הפרופיל שלך" badge on own card in search results |
+
+**Firestore rules** already enforce `clientId != providerId` on `volunteer_tasks`
+(see Section 11). The `jobs` collection does not have this rule because the
+escrow service handles it. If a future code path bypasses the service,
+add to `firestore.rules`:
+```
+allow create: if ... && request.resource.data.customerId != request.resource.data.expertId;
+```
+
+---
+
 ## 10. Firestore Collections Reference
 
 | Collection | Key Fields | Purpose |
 |-----------|-----------|---------|
-| `users/{uid}` | isProvider, isVolunteer, isVerified, isDemo, isElderlyOrNeedy, isAnySkillPro, proManualOverride, serviceType, xp, balance, pendingBalance, rating, reviewsCount, customerRating, isOnline, lastVolunteerTaskAt, volunteerTaskCount, hasActiveVolunteerBadge, stripeAccountId, cancellationPolicy, streak, lastStreakDate, streakBestEver, lastDailyDropDate, profileBoostUntil | User profiles |
+| `users/{uid}` | isProvider, isVolunteer, isVerified, isDemo, isElderlyOrNeedy, isAnySkillPro, proManualOverride, serviceType, xp, balance, pendingBalance, rating, reviewsCount, customerRating, isOnline, lastVolunteerTaskAt, volunteerTaskCount, hasActiveVolunteerBadge, stripeAccountId, cancellationPolicy, streak, lastStreakDate, streakBestEver, lastDailyDropDate, profileBoostUntil, workingHours, selfieVerificationUrl | User profiles |
 | `jobs/{jobId}` | customerId, expertId, totalAmount, netAmountForExpert, commission, status, quoteId, chatRoomId, clientReviewDone, providerReviewDone, cancellationDeadline, stripePaymentIntentId, stripeTransferId | Bookings |
 | `quotes/{id}` | providerId, clientId, amount, status, jobId | Price quotes |
 | `reviews/{id}` | jobId, reviewerId, revieweeId, isClientReview, ratingParams, overallRating, publicComment, privateAdminComment, isPublished, createdAt | Double-blind reviews |
@@ -737,7 +1054,7 @@ showSnackBar(confirmText);         // safe to use
 | `job_broadcasts/{id}` | clientId, category, status (open/claimed/expired), claimedBy, claimedByName, expiresAt, sourceJobRequestId | Urgent first-come-first-served claims |
 | `courses/{id}` | title, videoUrl, category, quizQuestions[], xpReward, order | Academy courses |
 | `user_progress/{uid}/courses/{id}` | watchedPercent, passed, xpAwarded | Course progress |
-| `stories/{uid}` | mediaUrl, timestamp, viewCount, likeCount | Skills Stories |
+| `stories/{uid}` | mediaUrl, videoUrl, timestamp, expiresAt, viewCount, likeCount, hasActive, providerName, providerAvatar | Skills Stories (25h expiry) |
 | `user_rewards/{id}` | userId, type, status (active/expired), awardedAt, expiresAt, source | Daily Drop / streak / engagement rewards |
 | `support_tickets/{id}` | userId, userName, jobId?, category, subject, status (open/in_progress/resolved), evidenceUrls | Support ticket + messages subcollection |
 | `category_requests/{id}` | userId, userName, description, originalCategory?, status (pending/approved/rejected) | Custom "Other" category requests |

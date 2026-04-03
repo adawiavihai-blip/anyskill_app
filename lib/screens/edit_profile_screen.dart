@@ -41,6 +41,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String _cancellationPolicy = 'flexible';
   Set<String> _selectedQuickTags = {};
 
+  /// Weekly working hours — keys are weekday indices (0=Sunday..6=Saturday),
+  /// values are `{"from": "09:00", "to": "17:00"}`.
+  /// Empty map = "all hours" (legacy behaviour — no restrictions).
+  Map<int, Map<String, String>> _workingHours = {};
+
+  static const _kDayNames = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+  static const _kHourOptions = [
+    '07:00', '08:00', '09:00', '10:00', '11:00', '12:00',
+    '13:00', '14:00', '15:00', '16:00', '17:00', '18:00',
+    '19:00', '20:00', '21:00', '22:00',
+  ];
+
   String? _profileImageUrl;
   String _phoneDisplay = ''; // read-only — shown from Auth / Firestore
   List<dynamic> _galleryImages = [];
@@ -100,6 +112,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _responseTimeMinutes = widget.userData['responseTimeMinutes'] as int?;
     _cancellationPolicy =
         widget.userData['cancellationPolicy'] as String? ?? 'flexible';
+
+    // Load working hours from Firestore (Map<String, dynamic> → Map<int, Map<String, String>>)
+    final rawHours = widget.userData['workingHours'] as Map<String, dynamic>? ?? {};
+    _workingHours = {};
+    for (final entry in rawHours.entries) {
+      final day = int.tryParse(entry.key);
+      if (day != null && entry.value is Map) {
+        final m = entry.value as Map;
+        _workingHours[day] = {
+          'from': m['from']?.toString() ?? '09:00',
+          'to':   m['to']?.toString()   ?? '17:00',
+        };
+      }
+    }
 
     _categorySub = CategoryService.stream().listen((cats) {
       if (!mounted) return;
@@ -286,6 +312,28 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return false;
   }
 
+  Widget _buildHourDropdown(String value, ValueChanged<String> onChanged) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: DropdownButton<String>(
+        value: _kHourOptions.contains(value) ? value : '09:00',
+        underline: const SizedBox.shrink(),
+        isDense: true,
+        style: const TextStyle(fontSize: 13, color: Colors.black87),
+        items: _kHourOptions.map((h) => DropdownMenuItem(
+          value: h,
+          child: Text(h, style: const TextStyle(fontSize: 13)),
+        )).toList(),
+        onChanged: (v) { if (v != null) onChanged(v); },
+      ),
+    );
+  }
+
   Future<void> _saveProfile() async {
     final l10n = AppLocalizations.of(context);
 
@@ -431,6 +479,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         payload['videoUrl'] = videoUrlResult?.value ?? ''; // ← sanitized
         if (_responseTimeMinutes != null) {
           payload['responseTimeMinutes'] = _responseTimeMinutes;
+        }
+        // Weekly working hours (convert Map<int,...> → Map<String,...> for Firestore)
+        if (_workingHours.isNotEmpty) {
+          payload['workingHours'] = {
+            for (final e in _workingHours.entries) '${e.key}': e.value,
+          };
+        } else {
+          payload['workingHours'] = FieldValue.delete();
         }
         // Dynamic service schema fields
         if (_categoryDetails.isNotEmpty) {
@@ -1485,6 +1541,83 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                   );
                                 }).toList(),
                           ),
+
+                          const SizedBox(height: 25),
+
+                          // ── Working Hours (שעות עבודה) ─────────────────────────
+                          Text(
+                            'שעות עבודה',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 4),
+                          Align(
+                            alignment: AlignmentDirectional.centerEnd,
+                            child: Text(
+                              'סמן את הימים ושעות העבודה שלך',
+                              style: const TextStyle(fontSize: 12, color: Colors.grey),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          ...List.generate(7, (dayIndex) {
+                            final enabled = _workingHours.containsKey(dayIndex);
+                            final from = _workingHours[dayIndex]?['from'] ?? '09:00';
+                            final to   = _workingHours[dayIndex]?['to']   ?? '17:00';
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: Row(
+                                children: [
+                                  // Day toggle
+                                  SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: Checkbox(
+                                      value: enabled,
+                                      activeColor: const Color(0xFF6366F1),
+                                      onChanged: (val) {
+                                        setState(() {
+                                          if (val == true) {
+                                            _workingHours[dayIndex] = {'from': '09:00', 'to': '17:00'};
+                                          } else {
+                                            _workingHours.remove(dayIndex);
+                                          }
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  SizedBox(
+                                    width: 52,
+                                    child: Text(
+                                      _kDayNames[dayIndex],
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: enabled ? Colors.black87 : Colors.grey,
+                                      ),
+                                    ),
+                                  ),
+                                  if (enabled) ...[
+                                    // From dropdown
+                                    _buildHourDropdown(from, (val) {
+                                      setState(() => _workingHours[dayIndex]!['from'] = val);
+                                    }),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                                      child: Text('–', style: TextStyle(color: Colors.grey[600])),
+                                    ),
+                                    // To dropdown
+                                    _buildHourDropdown(to, (val) {
+                                      setState(() => _workingHours[dayIndex]!['to'] = val);
+                                    }),
+                                  ] else
+                                    Text(
+                                      'לא עובד',
+                                      style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+                                    ),
+                                ],
+                              ),
+                            );
+                          }),
 
                           const SizedBox(height: 25),
 

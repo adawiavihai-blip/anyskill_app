@@ -13,6 +13,7 @@ import 'package:video_player/video_player.dart';
 import '../../expert_profile_screen.dart';
 import '../../chat_screen.dart';
 import '../../../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
+import '../../../utils/safe_image_provider.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Colour palette used throughout this file
@@ -26,9 +27,12 @@ const _kGradEnd    = Color(0xFFF59E0B);
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Horizontal row of circular skill-story avatars.
-/// • Shows providers where `hasActive == true` in the `stories` collection.
-/// • First slot is the current user's own story (if they are a provider).
-/// • Collapses entirely when there is nothing to show.
+///
+/// **NEVER hides.** Always renders a fixed-height row between the search bar
+/// and the categories grid.
+/// • Providers always see their own "Add Story" circle as the first slot.
+/// • Other experts' active stories appear beside it (25-hour expiry filter).
+/// • Customers see other experts' stories, or a "no stories" placeholder.
 class StoriesRow extends StatefulWidget {
   final bool isProvider;
 
@@ -69,24 +73,26 @@ class _StoriesRowState extends State<StoriesRow> {
 
   @override
   Widget build(BuildContext context) {
-    // Auth guard: no uid → collapse (will render once auth is resolved
-    // and HomeTab rebuilds with the authenticated user's StoriesRow).
-    if (_uid.isEmpty) return const SizedBox.shrink();
+    // Auth guard: no uid → show placeholder shell to keep height stable.
+    if (_uid.isEmpty) {
+      return _StoriesShell(
+        activeCount: 0,
+        child: _buildEmptyPlaceholder(),
+      );
+    }
 
     return StreamBuilder<QuerySnapshot>(
       stream: _storiesStream,
       builder: (context, snap) {
-        if (snap.connectionState != ConnectionState.waiting) {
-          final docs = snap.data?.docs ?? [];
-          debugPrint('QA: StoriesRow — fetched ${docs.length} docs from Firestore');
-          for (final d in docs) {
-            final data = d.data() as Map<String, dynamic>? ?? {};
-            debugPrint('  • doc=${d.id} hasActive=${data['hasActive']} '
-                'providerName=${data['providerName']} '
-                'timestamp=${data['timestamp']} '
-                'videoUrl=${(data['videoUrl'] as String? ?? '').isNotEmpty ? 'SET' : 'EMPTY'}');
-          }
-          if (snap.hasError) debugPrint('QA: StoriesRow ERROR — ${snap.error}');
+        // ── Error guard — show placeholder, never collapse to zero height ──
+        if (snap.hasError) {
+          debugPrint('STORY_DEBUG: StreamBuilder error — ${snap.error}');
+          return _StoriesShell(
+            activeCount: 0,
+            child: widget.isProvider
+                ? _buildProviderOnlyRow(ownDoc: null)
+                : _buildEmptyPlaceholder(),
+          );
         }
 
         // ── Loading skeleton — shown until first Firestore frame ──────────
@@ -114,26 +120,39 @@ class _StoriesRowState extends State<StoriesRow> {
           return tb.compareTo(ta); // descending
         });
 
-        // Client-side 24-hour expiry filter
+        // The current user's own story doc — NEVER filtered by expiry.
+        // The provider's "Add Story" slot must always appear regardless of age.
+        final ownDoc = rawDocs.where((d) => d.id == _uid).firstOrNull;
+
+        // 25-hour expiry filter for OTHER experts' stories only.
         final now = DateTime.now();
-        final allDocs = rawDocs.where((d) {
+        final otherDocs = rawDocs.where((d) {
+          if (d.id == _uid) return false; // own doc handled separately
           final data = d.data() as Map<String, dynamic>;
           final expiresAt = (data['expiresAt'] as Timestamp?)?.toDate();
           if (expiresAt != null) return expiresAt.isAfter(now);
-          // Fallback for legacy docs without expiresAt
           final ts = (data['timestamp'] as Timestamp?)?.toDate();
-          return ts != null && now.difference(ts).inHours < 24;
+          return ts != null && now.difference(ts).inHours < 25;
         }).toList();
-        final ownDoc    = allDocs.where((d) => d.id == _uid).firstOrNull;
-        final otherDocs = allDocs.where((d) => d.id != _uid).toList();
 
+        // Provider always gets slot 0 (their "Add Story" circle).
+        // itemCount is never 0 for providers — the row never vanishes.
         final itemCount = (widget.isProvider ? 1 : 0) + otherDocs.length;
 
-        // ── No stories + not a provider → collapse entirely (no dead space) ─
-        if (itemCount == 0) return const SizedBox.shrink();
+        debugPrint('STORY_DEBUG: Rendering StoriesRow with $itemCount items '
+            '(raw=${rawDocs.length}, otherDocs=${otherDocs.length}, '
+            'isProvider=${widget.isProvider}, ownDoc=${ownDoc != null})');
+
+        // ── Customer with zero stories → persistent placeholder ───────────
+        if (itemCount == 0) {
+          return _StoriesShell(
+            activeCount: 0,
+            child: _buildEmptyPlaceholder(),
+          );
+        }
 
         return _StoriesShell(
-          activeCount: allDocs.length,
+          activeCount: otherDocs.length + (ownDoc != null ? 1 : 0),
           child: SizedBox(
             height: 98,
             child: ListView.separated(
@@ -162,6 +181,49 @@ class _StoriesRowState extends State<StoriesRow> {
           ),
         );
       },
+    );
+  }
+
+  /// Provider-only row: just their "Add Story" slot when no other stories exist.
+  Widget _buildProviderOnlyRow({QueryDocumentSnapshot? ownDoc}) {
+    return SizedBox(
+      height: 98,
+      child: Align(
+        alignment: AlignmentDirectional.centerEnd,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: _MyStorySlot(
+            uid:        _uid,
+            ownDoc:     ownDoc,
+            onUploaded: () => setState(() {}),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Empty state for customers (or auth loading) — keeps the row height stable.
+  static Widget _buildEmptyPlaceholder() {
+    return SizedBox(
+      height: 98,
+      child: Center(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.auto_stories_outlined,
+                size: 20, color: Colors.grey.shade300),
+            const SizedBox(width: 8),
+            Text(
+              'אין סטוריז עדיין',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey.shade400,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -356,14 +418,9 @@ class _MyStorySlotState extends State<_MyStorySlot>
                         shape: BoxShape.circle,
                       ),
                     ),
-                    // Avatar
+                    // Avatar (handles both HTTPS and base64)
                     ClipOval(
-                      child: avatar.isNotEmpty
-                          ? CachedNetworkImage(
-                              imageUrl: avatar,
-                              width: 56, height: 56, fit: BoxFit.cover,
-                              errorWidget: (_, __, ___) => _avatarFallback(name))
-                          : _avatarFallback(name),
+                      child: _safeAvatarImage(avatar, name, 56),
                     ),
                     // "+" badge when no story
                     if (!_hasStory)
@@ -465,11 +522,7 @@ class _StoryCircle extends StatelessWidget {
                   ),
                 ),
                 ClipOval(
-                  child: avatar.isNotEmpty
-                      ? Image.network(avatar,
-                          width: 56, height: 56, fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _avatarFallback(name))
-                      : _avatarFallback(name),
+                  child: _safeAvatarImage(avatar, name, 56),
                 ),
                 // Time-remaining badge
                 if (timeLabel != null)
@@ -1939,6 +1992,23 @@ class _StatPill extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Safely renders a profile image that may be an HTTPS URL or base64 data URI.
+/// Falls back to initials if the image is empty or malformed.
+Widget _safeAvatarImage(String? url, String name, double size) {
+  if (url == null || url.isEmpty) return _avatarFallback(name, size: size);
+  if (url.startsWith('http')) {
+    return CachedNetworkImage(
+      imageUrl: url,
+      width: size, height: size, fit: BoxFit.cover,
+      errorWidget: (_, __, ___) => _avatarFallback(name, size: size),
+    );
+  }
+  // Base64 data URI
+  final provider = safeImageProvider(url);
+  if (provider == null) return _avatarFallback(name, size: size);
+  return Image(image: provider, width: size, height: size, fit: BoxFit.cover);
 }
 
 Widget _avatarFallback(String name, {double size = 56}) => Container(

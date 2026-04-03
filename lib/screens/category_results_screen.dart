@@ -16,6 +16,7 @@ import '../widgets/level_badge.dart';
 import '../constants/quick_tags.dart';
 import '../l10n/app_localizations.dart';
 import 'search_screen/widgets/stories_row.dart';
+import '../utils/safe_image_provider.dart';
 
 // Brand colours (shared with the rest of the app)
 const _kPurple     = Color(0xFF6366F1);
@@ -46,6 +47,9 @@ class CategoryResultsScreen extends StatefulWidget {
 class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   String _searchQuery    = '';
   bool   _filterUnder100 = false;
+  double _minRating      = 0;        // 0 = no filter, 3/4/4.5 = minimum stars
+  double? _maxDistanceKm;            // null = no radius limit
+  bool   _showAdvancedFilters = false;
   Position? _currentPosition;
 
   // ── Pagination state ───────────────────────────────────────────────────────
@@ -170,6 +174,25 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   // Availability bottom sheet
   // ─────────────────────────────────────────────────────────────────────────
 
+  /// Returns display time slots for a given [day] based on provider's
+  /// [workingHours]. Falls back to 4 fixed slots if no hours are configured.
+  static List<String> _timesForDay(Map<String, dynamic>? workingHours, DateTime day) {
+    const fallback = ['09:00', '11:00', '14:00', '16:00'];
+    if (workingHours == null || workingHours.isEmpty) return fallback;
+    // Our schema: 0=Sunday..6=Saturday. DateTime.weekday: 1=Mon..7=Sun.
+    final dayIndex = day.weekday == 7 ? 0 : day.weekday;
+    final entry = workingHours['$dayIndex'] as Map<String, dynamic>?;
+    if (entry == null) return []; // provider doesn't work this day
+    final fromHour = int.tryParse((entry['from'] ?? '09:00').toString().split(':').first) ?? 9;
+    final toHour   = int.tryParse((entry['to']   ?? '17:00').toString().split(':').first) ?? 17;
+    // Generate slots every 2 hours within the range
+    final slots = <String>[];
+    for (int h = fromHour; h < toHour; h += 2) {
+      slots.add('${h.toString().padLeft(2, '0')}:00');
+    }
+    return slots.isEmpty ? fallback : slots;
+  }
+
   void _showAvailabilitySheet(
       BuildContext context, Map<String, dynamic> data, String expertId) {
     final l10n = AppLocalizations.of(context);
@@ -190,8 +213,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       if (!blocked.contains(key)) slots.add(day);
     }
 
-    // Fixed time options shown for each available day
-    const times = ['09:00', '11:00', '14:00', '16:00'];
+    // Dynamic time options based on provider's workingHours, with legacy fallback
+    final rawHours = data['workingHours'] as Map<String, dynamic>?;
     final dayLabels = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
     final monthLabels = [
       'ינו׳', 'פבר׳', 'מרץ', 'אפר׳', 'מאי', 'יוני',
@@ -288,7 +311,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                             spacing: 6,
                             runSpacing: 6,
                             alignment: WrapAlignment.end,
-                            children: times.map((t) => GestureDetector(
+                            children: _timesForDay(rawHours, day).map((t) => GestureDetector(
                               onTap: () {
                                 Navigator.pop(ctx);
                                 Navigator.push(
@@ -434,11 +457,11 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                     child: CircleAvatar(
                       radius: 46,
                       backgroundColor: const Color(0xFFEEEBFF),
-                      backgroundImage: hasImg ? NetworkImage(profileImg) : null,
-                      child: hasImg
-                          ? null
-                          : Icon(Icons.person, size: 40,
-                              color: _kPurple.withValues(alpha: 0.5)),
+                      backgroundImage: hasImg ? safeImageProvider(profileImg) : null,
+                      child: safeImageProvider(profileImg) == null
+                          ? Icon(Icons.person, size: 40,
+                              color: _kPurple.withValues(alpha: 0.5))
+                          : null,
                     ),
                   ),
                 ),
@@ -470,6 +493,26 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                           Text(l10n.onlineStatus,
                               style: const TextStyle(
                                   color: Colors.white,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.50),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.circle, color: Color(0xFF9CA3AF), size: 7),
+                          SizedBox(width: 3),
+                          Text('לא זמין כעת',
+                              style: TextStyle(
+                                  color: Colors.white70,
                                   fontSize: 9,
                                   fontWeight: FontWeight.w600)),
                         ],
@@ -845,6 +888,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     final isOnline   = data['isOnline']   as bool? ?? false;
     final isPromoted = data['isPromoted'] as bool? ?? false;
     final expertId   = data['uid'] as String? ?? '';
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final isSelf     = expertId == currentUid;
 
     return GestureDetector(
       // Tap anywhere on card = open profile
@@ -900,6 +945,31 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           ),
         ),
           ),
+          // ── "Your Profile" badge (self-booking prevention) ────────────────
+          if (isSelf)
+            Positioned(
+              top: 8,
+              left: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF6366F1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.person_rounded, size: 12, color: Colors.white),
+                    SizedBox(width: 4),
+                    Text('הפרופיל שלך',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
+            ),
           // ── Favorite heart ────────────────────────────────────────────────
           Positioned(
             bottom: 24,
@@ -1068,54 +1138,195 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           ),
           const SizedBox(height: 8),
 
-          // פילטר מחיר
-          Align(
-            alignment: Alignment.centerRight,
-            child: GestureDetector(
-              onTap: () => setState(() => _filterUnder100 = !_filterUnder100),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: _filterUnder100 ? _kPurple : Colors.white,
-                  borderRadius: BorderRadius.circular(50),
-                  border: Border.all(
-                    color: _filterUnder100
-                        ? _kPurple
-                        : Colors.grey.shade300,
-                  ),
-                  boxShadow: _filterUnder100
-                      ? [
-                          BoxShadow(
-                            color: _kPurple.withValues(alpha: 0.25),
-                            blurRadius: 8,
-                            offset: const Offset(0, 3),
-                          )
-                        ]
-                      : [],
+          // ── Filter chips row ──────────────────────────────────────────
+          SizedBox(
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              reverse: true, // RTL
+              children: [
+                // Price < 100
+                _buildFilterChip(
+                  label: l10n.catResultsUnder100,
+                  icon: Icons.attach_money,
+                  active: _filterUnder100,
+                  onTap: () => setState(() => _filterUnder100 = !_filterUnder100),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.attach_money,
-                        size: 14,
-                        color: _filterUnder100 ? Colors.white : Colors.grey[600]),
-                    const SizedBox(width: 6),
-                    Text(
-                      l10n.catResultsUnder100,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: _filterUnder100 ? Colors.white : Colors.grey[800],
-                      ),
-                    ),
-                  ],
+                const SizedBox(width: 8),
+                // Rating filter
+                _buildFilterChip(
+                  label: _minRating > 0 ? '⭐ ${_minRating.toStringAsFixed(1)}+' : 'דירוג',
+                  icon: Icons.star_rounded,
+                  active: _minRating > 0,
+                  onTap: () => _showRatingFilterSheet(),
                 ),
-              ),
+                const SizedBox(width: 8),
+                // Distance filter
+                _buildFilterChip(
+                  label: _maxDistanceKm != null ? '${_maxDistanceKm!.toInt()} ק"מ' : 'מרחק',
+                  icon: Icons.location_on_outlined,
+                  active: _maxDistanceKm != null,
+                  onTap: () => _showDistanceFilterSheet(),
+                ),
+                const SizedBox(width: 8),
+                // Advanced toggle
+                _buildFilterChip(
+                  label: 'עוד',
+                  icon: Icons.tune_rounded,
+                  active: _showAdvancedFilters,
+                  onTap: () => setState(() => _showAdvancedFilters = !_showAdvancedFilters),
+                ),
+              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip({
+    required String label,
+    required IconData icon,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? _kPurple : Colors.white,
+          borderRadius: BorderRadius.circular(50),
+          border: Border.all(color: active ? _kPurple : Colors.grey.shade300),
+          boxShadow: active
+              ? [BoxShadow(color: _kPurple.withValues(alpha: 0.25), blurRadius: 8, offset: const Offset(0, 3))]
+              : [],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: active ? Colors.white : Colors.grey[600]),
+            const SizedBox(width: 6),
+            Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: active ? Colors.white : Colors.grey[800])),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showRatingFilterSheet() {
+    double tempRating = _minRating;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setLocal) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('סינון לפי דירוג', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  for (final r in [0.0, 3.0, 3.5, 4.0, 4.5])
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: ChoiceChip(
+                        label: Text(r == 0 ? 'הכל' : '${r.toStringAsFixed(1)}+'),
+                        selected: tempRating == r,
+                        selectedColor: _kPurple,
+                        labelStyle: TextStyle(color: tempRating == r ? Colors.white : Colors.black87, fontSize: 13),
+                        onSelected: (_) => setLocal(() => tempRating = r),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: _kPurple, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                  onPressed: () { Navigator.pop(ctx); setState(() => _minRating = tempRating); },
+                  child: const Text('החל', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showDistanceFilterSheet() {
+    double tempKm = _maxDistanceKm ?? 15;
+    final hasLocation = _currentPosition != null;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setLocal) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('סינון לפי מרחק', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 8),
+              if (!hasLocation)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text('יש לאשר גישה למיקום כדי לסנן לפי מרחק', style: TextStyle(color: Colors.orange[700], fontSize: 13)),
+                ),
+              Text('${tempKm.toInt()} ק"מ', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: _kPurple)),
+              Slider(
+                value: tempKm,
+                min: 1,
+                max: 50,
+                divisions: 49,
+                activeColor: _kPurple,
+                label: '${tempKm.toInt()} ק"מ',
+                onChanged: hasLocation ? (v) => setLocal(() => tempKm = v) : null,
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('50 ק"מ', style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+                  Text('1 ק"מ', style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      onPressed: () { Navigator.pop(ctx); setState(() => _maxDistanceKm = null); },
+                      child: const Text('נקה'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: _kPurple, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      onPressed: hasLocation ? () { Navigator.pop(ctx); setState(() => _maxDistanceKm = tempKm); } : null,
+                      child: const Text('החל', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1159,6 +1370,9 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       all,
       query: _searchQuery,
       underHundred: _filterUnder100,
+      minRating: _minRating,
+      maxDistanceKm: _maxDistanceKm,
+      myPosition: _currentPosition,
     );
 
     return _renderExperts(context, experts);
@@ -1167,7 +1381,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   Widget _renderExperts(BuildContext context, List<Map<String, dynamic>> experts) {
     final l10n = AppLocalizations.of(context);
     if (experts.isEmpty && !_isLoadingMore && !_hasMore) {
-      final hasFilters = _searchQuery.isNotEmpty || _filterUnder100;
+      final hasFilters = _searchQuery.isNotEmpty || _filterUnder100 || _minRating > 0 || _maxDistanceKm != null;
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -1214,6 +1428,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                   onPressed: () => setState(() {
                     _searchQuery = '';
                     _filterUnder100 = false;
+                    _minRating = 0;
+                    _maxDistanceKm = null;
                   }),
                 ),
               ],
