@@ -667,7 +667,7 @@ class _AdminUserDetailScreenState
 
   void _showReviewsSheet() {
     final reviewsAsync = ref.read(userReviewsProvider(widget.userId));
-    final reviews = reviewsAsync.valueOrNull ?? [];
+    final allReviews = reviewsAsync.valueOrNull ?? [];
     final userAsync = ref.read(userDetailProvider(widget.userId));
     final isProvider = userAsync.valueOrNull?['isProvider'] == true;
 
@@ -676,86 +676,174 @@ class _AdminUserDetailScreenState
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.75,
-        minChildSize: 0.4,
-        maxChildSize: 0.95,
-        expand: false,
-        builder: (_, scrollCtrl) => Column(
-          children: [
-            // Handle
-            Padding(
-              padding: const EdgeInsets.only(top: 12, bottom: 8),
-              child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(10))),
-            ),
-            // Title
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
+      builder: (ctx) {
+        bool blindOnly = false;
+
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final reviews = blindOnly
+                ? allReviews.where((r) {
+                    final published = r['isPublished'] as bool? ?? false;
+                    final created =
+                        ((r['createdAt'] ?? r['timestamp']) as Timestamp?)
+                            ?.toDate();
+                    final expired = created != null &&
+                        DateTime.now().difference(created).inDays >= 7;
+                    return !published && !expired;
+                  }).toList()
+                : allReviews;
+
+            final blindCount = allReviews.where((r) {
+              final published = r['isPublished'] as bool? ?? false;
+              final created =
+                  ((r['createdAt'] ?? r['timestamp']) as Timestamp?)
+                      ?.toDate();
+              final expired = created != null &&
+                  DateTime.now().difference(created).inDays >= 7;
+              return !published && !expired;
+            }).length;
+
+            return DraggableScrollableSheet(
+              initialChildSize: 0.75,
+              minChildSize: 0.4,
+              maxChildSize: 0.95,
+              expand: false,
+              builder: (_, scrollCtrl) => Column(
                 children: [
-                  const Icon(Icons.rate_review_rounded,
-                      color: _kIndigo, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                      isProvider
-                          ? 'ביקורות מלקוחות (${reviews.length})'
-                          : 'ביקורות מנותני שירות (${reviews.length})',
-                      style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: _kDark)),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: _kIndigo.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
+                  // Handle
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12, bottom: 8),
+                    child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                            color: Colors.grey[300],
+                            borderRadius: BorderRadius.circular(10))),
+                  ),
+                  // Title row
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.rate_review_rounded,
+                            color: _kIndigo, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                              isProvider
+                                  ? 'ביקורות מלקוחות (${reviews.length})'
+                                  : 'ביקורות מנותני שירות (${reviews.length})',
+                              style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: _kDark)),
+                        ),
+                      ],
                     ),
-                    child: const Text('תצוגת אדמין — כל הביקורות',
-                        style: TextStyle(
-                            fontSize: 10,
-                            color: _kIndigo,
-                            fontWeight: FontWeight.w600)),
+                  ),
+                  const SizedBox(height: 8),
+                  // Filter toggle
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      children: [
+                        GestureDetector(
+                          onTap: () =>
+                              setSheetState(() => blindOnly = !blindOnly),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: blindOnly
+                                  ? _kAmber.withValues(alpha: 0.15)
+                                  : Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                  color: blindOnly
+                                      ? _kAmber.withValues(alpha: 0.4)
+                                      : Colors.grey.shade300),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  blindOnly
+                                      ? Icons.visibility_off_rounded
+                                      : Icons.visibility_rounded,
+                                  size: 14,
+                                  color: blindOnly ? _kAmber : _kMuted,
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  'מוסתרות בלבד ($blindCount)',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: blindOnly ? _kAmber : _kMuted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: _kIndigo.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text('תצוגת אדמין',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  color: _kIndigo,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 16),
+                  // Review list
+                  Expanded(
+                    child: reviews.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                    blindOnly
+                                        ? Icons.visibility_off_outlined
+                                        : Icons.rate_review_outlined,
+                                    size: 48,
+                                    color: _kMuted),
+                                const SizedBox(height: 12),
+                                Text(
+                                    blindOnly
+                                        ? 'אין ביקורות מוסתרות'
+                                        : 'אין ביקורות עדיין',
+                                    style: const TextStyle(
+                                        color: _kMuted, fontSize: 15)),
+                              ],
+                            ),
+                          )
+                        : ListView.separated(
+                            controller: scrollCtrl,
+                            padding:
+                                const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                            itemCount: reviews.length,
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 20),
+                            itemBuilder: (_, i) =>
+                                _buildReviewItem(reviews[i]),
+                          ),
                   ),
                 ],
               ),
-            ),
-            const Divider(height: 20),
-            // Review list
-            Expanded(
-              child: reviews.isEmpty
-                  ? const Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.rate_review_outlined,
-                              size: 48, color: _kMuted),
-                          SizedBox(height: 12),
-                          Text('אין ביקורות עדיין',
-                              style: TextStyle(
-                                  color: _kMuted, fontSize: 15)),
-                        ],
-                      ),
-                    )
-                  : ListView.separated(
-                      controller: scrollCtrl,
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                      itemCount: reviews.length,
-                      separatorBuilder: (_, __) =>
-                          const Divider(height: 20),
-                      itemBuilder: (_, i) =>
-                          _buildReviewItem(reviews[i]),
-                    ),
-            ),
-          ],
-        ),
-      ),
+            );
+          },
+        );
+      },
     );
   }
 
