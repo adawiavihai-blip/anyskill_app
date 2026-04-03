@@ -102,6 +102,13 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
           doc: users[index],
           verifyingUids: _verifyingUids,
           approvedUids: _approvedUids,
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => AdminUserDetailScreen(
+                  userId: users[index].id),
+            ),
+          ),
           onLongPress: () => _showUserActions(
             users[index].id,
             users[index].data(),
@@ -541,6 +548,7 @@ class _UserCard extends StatelessWidget {
     required this.doc,
     required this.verifyingUids,
     required this.approvedUids,
+    required this.onTap,
     required this.onLongPress,
     required this.onApprove,
     required this.onVerifyToggle,
@@ -551,6 +559,7 @@ class _UserCard extends StatelessWidget {
   final QueryDocumentSnapshot<Map<String, dynamic>> doc;
   final Set<String> verifyingUids;
   final Set<String> approvedUids;
+  final VoidCallback onTap;
   final VoidCallback onLongPress;
   final void Function(String uid, String name, String email, String cat)
       onApprove;
@@ -622,6 +631,7 @@ class _UserCard extends StatelessWidget {
             ),
 
           ListTile(
+            onTap: onTap,
             onLongPress: onLongPress,
             leading: Stack(
               children: [

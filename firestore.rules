@@ -720,6 +720,11 @@ service cloud.firestore {
       allow create, delete: if false; // Admin SDK only
     }
 
+    match /admin_audit_log/{logId} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
+    }
+
     match /reengagement_log/{logId} {
       allow create: if isAdmin() || isCmsAdmin();
       allow read:   if isAdmin() || isCmsAdmin();
