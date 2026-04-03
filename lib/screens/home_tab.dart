@@ -124,6 +124,16 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     final isProvider = widget.userData['isProvider'] == true;
     final category   = (widget.userData['serviceType'] ?? '') as String;
 
+    // Auth guard: all streams below require authenticated Firestore access.
+    // If uid is empty (auth not yet resolved), use empty streams to avoid
+    // permission-denied errors from stricter v8.9.4 Firestore rules.
+    if (uid.isEmpty) {
+      _urgentStream        = const Stream.empty();
+      _notificationsStream = const Stream.empty();
+      _remindersStream     = const Stream.empty();
+      _dealStream          = const Stream.empty();
+    } else {
+
     if (isProvider && category.isNotEmpty) {
       _urgentStream = FirebaseFirestore.instance
           .collection('job_requests')
@@ -142,9 +152,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     }
 
     // Notifications bell stream — cached here so build() never creates a new subscription
-    _notificationsStream = uid.isEmpty
-        ? const Stream.empty()
-        : FirebaseFirestore.instance
+    _notificationsStream = FirebaseFirestore.instance
             .collection('notifications')
             .where('userId', isEqualTo: uid)
             .where('isRead', isEqualTo: false)
@@ -152,9 +160,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             .snapshots();
 
     // AI Re-Engagement reminders — active, non-dismissed reminders for this user
-    _remindersStream = uid.isEmpty
-        ? const Stream.empty()
-        : FirebaseFirestore.instance
+    _remindersStream = FirebaseFirestore.instance
             .collection('scheduled_reminders')
             .where('userId',      isEqualTo: uid)
             .where('isDismissed', isEqualTo: false)
@@ -164,6 +170,8 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
     // AI Deal of the Day — today's opportunity from generateDailyOpportunity CF
     _dealStream = OpportunityHunterService.streamToday();
+
+    } // end uid.isNotEmpty else block
 
     // Restore today's dismissal preference from SharedPreferences
     SharedPreferences.getInstance().then((p) {
@@ -384,6 +392,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
                 // ── Full visual category grid ──────────────────────────────
                 else ...[
+                  // ── Story Carousel strip (primary slot — must stay above categories) ──
+                  SliverToBoxAdapter(
+                    child: StoriesRow(isProvider: isProvider),
+                  ),
+
                   // ── AI Re-Engagement offer card ────────────────────────
                   SliverToBoxAdapter(
                     child: StreamBuilder<QuerySnapshot>(
@@ -396,24 +409,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                         return _buildReengagementCard(data, remId);
                       },
                     ),
-                  ),
-
-                  // ── AI Deal of the Day banner ──────────────────────────
-                  if (!_dealDismissed)
-                    SliverToBoxAdapter(
-                      child: StreamBuilder<DailyOpportunity?>(
-                        stream: _dealStream,
-                        builder: (context, dealSnap) {
-                          final deal = dealSnap.data;
-                          if (deal == null) return const SizedBox.shrink();
-                          return _buildDealBanner(deal);
-                        },
-                      ),
-                    ),
-
-                  // ── Story Carousel strip ───────────────────────────────
-                  SliverToBoxAdapter(
-                    child: StoriesRow(isProvider: isProvider),
                   ),
 
                   // ── Search results count (only when filtering) ─────────
@@ -438,6 +433,19 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     allDocs: allDocs,
                     isAdmin: isAdmin,
                   ),
+
+                  // ── AI Deal of the Day banner (below categories) ───────
+                  if (!_dealDismissed)
+                    SliverToBoxAdapter(
+                      child: StreamBuilder<DailyOpportunity?>(
+                        stream: _dealStream,
+                        builder: (context, dealSnap) {
+                          final deal = dealSnap.data;
+                          if (deal == null) return const SizedBox.shrink();
+                          return _buildDealBanner(deal);
+                        },
+                      ),
+                    ),
                 ], // end else [...] community + grid
 
                 // ── Footer: logout + version ────────────────────────────────

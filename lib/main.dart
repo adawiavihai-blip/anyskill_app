@@ -203,6 +203,38 @@ void main() async {
     }
   }
 
+  // ── Step 3a-2: Force cache clear on version upgrade (web only) ─────────
+  // Detects when the running app version differs from the last-seen version
+  // stored in SharedPreferences. On mismatch, nukes IndexedDB (Firestore
+  // persistence) and Cache API (service-worker assets) to guarantee users
+  // get fresh data and no stale Firestore cache causes blank screens.
+  if (kIsWeb) {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastVersion = prefs.getString('last_app_version');
+      if (lastVersion != null && lastVersion != currentAppVersion) {
+        debugPrint('🧹 Version upgrade detected ($lastVersion → $currentAppVersion) — clearing web caches');
+        await clearWebCaches();
+        // Re-configure Firestore persistence after IndexedDB wipe
+        try {
+          FirebaseFirestore.instance.settings = const Settings(
+            persistenceEnabled: true,
+            cacheSizeBytes: 40 * 1024 * 1024,
+          );
+        } catch (_) {
+          try {
+            FirebaseFirestore.instance.settings = const Settings(
+              persistenceEnabled: false,
+            );
+          } catch (_) {}
+        }
+      }
+      await prefs.setString('last_app_version', currentAppVersion);
+    } catch (e) {
+      debugPrint('⚠️ Version cache-clear failed: $e');
+    }
+  }
+
   // ── Step 3b: Web Auth persistence ──────────────────────────────────────
   // MUST be the very first call on FirebaseAuth.instance — before
   // getRedirectResult(), before Stripe, before anything that could

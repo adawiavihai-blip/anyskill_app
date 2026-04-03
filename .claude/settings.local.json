@@ -177,7 +177,8 @@
       "Bash(grep -roh l10n.\\\\\\([a-zA-Z_]*\\\\\\) c:/Users/aviha/Desktop/anyskill_app/lib/screens/ c:/Users/aviha/Desktop/anyskill_app/lib/services/ c:/Users/aviha/Desktop/anyskill_app/lib/widgets/)",
       "Bash(gh run:*)",
       "Bash(wc -l lib/screens/*.dart)",
-      "Bash(ls \"c:/Users/aviha/Desktop/anyskill_app/lib/providers/\"*.g.dart)"
+      "Bash(ls \"c:/Users/aviha/Desktop/anyskill_app/lib/providers/\"*.g.dart)",
+      "Bash(ls -la /c/Users/aviha/Desktop/anyskill_app/functions/*.js)"
     ]
   }
 }

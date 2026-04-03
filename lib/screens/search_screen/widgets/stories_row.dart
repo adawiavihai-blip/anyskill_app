@@ -42,10 +42,23 @@ class _StoriesRowState extends State<StoriesRow> {
   final _uid     = FirebaseAuth.instance.currentUser?.uid ?? '';
   bool  _isAdmin = false;
 
+  // Stream cached in initState — prevents re-subscription on every rebuild.
+  // Guarded behind auth: if uid is empty, use an empty stream so we never
+  // hit Firestore rules before auth is resolved (fixes v8.9.4 race condition).
+  late final Stream<QuerySnapshot> _storiesStream;
+
   @override
   void initState() {
     super.initState();
-    if (_uid.isNotEmpty) {
+
+    if (_uid.isEmpty) {
+      _storiesStream = const Stream.empty();
+    } else {
+      _storiesStream = FirebaseFirestore.instance
+          .collection('stories')
+          .where('hasActive', isEqualTo: true)
+          .limit(30)
+          .snapshots();
       FirebaseFirestore.instance.collection('users').doc(_uid).get().then((snap) {
         if ((snap.data()?['isAdmin'] == true) && mounted) {
           setState(() => _isAdmin = true);
@@ -56,17 +69,12 @@ class _StoriesRowState extends State<StoriesRow> {
 
   @override
   Widget build(BuildContext context) {
-    // QA: StoriesRow is rendering
-    debugPrint('QA: StoriesRow.build — isProvider=${widget.isProvider}');
+    // Auth guard: no uid → collapse (will render once auth is resolved
+    // and HomeTab rebuilds with the authenticated user's StoriesRow).
+    if (_uid.isEmpty) return const SizedBox.shrink();
+
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('stories')
-          // NOTE: No orderBy here — combining where()+orderBy() on different
-          // fields requires a composite Firestore index that silently fails on
-          // web and returns 0 results. We sort client-side instead.
-          .where('hasActive', isEqualTo: true)
-          .limit(30)
-          .snapshots(),
+      stream: _storiesStream,
       builder: (context, snap) {
         if (snap.connectionState != ConnectionState.waiting) {
           final docs = snap.data?.docs ?? [];

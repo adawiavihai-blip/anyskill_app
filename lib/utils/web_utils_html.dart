@@ -22,3 +22,24 @@ void triggerCsvDownload(String content, String filename) {
 void openUrl(String url) {
   html.window.open(url, '_blank');
 }
+
+/// Clears browser caches (IndexedDB + Cache API) to force fresh Firestore
+/// and service-worker data after a version upgrade.
+/// Returns a Future that completes when cleanup is done (best-effort).
+Future<void> clearWebCaches() async {
+  try {
+    // 1. Delete all IndexedDB databases (Firestore persistence, etc.)
+    //    The window.indexedDB.databases() API is not available in dart:html,
+    //    so we delete the known Firestore DB by name.
+    html.window.indexedDB!.deleteDatabase('firebaseLocalStorageDb');
+    html.window.indexedDB!.deleteDatabase('firestore/[DEFAULT]/anyskill-6fdf3/main');
+  } catch (_) {}
+  try {
+    // 2. Clear the Cache API (service-worker cached assets)
+    //    caches.keys() → delete each cache store.
+    final cacheKeys = await html.window.caches!.keys();
+    for (final key in cacheKeys) {
+      await html.window.caches!.delete(key);
+    }
+  } catch (_) {}
+}
