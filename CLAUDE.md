@@ -14,7 +14,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 
 | Layer | Technology |
 |-------|-----------|
-| Client | Flutter 3.7+, Dart |
+| Client | Flutter 3.7+, Dart, Riverpod (generators) |
 | Auth | Firebase Auth (Google Sign-In, Phone/OTP) |
 | Database | Cloud Firestore (42+ collections) |
 | Storage | Firebase Storage |
@@ -25,7 +25,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | i18n | 4 locales: Hebrew (he), English (en), Spanish (es), Arabic (ar) -- 942 keys each |
 | Hosting | Firebase Hosting (SPA) |
 
-**Version:** 8.9.3 &bull; **Firebase Project:** anyskill-6fdf3
+**Version:** 8.9.4 &bull; **Firebase Project:** anyskill-6fdf3
 
 ---
 
@@ -42,6 +42,8 @@ lib/
   services/                  # 40 services (volunteer, escrow, gamification, ranking, location, AI, stripe, etc.)
   widgets/                   # 14 reusable widgets (xp_progress_bar, level_badge, pro_badge, etc.)
   models/                    # pricing_model, quote, review
+  providers/                 # Riverpod providers (admin_users, admin_billing, admin_global, user_detail)
+  repositories/              # Data layer (admin_users, admin_billing, provider, category, search, story, logger)
   utils/                     # expert_filter, payment_calculator, input_sanitizer
   l10n/                      # app_localizations.dart (942 keys, 4 locales: he/en/es/ar)
   constants/                 # quick_tags, help_knowledge_base
@@ -69,16 +71,42 @@ firestore.indexes.json       # 13+ composite indexes
 | **Admin** | `isAdmin: true` (Firestore) + email check | Admin SDK only | Full dashboard, dispute resolution, user management |
 | **CMS Admin** | Email = `adawiavihai@gmail.com` | Hardcoded | Content management, design CMS |
 
-### Provider Lifecycle & Registration (`provider_registration_screen.dart`)
+### Provider Lifecycle & Registration (`onboarding_screen.dart`)
+
+**Mandatory fields — ALL users (v8.9.4):**
+
+| Field | Hebrew | Mandatory for |
+|-------|--------|---------------|
+| Full Name | שם מלא | All |
+| Phone Number | מספר טלפון | All |
+| Email | אימייל | Providers only |
+| Profile Image | תמונה | Providers only |
+| Business Type | סוג עסק | Providers only |
+| ID Number | ת.ז / ח.פ | Providers only |
+| ID Document | צילום ת.ז / דרכון | Providers only |
+| Category | קטגוריה מקצועית | Providers only |
+
+**OnboardingGate phone enforcement (`main.dart`):**
+Legacy users who completed onboarding before phone was mandatory are redirected
+back to `OnboardingScreen` if `users/{uid}.phone` is empty.
 
 **Standard path (known category):**
 ```
-1. Provider selects category from dropdown (תחום עיסוק)
-2. Selects sub-category from cascading dropdown (תת-קטגוריה)
-3. Fills in profile details + optional business document upload
-4. Submit → isPendingExpert: true → PendingVerificationScreen
-5. Admin approves → isVerified: true → Full provider access
+1. User fills Contact Info (name + phone mandatory, email for providers)
+2. Provider selects business type from dropdown
+3. Provider uploads ID document (mandatory)
+4. Provider selects category from dropdown (תחום עיסוק)
+5. Selects sub-category from cascading dropdown (תת-קטגוריה)
+6. All users: profile image + bio
+7. Accept terms (must read TermsOfServiceScreen first)
+8. Submit → isPendingExpert: true → PendingVerificationScreen
+9. Admin approves → isVerified: true → Full provider access
 ```
+
+**Validation:** `_submit()` enforces all mandatory fields with Hebrew error messages.
+`canSubmit` button is disabled until name + phone + terms are filled.
+Provider submit is blocked unless ALL provider fields are complete.
+Error: "יש למלא את כל הפרטים כדי להמשיך"
 
 **"Other" category path (manual approval):**
 ```
@@ -348,7 +376,23 @@ final published = allDocs.where((doc) {
 All 4 must be rated (> 0) before submission is allowed.
 Overall rating = average of 4, formatted to 1 decimal.
 
-### 5.4 Post-Submission UX
+### 5.4 Admin Review Tools (v8.9.4)
+
+**Admin sees ALL reviews** regardless of blind/publish status. In the
+`AdminUserDetailScreen` reviews bottom sheet:
+
+- **Status badge** on each review: "פומבי" (green) or "מוסתר מהמשתמש" (amber)
+- **Blind filter toggle:** "מוסתרות בלבד (N)" — shows only reviews where
+  `isPublished == false` AND `createdAt < 7 days ago`
+- **Rating params breakdown:** Shows individual scores (מקצועיות, דיוק, תקשורת, תמורה)
+- **Private admin comment:** Red locked section visible only in admin view
+- **Role-aware title:** "ביקורות מלקוחות" for providers / "ביקורות מנותני שירות" for customers
+
+**Live rating aggregation:** When `users/{uid}.rating` is 0 or null, the admin
+detail screen computes the average from actual `reviews` collection docs via
+`userReviewsProvider`. This ensures the rating card is never empty when reviews exist.
+
+### 5.5 Post-Submission UX
 
 After customer submits: yellow info box says:
 > "חוות דעתך תפורסם לאחר שהצד השני ישתף את שלו, או באופן אוטומטי לאחר 7 ימים"
@@ -356,7 +400,7 @@ After customer submits: yellow info box says:
 Customer is auto-navigated to ReviewScreen immediately after releasing payment
 (`_handleCompleteJob` in `my_bookings_screen.dart`).
 
-### 5.5 Firestore Security Rules for Reviews
+### 5.6 Firestore Security Rules for Reviews
 
 ```
 allow create: reviewerId == auth.uid AND reviewer is a job participant
@@ -701,6 +745,7 @@ showSnackBar(confirmText);         // safe to use
 | `app_settings/sounds` | {soundName: assetPath or URL} | Admin-managed sound mappings |
 | `settings_gamification/app_levels` | silver (default 500), gold (default 2000) | XP level thresholds |
 | `application_content/{locale}` | key-value string overrides | CMS text overrides |
+| `admin_audit_log/{id}` | targetUserId, action, adminName, adminUid, createdAt | Admin action audit trail (v8.9.4) |
 
 ---
 
@@ -941,7 +986,49 @@ See Section 12c for full documentation.
 
 ---
 
-## 15b. Code Health Snapshot (2026-03-30)
+## 15a. Admin User Detail Screen (v8.9.4)
+
+**Navigation:** Tap any user row in AdminUsersTab → `AdminUserDetailScreen(userId:)`
+
+**Architecture:** Riverpod `.family` providers (autoDispose per userId):
+- `userDetailProvider(uid)` — real-time stream of user doc
+- `userTransactionsProvider(uid)` — one-shot fetch sent + received
+- `userJobsProvider(uid)` — one-shot fetch as customer + expert
+- `userReviewsProvider(uid)` — one-shot fetch all reviews (admin sees ALL)
+- `userAuditLogProvider(uid)` — real-time stream of admin actions
+
+**Sections:**
+| Section | Content |
+|---------|---------|
+| Hero header | Gradient SliverAppBar with avatar, badges, online dot |
+| Status chips | Role-aware: provider shows XP/streak/Pro; customer hides them |
+| Quick stats (Provider) | כוח הרווחה: earnings, jobs, rating, trust score, reviews, XP |
+| Quick stats (Customer) | כוח הקנייה: spending, bookings, customer rating, trust score, reviews |
+| Trust Score (אמינות) | `completed / (completed + cancelled) × 100`. Green ≥90%, amber ≥70%, red <70% |
+| Personal details | Phone, email, category (providers), policy (providers), balance |
+| Timeline | Join date, last seen, rating — all with relative Hebrew time |
+| Admin note | Tap-to-edit, writes to `adminNote` |
+| Action center | 6 buttons: verify, ban, promote, send notification, top-up, view-as-user |
+| Transactions | Last 10 with direction arrows |
+| Reviews | Bottom sheet with blind filter toggle |
+| Audit log | Streams `admin_audit_log` collection |
+
+**Speed Dial FAB:**
+| Button | Action |
+|--------|--------|
+| WhatsApp | `wa.me/972...` with formatted phone |
+| Call | `tel:` link |
+| Internal Note | Edit `adminNote` dialog |
+| Send Notification | Push to `notifications` collection |
+
+**Audit logging:** Every admin action (verify, ban, promote, top-up, delete, notification)
+writes to `admin_audit_log/{id}` with `targetUserId`, `action`, `adminName`, `createdAt`.
+
+**Firestore rule:** `admin_audit_log` — admin read/create, no delete.
+
+---
+
+## 15b. Code Health Snapshot (2026-04-03)
 
 | Metric | Value | Status |
 |--------|-------|--------|
@@ -1131,4 +1218,4 @@ firebase deploy --only firestore:indexes # Deploy indexes
 
 ---
 
-*Last updated: 2026-03-30 | Version: 8.9.3*
+*Last updated: 2026-04-03 | Version: 8.9.4*
