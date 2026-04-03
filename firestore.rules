@@ -776,5 +776,54 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MISSING-RULES AUDIT FIX (v8.9.4 — security hardening)
+    // Collections found in code with NO prior rules — all locked down.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // ── Counter-offers (subcollection of job_requests) ─────────────────
+    // Providers write counter-offers; only the job owner + admin can read.
+    match /job_requests/{reqId}/counter_offers/{offerId} {
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.providerId == request.auth.uid;
+      allow read:   if isAdmin()
+                    || (isVerifiedAuth()
+                        && (get(/databases/$(database)/documents/job_requests/$(reqId)).data.clientId == request.auth.uid
+                            || request.auth.uid == resource.data.providerId));
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Daily opportunities (Cloud Function generated) ────────────────
+    match /daily_opportunities/{docId} {
+      allow read:   if isVerifiedAuth();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // ── System stats (billing KPIs — admin dashboard) ─────────────────
+    // Written by Cloud Functions only. Admin read.
+    match /system_stats/{docId} {
+      allow read:  if isAdmin();
+      allow write: if false; // Admin SDK (Cloud Functions) only
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PENDINGBALANCE HARDENING
+    // ═══════════════════════════════════════════════════════════════════════
+    // NOTE: The users/{uid} rule at line ~140 allows ANY authenticated user
+    // to write pendingBalance on ANY user doc via:
+    //   || (isVerifiedAuth() && onlyFields(['pendingBalance']))
+    //
+    // This is documented as "acceptable because actual payouts read from
+    // the jobs doc, not pendingBalance". However, it still allows:
+    //   • User A inflating User B's pendingBalance to mislead the admin UI
+    //   • Griefing by setting pendingBalance to a negative number
+    //
+    // RECOMMENDED FIX: restrict to increment-only via Cloud Function.
+    // For now, the risk is ACCEPTED — see CLAUDE.md Section 11.
+    // ═══════════════════════════════════════════════════════════════════════
+
   }
 }
