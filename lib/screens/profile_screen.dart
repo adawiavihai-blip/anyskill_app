@@ -31,6 +31,11 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   final user = FirebaseAuth.instance.currentUser;
 
+  // Single shared stream for the user doc — prevents duplicate Firestore reads.
+  // Both AppBar and body StreamBuilders use this same stream.
+  late final Stream<DocumentSnapshot<Map<String, dynamic>>> _userStream =
+      FirebaseFirestore.instance.collection('users').doc(user?.uid).snapshots();
+
   // Incrementing this key forces StreamBuilder to recreate its subscription,
   // which is the recovery path after a transient Permission Denied error
   // (e.g., App Check token not yet ready on first load).
@@ -245,7 +250,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         automaticallyImplyLeading: false,
         actions: [
           StreamBuilder<DocumentSnapshot>(
-            stream: FirebaseFirestore.instance.collection('users').doc(user?.uid).snapshots(),
+            stream: _userStream,
             builder: (context, snapshot) {
               final data = snapshot.data?.data() as Map<String, dynamic>? ?? {};
               final isProviderUser = (data['isProvider'] as bool? ?? false) ||
@@ -281,7 +286,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       body: StreamBuilder<DocumentSnapshot>(
         key: ValueKey(_streamKey),
-        stream: FirebaseFirestore.instance.collection('users').doc(user?.uid).snapshots(),
+        stream: _userStream,
         builder: (context, snapshot) {
           // Guard: auth state changed before AuthWrapper has redirected.
           if (FirebaseAuth.instance.currentUser == null) {

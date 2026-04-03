@@ -73,7 +73,7 @@ class AcademyService {
 
   // Stream all courses ordered by the `order` field
   static Stream<QuerySnapshot<Map<String, dynamic>>> streamCourses() =>
-      _db.collection('courses').orderBy('order').snapshots();
+      _db.collection('courses').orderBy('order').limit(100).snapshots();
 
   // Stream all progress docs for a given user
   static Stream<QuerySnapshot<Map<String, dynamic>>> streamProgress(
@@ -84,6 +84,7 @@ class AcademyService {
               .collection('user_progress')
               .doc(uid)
               .collection('courses')
+              .limit(100)
               .snapshots();
 
   // Save how far the user has watched (called every ~5 s while playing)

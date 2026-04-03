@@ -1131,12 +1131,17 @@ senderId, senderName, isAdmin: bool, message, createdAt
 
 ## 17. Scalability & Security (3M+ Users)
 
-### Database Indexing (30 composite indexes)
-8 new indexes added for new collections (2026-03-30):
+### Database Indexing (31 composite indexes)
+Indexes added across project lifetime:
+- `users`: 4 indexes (provider+serviceType, provider+rating, volunteer+online+serviceType, pending+createdAt)
+- `jobs`: 7 indexes (expertId, customerId, status — various combinations with createdAt)
 - `volunteer_tasks`: 4 indexes (anti-fraud cooldown, reciprocal, daily cap, client stream)
 - `job_broadcasts`: 1 index (status + category + createdAt)
 - `support_tickets`: 2 indexes (admin inbox, user tickets)
 - `user_rewards`: 1 index (active rewards by user)
+- `reviews`: 1 index (revieweeId + createdAt DESC)
+- `admin_audit_log`: 1 index (targetUserId + createdAt DESC)
+- `notifications`, `messages`, `transactions`, `search_logs`, etc.: remaining indexes
 
 **Deploy:** `firebase deploy --only firestore:indexes`
 
@@ -1160,6 +1165,127 @@ Centralized utility: `lib/utils/image_compressor.dart` with `ImagePreset` enum.
   - Admin settings: 1 min
   - Expert profiles: 5 min
 - **Cache purge:** Timer every 5 min in main.dart
+
+### Performance & Cost Optimization Rules (v8.9.4)
+
+> **MANDATORY for all new code.** Every Firestore query must follow these rules.
+> Violations inflate the Firebase bill and degrade UX at scale.
+
+#### Rule 1: Every `.snapshots()` stream MUST have `.limit()`
+
+| Context | Max Limit | Example |
+|---------|-----------|---------|
+| User-facing lists (search, chat, bookings) | **15-50** | `.limit(15)` per page |
+| Admin dashboards (insights, analytics) | **500** | `.limit(500)` — never 5000 |
+| Single-user streams (profile, notifications) | **20-50** | `.limit(50)` |
+| System/config docs | **1** (single doc) | `.doc('settings').snapshots()` |
+| Background badge counts | **100-200** | `.limit(200)` |
+
+**Rationale:** Each doc in a stream costs 1 read on every change to ANY doc in the result set.
+A `.limit(5000)` stream = 5000 reads every time one doc updates.
+
+#### Rule 2: Never duplicate a stream — share it
+
+**Wrong:**
+```dart
+// AppBar
+StreamBuilder(stream: users.doc(uid).snapshots(), ...)
+// Body
+StreamBuilder(stream: users.doc(uid).snapshots(), ...) // 2x reads!
+```
+
+**Correct:**
+```dart
+late final _userStream = users.doc(uid).snapshots(); // one stream, shared
+StreamBuilder(stream: _userStream, ...) // both use same subscription
+```
+
+#### Rule 3: Use `.get()` for data that doesn't change mid-session
+
+| Data Type | Method | Why |
+|-----------|--------|-----|
+| Categories list | `.snapshots()` with 30-min `CacheService` TTL | Admin may add categories live |
+| System settings | `.snapshots()` on single doc | Tiny cost, enables live toggles |
+| Course list | `.get()` cached or `.snapshots().limit(100)` | Courses don't change mid-session |
+| Login screen config | `.snapshots()` acceptable (single doc) | 1 read, negligible |
+| User profiles (other users) | `.get()` with 5-min cache | No need for real-time on others' profiles |
+
+#### Rule 4: Pagination standards
+
+| Screen | Page Size | Method |
+|--------|-----------|--------|
+| Search results | 15 | Cursor-based (`.startAfterDocument()`) |
+| Admin user list | 50 | Cursor-based |
+| Chat messages | 50 | `.limit(50).orderBy('timestamp', descending: true)` |
+| Notifications | 50 | `.limit(50).orderBy('createdAt', descending: true)` |
+| Transaction history | 200 | `.limit(200)` (no real-time, use `.get()`) |
+| Reviews | 30 | `.limit(30)` per user |
+
+#### Rule 5: CacheService TTLs (in-memory)
+
+| Data Type | TTL | Key Pattern |
+|-----------|-----|-------------|
+| Categories | **30 min** | `categories/{name}` |
+| User profiles | **5 min** | `users/{uid}` |
+| Admin settings | **1 min** | `admin/settings` |
+| Expert profiles | **5 min** | `expert/{uid}` |
+
+**Purge:** `Timer.periodic(5 min)` in `main.dart` calls `CacheService.purgeExpired()`.
+
+#### Rule 6: Firestore web persistence
+
+```dart
+// main.dart — after Firebase.initializeApp()
+FirebaseFirestore.instance.settings = const Settings(
+  persistenceEnabled: true,
+  cacheSizeBytes: 40 * 1024 * 1024, // 40 MB
+);
+```
+
+Fallback: if persistence init fails, disable it entirely to avoid
+"INTERNAL ASSERTION FAILED" errors from corrupted IndexedDB.
+
+#### Rule 7: Financial rounding (NIS)
+
+All money calculations MUST use 2-decimal rounding:
+- **Dart:** `double.parse((amount * feePct).toStringAsFixed(2))`
+- **JavaScript (CF):** `roundNIS(amount * feePct)` where `roundNIS = n => Math.round(n * 100) / 100`
+- **Pattern:** Always compute `fee = round(total * pct)`, then `net = round(total - fee)` — fee-first subtraction prevents ghost agorot.
+
+#### Rule 8: Mandatory composite indexes
+
+All queries with multiple `.where()` or `.where() + .orderBy()` need composite indexes.
+Current index count: **31** (deployed via `firebase deploy --only firestore:indexes`).
+
+| Collection | Fields | Purpose |
+|-----------|--------|---------|
+| `users` | isProvider + serviceType | Category search |
+| `users` | isProvider + rating DESC | Top-rated search |
+| `users` | isVolunteer + isOnline + serviceType | Volunteer matching |
+| `jobs` | expertId + status + createdAt | Provider bookings |
+| `jobs` | customerId + status + createdAt | Customer bookings |
+| `jobs` | status + createdAt | Admin dashboard |
+| `reviews` | revieweeId + createdAt DESC | User detail reviews |
+| `admin_audit_log` | targetUserId + createdAt DESC | Audit trail |
+| `volunteer_tasks` | providerId + clientId + status + completedAt | Anti-fraud cooldown |
+| `notifications` | userId + isRead + createdAt | Unread badge |
+| `support_tickets` | status + createdAt | Admin inbox |
+| `user_rewards` | userId + status + expiresAt | Active rewards |
+
+**Before adding a new multi-field query:** check `firestore.indexes.json` and add the index
+in the same PR. Queries without matching indexes return 0 results silently on web.
+
+#### Cost projection at 4,000 users
+
+| Metric | Value |
+|--------|-------|
+| Reads/month | ~85M |
+| Writes/month | ~5M |
+| Estimated cost | ~$51/month |
+| Free tier (Spark) | 50K reads/day |
+| Blaze breakeven | ~28K reads/day |
+
+---
 
 ### Error Monitoring (Dual-Channel)
 

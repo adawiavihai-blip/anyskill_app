@@ -385,6 +385,7 @@ class _SearchPageState extends State<SearchPage> {
                 stream: FirebaseFirestore.instance
                     .collection('categories')
                     .orderBy('order')
+                    .limit(200)
                     .snapshots(),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
