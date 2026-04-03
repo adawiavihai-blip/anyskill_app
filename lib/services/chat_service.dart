@@ -18,14 +18,16 @@ class ChatService {
 
   // ── שליחת הודעה — כתיבת מסמך ההודעה בלבד ──────────────────────────────────
   // המטאדאטה (lastMessage, unreadCount) מתעדכנת ע"י sendchatnotification CF
-  static Future<void> sendMessage({
+  /// Sends a chat message. Returns `true` on success, `false` on failure.
+  /// Callers should show a SnackBar or retry UI on `false`.
+  static Future<bool> sendMessage({
     required String chatRoomId,
     required String senderId,
     required String receiverId,
     required String content,
     required String type,
   }) async {
-    if (content.trim().isEmpty) return;
+    if (content.trim().isEmpty) return false;
 
     try {
       await _db
@@ -40,8 +42,10 @@ class ChatService {
         'timestamp': FieldValue.serverTimestamp(),
         'isRead': false,
       });
+      return true;
     } catch (e) {
       debugPrint("ChatService Error - sendMessage: $e");
+      return false;
     }
   }
 

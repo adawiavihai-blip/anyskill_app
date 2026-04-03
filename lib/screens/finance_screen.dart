@@ -919,7 +919,7 @@ class _FinanceScreenState extends State<FinanceScreen>
   // ═══════════════════════════════════════════════════════════════════════════
 
   Widget _buildEarningsChart(BuildContext context) {
-    final maxY        = _dailyEarnings.reduce((a, b) => a > b ? a : b);
+    final maxY        = _dailyEarnings.isEmpty ? 0.0 : _dailyEarnings.reduce((a, b) => a > b ? a : b);
     final effectiveMax = maxY > 0 ? maxY * 1.25 : 100.0;
     final total       = _dailyEarnings.fold(0.0, (a, b) => a + b);
     final spots       = List.generate(

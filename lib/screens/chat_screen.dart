@@ -287,13 +287,20 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) SafetyModule.showError(context, 'אין חיבור לאינטרנט.');
       return;
     }
-    ChatLogicModule.sendMessage(
+    final ok = await ChatLogicModule.sendMessage(
       chatRoomId: chatRoomId,
       senderId:   currentUserId,
       receiverId: widget.receiverId,
       content:    content,
       type:       type,
     );
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('שליחת ההודעה נכשלה — נסה שוב'),
+        backgroundColor: Color(0xFFEF4444),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
   }
 
   Future<void> _sendPaymentRequest(

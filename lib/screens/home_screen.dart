@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:showcaseview/showcaseview.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -47,6 +48,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Admin status — read from Firestore `users/{uid}.isAdmin` (not email)
   bool _isAdmin = false;
 
+  // ── Offline banner ──────────────────────────────────────────────────────
+  bool _isOffline = false;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+
   // ── Badge counters ─────────────────────────────────────────────────────────
   int _bookingsCustBadge   = 0;  // jobs needing customer approval (expert_completed)
   int _bookingsExpertBadge = 0;  // jobs needing expert to finish (paid_escrow)
@@ -83,6 +88,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _setOnlineStatus(true);
+    // Offline detection — shows/hides banner in real time
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
+      final offline = results.every((r) => r == ConnectivityResult.none);
+      if (offline != _isOffline && mounted) setState(() => _isOffline = offline);
+    });
     final uid = currentUser?.uid;
     if (uid != null) LocationService.init(uid);
     if (uid != null) OpportunityHunterService.markActive(uid);
@@ -138,6 +148,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _setOnlineStatus(false);
     WidgetsBinding.instance.removeObserver(this);
     _adminFlagSub?.cancel();
+    _connectivitySub?.cancel();
     _bookingsCustSub?.cancel();
     _bookingsExpertSub?.cancel();
     _opportunitiesSub?.cancel();
@@ -326,11 +337,41 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             }
           },
           child: Scaffold(
-          body: AnimatedOpacity(
-            duration: const Duration(milliseconds: 240),
-            curve: Curves.easeOut,
-            opacity: _tabFadeOpacity,
-            child: IndexedStack(index: safeIndex, children: tabs),
+          body: Column(
+            children: [
+              // ── Offline banner ───────────────────────────────────────
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                height: _isOffline ? 36 : 0,
+                color: const Color(0xFFEF4444),
+                child: _isOffline
+                    ? const Center(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.wifi_off_rounded,
+                                color: Colors.white, size: 16),
+                            SizedBox(width: 6),
+                            Text('אין חיבור לאינטרנט',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      )
+                    : null,
+              ),
+              // ── Main content ─────────────────────────────────────────
+              Expanded(
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 240),
+                  curve: Curves.easeOut,
+                  opacity: _tabFadeOpacity,
+                  child: IndexedStack(index: safeIndex, children: tabs),
+                ),
+              ),
+            ],
           ),
           bottomNavigationBar: _buildEliteBottomNav(isAdmin, isProvider, serviceType, safeIndex, data),
           // ── Wolt-style floating "Urgent Search" button ────────────────

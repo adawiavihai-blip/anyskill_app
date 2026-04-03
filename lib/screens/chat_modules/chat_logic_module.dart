@@ -7,14 +7,15 @@ class ChatLogicModule {
   // --- שליחת הודעה ---
   // הלקוח כותב רק את מסמך ההודעה. Cloud Function (sendchatnotification)
   // מעדכן את המטאדאטה (lastMessage, unreadCount, shards) בצד השרת.
-  static Future<void> sendMessage({
+  /// Returns `true` on success, `false` on failure.
+  static Future<bool> sendMessage({
     required String chatRoomId,
     required String senderId,
     required String receiverId,
     required String content,
     required String type,
   }) async {
-    await ChatService.sendMessage(
+    return ChatService.sendMessage(
       chatRoomId: chatRoomId,
       senderId: senderId,
       receiverId: receiverId,
