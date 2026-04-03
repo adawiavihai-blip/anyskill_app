@@ -65,13 +65,31 @@ class _AdminUserDetailScreenState
     );
   }
 
+  // ── Helper: pick first non-empty string from multiple field names ─────
+  static String _pickString(Map<String, dynamic> d, List<String> keys) {
+    for (final k in keys) {
+      final v = d[k];
+      if (v is String && v.isNotEmpty) return v;
+    }
+    return '';
+  }
+
+  // ── Helper: pick first valid Timestamp from multiple field names ─────
+  static DateTime? _pickDate(Map<String, dynamic> d, List<String> keys) {
+    for (final k in keys) {
+      final v = d[k];
+      if (v is Timestamp) return v.toDate();
+    }
+    return null;
+  }
+
   Widget _buildBody(Map<String, dynamic> data) {
-    final name = data['name'] as String? ?? 'משתמש';
-    final email = data['email'] as String? ?? '';
-    final phone =
-        (data['phone'] as String? ?? data['phoneNumber'] as String? ?? '')
-            .trim();
-    final profileImg = data['profileImage'] as String? ?? '';
+    final name = _pickString(data, ['name']).isEmpty
+        ? 'משתמש'
+        : data['name'] as String;
+    final email = _pickString(data, ['email']);
+    final phone = _pickString(data, ['phone', 'phoneNumber', 'mobile']);
+    final profileImg = _pickString(data, ['profileImage', 'photoURL', 'imageUrl']);
     final avatar = _safeImage(profileImg);
     final isProvider = data['isProvider'] == true;
     final isVerified = data['isVerified'] == true;
@@ -85,15 +103,17 @@ class _AdminUserDetailScreenState
     final pendingBalance =
         (data['pendingBalance'] as num? ?? 0).toDouble();
     final xp = (data['xp'] as num? ?? 0).toInt();
-    final serviceType = data['serviceType'] as String? ?? '';
-    final subCategory = data['subCategory'] as String? ?? '';
-    final aboutMe = data['aboutMe'] as String? ?? '';
-    final createdAt = (data['createdAt'] as Timestamp?)?.toDate();
-    final lastOnline = (data['lastOnlineAt'] as Timestamp?)?.toDate();
+    final serviceType = _pickString(data, ['serviceType']);
+    final subCategory = _pickString(data, ['subCategory']);
+    final aboutMe = _pickString(data, ['aboutMe']);
+    final createdAt = _pickDate(data, ['createdAt', 'joinDate', 'registrationTimestamp']);
+    final lastOnline = _pickDate(data, ['lastOnlineAt', 'lastActiveAt', 'lastActive', 'lastSeen', 'lastLogin']);
     final streak = (data['streak'] as num? ?? 0).toInt();
     final cancellationPolicy =
-        data['cancellationPolicy'] as String? ?? 'flexible';
-    final adminNote = data['adminNote'] as String? ?? '';
+        _pickString(data, ['cancellationPolicy']).isEmpty
+            ? 'flexible'
+            : data['cancellationPolicy'] as String;
+    final adminNote = _pickString(data, ['adminNote']);
 
     return CustomScrollView(
       slivers: [
@@ -249,6 +269,45 @@ class _AdminUserDetailScreenState
         // ── Quick stats ───────────────────────────────────────────────
         SliverToBoxAdapter(child: _buildQuickStats(data)),
 
+        // ── Fix profile image (admin only, shown when image missing) ──
+        if (profileImg.isEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: GestureDetector(
+                onTap: () => _fixProfileImage(data),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _kAmber.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: _kAmber.withValues(alpha: 0.3)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.image_not_supported_rounded,
+                          color: _kAmber, size: 18),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'תמונת פרופיל חסרה — לחץ לסנכרון מ-Google Auth',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: _kAmber),
+                        ),
+                      ),
+                      Icon(Icons.sync_rounded,
+                          color: _kAmber, size: 18),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
         // ── Personal details ──────────────────────────────────────────
         SliverToBoxAdapter(
           child: _section(
@@ -256,10 +315,11 @@ class _AdminUserDetailScreenState
             Icons.person_outline_rounded,
             Column(
               children: [
-                _detailRow('טלפון', phone.isEmpty ? '—' : phone),
+                _detailRow('טלפון', phone.isEmpty ? 'לא הוזן' : phone),
+                _detailRow('אימייל', email.isEmpty ? 'לא הוזן' : email),
                 _detailRow('קטגוריה',
-                    serviceType.isEmpty ? '—' : '$serviceType${subCategory.isNotEmpty ? ' › $subCategory' : ''}'),
-                _detailRow('מדיניות ביטול', cancellationPolicy),
+                    serviceType.isEmpty ? 'לא הוגדרה' : '$serviceType${subCategory.isNotEmpty ? ' › $subCategory' : ''}'),
+                _detailRow('מדיניות ביטול', _policyCopy(cancellationPolicy)),
                 _detailRow('יתרה', '₪${balance.toStringAsFixed(2)}'),
                 _detailRow(
                     'יתרה ממתינה', '₪${pendingBalance.toStringAsFixed(2)}'),
@@ -287,13 +347,17 @@ class _AdminUserDetailScreenState
                 _timelineItem(
                   Icons.person_add_rounded,
                   'הצטרפות',
-                  createdAt != null ? _fmt.format(createdAt) : '—',
+                  createdAt != null
+                      ? '${_fmt.format(createdAt)} (${_relativeTime(createdAt)})'
+                      : 'לא ידוע',
                   _kGreen,
                 ),
                 _timelineItem(
                   Icons.wifi_rounded,
                   'נראה לאחרונה',
-                  lastOnline != null ? _fmt.format(lastOnline) : '—',
+                  lastOnline != null
+                      ? '${_fmt.format(lastOnline)} (${_relativeTime(lastOnline)})'
+                      : 'לא ידוע',
                   _kIndigo,
                 ),
                 _timelineItem(
@@ -1171,6 +1235,85 @@ class _AdminUserDetailScreenState
         ],
       ),
     );
+  }
+
+  // ── Audit log writer ───────────────────────────────────────────────────
+
+  // ── Hebrew relative time ────────────────────────────────────────────────
+
+  static String _relativeTime(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inDays >= 365) {
+      final y = (diff.inDays / 365).floor();
+      return y == 1 ? 'לפני שנה' : 'לפני $y שנים';
+    } else if (diff.inDays >= 30) {
+      final m = (diff.inDays / 30).floor();
+      return m == 1 ? 'לפני חודש' : 'לפני $m חודשים';
+    } else if (diff.inDays >= 1) {
+      return diff.inDays == 1 ? 'אתמול' : 'לפני ${diff.inDays} ימים';
+    } else if (diff.inHours >= 1) {
+      return 'לפני ${diff.inHours} שעות';
+    } else {
+      return 'לפני ${diff.inMinutes} דקות';
+    }
+  }
+
+  // ── Hebrew cancellation policy label ───────────────────────────────────
+
+  static String _policyCopy(String policy) {
+    switch (policy) {
+      case 'flexible':
+        return 'גמישה (4 שעות)';
+      case 'moderate':
+        return 'מתונה (24 שעות)';
+      case 'strict':
+        return 'קפדנית (48 שעות)';
+      default:
+        return policy;
+    }
+  }
+
+  // ── Fix profile image — writes Auth photoURL to Firestore ──────────────
+
+  Future<void> _fixProfileImage(Map<String, dynamic> data) async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    // Try the viewed user's own Auth record isn't accessible from admin,
+    // so we fetch their Google photoURL from the data we have.
+    // If it's the current admin viewing their OWN profile, use Auth directly.
+    final currentUser = FirebaseAuth.instance.currentUser;
+    String? photoUrl;
+
+    if (currentUser?.uid == widget.userId) {
+      // Admin viewing their own detail page — use Auth
+      await currentUser!.reload();
+      photoUrl = FirebaseAuth.instance.currentUser?.photoURL;
+    }
+
+    if (photoUrl == null || photoUrl.isEmpty) {
+      // Try any fallback fields from the Firestore doc
+      photoUrl = _pickString(data, ['photoURL', 'imageUrl', 'photo']);
+    }
+
+    if (photoUrl.isEmpty) {
+      messenger.showSnackBar(const SnackBar(
+        content: Text('לא נמצאה תמונה לסנכרון — העלה תמונה דרך עריכת פרופיל'),
+        backgroundColor: Colors.orange,
+      ));
+      return;
+    }
+
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.userId)
+        .update({'profileImage': photoUrl});
+
+    _logAuditAction('סנכרון תמונת פרופיל', data['name'] ?? 'משתמש');
+
+    messenger.showSnackBar(const SnackBar(
+      content: Text('תמונת פרופיל עודכנה'),
+      backgroundColor: Color(0xFF10B981),
+    ));
   }
 
   // ── Audit log writer ───────────────────────────────────────────────────

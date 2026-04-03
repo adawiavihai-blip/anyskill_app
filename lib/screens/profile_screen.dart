@@ -55,6 +55,68 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  // ── Auto-sync profile image from Auth → Firestore (runs once) ─────────
+  bool _syncAttempted = false;
+
+  void _autoSyncProfileImage(Map<String, dynamic> data) {
+    if (_syncAttempted) return;
+    _syncAttempted = true;
+
+    final firestoreImg = data['profileImage'] as String? ?? '';
+    if (firestoreImg.isNotEmpty) return; // already has an image
+
+    final authUser = FirebaseAuth.instance.currentUser;
+    if (authUser == null) return;
+
+    // Try Auth photoURL first
+    final authPhoto = authUser.photoURL ?? '';
+    if (authPhoto.isEmpty) {
+      debugPrint('[Profile] No image in Firestore AND no Auth photoURL — nothing to sync');
+      return;
+    }
+
+    debugPrint('[Profile] Auto-syncing profileImage from Auth: $authPhoto');
+    FirebaseFirestore.instance
+        .collection('users')
+        .doc(authUser.uid)
+        .update({'profileImage': authPhoto})
+        .then((_) => debugPrint('[Profile] profileImage synced to Firestore'))
+        .catchError((e) => debugPrint('[Profile] Sync failed: $e'));
+  }
+
+  /// Manual sync — callable from a button for admins.
+  Future<void> _forceResyncProfileImage() async {
+    final authUser = FirebaseAuth.instance.currentUser;
+    if (authUser == null) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+
+    // Force refresh the Auth user to get the latest Google photoURL
+    await authUser.reload();
+    final refreshed = FirebaseAuth.instance.currentUser;
+    final photoUrl = refreshed?.photoURL ?? '';
+
+    if (photoUrl.isEmpty) {
+      messenger.showSnackBar(const SnackBar(
+        content: Text('לא נמצאה תמונת פרופיל בחשבון Google'),
+        backgroundColor: Colors.orange,
+      ));
+      return;
+    }
+
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(authUser.uid)
+        .update({'profileImage': photoUrl});
+
+    _syncAttempted = false; // allow re-read on next stream event
+
+    messenger.showSnackBar(const SnackBar(
+      content: Text('תמונת פרופיל עודכנה מ-Google'),
+      backgroundColor: Color(0xFF10B981),
+    ));
+  }
+
   // ── Logout ────────────────────────────────────────────────────────────────
   Future<void> _logout() async {
     await FirebaseAuth.instance.signOut();
@@ -197,6 +259,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       onPressed: () => _shareProfile(data['name'] ?? l10n.defaultUserName, user?.uid ?? '', l10n),
                       tooltip: l10n.shareProfileTooltip,
                     ),
+                  // Sync profile image from Google — visible when image is missing
+                  if ((data['profileImage'] as String? ?? '').isEmpty)
+                    IconButton(
+                      icon: const Icon(Icons.sync_rounded, color: Colors.orange),
+                      tooltip: 'סנכרן תמונה מ-Google',
+                      onPressed: _forceResyncProfileImage,
+                    ),
                   IconButton(
                     icon: const Icon(Icons.edit_outlined, color: Color(0xFF0047AB)),
                     onPressed: () => Navigator.push(
@@ -248,6 +317,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
             return const Center(child: CircularProgressIndicator(strokeWidth: 2));
           }
           var data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
+
+          // ── Auto-sync: backfill profileImage from Auth if missing ──
+          _autoSyncProfileImage(data);
+
           // Accept both field names — legacy docs may use 'isSpecialist'
           final isProvider = (data['isProvider'] as bool? ?? false) ||
                              (data['isSpecialist'] as bool? ?? false);
