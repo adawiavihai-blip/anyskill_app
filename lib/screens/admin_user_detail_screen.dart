@@ -240,7 +240,7 @@ class _AdminUserDetailScreenState
           ],
         ),
 
-        // ── Status chips ──────────────────────────────────────────────
+        // ── Status chips (role-aware) ─────────────────────────────────
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -248,7 +248,7 @@ class _AdminUserDetailScreenState
               spacing: 6,
               runSpacing: 6,
               children: [
-                _chip(isProvider ? 'ספק' : 'לקוח',
+                _chip(isProvider ? 'ספק שירות' : 'לקוח',
                     isProvider ? _kIndigo : _kGreen),
                 if (isAdmin)
                   _chip('אדמין', _kPurple),
@@ -258,16 +258,23 @@ class _AdminUserDetailScreenState
                   _chip('אונליין', _kGreen)
                 else
                   _chip('אופליין', _kMuted),
-                if (streak > 0)
-                  _chip('סטריק $streak', _kAmber),
-                _chip('XP: $xp', _kIndigo),
+                // Provider-only chips
+                if (isProvider) ...[
+                  if (streak > 0) _chip('סטריק $streak', _kAmber),
+                  _chip('XP: $xp', _kIndigo),
+                  if (isPro) _chip('AnySkill Pro', const Color(0xFFEC4899)),
+                ],
               ],
             ),
           ),
         ),
 
-        // ── Quick stats ───────────────────────────────────────────────
-        SliverToBoxAdapter(child: _buildQuickStats(data)),
+        // ── Quick stats (role-aware) ──────────────────────────────────
+        SliverToBoxAdapter(
+          child: isProvider
+              ? _buildProviderStats(data)
+              : _buildCustomerStats(data),
+        ),
 
         // ── Fix profile image (admin only, shown when image missing) ──
         if (profileImg.isEmpty)
@@ -308,7 +315,7 @@ class _AdminUserDetailScreenState
             ),
           ),
 
-        // ── Personal details ──────────────────────────────────────────
+        // ── Personal details (role-aware) ────────────────────────────
         SliverToBoxAdapter(
           child: _section(
             'פרטים אישיים',
@@ -317,12 +324,16 @@ class _AdminUserDetailScreenState
               children: [
                 _detailRow('טלפון', phone.isEmpty ? 'לא הוזן' : phone),
                 _detailRow('אימייל', email.isEmpty ? 'לא הוזן' : email),
-                _detailRow('קטגוריה',
-                    serviceType.isEmpty ? 'לא הוגדרה' : '$serviceType${subCategory.isNotEmpty ? ' › $subCategory' : ''}'),
-                _detailRow('מדיניות ביטול', _policyCopy(cancellationPolicy)),
+                // Provider-only fields
+                if (isProvider) ...[
+                  _detailRow('קטגוריה',
+                      serviceType.isEmpty ? 'לא הוגדרה' : '$serviceType${subCategory.isNotEmpty ? ' › $subCategory' : ''}'),
+                  _detailRow('מדיניות ביטול', _policyCopy(cancellationPolicy)),
+                ],
                 _detailRow('יתרה', '₪${balance.toStringAsFixed(2)}'),
-                _detailRow(
-                    'יתרה ממתינה', '₪${pendingBalance.toStringAsFixed(2)}'),
+                if (isProvider)
+                  _detailRow(
+                      'יתרה ממתינה', '₪${pendingBalance.toStringAsFixed(2)}'),
                 if (aboutMe.isNotEmpty) ...[
                   const Divider(height: 16),
                   Align(
@@ -431,79 +442,471 @@ class _AdminUserDetailScreenState
     );
   }
 
-  // ── Quick stats cards ──────────────────────────────────────────────────
+  // ── Provider stats — Earning Power ──────────────────────────────────
 
-  Widget _buildQuickStats(Map<String, dynamic> data) {
+  Widget _buildProviderStats(Map<String, dynamic> data) {
     final rating = (data['rating'] as num? ?? 0).toDouble();
+    final xp = (data['xp'] as num? ?? 0).toInt();
 
     final txAsync = ref.watch(userTransactionsProvider(widget.userId));
     final jobsAsync = ref.watch(userJobsProvider(widget.userId));
+    final reviewsAsync = ref.watch(userReviewsProvider(widget.userId));
 
-    final txCount = txAsync.valueOrNull?.length ?? 0;
     final jobCount = jobsAsync.valueOrNull?.length ?? 0;
-    final lifetimeValue = txAsync.valueOrNull?.fold<double>(
-            0, (acc, tx) => acc + ((tx['amount'] as num?) ?? 0).toDouble()) ??
+    final reviewCount = reviewsAsync.valueOrNull?.length ?? 0;
+    final totalEarned = txAsync.valueOrNull
+            ?.where((tx) => tx['receiverId'] == widget.userId)
+            .fold<double>(
+                0, (acc, tx) => acc + ((tx['amount'] as num?) ?? 0).toDouble()) ??
         0;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-              child: _statCard('עסקאות', '$txCount', Icons.receipt_long_rounded,
-                  _kIndigo)),
-          const SizedBox(width: 10),
-          Expanded(
-              child: _statCard('עבודות', '$jobCount',
-                  Icons.work_outline_rounded, _kPurple)),
-          const SizedBox(width: 10),
-          Expanded(
-              child: _statCard(
+          const Padding(
+            padding: EdgeInsetsDirectional.only(start: 4, bottom: 8),
+            child: Text('כוח הרווחה',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: _kMuted)),
+          ),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _miniStatCard(
+                  'הכנסות', '₪${totalEarned.toStringAsFixed(0)}',
+                  Icons.account_balance_wallet_rounded, _kGreen),
+              _miniStatCard(
+                  'עבודות', '$jobCount',
+                  Icons.work_outline_rounded, _kPurple),
+              _miniStatCard(
                   'דירוג',
                   rating > 0 ? rating.toStringAsFixed(1) : '—',
-                  Icons.star_rounded,
-                  _kAmber)),
-          const SizedBox(width: 10),
-          Expanded(
-              child: _statCard(
-                  'LTV',
-                  '₪${lifetimeValue.toStringAsFixed(0)}',
-                  Icons.account_balance_wallet_rounded,
-                  _kGreen)),
+                  Icons.star_rounded, _kAmber),
+              GestureDetector(
+                onTap: _showReviewsSheet,
+                child: _miniStatCard(
+                    'ביקורות', '$reviewCount',
+                    Icons.rate_review_rounded, const Color(0xFFEC4899)),
+              ),
+              _miniStatCard('XP', '$xp', Icons.bolt_rounded, _kIndigo),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _statCard(
-      String label, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(
-              color: color.withValues(alpha: 0.1),
-              blurRadius: 10,
-              offset: const Offset(0, 3)),
-        ],
-      ),
+  // ── Customer stats — Buying Power ─────────────────────────────────────
+
+  Widget _buildCustomerStats(Map<String, dynamic> data) {
+    final customerRating =
+        (data['customerRating'] as num? ?? 0).toDouble();
+
+    final txAsync = ref.watch(userTransactionsProvider(widget.userId));
+    final jobsAsync = ref.watch(userJobsProvider(widget.userId));
+    final reviewsAsync = ref.watch(userReviewsProvider(widget.userId));
+
+    final bookingCount = jobsAsync.valueOrNull?.length ?? 0;
+    final reviewCount = reviewsAsync.valueOrNull?.length ?? 0;
+    final totalSpent = txAsync.valueOrNull
+            ?.where((tx) => tx['senderId'] == widget.userId)
+            .fold<double>(
+                0, (acc, tx) => acc + ((tx['amount'] as num?) ?? 0).toDouble()) ??
+        0;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(height: 6),
-          Text(value,
-              style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                  color: color)),
-          Text(label,
-              style:
-                  const TextStyle(fontSize: 10, color: _kMuted)),
+          const Padding(
+            padding: EdgeInsetsDirectional.only(start: 4, bottom: 8),
+            child: Text('כוח הקנייה',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: _kMuted)),
+          ),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _miniStatCard(
+                  'הוצאות', '₪${totalSpent.toStringAsFixed(0)}',
+                  Icons.shopping_cart_rounded, _kIndigo),
+              _miniStatCard(
+                  'הזמנות', '$bookingCount',
+                  Icons.calendar_today_rounded, _kPurple),
+              _miniStatCard(
+                  'דירוג לקוח',
+                  customerRating > 0
+                      ? customerRating.toStringAsFixed(1)
+                      : '—',
+                  Icons.star_rounded, _kAmber),
+              GestureDetector(
+                onTap: _showReviewsSheet,
+                child: _miniStatCard(
+                    'ביקורות', '$reviewCount',
+                    Icons.rate_review_rounded, const Color(0xFFEC4899)),
+              ),
+            ],
+          ),
         ],
       ),
     );
+  }
+
+  Widget _miniStatCard(
+      String label, String value, IconData icon, Color color) {
+    return SizedBox(
+      width: 75,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+                color: color.withValues(alpha: 0.1),
+                blurRadius: 10,
+                offset: const Offset(0, 3)),
+          ],
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 20),
+            const SizedBox(height: 6),
+            Text(value,
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: color)),
+            Text(label,
+                style:
+                    const TextStyle(fontSize: 10, color: _kMuted)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Reviews bottom sheet ───────────────────────────────────────────────
+
+  void _showReviewsSheet() {
+    final reviewsAsync = ref.read(userReviewsProvider(widget.userId));
+    final reviews = reviewsAsync.valueOrNull ?? [];
+    final userAsync = ref.read(userDetailProvider(widget.userId));
+    final isProvider = userAsync.valueOrNull?['isProvider'] == true;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        minChildSize: 0.4,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (_, scrollCtrl) => Column(
+          children: [
+            // Handle
+            Padding(
+              padding: const EdgeInsets.only(top: 12, bottom: 8),
+              child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(10))),
+            ),
+            // Title
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  const Icon(Icons.rate_review_rounded,
+                      color: _kIndigo, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                      isProvider
+                          ? 'ביקורות מלקוחות (${reviews.length})'
+                          : 'ביקורות מנותני שירות (${reviews.length})',
+                      style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: _kDark)),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: _kIndigo.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text('תצוגת אדמין — כל הביקורות',
+                        style: TextStyle(
+                            fontSize: 10,
+                            color: _kIndigo,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 20),
+            // Review list
+            Expanded(
+              child: reviews.isEmpty
+                  ? const Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.rate_review_outlined,
+                              size: 48, color: _kMuted),
+                          SizedBox(height: 12),
+                          Text('אין ביקורות עדיין',
+                              style: TextStyle(
+                                  color: _kMuted, fontSize: 15)),
+                        ],
+                      ),
+                    )
+                  : ListView.separated(
+                      controller: scrollCtrl,
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                      itemCount: reviews.length,
+                      separatorBuilder: (_, __) =>
+                          const Divider(height: 20),
+                      itemBuilder: (_, i) =>
+                          _buildReviewItem(reviews[i]),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReviewItem(Map<String, dynamic> review) {
+    final reviewerName = review['reviewerName'] as String? ?? 'משתמש';
+    final isClientReview = review['isClientReview'] == true;
+    final overall =
+        (review['overallRating'] ?? review['rating'] as num? ?? 0)
+            .toDouble();
+    final comment = (review['publicComment'] ?? review['comment'])
+            as String? ??
+        '';
+    final privateComment =
+        review['privateAdminComment'] as String? ?? '';
+    final isPublished = review['isPublished'] as bool? ?? false;
+    final createdAt =
+        ((review['createdAt'] ?? review['timestamp']) as Timestamp?)
+            ?.toDate();
+
+    // 7-day blind logic: published if isPublished==true OR 7+ days old
+    final bool effectivelyPublic = isPublished ||
+        (createdAt != null &&
+            DateTime.now().difference(createdAt).inDays >= 7);
+
+    // Rating params breakdown
+    final ratingParams =
+        review['ratingParams'] as Map<String, dynamic>? ?? {};
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: effectivelyPublic
+            ? Colors.white
+            : _kAmber.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: effectivelyPublic
+              ? Colors.grey.shade100
+              : _kAmber.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header: reviewer name + status badge + date
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: isClientReview
+                    ? _kIndigo.withValues(alpha: 0.1)
+                    : _kGreen.withValues(alpha: 0.1),
+                child: Icon(
+                  isClientReview
+                      ? Icons.person_rounded
+                      : Icons.work_rounded,
+                  size: 16,
+                  color: isClientReview ? _kIndigo : _kGreen,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(reviewerName,
+                        style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: _kDark)),
+                    Text(
+                      isClientReview
+                          ? 'ביקורת לקוח'
+                          : 'ביקורת ספק',
+                      style: const TextStyle(
+                          fontSize: 11, color: _kMuted),
+                    ),
+                  ],
+                ),
+              ),
+              // Status badge
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: effectivelyPublic
+                      ? _kGreen.withValues(alpha: 0.1)
+                      : _kAmber.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: effectivelyPublic
+                        ? _kGreen.withValues(alpha: 0.3)
+                        : _kAmber.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Text(
+                  effectivelyPublic ? 'פומבי' : 'מוסתר מהמשתמש',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: effectivelyPublic ? _kGreen : _kAmber,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          // Star rating
+          Row(
+            children: [
+              ...List.generate(5, (i) {
+                final starVal = i + 1;
+                return Icon(
+                  starVal <= overall
+                      ? Icons.star_rounded
+                      : (starVal - 0.5 <= overall
+                          ? Icons.star_half_rounded
+                          : Icons.star_border_rounded),
+                  color: _kAmber,
+                  size: 20,
+                );
+              }),
+              const SizedBox(width: 6),
+              Text(overall.toStringAsFixed(1),
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: _kDark)),
+              if (createdAt != null) ...[
+                const Spacer(),
+                Text(_fmt.format(createdAt),
+                    style:
+                        const TextStyle(fontSize: 11, color: _kMuted)),
+              ],
+            ],
+          ),
+
+          // Rating params breakdown (admin detail)
+          if (ratingParams.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: ratingParams.entries.map((e) {
+                final paramLabel = _ratingParamLabel(e.key);
+                final val = (e.value as num?)?.toDouble() ?? 0;
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '$paramLabel: ${val.toStringAsFixed(1)}',
+                    style: const TextStyle(
+                        fontSize: 10, color: _kMuted),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+
+          // Comment
+          if (comment.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(comment,
+                style: const TextStyle(
+                    fontSize: 13, color: _kDark, height: 1.5)),
+          ],
+
+          // Private admin comment
+          if (privateComment.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: _kRed.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: _kRed.withValues(alpha: 0.15)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.lock_rounded,
+                      size: 14, color: _kRed),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      privateComment,
+                      style: const TextStyle(
+                          fontSize: 12, color: _kRed, height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static String _ratingParamLabel(String key) {
+    switch (key) {
+      case 'professional':
+        return 'מקצועיות';
+      case 'timing':
+        return 'דיוק בזמנים';
+      case 'communication':
+        return 'תקשורת';
+      case 'value':
+        return 'תמורה למחיר';
+      default:
+        return key;
+    }
   }
 
   // ── Action center ──────────────────────────────────────────────────────

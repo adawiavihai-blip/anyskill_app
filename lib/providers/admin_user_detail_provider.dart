@@ -86,6 +86,48 @@ Future<List<Map<String, dynamic>>> userJobs(
   return all;
 }
 
+// ── User reviews (all reviews where this user is the reviewee) ───────────────
+// Admin sees ALL reviews regardless of isPublished status.
+
+@riverpod
+Future<List<Map<String, dynamic>>> userReviews(
+    UserReviewsRef ref, String userId) async {
+  final db = FirebaseFirestore.instance;
+
+  // Query both field names for backward compatibility
+  final results = await Future.wait([
+    db
+        .collection('reviews')
+        .where('revieweeId', isEqualTo: userId)
+        .limit(100)
+        .get(),
+    db
+        .collection('reviews')
+        .where('expertId', isEqualTo: userId)
+        .limit(100)
+        .get(),
+  ]);
+
+  // Deduplicate by doc ID (both queries may return the same doc)
+  final seen = <String>{};
+  final all = <Map<String, dynamic>>[];
+  for (final snap in results) {
+    for (final doc in snap.docs) {
+      if (seen.add(doc.id)) {
+        all.add({'id': doc.id, ...doc.data()});
+      }
+    }
+  }
+
+  all.sort((a, b) {
+    final ta = (a['createdAt'] ?? a['timestamp']) as Timestamp?;
+    final tb = (b['createdAt'] ?? b['timestamp']) as Timestamp?;
+    if (ta == null || tb == null) return 0;
+    return tb.compareTo(ta);
+  });
+  return all;
+}
+
 // ── Admin audit log for this user ────────────────────────────────────────────
 
 @riverpod

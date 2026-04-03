@@ -392,6 +392,129 @@ class _UserJobsProviderElement
   String get userId => (origin as UserJobsProvider).userId;
 }
 
+String _$userReviewsHash() => r'349632d69c8488525718c14dae15d6c717eaac6c';
+
+/// See also [userReviews].
+@ProviderFor(userReviews)
+const userReviewsProvider = UserReviewsFamily();
+
+/// See also [userReviews].
+class UserReviewsFamily extends Family<AsyncValue<List<Map<String, dynamic>>>> {
+  /// See also [userReviews].
+  const UserReviewsFamily();
+
+  /// See also [userReviews].
+  UserReviewsProvider call(String userId) {
+    return UserReviewsProvider(userId);
+  }
+
+  @override
+  UserReviewsProvider getProviderOverride(
+    covariant UserReviewsProvider provider,
+  ) {
+    return call(provider.userId);
+  }
+
+  static const Iterable<ProviderOrFamily>? _dependencies = null;
+
+  @override
+  Iterable<ProviderOrFamily>? get dependencies => _dependencies;
+
+  static const Iterable<ProviderOrFamily>? _allTransitiveDependencies = null;
+
+  @override
+  Iterable<ProviderOrFamily>? get allTransitiveDependencies =>
+      _allTransitiveDependencies;
+
+  @override
+  String? get name => r'userReviewsProvider';
+}
+
+/// See also [userReviews].
+class UserReviewsProvider
+    extends AutoDisposeFutureProvider<List<Map<String, dynamic>>> {
+  /// See also [userReviews].
+  UserReviewsProvider(String userId)
+    : this._internal(
+        (ref) => userReviews(ref as UserReviewsRef, userId),
+        from: userReviewsProvider,
+        name: r'userReviewsProvider',
+        debugGetCreateSourceHash:
+            const bool.fromEnvironment('dart.vm.product')
+                ? null
+                : _$userReviewsHash,
+        dependencies: UserReviewsFamily._dependencies,
+        allTransitiveDependencies: UserReviewsFamily._allTransitiveDependencies,
+        userId: userId,
+      );
+
+  UserReviewsProvider._internal(
+    super._createNotifier, {
+    required super.name,
+    required super.dependencies,
+    required super.allTransitiveDependencies,
+    required super.debugGetCreateSourceHash,
+    required super.from,
+    required this.userId,
+  }) : super.internal();
+
+  final String userId;
+
+  @override
+  Override overrideWith(
+    FutureOr<List<Map<String, dynamic>>> Function(UserReviewsRef provider)
+    create,
+  ) {
+    return ProviderOverride(
+      origin: this,
+      override: UserReviewsProvider._internal(
+        (ref) => create(ref as UserReviewsRef),
+        from: from,
+        name: null,
+        dependencies: null,
+        allTransitiveDependencies: null,
+        debugGetCreateSourceHash: null,
+        userId: userId,
+      ),
+    );
+  }
+
+  @override
+  AutoDisposeFutureProviderElement<List<Map<String, dynamic>>> createElement() {
+    return _UserReviewsProviderElement(this);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is UserReviewsProvider && other.userId == userId;
+  }
+
+  @override
+  int get hashCode {
+    var hash = _SystemHash.combine(0, runtimeType.hashCode);
+    hash = _SystemHash.combine(hash, userId.hashCode);
+
+    return _SystemHash.finish(hash);
+  }
+}
+
+@Deprecated('Will be removed in 3.0. Use Ref instead')
+// ignore: unused_element
+mixin UserReviewsRef
+    on AutoDisposeFutureProviderRef<List<Map<String, dynamic>>> {
+  /// The parameter `userId` of this provider.
+  String get userId;
+}
+
+class _UserReviewsProviderElement
+    extends AutoDisposeFutureProviderElement<List<Map<String, dynamic>>>
+    with UserReviewsRef {
+  _UserReviewsProviderElement(super.provider);
+
+  @override
+  String get userId => (origin as UserReviewsProvider).userId;
+}
+
 String _$userAuditLogHash() => r'16a9519385138bde4e2f8aac7de79ef076217b60';
 
 /// See also [userAuditLog].
