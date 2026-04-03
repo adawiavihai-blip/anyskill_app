@@ -88,8 +88,16 @@ Future<void> _ensureProfileExists(User user) async {
     final docRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
     final snap = await docRef.get();
     if (snap.exists) {
-      // ignore: avoid_print
-      print('ℹ️ [Profile] Already exists for ${user.uid}');
+      // Backfill profileImage from Auth if Firestore field is empty.
+      // Early accounts were created before profileImage was added to the schema.
+      final data = snap.data() ?? {};
+      final firestoreImg = data['profileImage'] as String? ?? '';
+      final authImg = user.photoURL ?? '';
+      if (firestoreImg.isEmpty && authImg.isNotEmpty) {
+        await docRef.update({'profileImage': authImg});
+        // ignore: avoid_print
+        print('🔧 [Profile] Backfilled profileImage from Auth photoURL for ${user.uid}');
+      }
       return;
     }
     await docRef.set({

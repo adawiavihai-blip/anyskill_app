@@ -260,8 +260,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
               children: [
                 // ── Airbnb-style specialist header ──────────────────────────────
               Builder(builder: (_) {
-                final profileImg  = data['profileImage'] as String? ?? '';
-                debugPrint('[Profile] profileImage field: ${profileImg.isEmpty ? "EMPTY" : profileImg.length > 80 ? "${profileImg.substring(0, 80)}... (${profileImg.length} chars)" : profileImg}');
+                // Try profileImage first, then fall back to Auth photoURL
+                var profileImg = data['profileImage'] as String? ?? '';
+                if (profileImg.isEmpty) {
+                  profileImg = FirebaseAuth.instance.currentUser?.photoURL ?? '';
+                }
+                debugPrint('[Profile] email=${data['email']}, '
+                    'profileImage=${profileImg.isEmpty ? "EMPTY" : profileImg.length > 80 ? "${profileImg.substring(0, 80)}..." : profileImg}');
                 final ImageProvider? avatarImg = _safeImageProvider(profileImg);
                 final name        = data['name'] as String? ?? l10n.defaultUserName;
                 final isVerified  = data['isVerified'] as bool? ?? false;
@@ -874,7 +879,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildCustomerView(Map<String, dynamic> data, AppLocalizations l10n) {
     final uid        = user?.uid ?? '';
-    final profileImg = data['profileImage'] as String? ?? '';
+    var profileImg = data['profileImage'] as String? ?? '';
+    if (profileImg.isEmpty) {
+      profileImg = FirebaseAuth.instance.currentUser?.photoURL ?? '';
+    }
     final ImageProvider? custAvatarImg = _safeImageProvider(profileImg);
     final name       = data['name'] as String? ?? l10n.defaultUserName;
 

@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../providers/admin_users_provider.dart';
 import '../utils/web_utils.dart';
+import 'admin_user_detail_screen.dart';
 
 // ── Filter enum ──────────────────────────────────────────────────────────────
 
