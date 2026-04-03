@@ -1250,9 +1250,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     final addOnTotal = _selectedAddOnIndices.fold<double>(
         0.0, (acc, idx) => acc + (idx < pricing.addOns.length ? pricing.addOns[idx].price : 0.0));
     final totalPrice = svcPrice + addOnTotal;
-    final isReady    = _selectedDay != null && _selectedTimeSlot != null;
-    final isOnline   = data['isOnline'] as bool? ?? false;
-    final isSelf     = (FirebaseAuth.instance.currentUser?.uid ?? '') == widget.expertId;
+    final isReady = _selectedDay != null && _selectedTimeSlot != null;
+    final isSelf  = (FirebaseAuth.instance.currentUser?.uid ?? '') == widget.expertId;
+    final canBook = isReady && !isSelf;
 
     return Positioned(
       bottom: 0,
@@ -1311,7 +1311,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                       elevation: 0,
                     ),
                     onPressed:
-                        (isReady && isOnline && !isSelf) ? () => _showBookingSummary(context, data, totalPrice, addOns: pricing.addOns, selectedAddOns: _selectedAddOnIndices) : null,
+                        canBook ? () => _showBookingSummary(context, data, totalPrice, addOns: pricing.addOns, selectedAddOns: _selectedAddOnIndices) : null,
                     child: _isProcessing
                         ? const CircularProgressIndicator(
                             color: Colors.white, strokeWidth: 2.5)
@@ -1327,20 +1327,6 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                           color: Colors.white,
                                           fontWeight: FontWeight.w600,
                                           fontSize: 13)),
-                                ],
-                              )
-                        : (!isOnline)
-                            ? const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.do_not_disturb_rounded,
-                                      color: Colors.white, size: 16),
-                                  SizedBox(width: 6),
-                                  Text('לא זמין להזמנות כרגע',
-                                      style: TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 14)),
                                 ],
                               )
                         : isReady

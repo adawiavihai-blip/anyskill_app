@@ -154,13 +154,18 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     if (_lastDoc != null) q = q.startAfterDocument(_lastDoc!);
     q = q.limit(_kPageSize);
 
-    final snap = await q.get();
+    final snap = await q.get().timeout(
+      const Duration(seconds: 6),
+      onTimeout: () => q.get(const GetOptions(source: Source.cache)),
+    );
+    debugPrint('[CategoryResults] Fetched ${snap.docs.length} docs '
+        'for category="${widget.categoryName}" (cursor=${_lastDoc != null})');
     if (snap.docs.length < _kPageSize) {
       if (mounted) setState(() => _hasMore = false);
     }
     if (snap.docs.isNotEmpty) _lastDoc = snap.docs.last;
 
-    return snap.docs.map((d) {
+    final results = snap.docs.map((d) {
       final map = d.data();
       map['uid'] = d.id;
       return map;
@@ -168,6 +173,9 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     .where((m) => m['isVerified'] != false)
     .where((m) => m['isHidden']   != true)
     .toList();
+
+    debugPrint('[CategoryResults] After filters: ${results.length} experts visible');
+    return results;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

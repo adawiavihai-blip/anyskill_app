@@ -393,52 +393,46 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           // AnimatedScale + AnimatedOpacity give a smooth shrink-fade when
           // switching tabs. IgnorePointer blocks hit-tests while invisible so
           // the hidden button can never be accidentally tapped.
-          floatingActionButton: AnimatedScale(
-            scale: safeIndex == 0 ? 1.0 : 0.0,
-            duration: const Duration(milliseconds: 200),
-            curve: safeIndex == 0 ? Curves.easeOutBack : Curves.easeIn,
-            child: AnimatedOpacity(
-              opacity: safeIndex == 0 ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 150),
-              child: IgnorePointer(
-                ignoring: safeIndex != 0,
-                child: FloatingActionButton.extended(
-                  onPressed: () => _showQuickRequestSheet(context, data),
-                  label: const Text(
-                    'חיפוש דחוף',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                  // Magnifying glass with a bolt inside the lens — stacked Material icons.
-                  icon: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      children: const [
-                        Icon(Icons.search_rounded, color: Colors.white, size: 19),
-                        Positioned(
-                          top: 1,
-                          left: 1,
-                          child: Icon(Icons.bolt, color: Colors.white, size: 8),
+          floatingActionButton: Builder(builder: (_) {
+            // Visible ONLY when Home tab is selected AND the user hasn't
+            // navigated into a sub-route (category/profile/search).
+            final homeAtRoot = safeIndex == 0 &&
+                !(_tabNavKeys[0].currentState?.canPop() ?? false);
+            return AnimatedScale(
+              scale: homeAtRoot ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              curve: homeAtRoot ? Curves.easeOutBack : Curves.easeIn,
+              child: AnimatedOpacity(
+                opacity: homeAtRoot ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 150),
+                child: IgnorePointer(
+                  ignoring: !homeAtRoot,
+                  child: Transform.scale(
+                    scale: 0.8,
+                    child: FloatingActionButton.extended(
+                      onPressed: () => _showQuickRequestSheet(context, data),
+                      label: const Text(
+                        'חיפוש דחוף',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          letterSpacing: 0.2,
                         ),
-                      ],
+                      ),
+                      icon: const Icon(Icons.search_rounded, color: Colors.white, size: 16),
+                      backgroundColor: const Color(0xFF6366F1),
+                      foregroundColor: Colors.white,
+                      elevation: 3,
+                      extendedPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(50),
+                      ),
                     ),
-                  ),
-                  backgroundColor: const Color(0xFF6366F1),
-                  foregroundColor: Colors.white,
-                  elevation: 4,
-                  extendedPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(50),
                   ),
                 ),
               ),
-            ),
-          ),
+            );
+          }),
           floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
           ),         // close Scaffold
         );           // close PopScope
@@ -450,6 +444,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// the tab without hiding the bottom nav.
   Navigator _nestedTab(int idx, Widget child) => Navigator(
     key: _tabNavKeys[idx],
+    observers: [if (idx == 0) _HomeRouteObserver(onChanged: () {
+      // When Home tab pushes/pops a sub-route, rebuild parent so the
+      // urgent search button visibility re-evaluates via the Builder.
+      if (mounted) setState(() {});
+    })],
     onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => child),
   );
 
@@ -1702,4 +1701,20 @@ class _QuickRequestSheetState extends State<_QuickRequestSheet> {
       ),
     );
   }
+}
+
+/// Notifies the parent when routes are pushed/popped on the Home tab Navigator.
+/// Used to hide the "Urgent Search" FAB when the user is inside a sub-route.
+class _HomeRouteObserver extends NavigatorObserver {
+  _HomeRouteObserver({required this.onChanged});
+  final VoidCallback onChanged;
+
+  @override
+  void didPush(Route route, Route? previousRoute) => onChanged();
+  @override
+  void didPop(Route route, Route? previousRoute) => onChanged();
+  @override
+  void didReplace({Route? newRoute, Route? oldRoute}) => onChanged();
+  @override
+  void didRemove(Route route, Route? previousRoute) => onChanged();
 }

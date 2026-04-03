@@ -1111,6 +1111,31 @@ but won't crash the `FutureBuilder`).
 - The watchdog timer must be ≥ 10 seconds (Flutter engine needs ~5s on slow devices)
 - `_resilientUserFetch` must never throw — all tiers wrapped in try/catch
 
+### Law 16: UI Context Awareness
+
+**Floating buttons must strictly adhere to their assigned screens and never
+persist during sub-navigation.**
+
+**Urgent Search FAB (`home_screen.dart`):**
+- Visible ONLY when: `safeIndex == 0` (Home tab selected) AND the Home tab's
+  nested Navigator is at its **root** route (`canPop() == false`)
+- Hidden when the user navigates into a category, expert profile, or search
+- A `_HomeRouteObserver` on the Home tab's Navigator triggers `setState()`
+  on push/pop so the `Builder` re-evaluates visibility
+
+**Booking button (`expert_profile_screen.dart`):**
+- `isOnline` does NOT block scheduled bookings — removed the gate in v9.0.2
+- Only blocked by: `isSelf` (self-booking) or `!isReady` (no date/time selected)
+- Offline providers show a grey badge on search cards but can still receive bookings
+
+**Review auto-trigger (`my_bookings_screen.dart`):**
+- Admins NEVER get auto-review popups (`if (_isAdmin) return`)
+- Requires `completedAt` timestamp to exist (proves payment finalized)
+- Requires `providerReviewShown != true` (Firestore flag set immediately on trigger)
+- Requires `jobExpertId == currentUserId` (only the expert reviews)
+- Requires `jobExpertId != jobCustomerId` (never self-rate)
+- `_reviewTriggeredFor` in-memory set prevents re-trigger within same session
+
 ---
 
 ## 10. Firestore Collections Reference

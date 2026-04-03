@@ -149,9 +149,10 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         final isProvider = data['isProvider'] == true;
         final isAdmin    = data['isAdmin']    == true;
         setState(() {
-          // Admin always gets provider tabs so they see ALL jobs
-          // (expert-side via "משימות שלי" + customer-side via calendar)
-          _isProvider     = isProvider || isAdmin;
+          // Admin sees CLIENT tabs by default (פעילות + היסטוריה).
+          // If admin is ALSO a provider (isProvider: true), they see
+          // provider tabs like any regular provider. No special merging.
+          _isProvider     = isProvider;
           _isAdmin        = isAdmin;
           _providerLoaded = true;
         });
@@ -870,21 +871,46 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   final Set<String> _reviewTriggeredFor = {};
 
   /// Auto-opens ReviewScreen for completed jobs the provider hasn't reviewed.
+  /// CRITICAL: Only triggers when the current user IS the expert for this job.
+  /// Without this guard, admins (who see merged streams) would be asked to
+  /// rate themselves on jobs where they are the CUSTOMER, not the expert.
   void _autoTriggerProviderReview(BuildContext ctx, List<QueryDocumentSnapshot> docs) {
+    // ── Admins NEVER get auto-review popups ──────────────────────────────
+    // Admins use the admin panel to manage reviews. Auto-popups trapped
+    // them in a self-rating loop because their UID appeared in merged streams.
+    if (_isAdmin) return;
+
     for (final doc in docs) {
       final d = doc.data() as Map<String, dynamic>;
       if (d['status'] != 'completed') continue;
       if (d['providerReviewDone'] == true) continue;
+      if (d['providerReviewShown'] == true) continue; // already prompted
       if (_reviewTriggeredFor.contains(doc.id)) continue;
 
+      // Require completedAt — proves payment was finalized in Firestore
+      final completedAt = d['completedAt'];
+      if (completedAt == null) continue;
+
+      // Anti-fraud: only the EXPERT for this job can auto-review
+      final jobExpertId   = d['expertId']?.toString()   ?? '';
+      final jobCustomerId = d['customerId']?.toString() ?? '';
+      if (jobExpertId != currentUserId) continue;
+      if (jobExpertId == jobCustomerId) continue;
+
       _reviewTriggeredFor.add(doc.id);
-      // Defer so the current build finishes before pushing a route
+
+      // Mark reviewShown in Firestore IMMEDIATELY to prevent re-trigger
+      // even if the stream fires again before the popup is dismissed.
+      FirebaseFirestore.instance.collection('jobs').doc(doc.id).update({
+        'providerReviewShown': true,
+      }).catchError((_) {});
+
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         Navigator.push(ctx, MaterialPageRoute(
           builder: (_) => ReviewScreen(
             jobId:          doc.id,
-            revieweeId:     d['customerId']?.toString()   ?? '',
+            revieweeId:     jobCustomerId,
             revieweeName:   d['customerName']?.toString() ?? 'לקוח',
             revieweeAvatar: '',
             isClientReview: false,
@@ -909,55 +935,10 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
       }
     });
 
-    // Admin sees ALL jobs (expert + customer). Regular providers see expert only.
-    return _isAdmin
-        ? _buildMergedTasksStream()
-        : _buildSingleTasksStream(_expertStream);
+    return _buildSingleTasksStream(_expertStream);
   }
 
-  /// Admin merged view: combines expert-side + customer-side jobs.
-  Widget _buildMergedTasksStream() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: _expertStream,
-      builder: (context, expertSnap) {
-        return StreamBuilder<QuerySnapshot>(
-          stream: _customerStream,
-          builder: (context, customerSnap) {
-            // Wait for both streams
-            if ((!expertSnap.hasData && !_tasksTimedOut) ||
-                (!customerSnap.hasData && !_tasksTimedOut)) {
-              return const _BookingsShimmer();
-            }
-
-            final expertDocs   = expertSnap.data?.docs   ?? [];
-            final customerDocs = customerSnap.data?.docs  ?? [];
-
-            // Merge and deduplicate by doc ID
-            final seen = <String>{};
-            final merged = <QueryDocumentSnapshot>[];
-            for (final d in [...expertDocs, ...customerDocs]) {
-              if (seen.add(d.id)) merged.add(d);
-            }
-
-            _tasksFirstSnapshotReceived = true;
-            _tasksTimeoutTimer?.cancel();
-
-            debugPrint('[Tasks/Admin] Merged ${merged.length} docs '
-                '(expert=${expertDocs.length}, customer=${customerDocs.length})');
-
-            if (merged.isEmpty) {
-              return _buildEmptyState(isExpert: true, isHistory: false);
-            }
-
-            _autoTriggerProviderReview(context, merged);
-            return _buildExpertTasksList(merged);
-          },
-        );
-      },
-    );
-  }
-
-  /// Standard single-stream view for regular providers.
+  /// Standard single-stream view for providers (expert-side jobs only).
   Widget _buildSingleTasksStream(Stream<QuerySnapshot> stream) {
     return StreamBuilder<QuerySnapshot>(
       stream: stream,

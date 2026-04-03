@@ -28,12 +28,21 @@ class AdminUsersRepository {
     Query<Map<String, dynamic>> q = _users.limit(limit);
     if (startAfter != null) q = q.startAfterDocument(startAfter);
 
+    // Three-tier fetch (same pattern as OnboardingGate — never hangs):
+    //   1. Server with 5s timeout
+    //   2. Cache fallback
+    //   3. Default get with 5s timeout
     try {
-      return await q.get(const GetOptions(source: Source.server));
-    } catch (_) {
-      // Offline fallback — read from cache
-      return q.get(const GetOptions(source: Source.cache));
-    }
+      return await q.get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {}
+    try {
+      return await q.get(const GetOptions(source: Source.cache));
+    } catch (_) {}
+    return q.get().timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => q.get(const GetOptions(source: Source.cache)),
+    );
   }
 
   // ── Single-user stream ─────────────────────────────────────────────────
