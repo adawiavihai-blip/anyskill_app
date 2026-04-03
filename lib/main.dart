@@ -872,6 +872,15 @@ class _OnboardingGateState extends State<OnboardingGate> {
         final complete = data['onboardingComplete'] ?? data.isNotEmpty;
         if (!complete) return const OnboardingScreen();
 
+        // Enforce mandatory phone — redirect back to onboarding if missing.
+        // This catches legacy users who completed onboarding before phone
+        // was mandatory.
+        final phone = (data['phone'] as String? ?? '').trim();
+        if (phone.isEmpty) {
+          debugPrint('[OnboardingGate] Phone missing — redirecting to onboarding');
+          return const OnboardingScreen();
+        }
+
         // First launch after sign-up — ask for permissions once
         if (!hasSeenPerms) return const PermissionRequestScreen();
 

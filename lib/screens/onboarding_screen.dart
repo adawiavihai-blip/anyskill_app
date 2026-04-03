@@ -78,6 +78,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // ── All users ─────────────────────────────────────────────────────────────
   String? _profileImageBase64;
   final _bioController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _emailController = TextEditingController();
 
   // ── Terms ─────────────────────────────────────────────────────────────────
   bool _termsAccepted = false;
@@ -99,10 +101,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       vsync: this,
       duration: const Duration(milliseconds: 600),
     );
-    // Pre-fill name from Firebase Auth
+    // Pre-fill from Firebase Auth
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
       _nameController.text = user.displayName ?? '';
+      _emailController.text = user.email ?? '';
+      _phoneController.text = user.phoneNumber ?? '';
     }
     // Stream live categories from Firestore
     _catSub = CategoryService.streamMainCategories().listen((cats) {
@@ -126,6 +130,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _nameController.dispose();
     _otherCategoryController.dispose();
     _bioController.dispose();
+    _phoneController.dispose();
+    _emailController.dispose();
     super.dispose();
   }
 
@@ -133,20 +139,24 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   double get _progress {
     if (_isCustomer) {
       int done = 1; // role selected = 1
+      const total = 5;
+      if (_nameController.text.trim().isNotEmpty) done++;
+      if (_phoneController.text.trim().isNotEmpty) done++;
       if (_profileImageBase64 != null) done++;
-      if (_bioController.text.trim().isNotEmpty) done++;
       if (_termsAccepted) done++;
-      return done / 4;
+      return done / total;
     }
     int done = 1; // role selected
-    const total = 9;
+    const total = 11;
+    if (_nameController.text.trim().isNotEmpty) done++;
+    if (_phoneController.text.trim().isNotEmpty) done++;
+    if (_emailController.text.trim().isNotEmpty) done++;
     if (_businessType != null) done++;
     if (_idController.text.trim().isNotEmpty) done++;
     if (_idDocUrl != null) done++;
     if (_selectedCategory != null || _isOtherCategory) done++;
     if (_profileImageBase64 != null) done++;
     if (_bioController.text.trim().isNotEmpty) done++;
-    if (_nameController.text.trim().isNotEmpty) done++;
     if (_termsAccepted) done++;
     return done / total;
   }
@@ -156,9 +166,24 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // ══════════════════════════════════════════════════════════════════════════
 
   void _submit() {
+    // ── Mandatory for ALL roles ────────────────────────────────────────
+    if (_nameController.text.trim().isEmpty) {
+      _snack('נא להזין שם מלא', _kRed);
+      return;
+    }
+    if (_phoneController.text.trim().isEmpty) {
+      _snack('נא להזין מספר טלפון', _kRed);
+      return;
+    }
+
+    // ── Provider-only mandatory fields ─────────────────────────────────
     if (_isProvider) {
-      if (_nameController.text.trim().isEmpty) {
-        _snack('נא להזין שם מלא', _kRed);
+      if (_emailController.text.trim().isEmpty) {
+        _snack('נא להזין כתובת אימייל', _kRed);
+        return;
+      }
+      if (_profileImageBase64 == null) {
+        _snack('נא להעלות תמונת פרופיל', _kRed);
         return;
       }
       if (_businessType == null) {
@@ -174,7 +199,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         return;
       }
       if (_selectedCategory == null && !_isOtherCategory) {
-        _snack('נא לבחור קטגוריה', _kRed);
+        _snack('נא לבחור קטגוריה מקצועית', _kRed);
         return;
       }
       if (_isOtherCategory && _otherCategoryController.text.trim().length < 3) {
@@ -199,10 +224,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         'isProvider':         _isProvider,
         'onboardingComplete': true,
         'termsAccepted':      true,
+        'name':               _nameController.text.trim(),
+        'phone':              _phoneController.text.trim(),
       };
 
-      if (_nameController.text.trim().isNotEmpty) {
-        updates['name'] = _nameController.text.trim();
+      if (_emailController.text.trim().isNotEmpty) {
+        updates['email'] = _emailController.text.trim();
       }
 
       if (_isProvider) {
@@ -446,7 +473,17 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                           const SizedBox(height: 16),
                         ],
 
-                        // 3. Profile
+                        // 3. Contact info (mandatory for all)
+                        _sectionCard(
+                          icon: Icons.contact_phone_outlined,
+                          title: 'פרטי קשר',
+                          check: _phoneController.text.trim().isNotEmpty &&
+                              _nameController.text.trim().isNotEmpty,
+                          child: _buildContactFields(),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // 4. Profile
                         _sectionCard(
                           icon: Icons.badge_outlined,
                           title: 'הפרופיל שלך',
@@ -727,15 +764,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Name
-        _buildTextField(
-          controller: _nameController,
-          label: 'שם מלא',
-          hint: 'כפי שמופיע בתעודת הזהות',
-          prefixIcon: const Icon(Icons.person_outline, size: 20, color: _kMuted),
-        ),
-        const SizedBox(height: 12),
-
         // Business type
         _buildDropdown(
           value: _businessType,
@@ -894,6 +922,49 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   // ══════════════════════════════════════════════════════════════════════════
+  // CONTACT INFO SECTION (mandatory for all roles)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildContactFields() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildTextField(
+          controller: _nameController,
+          label: 'שם מלא *',
+          hint: 'השם שיוצג בפרופיל',
+          prefixIcon: const Icon(Icons.person_outline_rounded, size: 20),
+        ),
+        const SizedBox(height: 12),
+        _buildTextField(
+          controller: _phoneController,
+          label: 'מספר טלפון *',
+          hint: '050-1234567',
+          keyboardType: TextInputType.phone,
+          prefixIcon: const Icon(Icons.phone_outlined, size: 20),
+        ),
+        if (_isProvider) ...[
+          const SizedBox(height: 12),
+          _buildTextField(
+            controller: _emailController,
+            label: 'אימייל *',
+            hint: 'example@mail.com',
+            keyboardType: TextInputType.emailAddress,
+            prefixIcon: const Icon(Icons.email_outlined, size: 20),
+          ),
+        ],
+        const SizedBox(height: 6),
+        Text(
+          _isProvider
+              ? '* כל השדות חובה לנותני שירות'
+              : '* שם וטלפון הם שדות חובה',
+          style: const TextStyle(fontSize: 11, color: _kMuted),
+        ),
+      ],
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
   // PROFILE SECTION
   // ══════════════════════════════════════════════════════════════════════════
 
@@ -1038,7 +1109,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // ══════════════════════════════════════════════════════════════════════════
 
   Widget _buildSubmitButton() {
-    final canSubmit = _termsAccepted && !_isSaving;
+    final canSubmit = _termsAccepted &&
+        !_isSaving &&
+        _nameController.text.trim().isNotEmpty &&
+        _phoneController.text.trim().isNotEmpty;
     return SizedBox(
       height: 54,
       child: ElevatedButton(
