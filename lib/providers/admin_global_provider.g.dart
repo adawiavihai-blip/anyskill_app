@@ -6,7 +6,7 @@ part of 'admin_global_provider.dart';
 // RiverpodGenerator
 // **************************************************************************
 
-String _$adminGlobalHash() => r'3b53abc1526c8c3e0f61b0758641ab3a69cd896d';
+String _$adminGlobalHash() => r'dbd1cc0433b76423dc22d8dc9db30021e8cae521';
 
 /// See also [AdminGlobal].
 @ProviderFor(AdminGlobal)

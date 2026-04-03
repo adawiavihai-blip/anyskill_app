@@ -186,10 +186,11 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
     _loadPulseAnalytics();
     _loadPeakHours();
 
-    // 1. GMV — sum totalAmount of all completed jobs
+    // 1. GMV — sum totalAmount of completed jobs (last 500 for performance)
     _insCompletedSub = FirebaseFirestore.instance
         .collection('jobs')
         .where('status', isEqualTo: 'completed')
+        .limit(500)
         .snapshots()
         .listen((snap) {
       double gmv = 0;
@@ -204,7 +205,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
     // 2. Net revenue — sum amount from platform_earnings
     _insEarnSub = FirebaseFirestore.instance
         .collection('platform_earnings')
-        .limit(5000)
+        .limit(500)
         .snapshots()
         .listen((snap) {
       double rev = 0;
@@ -220,6 +221,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
     _insEscrowSub = FirebaseFirestore.instance
         .collection('jobs')
         .where('status', isEqualTo: 'paid_escrow')
+        .limit(500)
         .snapshots()
         .listen((snap) {
       double esc = 0;
@@ -234,7 +236,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
     // 4. Transaction count — total records in transactions collection
     _insTxSub = FirebaseFirestore.instance
         .collection('transactions')
-        .limit(5000)
+        .limit(500)
         .snapshots()
         .listen((snap) {
       if (mounted) setState(() { _insTxCount = snap.docs.length; _insTxLoaded = true; });
@@ -247,6 +249,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
         .collection('job_requests')
         .where('status', isEqualTo: 'open')
         .where('interestedCount', isEqualTo: 0)
+        .limit(200)
         .snapshots()
         .listen((snap) {
       if (mounted) setState(() { _insUnanswered = snap.docs.length; _insUnanswLoaded = true; });
@@ -257,6 +260,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
     // 6. Banner analytics — click counts per banner (sorted desc)
     _insBannersSub = FirebaseFirestore.instance
         .collection('banners')
+        .limit(50)
         .snapshots()
         .listen((snap) {
       final banners = snap.docs

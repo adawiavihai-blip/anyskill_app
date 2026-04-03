@@ -320,6 +320,40 @@
         { "fieldPath": "expiresAt", "order": "ASCENDING" }
       ]
     }
+    ,
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isProvider", "order": "ASCENDING" },
+        { "fieldPath": "rating",     "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isVolunteer",  "order": "ASCENDING" },
+        { "fieldPath": "isOnline",     "order": "ASCENDING" },
+        { "fieldPath": "serviceType",  "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admin_audit_log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "targetUserId", "order": "ASCENDING"  },
+        { "fieldPath": "createdAt",    "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "reviews",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "revieweeId", "order": "ASCENDING"  },
+        { "fieldPath": "createdAt",  "order": "DESCENDING" }
+      ]
+    }
   ],
   "fieldOverrides": []
 }

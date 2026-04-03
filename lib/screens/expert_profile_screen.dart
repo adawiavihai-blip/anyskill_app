@@ -182,17 +182,12 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       final double commission        = totalPrice * feePercentage;
       final double expertNetEarnings = totalPrice - commission;
 
-      // 1b. Customer balance
-      final customerRef  = firestore.collection('users').doc(currentUserId);
-      final customerSnap = await customerRef.get();
-      final Map<String, dynamic> customerData = customerSnap.data() ?? {};
-      final double currentBalance  = (customerData['balance'] ?? 0.0).toDouble();
-      if (currentBalance < totalPrice) throw msgInsufficientBalance;
+      // ── Phase 2: Atomic transaction ─────────────────────────────────────
+      // runTransaction ensures balance check + deduction + job creation
+      // happen atomically — prevents double-spend race condition.
+      final customerRef = firestore.collection('users').doc(currentUserId);
 
-      // 1c. Slot collision pre-flight
-      //     Two users booking the same slot in the same millisecond is
-      //     vanishingly rare in a boutique marketplace; a pre-flight read is a
-      //     practical guard without the Promise-chain overhead of runTransaction.
+      // Slot pre-compute (key only — actual guard is inside transaction)
       DocumentReference? slotRef;
       final d = _selectedDay;
       final t = _selectedTimeSlot;
@@ -202,74 +197,75 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             '${d.year}${d.month.toString().padLeft(2, '0')}${d.day.toString().padLeft(2, '0')}_'
             '${t.replaceAll(':', '').replaceAll(' ', '')}';
         slotRef = firestore.collection('bookingSlots').doc(slotKey);
-        final slotSnap = await slotRef.get();
-        if (slotSnap.exists) throw kSlotConflict;
       }
 
-      // ── Phase 2: WriteBatch commit ─────────────────────────────────────────
-      // WriteBatch.commit() issues a single batched Firestore write RPC.
-      // Unlike runTransaction it has no retry loop and does not create a
-      // nested JS Promise chain, making it stable on Desktop Web (Chrome/Edge).
       final cancelDeadline = CancellationPolicyService.deadline(
         policy:          cancellationPolicy,
         appointmentDate: _selectedDay,
         timeSlot:        _selectedTimeSlot,
       );
 
-      final batch  = firestore.batch();
       final jobRef = firestore.collection('jobs').doc();
 
-      // Reserve booking slot (prevents duplicate in normal flow)
-      if (slotRef != null) {
-        batch.set(slotRef, {
-          'expertId':  widget.expertId,
-          'createdAt': FieldValue.serverTimestamp(),
+      await firestore.runTransaction((tx) async {
+        // READ: customer balance (inside transaction = atomic)
+        final customerSnap = await tx.get(customerRef);
+        final Map<String, dynamic> customerData = customerSnap.data() ?? {};
+        final double currentBalance = (customerData['balance'] ?? 0.0).toDouble();
+        if (currentBalance < totalPrice) throw msgInsufficientBalance;
+
+        // READ: slot collision check (inside transaction = atomic)
+        if (slotRef != null) {
+          final slotSnap = await tx.get(slotRef);
+          if (slotSnap.exists) throw kSlotConflict;
+          tx.set(slotRef, {
+            'expertId':  widget.expertId,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        // WRITE: job document
+        tx.set(jobRef, {
+          'jobId':               jobRef.id,
+          'chatRoomId':          chatRoomId,
+          'customerId':          currentUserId,
+          'customerName':        customerData['name'] ?? '',
+          'expertId':            widget.expertId,
+          'expertName':          widget.expertName,
+          'totalPaidByCustomer': totalPrice,
+          'totalAmount':         totalPrice,
+          'commissionAmount':    commission,
+          'netAmountForExpert':  expertNetEarnings,
+          'appointmentDate':     _selectedDay,
+          'appointmentTime':     _selectedTimeSlot,
+          'status':              'paid_escrow',
+          'createdAt':           FieldValue.serverTimestamp(),
+          'cancellationPolicy':  cancellationPolicy,
+          if (cancelDeadline != null)
+            'cancellationDeadline': Timestamp.fromDate(cancelDeadline),
         });
-      }
 
-      // Job document — immediately visible to provider's StreamBuilder
-      batch.set(jobRef, {
-        'jobId':               jobRef.id,
-        'chatRoomId':          chatRoomId,
-        'customerId':          currentUserId,
-        'customerName':        customerData['name'] ?? '',
-        'expertId':            widget.expertId,
-        'expertName':          widget.expertName,
-        'totalPaidByCustomer': totalPrice,
-        'totalAmount':         totalPrice,
-        'commissionAmount':    commission,
-        'netAmountForExpert':  expertNetEarnings,
-        'appointmentDate':     _selectedDay,
-        'appointmentTime':     _selectedTimeSlot,
-        'status':              'paid_escrow',
-        'createdAt':           FieldValue.serverTimestamp(),
-        'cancellationPolicy':  cancellationPolicy,
-        if (cancelDeadline != null)
-          'cancellationDeadline': Timestamp.fromDate(cancelDeadline),
+        // WRITE: deduct customer balance
+        tx.update(customerRef, {'balance': FieldValue.increment(-totalPrice)});
+
+        // WRITE: platform commission
+        tx.set(firestore.collection('platform_earnings').doc(), {
+          'jobId':          jobRef.id,
+          'amount':         commission,
+          'sourceExpertId': widget.expertId,
+          'timestamp':      FieldValue.serverTimestamp(),
+          'status':         'pending_escrow',
+        });
+
+        // WRITE: wallet transaction log
+        tx.set(firestore.collection('transactions').doc(), {
+          'userId':    currentUserId,
+          'amount':    -totalPrice,
+          'title':     msgTransactionTitle,
+          'timestamp': FieldValue.serverTimestamp(),
+          'status':    'escrow',
+        });
       });
-
-      // Deduct customer balance
-      batch.update(customerRef, {'balance': FieldValue.increment(-totalPrice)});
-
-      // Platform commission record
-      batch.set(firestore.collection('platform_earnings').doc(), {
-        'jobId':          jobRef.id,
-        'amount':         commission,
-        'sourceExpertId': widget.expertId,
-        'timestamp':      FieldValue.serverTimestamp(),
-        'status':         'pending_escrow',
-      });
-
-      // Wallet transaction log
-      batch.set(firestore.collection('transactions').doc(), {
-        'userId':    currentUserId,
-        'amount':    -totalPrice,
-        'title':     msgTransactionTitle,
-        'timestamp': FieldValue.serverTimestamp(),
-        'status':    'escrow',
-      });
-
-      await batch.commit();
 
       // Debug: confirm the exact expertId written so we can verify it matches
       // the provider's UID in my_bookings_screen.dart's _expertStream query.

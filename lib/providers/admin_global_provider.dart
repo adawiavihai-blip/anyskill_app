@@ -97,6 +97,7 @@ class AdminGlobal extends _$AdminGlobal {
       _db
           .collection('jobs')
           .where('status', isEqualTo: 'disputed')
+          .limit(200)
           .snapshots()
           .listen(
         (snap) => state = state.copyWith(pendingDisputes: snap.docs.length),
@@ -137,6 +138,7 @@ class AdminGlobal extends _$AdminGlobal {
       _db
           .collection('jobs')
           .where('status', isEqualTo: 'paid_escrow')
+          .limit(500)
           .snapshots()
           .listen(
         (snap) => state = state.copyWith(activeEscrows: snap.docs.length),
