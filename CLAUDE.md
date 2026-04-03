@@ -26,7 +26,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | Monitoring | Sentry (sentry_flutter ^8.0.0), Firebase Crashlytics, Watchtower |
 | Hosting | Firebase Hosting (SPA) |
 
-**Version:** 8.9.4 &bull; **Firebase Project:** anyskill-6fdf3
+**Version:** 9.0.0 &bull; **Firebase Project:** anyskill-6fdf3
 
 ---
 
@@ -1033,6 +1033,84 @@ add to `firestore.rules`:
 allow create: if ... && request.resource.data.customerId != request.resource.data.expertId;
 ```
 
+### Law 14: Task Visibility + Admin Superiority
+
+#### No Ghost Bookings
+
+Job streams must return **all** relevant documents. Ghost bookings
+(jobs appearing and disappearing) are caused by two things:
+
+**A) Query limits too low.** Without `orderBy`, Firestore picks an
+arbitrary subset. When a doc changes, the subset shifts and jobs
+appear/disappear. Fix: use `.limit(200)` for booking streams.
+
+**B) Missing terminal statuses.** Every status that exists in the system
+must be in exactly one bucket — active or history.
+
+**Active statuses (shown in "משימות שלי" / "פעילות"):**
+```
+paid_escrow, expert_completed, disputed,
+pending, accepted, in_progress, awaiting_payment
+```
+
+**History statuses (shown in "היסטוריה"):**
+```
+completed, cancelled, refunded,
+split_resolved, cancelled_with_penalty, payment_failed
+```
+
+The customer history tab uses a **catch-all**: `!_activeStatuses.contains(status)`.
+The provider tasks list must use the class-level `_activeStatuses` set.
+
+#### Admin Superiority — Unrestricted Visibility
+
+The Admin user (`isAdmin: true`) must have **unrestricted visibility** of all
+jobs, experts, and users. Admins must never experience UI lag from redundant
+stream listeners.
+
+**Admin bookings merge (`my_bookings_screen.dart`):**
+- When `isAdmin: true`, `_isProvider` is forced to `true` so admin always
+  sees provider tabs (יומן + משימות שלי)
+- `_buildMergedTasksStream()` merges BOTH `_expertStream` and `_customerStream`
+  into a single deduplicated list (by doc ID)
+- Admin sees every job they're involved in — as customer OR as expert
+
+**Tab caching (`home_screen.dart`):**
+- The `IndexedStack` tab list is cached in `_cachedTabs`
+- Only rebuilt when `isProvider` or `isAdmin` changes
+- Normal user doc changes (isOnline toggle, XP, badge) reuse the cached list
+- This eliminates redundant widget tree rebuilds on every Firestore event
+
+**Files:** `my_bookings_screen.dart` (`_buildMergedTasksStream`, `_subscribeProviderStatus`),
+`home_screen.dart` (`_cachedTabs`, `_cachedIsProvider`, `_cachedIsAdmin`).
+
+### Law 15: Mobile Resilience — Watchdog + Resilient Fetch
+
+Mobile browsers (especially iOS Safari) are prone to loading hangs caused
+by stale service workers, slow Firestore reads, or stuck JS init.
+
+**Three-tier resilient user fetch (`_resilientUserFetch` in `main.dart`):**
+
+| Tier | Source | Timeout | Fallback on failure |
+|------|--------|---------|---------------------|
+| 1 | `Source.server` | 4 seconds | → Tier 2 |
+| 2 | `Source.cache` | instant | → Tier 3 (if empty/missing) |
+| 3 | Default `get()` | 4 seconds | → cache catchError |
+
+**Never throws.** Always returns a `DocumentSnapshot` (may be non-existent
+but won't crash the `FutureBuilder`).
+
+**JS Watchdog timer (`app_init.js`):**
+- On page load: clears `sessionStorage['app_ready']`, starts 10s countdown
+- Flutter writes `sessionStorage['app_ready'] = '1'` after first frame
+- If flag not set after 10s: clears nuclear purge key + `location.reload()`
+- This catches stuck SW registration, stalled Dart init, corrupted cache
+
+**Rules:**
+- `Source.server` timeout must be ≤ 4 seconds (was 8s — too slow on mobile)
+- The watchdog timer must be ≥ 10 seconds (Flutter engine needs ~5s on slow devices)
+- `_resilientUserFetch` must never throw — all tiers wrapped in try/catch
+
 ---
 
 ## 10. Firestore Collections Reference
@@ -1345,7 +1423,7 @@ writes to `admin_audit_log/{id}` with `targetUserId`, `action`, `adminName`, `cr
 
 ---
 
-## 15b. Code Health Snapshot (2026-04-03)
+## 15b. Code Health Snapshot (2026-04-04 — v8.9.9 STABLE)
 
 | Metric | Value | Status |
 |--------|-------|--------|
@@ -1661,4 +1739,4 @@ firebase deploy --only firestore:indexes # Deploy indexes
 
 ---
 
-*Last updated: 2026-04-03 | Version: 8.9.4*
+*Last updated: 2026-04-04 | Version: 9.0.0 (STABLE)*

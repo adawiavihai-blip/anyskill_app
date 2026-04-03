@@ -282,6 +282,31 @@ class _FinanceScreenState extends State<FinanceScreen>
                       child: _buildClientPaymentCard(context),
                     ),
                   ),
+                  // ── Internal wallet balance summary ──────────────────
+                  if (balance > 0 || balance < 0)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                        child: Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0F0FF),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFF6366F1).withValues(alpha: 0.2)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.account_balance_wallet_rounded,
+                                  size: 20, color: Color(0xFF6366F1)),
+                              const SizedBox(width: 10),
+                              Text('יתרת ארנק פנימי: ₪${balance.toStringAsFixed(0)}',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600, fontSize: 14)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
 
                 // ── Promo banners (both roles) ─────────────────────────
@@ -1073,6 +1098,7 @@ class _FinanceScreenState extends State<FinanceScreen>
           .where(Filter.or(
             Filter('senderId',   isEqualTo: uid),
             Filter('receiverId', isEqualTo: uid),
+            Filter('userId',     isEqualTo: uid),
           ))
           .snapshots(),
       builder: (context, snap) {

@@ -48,6 +48,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Admin status — read from Firestore `users/{uid}.isAdmin` (not email)
   bool _isAdmin = false;
 
+  // ── Tab caching — prevents rebuilding the entire IndexedStack on every
+  //    user doc stream event (isOnline toggle, XP update, etc.)
+  List<Widget>? _cachedTabs;
+  bool _cachedIsProvider = false;
+  bool _cachedIsAdmin    = false;
+
   // ── Offline banner ──────────────────────────────────────────────────────
   bool _isOffline = false;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
@@ -277,41 +283,50 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         //   Home(0), Bookings(1), [QR center], Chat(2), Wallet(3).
         final int profileTabPos = 4;
 
-        final List<Widget> tabs = [
-          _nestedTab(0, HomeTab(
-            userData: data,
-            currentUserId: currentUser?.uid ?? '',
-            isOnline: isOnline,
-            onToggleOnline: (v) => _setOnlineStatus(v, showFeedback: true),
-            onGoToBookings: () => setState(() => _selectedIndex = 1),
-            onGoToChat: () => setState(() => _selectedIndex = 2),
-            onOpenQuickRequest: () => _showQuickRequestSheet(context, data),
-            onGoToProfile: () => setState(() => _selectedIndex = profileTabPos),
-          )),
-          _nestedTab(1, MyBookingsScreen(onGoToSearch: goToSearch)),
-          _nestedTab(2, ChatListScreen(onGoToSearch: goToSearch)),
-          _nestedTab(3, const FinanceScreen()),   // pos 3 / key 3 — Wallet
-          _nestedTab(4, const ProfileScreen()),   // pos 4 / key 4 — Profile (avatar only)
-        ];
+        // ── Tab caching: only rebuild when role changes ──────────────────
+        // On mobile, the user doc stream fires on every isOnline toggle,
+        // XP update, badge check, etc.  Rebuilding the full tab list each
+        // time is expensive.  We cache it and only regenerate when
+        // isProvider or isAdmin actually changes.
+        final roleChanged = _cachedTabs == null
+            || _cachedIsProvider != isProvider
+            || _cachedIsAdmin    != effectiveAdmin;
 
-        // Index 5 — Opportunities (providers only)
-        if (isProvider) {
-          tabs.add(_nestedTab(5, OpportunitiesScreen(
-            key: ValueKey(serviceType),
-            serviceType: serviceType,
-            providerName: userName,
-            isAdmin: effectiveAdmin,
-          )));
+        if (roleChanged) {
+          _cachedIsProvider = isProvider;
+          _cachedIsAdmin    = effectiveAdmin;
+          final newTabs = <Widget>[
+            _nestedTab(0, HomeTab(
+              userData: data,
+              currentUserId: currentUser?.uid ?? '',
+              isOnline: isOnline,
+              onToggleOnline: (v) => _setOnlineStatus(v, showFeedback: true),
+              onGoToBookings: () => setState(() => _selectedIndex = 1),
+              onGoToChat: () => setState(() => _selectedIndex = 2),
+              onOpenQuickRequest: () => _showQuickRequestSheet(context, data),
+              onGoToProfile: () => setState(() => _selectedIndex = profileTabPos),
+            )),
+            _nestedTab(1, MyBookingsScreen(onGoToSearch: goToSearch)),
+            _nestedTab(2, ChatListScreen(onGoToSearch: goToSearch)),
+            _nestedTab(3, const FinanceScreen()),
+            _nestedTab(4, const ProfileScreen()),
+          ];
+          if (isProvider) {
+            newTabs.add(_nestedTab(5, OpportunitiesScreen(
+              key: ValueKey(serviceType),
+              serviceType: serviceType,
+              providerName: userName,
+              isAdmin: effectiveAdmin,
+            )));
+          }
+          if (effectiveAdmin) {
+            newTabs.add(_nestedTab(6, const AdminScreen()));
+            newTabs.add(_nestedTab(7, const SystemWalletScreen()));
+          }
+          _cachedTabs = newTabs;
         }
 
-        // Admin-only tabs.
-        // Strict isAdmin guard: these tabs are NEVER added to the list for
-        // non-admin users, so there is no possible list index that maps to
-        // AdminScreen or SystemWalletScreen for a regular user.
-        if (effectiveAdmin) {
-          tabs.add(_nestedTab(6, const AdminScreen()));
-          tabs.add(_nestedTab(7, const SystemWalletScreen()));
-        }
+        final tabs = _cachedTabs!;
 
         // ── Guard: clamp _selectedIndex to valid range ────────────────────────
         // If the user's role changed (e.g. provider → customer removes יומן/הזדמנויות),

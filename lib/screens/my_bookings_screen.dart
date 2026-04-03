@@ -131,6 +131,8 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   // updates (e.g. admin grants provider status while the screen is open).
   // Replaces the old one-shot get() which could race with the first build
   // and leave _isProvider=false, hiding the provider tabs permanently.
+  bool _isAdmin = false;
+
   void _subscribeProviderStatus() {
     if (currentUserId.isEmpty) {
       setState(() => _providerLoaded = true);
@@ -145,8 +147,12 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         if (!mounted) return;
         final data = doc.data() ?? {};
         final isProvider = data['isProvider'] == true;
+        final isAdmin    = data['isAdmin']    == true;
         setState(() {
-          _isProvider     = isProvider;
+          // Admin always gets provider tabs so they see ALL jobs
+          // (expert-side via "משימות שלי" + customer-side via calendar)
+          _isProvider     = isProvider || isAdmin;
+          _isAdmin        = isAdmin;
           _providerLoaded = true;
         });
       },
@@ -903,8 +909,58 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
       }
     });
 
+    // Admin sees ALL jobs (expert + customer). Regular providers see expert only.
+    return _isAdmin
+        ? _buildMergedTasksStream()
+        : _buildSingleTasksStream(_expertStream);
+  }
+
+  /// Admin merged view: combines expert-side + customer-side jobs.
+  Widget _buildMergedTasksStream() {
     return StreamBuilder<QuerySnapshot>(
       stream: _expertStream,
+      builder: (context, expertSnap) {
+        return StreamBuilder<QuerySnapshot>(
+          stream: _customerStream,
+          builder: (context, customerSnap) {
+            // Wait for both streams
+            if ((!expertSnap.hasData && !_tasksTimedOut) ||
+                (!customerSnap.hasData && !_tasksTimedOut)) {
+              return const _BookingsShimmer();
+            }
+
+            final expertDocs   = expertSnap.data?.docs   ?? [];
+            final customerDocs = customerSnap.data?.docs  ?? [];
+
+            // Merge and deduplicate by doc ID
+            final seen = <String>{};
+            final merged = <QueryDocumentSnapshot>[];
+            for (final d in [...expertDocs, ...customerDocs]) {
+              if (seen.add(d.id)) merged.add(d);
+            }
+
+            _tasksFirstSnapshotReceived = true;
+            _tasksTimeoutTimer?.cancel();
+
+            debugPrint('[Tasks/Admin] Merged ${merged.length} docs '
+                '(expert=${expertDocs.length}, customer=${customerDocs.length})');
+
+            if (merged.isEmpty) {
+              return _buildEmptyState(isExpert: true, isHistory: false);
+            }
+
+            _autoTriggerProviderReview(context, merged);
+            return _buildExpertTasksList(merged);
+          },
+        );
+      },
+    );
+  }
+
+  /// Standard single-stream view for regular providers.
+  Widget _buildSingleTasksStream(Stream<QuerySnapshot> stream) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: stream,
       builder: (context, snapshot) {
         // ── Error state ─────────────────────────────────────────────────
         if (snapshot.hasError) {
