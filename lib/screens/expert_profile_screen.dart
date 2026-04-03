@@ -172,19 +172,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
 
     try {
       // ── Phase 1: reads ────────────────────────────────────────────────────
-      // Plain sequential awaits — no transaction wrapper, no JS Promise retries.
-
-      // 1a. Admin fee
-      final adminSnap = await adminSettingsRef.get();
-      final Map<String, dynamic> adminData = adminSnap.data() ?? {};
-      final double feePercentage =
-          ((adminData['feePercentage']) ?? 0.10).toDouble();
-      final double commission        = totalPrice * feePercentage;
-      final double expertNetEarnings = totalPrice - commission;
-
-      // ── Phase 2: Atomic transaction ─────────────────────────────────────
-      // runTransaction ensures balance check + deduction + job creation
-      // happen atomically — prevents double-spend race condition.
+      // ── Atomic transaction ──────────────────────────────────────────
+      // Fee, balance, slot check, and all writes happen inside a single
+      // transaction — prevents double-spend and fee-change race conditions.
       final customerRef = firestore.collection('users').doc(currentUserId);
 
       // Slot pre-compute (key only — actual guard is inside transaction)
@@ -207,7 +197,20 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
 
       final jobRef = firestore.collection('jobs').doc();
 
+      // Commission values — computed inside transaction, stored here for
+      // the post-transaction system message.
+      double commission = 0;
+      double expertNetEarnings = 0;
+
       await firestore.runTransaction((tx) async {
+        // READ: admin fee settings (inside transaction = atomic)
+        final adminSnap = await tx.get(adminSettingsRef);
+        final feePercentage =
+            ((adminSnap.data() ?? {})['feePercentage'] as num? ?? 0.10)
+                .toDouble();
+        commission = double.parse((totalPrice * feePercentage).toStringAsFixed(2));
+        expertNetEarnings = double.parse((totalPrice - commission).toStringAsFixed(2));
+
         // READ: customer balance (inside transaction = atomic)
         final customerSnap = await tx.get(customerRef);
         final Map<String, dynamic> customerData = customerSnap.data() ?? {};
@@ -267,12 +270,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         });
       });
 
-      // Debug: confirm the exact expertId written so we can verify it matches
-      // the provider's UID in my_bookings_screen.dart's _expertStream query.
-      // Compare this value against the "[AnySkill] isProvider" log on the
-      // provider's device — they must be identical for the stream to pick it up.
-
-      // System chat message (non-critical; after batch so batch failure is clean)
+      // System chat message (non-critical; after transaction)
       await _sendSystemNotification(
           chatRoomId, totalPrice, expertNetEarnings, currentUserId,
           systemMsg: l10n.expertSystemMessage(

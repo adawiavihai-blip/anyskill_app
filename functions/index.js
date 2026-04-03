@@ -19,6 +19,11 @@ admin.initializeApp();
 // Exported from payments.js to keep index.js focused on platform logic.
 const payments = require("./payments");
 
+// ── Financial rounding (NIS = 2 decimal places) ─────────────────────────────
+// JavaScript floating point: 100 * 0.10 = 10.000000000000002
+// This helper prevents ghost agorot and ensures fee + net = total exactly.
+function roundNIS(n) { return Math.round(n * 100) / 100; }
+
 // Flat (root-level) exports — current Flutter clients call these directly.
 exports.createPaymentIntent        = payments.createPaymentIntent;
 exports.handleStripeWebhook        = payments.handleStripeWebhook;
@@ -458,8 +463,8 @@ exports.processPaymentRelease = onCall(async (request) => {
             const globalFee = adminSnap.exists ? (adminSnap.data().feePercentage ?? 0.10) : 0.10;
             const feePercentage = (customCommission != null) ? customCommission : globalFee;
 
-            const feeAmount   = totalAmount * feePercentage;
-            const netToExpert = totalAmount - feeAmount;
+            const feeAmount   = roundNIS(totalAmount * feePercentage);
+            const netToExpert = roundNIS(totalAmount - feeAmount);
             console.log(`[PPR] STEP6 TX: feePercentage=${feePercentage} (${customCommission != null ? 'custom' : 'global'}), feeAmount=${feeAmount}, netToExpert=${netToExpert}`);
 
             // ── Edge case: provider deleted their account mid-transaction ──────
@@ -2564,8 +2569,8 @@ exports.resolveDisputeAdmin = onCall(
 
             } else if (resolution === "release") {
                 // Release escrow to expert (minus platform fee)
-                expertCredit   = totalAmount * (1 - feePct);
-                platformFee    = totalAmount * feePct;
+                platformFee    = roundNIS(totalAmount * feePct);
+                expertCredit   = roundNIS(totalAmount - platformFee);
                 customerCredit = 0;
                 newStatus      = "completed";
 
@@ -2581,10 +2586,10 @@ exports.resolveDisputeAdmin = onCall(
 
             } else {
                 // Split 50 / 50
-                const half     = totalAmount * 0.5;
+                const half     = roundNIS(totalAmount * 0.5);
                 customerCredit = half;
-                expertCredit   = half * (1 - feePct);
-                platformFee    = half * feePct;
+                platformFee    = roundNIS(half * feePct);
+                expertCredit   = roundNIS(half - platformFee);
                 newStatus      = "split_resolved";
 
                 t.update(customerRef, { balance: admin.firestore.FieldValue.increment(customerCredit) });
@@ -2776,10 +2781,10 @@ exports.processCancellation = onCall(
                     // After deadline → penalty split
                     isPenalty = true;
                     const penaltyPct    = policy === "strict" ? 1.0 : 0.5;
-                    const penaltyAmount = totalAmount * penaltyPct;
-                    customerCredit = totalAmount - penaltyAmount;
-                    expertCredit   = penaltyAmount * (1 - feePct);
-                    platformFee    = penaltyAmount * feePct;
+                    const penaltyAmount = roundNIS(totalAmount * penaltyPct);
+                    customerCredit = roundNIS(totalAmount - penaltyAmount);
+                    expertCredit   = roundNIS(penaltyAmount * (1 - feePct));
+                    platformFee    = roundNIS(penaltyAmount * feePct);
                     newStatus      = "cancelled_with_penalty";
 
                     if (customerCredit > 0) {
