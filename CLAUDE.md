@@ -26,7 +26,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | Monitoring | Sentry (sentry_flutter ^8.0.0), Firebase Crashlytics, Watchtower |
 | Hosting | Firebase Hosting (SPA) |
 
-**Version:** 9.0.9 &bull; **Firebase Project:** anyskill-6fdf3
+**Version:** 9.1.0 &bull; **Firebase Project:** anyskill-6fdf3
 
 ---
 
@@ -1293,6 +1293,31 @@ verification miss — logs instead of throwing.
 - History/task streams must ALWAYS have a timeout fallback (≤ 10 seconds)
 - `isVolunteer` badge must appear on: search cards, expert profile, public profile
 
+### Law 22: Data Integrity & Real-time Sync (v9.1.0)
+
+**Volunteer profile images must use `safeImageProvider`:**
+- `_buildVolunteerChip` in `community_screen.dart` uses `safeImageProvider(imageUrl)`
+- Handles both base64 and HTTPS URLs with initials fallback
+- Debug logging: `[Volunteer] name (uid=...) img=N chars|NULL`
+
+**Support chat must be accessible from Messages tab:**
+- Pinned "תמיכה" entry at index 0 of the chat list (`chat_list_screen.dart`)
+- Shows support agent icon + "צריך עזרה? דבר עם הצוות שלנו"
+- Taps navigates to `SupportCenterScreen`
+- Support tickets live in `support_tickets` collection (separate from `chats`)
+
+**Story upload must offer replace/delete options:**
+- When provider has an existing story, tapping opens a bottom sheet:
+  - "צפה בסטורי" → view existing
+  - "העלה סטורי חדש" → upload replacement
+  - "מחק סטורי" → delete + allow new upload
+- When no story exists, tapping goes straight to upload
+
+**Customer stream timeout:**
+- `_customerStreamTimedOut` flag after 6 seconds
+- Shows empty state instead of infinite skeleton shimmer
+- Same pattern as provider history timeout
+
 ---
 
 ## 9c. v9.0.4 Changelog — Major Fixes Implemented 2026-04-04
@@ -1986,4 +2011,4 @@ firebase deploy --only firestore:indexes # Deploy indexes
 
 ---
 
-*Last updated: 2026-04-04 | Version: 9.0.9 (STABLE)*
+*Last updated: 2026-04-04 | Version: 9.1.0 (STABLE)*

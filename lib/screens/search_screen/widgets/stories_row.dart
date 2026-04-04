@@ -355,11 +355,52 @@ class _MyStorySlotState extends State<_MyStorySlot>
 
   void _onTap(BuildContext context) {
     if (_hasStory) {
-      // View own story
-      openStoryViewer(context, widget.uid,
-          widget.ownDoc!.data() as Map<String, dynamic>);
+      // Show options: view or replace
+      showModalBottomSheet(
+        context: context,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.play_circle_rounded, color: Color(0xFF6366F1)),
+                  title: const Text('צפה בסטורי', style: TextStyle(fontWeight: FontWeight.bold)),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    openStoryViewer(context, widget.uid,
+                        widget.ownDoc!.data() as Map<String, dynamic>);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.upload_rounded, color: Color(0xFF10B981)),
+                  title: const Text('העלה סטורי חדש', style: TextStyle(fontWeight: FontWeight.bold)),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _showUploadSheet(context, widget.uid, widget.onUploaded);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.delete_outline_rounded, color: Color(0xFFEF4444)),
+                  title: const Text('מחק סטורי', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFEF4444))),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    final videoUrl = (widget.ownDoc!.data()
+                            as Map<String, dynamic>)['videoUrl'] as String? ?? '';
+                    _confirmAndDeleteStory(context, widget.uid, videoUrl);
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
     } else {
-      // Upload new story
+      // No story — go straight to upload
       _showUploadSheet(context, widget.uid, widget.onUploaded);
     }
   }

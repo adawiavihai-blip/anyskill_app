@@ -791,8 +791,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
 
   Widget _buildVolunteerChip(Map<String, dynamic> userData, String uid) {
     final name = userData['name'] as String? ?? 'מתנדב';
-    final imageUrl = userData['profileImage'] as String?;
+    final rawImg = userData['profileImage'];
+    final imageUrl = (rawImg is String && rawImg.isNotEmpty) ? rawImg : null;
     final category = userData['serviceType'] as String? ?? '';
+    debugPrint('[Volunteer] $name (uid=$uid) img=${imageUrl != null ? "${imageUrl.length} chars" : "NULL"}');
 
     return GestureDetector(
       onTap: () => Navigator.of(context, rootNavigator: true).push(

@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
 import 'chat_screen.dart';
+import 'support_center_screen.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/skeleton_loader.dart';
 
@@ -197,8 +198,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 // Runs once per stream update; subsequent builds hit the cache.
                 _primeUserCache(chats);
 
+                // +1 for the pinned Support entry at index 0
                 return ListView.separated(
-                  itemCount: chats.length,
+                  itemCount: chats.length + 1,
                   padding: const EdgeInsets.only(bottom: 20),
                   separatorBuilder: (_, __) => Divider(
                     height: 1,
@@ -208,7 +210,25 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     color: Colors.grey.shade100,
                   ),
                   itemBuilder: (context, index) {
-                    final chatDoc  = chats[index];
+                    // Index 0 = pinned Support entry
+                    if (index == 0) {
+                      return ListTile(
+                        leading: const CircleAvatar(
+                          backgroundColor: Color(0xFF6366F1),
+                          child: Icon(Icons.support_agent_rounded,
+                              color: Colors.white, size: 22),
+                        ),
+                        title: const Text('תמיכה',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: const Text('צריך עזרה? דבר עם הצוות שלנו',
+                            style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8))),
+                        trailing: const Icon(Icons.arrow_forward_ios_rounded,
+                            size: 14, color: Color(0xFF94A3B8)),
+                        onTap: () => Navigator.push(context,
+                          MaterialPageRoute(builder: (_) => const SupportCenterScreen())),
+                      );
+                    }
+                    final chatDoc  = chats[index - 1]; // offset by 1 for support entry
                     final chatData = chatDoc.data() as Map<String, dynamic>? ?? {};
                     final users    = chatData['users'] as List? ?? [];
                     final otherUserId = users.firstWhere(
