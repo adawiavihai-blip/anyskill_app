@@ -180,59 +180,48 @@ void main() async {
     // rather than a permanent white screen.
   }
 
-  // ── Step 3a: Firestore web settings ──────────────────────────────────────
-  // On web, the default IndexedDB multi-tab persistence can hit
-  // "INTERNAL ASSERTION FAILED: Unexpected state" when tabs conflict
-  // or the cache is corrupted. We configure a 40 MB cache and catch
-  // any persistence init errors gracefully.
+  // ── Step 3a: Firestore web — single settings call + corruption recovery ──
+  // CRITICAL: Firestore settings can only be set ONCE. Setting them twice
+  // (e.g., after a version-upgrade cache wipe) causes the
+  // "INTERNAL ASSERTION FAILED: Unexpected state" crash.
+  //
+  // Strategy:
+  //   1. Check for version upgrade → clear caches if needed (BEFORE settings)
+  //   2. Set Firestore settings exactly ONCE
+  //   3. If persistence fails → clearPersistence + disable
   if (kIsWeb) {
+    // Version upgrade: wipe caches BEFORE Firestore settings are applied
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastVersion = prefs.getString('last_app_version');
+      if (lastVersion != null && lastVersion != currentAppVersion) {
+        debugPrint('🧹 Version upgrade ($lastVersion → $currentAppVersion) — clearing caches');
+        await clearWebCaches();
+        // Also clear Firestore persistence to prevent corrupted IndexedDB
+        try { await FirebaseFirestore.instance.clearPersistence(); } catch (_) {}
+      }
+      await prefs.setString('last_app_version', currentAppVersion);
+    } catch (e) {
+      debugPrint('⚠️ Version cache-clear failed: $e');
+    }
+
+    // Single Firestore settings call — NEVER called again after this point
     try {
       FirebaseFirestore.instance.settings = const Settings(
         persistenceEnabled: true,
         cacheSizeBytes: 40 * 1024 * 1024, // 40 MB
       );
-      debugPrint('✅ Firestore Web: persistence configured (40 MB)');
+      debugPrint('✅ Firestore Web: persistence ON (40 MB)');
     } catch (e) {
-      debugPrint('⚠️ Firestore Web persistence config failed: $e');
-      // Fallback: disable persistence entirely to avoid assertion errors
+      debugPrint('⚠️ Firestore persistence init failed: $e');
+      // Corrupted IndexedDB — clear and disable persistence
+      try { await FirebaseFirestore.instance.clearPersistence(); } catch (_) {}
       try {
-        FirebaseFirestore.instance.settings = const Settings(
-          persistenceEnabled: false,
-        );
-        debugPrint('ℹ️ Firestore Web: persistence DISABLED (fallback)');
-      } catch (_) {}
-    }
-  }
-
-  // ── Step 3a-2: Force cache clear on version upgrade (web only) ─────────
-  // Detects when the running app version differs from the last-seen version
-  // stored in SharedPreferences. On mismatch, nukes IndexedDB (Firestore
-  // persistence) and Cache API (service-worker assets) to guarantee users
-  // get fresh data and no stale Firestore cache causes blank screens.
-  if (kIsWeb) {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final lastVersion = prefs.getString('last_app_version');
-      if (lastVersion != null && lastVersion != currentAppVersion) {
-        debugPrint('🧹 Version upgrade detected ($lastVersion → $currentAppVersion) — clearing web caches');
-        await clearWebCaches();
-        // Re-configure Firestore persistence after IndexedDB wipe
-        try {
-          FirebaseFirestore.instance.settings = const Settings(
-            persistenceEnabled: true,
-            cacheSizeBytes: 40 * 1024 * 1024,
-          );
-        } catch (_) {
-          try {
-            FirebaseFirestore.instance.settings = const Settings(
-              persistenceEnabled: false,
-            );
-          } catch (_) {}
-        }
+        FirebaseFirestore.instance.settings = const Settings(persistenceEnabled: false);
+        debugPrint('ℹ️ Firestore Web: persistence DISABLED (recovery)');
+      } catch (_) {
+        debugPrint('⚠️ Firestore settings failed entirely — using SDK defaults');
       }
-      await prefs.setString('last_app_version', currentAppVersion);
-    } catch (e) {
-      debugPrint('⚠️ Version cache-clear failed: $e');
     }
   }
 
@@ -412,10 +401,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) setState(() => _startupGrace = false);
     });
-    // iOS Connection Supervisor: if auth hasn't resolved in 5 seconds,
+    // iOS Connection Supervisor: if auth hasn't resolved in 3 seconds,
     // force past the waiting state so the user sees login or home screen
-    // instead of an infinite splash logo.
-    Future.delayed(const Duration(seconds: 5), () {
+    // instead of an infinite splash logo.  Reduced from 5s — users were
+    // still seeing the splash for too long on iPhone.
+    Future.delayed(const Duration(seconds: 3), () {
       if (mounted && !_authTimedOut) setState(() => _authTimedOut = true);
     });
     _handleWebUpdates();

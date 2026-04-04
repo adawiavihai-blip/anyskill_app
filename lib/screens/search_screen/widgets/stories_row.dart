@@ -853,16 +853,30 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen>
   }
 
   Future<void> _initVideo() async {
-    try {
-      _ctrl = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl));
-      await _ctrl.initialize();
-      if (!mounted) return;
-      _ctrl.addListener(_onUpdate);
-      await _ctrl.play();
-      setState(() => _initialized = true);
-    } catch (_) {
+    final url = widget.videoUrl;
+    if (url.isEmpty) {
       if (mounted) setState(() => _error = true);
+      return;
     }
+    // Retry up to 2 times — Firebase Storage URLs may take a moment to propagate
+    for (int attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (attempt > 0) await Future.delayed(const Duration(seconds: 2));
+        _ctrl = VideoPlayerController.networkUrl(Uri.parse(url));
+        await _ctrl.initialize().timeout(const Duration(seconds: 10));
+        if (!mounted) return;
+        _ctrl.addListener(_onUpdate);
+        await _ctrl.play();
+        setState(() => _initialized = true);
+        return; // success — exit retry loop
+      } catch (e) {
+        debugPrint('[StoryViewer] Init attempt ${attempt + 1} failed: $e');
+        if (attempt == 0) {
+          try { _ctrl.dispose(); } catch (_) {}
+        }
+      }
+    }
+    if (mounted) setState(() => _error = true);
   }
 
   void _onUpdate() {

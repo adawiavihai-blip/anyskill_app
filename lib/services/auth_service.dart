@@ -13,20 +13,22 @@ import '../screens/phone_login_screen.dart';
 /// listeners remaining.
 Future<void> performSignOut(BuildContext context) async {
   try {
-    // Step 1: clear the entire nav stack and go to PhoneLoginScreen.
-    // All StreamBuilders in the old tree are disposed here, cancelling
-    // every active Firestore listener before credentials are revoked.
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const PhoneLoginScreen()),
-      (route) => false,
-    );
-
-    // Step 2: sign out after the navigation request is enqueued.
-    // By the time this executes the old widget tree is already tearing down.
+    // Sign out ONLY — do NOT navigate manually.
+    // AuthWrapper's StreamBuilder on authStateChanges() will detect the
+    // null user and automatically rebuild to PhoneLoginScreen.
+    // Manual pushAndRemoveUntil caused a double-navigation race that
+    // crashed with a blank "death screen" (v9.1.0 bug).
     await FirebaseAuth.instance.signOut();
-    debugPrint('SignOut: completed successfully');
+    debugPrint('SignOut: completed — AuthWrapper will handle navigation');
   } catch (e) {
-    // Firestore may still log a non-fatal assertion — auth state clears anyway.
     debugPrint('SignOut error (non-fatal): $e');
+    // Even if signOut throws, force-navigate to prevent the user from
+    // being stuck on a broken screen.
+    if (context.mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const PhoneLoginScreen()),
+        (route) => false,
+      );
+    }
   }
 }

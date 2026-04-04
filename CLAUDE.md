@@ -26,7 +26,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | Monitoring | Sentry (sentry_flutter ^8.0.0), Firebase Crashlytics, Watchtower |
 | Hosting | Firebase Hosting (SPA) |
 
-**Version:** 9.1.0 &bull; **Firebase Project:** anyskill-6fdf3
+**Version:** 9.1.1 &bull; **Firebase Project:** anyskill-6fdf3
 
 ---
 
@@ -1318,6 +1318,31 @@ verification miss — logs instead of throwing.
 - Shows empty state instead of infinite skeleton shimmer
 - Same pattern as provider history timeout
 
+### Law 23: Infrastructure Integrity (v9.1.1)
+
+**Firestore persistence must be set exactly ONCE:**
+- `main.dart` Step 3a: version-upgrade cache wipe runs BEFORE Settings call
+- `clearPersistence()` called if IndexedDB is corrupted
+- Settings applied ONCE — never called again
+- On failure: `clearPersistence()` + `persistenceEnabled: false`
+- The duplicate settings call (v8.9.4 → v9.1.0) that caused
+  "INTERNAL ASSERTION FAILED: Unexpected state" is eliminated
+
+**Logout must NOT manually navigate:**
+- `performSignOut()` calls ONLY `FirebaseAuth.instance.signOut()`
+- `AuthWrapper.StreamBuilder<User?>` detects `null` → shows `PhoneLoginScreen`
+- Manual `pushAndRemoveUntil` caused a double-navigation race → blank screen
+- Fallback: if signOut throws, THEN navigate manually as last resort
+
+**Auth supervisor reduced to 3 seconds:**
+- iOS cold starts: `_authTimedOut = true` after 3s (was 5s)
+- Forces past splash screen — user sees login or home screen immediately
+
+**Rules:**
+- `FirebaseFirestore.instance.settings` must be called AT MOST ONCE per app lifecycle
+- `performSignOut` must NEVER navigate — let AuthWrapper handle it
+- All stream timeouts must fall back to empty/error state, never infinite spinner
+
 ---
 
 ## 9c. v9.0.4 Changelog — Major Fixes Implemented 2026-04-04
@@ -2011,4 +2036,4 @@ firebase deploy --only firestore:indexes # Deploy indexes
 
 ---
 
-*Last updated: 2026-04-04 | Version: 9.1.0 (STABLE)*
+*Last updated: 2026-04-04 | Version: 9.1.1 (STABLE)*

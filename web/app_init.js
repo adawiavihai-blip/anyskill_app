@@ -6,7 +6,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ── REQUIRED APP VERSION — bump this on every deploy ────────────────────────
-var REQUIRED_VERSION = '9.1.0';
+var REQUIRED_VERSION = '9.1.1';
 
 // NOTE: bfcache buster is now INLINE in index.html (not here) because
 // deferred scripts don't reliably fire on bfcache pageshow restoration.

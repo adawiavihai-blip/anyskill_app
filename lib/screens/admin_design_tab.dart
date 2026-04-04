@@ -265,11 +265,16 @@ class _AdminDesignTabState extends State<AdminDesignTab> {
     final keys = ContentManagementService.screenGroups[_selectedScreen] ?? [];
 
     return Scaffold(
-      body: Row(
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+        // On narrow screens (< 600px), use a dropdown instead of the sidebar
+        final isWide = constraints.maxWidth >= 600;
+        return Row(
         children: [
-          // ─── Left Pane: Screen Selector ──────────────────────────────────
+          // ─── Left Pane: Screen Selector (hidden on narrow screens) ────
+          if (isWide)
           SizedBox(
-            width: 250,
+            width: 220,
             child: Column(
               children: [
                 // Header
@@ -438,7 +443,9 @@ class _AdminDesignTabState extends State<AdminDesignTab> {
             ),
           ),
         ],
-      ),
+      );
+      },  // closes LayoutBuilder builder
+      ),  // closes LayoutBuilder
     );
   }
 }
