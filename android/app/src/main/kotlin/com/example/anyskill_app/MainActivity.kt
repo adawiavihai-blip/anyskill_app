@@ -1,4 +1,4 @@
-package com.example.anyskill_app
+package com.anyskill.app
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -26,7 +26,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | Monitoring | Sentry (sentry_flutter ^8.0.0), Firebase Crashlytics, Watchtower |
 | Hosting | Firebase Hosting (SPA) |
 
-**Version:** 9.1.4 &bull; **Firebase Project:** anyskill-6fdf3
+**Version:** 9.1.5 &bull; **Firebase Project:** anyskill-6fdf3
 
 ---
 
@@ -2107,4 +2107,4 @@ firebase deploy --only firestore:indexes # Deploy indexes
 
 ---
 
-*Last updated: 2026-04-04 | Version: 9.1.4 (STABLE)*
+*Last updated: 2026-04-04 | Version: 9.1.5 (STABLE)*

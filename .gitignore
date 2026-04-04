@@ -61,5 +61,10 @@ functions/.env
 functions/.env.*
 !functions/.env.example
 
+# Android release signing
+android/key.properties
+*.jks
+*.keystore
+
 # Google Maps API key script (contains billing-linked API key)
 # web/Maps.js
