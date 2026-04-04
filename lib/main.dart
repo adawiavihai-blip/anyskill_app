@@ -151,22 +151,18 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
 
-  // ── Step 1: PackageInfo ────────────────────────────────────────────────────
-  try {
-    final info = await PackageInfo.fromPlatform();
-    if (info.version.isNotEmpty) currentAppVersion = info.version;
-    debugPrint('✅ PackageInfo: $currentAppVersion');
-  } catch (e) {
-    debugPrint('⚠️ PackageInfo failed (using constants fallback): $e');
-  }
-
-  // ── Step 2: Locale ────────────────────────────────────────────────────────
-  try {
-    await LocaleProvider.init();
-    debugPrint('✅ LocaleProvider ready');
-  } catch (e) {
-    debugPrint('⚠️ LocaleProvider failed (using default locale): $e');
-  }
+  // ── Steps 1+2: PackageInfo + Locale (parallel — saves ~100ms) ─────────────
+  await Future.wait([
+    // Step 1: PackageInfo
+    PackageInfo.fromPlatform().then((info) {
+      if (info.version.isNotEmpty) currentAppVersion = info.version;
+      debugPrint('✅ PackageInfo: $currentAppVersion');
+    }).catchError((e) { debugPrint('⚠️ PackageInfo failed: $e'); }),
+    // Step 2: Locale
+    LocaleProvider.init()
+        .then((_) => debugPrint('✅ LocaleProvider ready'))
+        .catchError((e) { debugPrint('⚠️ Locale failed: $e'); }),
+  ]);
 
   // ── Step 3: Firebase core ─────────────────────────────────────────────────
   try {
@@ -249,16 +245,14 @@ void main() async {
   // ── Step 4: App Check — DISABLED ───────────────────────────────────────
   debugPrint('ℹ️ App Check: DISABLED (social auth compatibility)');
 
-  // ── Step 5: Stripe ────────────────────────────────────────────────────────
-  try {
-    await StripeService.init().timeout(
-      const Duration(seconds: 10),
-      onTimeout: () => debugPrint('⚠️ StripeService.init() timed out — skipping'),
-    );
-    debugPrint('✅ Stripe ready');
-  } catch (e) {
-    debugPrint('⚠️ Stripe init failed (payments unavailable until reload): $e');
-  }
+  // ── Step 5: Stripe — fire-and-forget (NEVER blocks first frame) ────────
+  // Previous: `await StripeService.init()` with 10s timeout — blocked the
+  // entire UI for up to 10 seconds on slow networks.
+  // Now: runs in background. Payments will work once init completes.
+  unawaited(StripeService.init().timeout(
+    const Duration(seconds: 10),
+    onTimeout: () => debugPrint('⚠️ StripeService.init() timed out'),
+  ).catchError((e) => debugPrint('⚠️ Stripe init failed: $e')));
 
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
