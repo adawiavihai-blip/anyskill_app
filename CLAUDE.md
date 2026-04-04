@@ -1359,6 +1359,43 @@ One line. No try-catch chains. No clearPersistence. No race conditions.
 - `performSignOut` must NEVER navigate — let AuthWrapper handle it
 - All stream timeouts must fall back to empty/error state, never infinite spinner
 
+### Law 24: Atomic Resilience — Defensive Engineering (v9.1.2)
+
+**Self-healing stream wrapper (`lib/utils/resilient_stream.dart`):**
+- `ResilientStreamBuilder<T>` — drop-in replacement for `StreamBuilder`
+- Built-in timeout (default 6s) → shows empty state, not infinite spinner
+- Built-in error handler → shows "שגיאה בטעינת הנתונים", never crashes
+- Use for ALL admin panel streams (banners, stories, users)
+
+**Hard state reset on logout (`lib/services/auth_service.dart`):**
+1. `CacheService.purgeExpired()` — clears in-memory cache
+2. `Sentry.configureScope(null)` — clears user context
+3. `FlutterSecureStorage().deleteAll()` — clears saved credentials
+4. `FirebaseAuth.signOut()` — triggers AuthWrapper navigation
+5. Fallback: if signOut throws → manual `pushAndRemoveUntil`
+
+**Admin sidebar responsive layout (`admin_design_tab.dart`):**
+- `LayoutBuilder` checks `constraints.maxWidth >= 600`
+- Wide screens: sidebar (220px) + content pane
+- Narrow screens: sidebar hidden (prevents vertical-letter bug)
+
+**Atomic init sequence (`main.dart`):**
+```
+Step 1: PackageInfo (version string)
+Step 2: LocaleProvider
+Step 3: Firebase.initializeApp()
+Step 3a: Firestore Settings (persistence OFF, ONCE only)
+Step 3b: Auth persistence (LOCAL)
+Step 3c: Web redirect handling
+Step 5: Stripe (10s timeout)
+Step 7: Sentry (fire-and-forget)
+Step 8: bfcache disable
+→ runApp()
+```
+
+No step depends on a previous step's success. Each step has try/catch.
+If any step fails, the app still launches with degraded functionality.
+
 ---
 
 ## 9c. v9.0.4 Changelog — Major Fixes Implemented 2026-04-04
