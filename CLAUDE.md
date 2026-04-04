@@ -26,7 +26,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | Monitoring | Sentry (sentry_flutter ^8.0.0), Firebase Crashlytics, Watchtower |
 | Hosting | Firebase Hosting (SPA) |
 
-**Version:** 9.0.3 &bull; **Firebase Project:** anyskill-6fdf3
+**Version:** 9.0.4 &bull; **Firebase Project:** anyskill-6fdf3
 
 ---
 
@@ -1156,12 +1156,77 @@ the customer History tab: `!_activeStatuses.contains(status)`.
 
 ---
 
+## 9c. v9.0.4 Changelog — Major Fixes Implemented 2026-04-04
+
+### Double Booking Prevention (`expert_profile_screen.dart`)
+
+When the user selects a day on the calendar, `_loadBookedSlots(day)` queries
+the `bookingSlots` collection for all docs matching the pattern:
+```
+bookingSlots/{expertId}_{YYYYMMDD}_{HHmm}
+```
+Uses `FieldPath.documentId` range query (`>= prefix`, `< prefix + 'z'`).
+Booked slots are displayed as **greyed out with strikethrough** — tapping
+does nothing. The existing `kSlotConflict` transaction guard remains as a
+fallback for rare race conditions.
+
+### Provider Workspace — 3-Tab Structure (`my_bookings_screen.dart`)
+
+| Tab | Position | Content | Status filter |
+|-----|----------|---------|---------------|
+| משימות שלי | 1 (leftmost) | Active jobs | `_activeStatuses` set |
+| יומן | 2 | Calendar with unavailable dates | All expert jobs |
+| היסטוריה | 3 | Past jobs | `!_activeStatuses` (catch-all) |
+
+`DefaultTabController(length: _isProvider ? 3 : 2)`.
+New `_buildProviderHistoryTab()` reuses `_buildGroupedList()` with `isHistory: true`.
+
+### Story System — Persistent "+" Button (`stories_row.dart`)
+
+The provider's "+" badge on their story circle is **always visible**:
+- **No story:** Indigo `+` icon → tapping opens upload sheet
+- **Has story:** Green play icon → tapping views, long-press deletes
+
+The 25-hour expiry filter applies only to OTHER experts' stories. The
+provider's own doc is extracted before filtering.
+
+### Admin Guards (`my_bookings_screen.dart`)
+
+- `_isProvider = isProvider` (reverted from `isProvider || isAdmin`)
+- Admins see client tabs by default — no merged streams
+- `_autoTriggerProviderReview`: `if (_isAdmin) return` as first line
+- Review trigger requires `completedAt`, `providerReviewShown`, `expertId == currentUserId`
+
+### Urgent Search FAB (`home_screen.dart`)
+
+Hidden via `_HomeRouteObserver` when inside any sub-route (category, profile,
+search). Uses `canPop()` check on the Home tab's nested Navigator.
+
+### Booking Gate (`expert_profile_screen.dart`)
+
+`canBook = isReady && !isSelf` — `isOnline` removed from the gate. Scheduled
+bookings work regardless of provider's online status.
+
+### Self-Booking Prevention — 3 Layers
+
+| Layer | File | Check |
+|-------|------|-------|
+| UI | `expert_profile_screen.dart` | `isSelf` → button disabled |
+| Service | `escrow_service.dart` | `clientId == providerId` → error |
+| Visual | `category_results_screen.dart` | "הפרופיל שלך" badge |
+
+### Version Text
+
+`'VERSION: 4.3.0'` → `'AnySkill v$appVersion'` using `constants.dart`.
+
+---
+
 ## 10. Firestore Collections Reference
 
 | Collection | Key Fields | Purpose |
 |-----------|-----------|---------|
 | `users/{uid}` | isProvider, isVolunteer, isVerified, isDemo, isElderlyOrNeedy, isAnySkillPro, proManualOverride, serviceType, xp, balance, pendingBalance, rating, reviewsCount, customerRating, isOnline, lastVolunteerTaskAt, volunteerTaskCount, hasActiveVolunteerBadge, stripeAccountId, cancellationPolicy, streak, lastStreakDate, streakBestEver, lastDailyDropDate, profileBoostUntil, workingHours, selfieVerificationUrl | User profiles |
-| `jobs/{jobId}` | customerId, expertId, totalAmount, netAmountForExpert, commission, status, quoteId, chatRoomId, clientReviewDone, providerReviewDone, cancellationDeadline, stripePaymentIntentId, stripeTransferId | Bookings |
+| `jobs/{jobId}` | customerId, expertId, totalAmount, netAmountForExpert, commission, status, quoteId, chatRoomId, clientReviewDone, providerReviewDone, providerReviewShown, completedAt, cancellationDeadline, stripePaymentIntentId, stripeTransferId | Bookings |
 | `quotes/{id}` | providerId, clientId, amount, status, jobId | Price quotes |
 | `reviews/{id}` | jobId, reviewerId, revieweeId, isClientReview, ratingParams, overallRating, publicComment, privateAdminComment, isPublished, createdAt | Double-blind reviews |
 | `volunteer_tasks/{id}` | clientId, providerId, category, description, status, clientConfirmed, gpsValidated, providerLat/Lng, clientLat/Lng, gpsDistanceMeters, xpAwarded, xpAmount, clientReview, completedAt | Volunteer lifecycle |
@@ -1466,7 +1531,7 @@ writes to `admin_audit_log/{id}` with `targetUserId`, `action`, `adminName`, `cr
 
 ---
 
-## 15b. Code Health Snapshot (2026-04-04 — v8.9.9 STABLE)
+## 15b. Code Health Snapshot (2026-04-04 — v9.0.4 STABLE)
 
 | Metric | Value | Status |
 |--------|-------|--------|
@@ -1782,4 +1847,4 @@ firebase deploy --only firestore:indexes # Deploy indexes
 
 ---
 
-*Last updated: 2026-04-04 | Version: 9.0.3 (STABLE)*
+*Last updated: 2026-04-04 | Version: 9.0.4 (STABLE)*
