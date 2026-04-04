@@ -2579,7 +2579,7 @@ class _CustomerBookingCardState extends State<_CustomerBookingCard>
                                     ? const Color(0xFF16A34A)
                                     : const Color(0xFF94A3B8)),
                             const SizedBox(width: 6),
-                            Text('📞 התקשר למומחה',
+                            Text('📞 התקשר',
                                 style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
@@ -2621,7 +2621,7 @@ class _CustomerBookingCardState extends State<_CustomerBookingCard>
                                     ? const Color(0xFF6366F1)
                                     : const Color(0xFF94A3B8)),
                             const SizedBox(width: 6),
-                            Text('💬 צ\'אט מהיר',
+                            Text('💬 שלח הודעה',
                                 style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
@@ -3298,7 +3298,7 @@ class _ExpertJobCardState extends State<_ExpertJobCard>
                     Expanded(
                       child: _QuickActionChip(
                         icon: Icons.chat_bubble_outline_rounded,
-                        label: 'צ׳אט עם לקוח',
+                        label: 'שלח הודעה',
                         onPressed: chatRoomId.isNotEmpty
                             ? () => Navigator.push(
                                   context,

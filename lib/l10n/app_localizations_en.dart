@@ -45,7 +45,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tabBookings => 'Bookings';
 
   @override
-  String get tabChat => 'Chat';
+  String get tabChat => 'Messages';
 
   @override
   String get tabWallet => 'Wallet';

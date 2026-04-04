@@ -26,7 +26,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | Monitoring | Sentry (sentry_flutter ^8.0.0), Firebase Crashlytics, Watchtower |
 | Hosting | Firebase Hosting (SPA) |
 
-**Version:** 9.0.5 &bull; **Firebase Project:** anyskill-6fdf3
+**Version:** 9.0.6 &bull; **Firebase Project:** anyskill-6fdf3
 
 ---
 
@@ -1183,6 +1183,35 @@ The "הגעתי" button only appears when `expertOnWay == true && workStartedTs 
 
 ---
 
+### Law 18: Naming Convention & Direct Actions (v9.0.6)
+
+**"Chat" is now "Messages" (הודעות) across the entire app.**
+
+| Locale | Old | New |
+|--------|-----|-----|
+| Hebrew | צ'אט | **הודעות** |
+| English | Chat | **Messages** |
+| Spanish | Chat | **Mensajes** |
+| Arabic | الرسائل | الرسائل (unchanged) |
+
+Updated in: `tabChat` key in all 4 `.arb` files and all 4 `app_localizations_*.dart` files.
+The `chatListTitle` was already "הודעות"/"Messages" — no change needed.
+
+**Booking card buttons must use short, action-oriented labels:**
+
+| Old | New | Action |
+|-----|-----|--------|
+| "📞 התקשר למומחה" | "📞 התקשר" | `tel:` link to expert phone |
+| "💬 צ'אט מהיר" | "💬 שלח הודעה" | Opens specific conversation |
+| "צ׳אט עם לקוח" | "שלח הודעה" | Opens conversation with customer |
+
+**Rules:**
+- Never use "צ'אט" / "Chat" in user-facing text — always "הודעות" / "Messages"
+- Booking card buttons must be ≤ 3 Hebrew words
+- Every "Send Message" button must deep-link to the specific conversation
+
+---
+
 ## 9c. v9.0.4 Changelog — Major Fixes Implemented 2026-04-04
 
 ### Double Booking Prevention (`expert_profile_screen.dart`)
@@ -1874,4 +1903,4 @@ firebase deploy --only firestore:indexes # Deploy indexes
 
 ---
 
-*Last updated: 2026-04-04 | Version: 9.0.5 (STABLE)*
+*Last updated: 2026-04-04 | Version: 9.0.6 (STABLE)*

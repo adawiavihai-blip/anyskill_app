@@ -174,7 +174,7 @@ abstract class AppLocalizations {
   /// No description provided for @tabChat.
   ///
   /// In he, this message translates to:
-  /// **'צ\'אט'**
+  /// **'הודעות'**
   String get tabChat;
 
   /// No description provided for @tabWallet.

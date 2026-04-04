@@ -45,7 +45,7 @@ class AppLocalizationsHe extends AppLocalizations {
   String get tabBookings => 'הזמנות';
 
   @override
-  String get tabChat => 'צ\'אט';
+  String get tabChat => 'הודעות';
 
   @override
   String get tabWallet => 'ארנק';
