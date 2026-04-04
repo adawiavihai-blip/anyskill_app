@@ -180,49 +180,38 @@ void main() async {
     // rather than a permanent white screen.
   }
 
-  // ── Step 3a: Firestore web — single settings call + corruption recovery ──
-  // CRITICAL: Firestore settings can only be set ONCE. Setting them twice
-  // (e.g., after a version-upgrade cache wipe) causes the
-  // "INTERNAL ASSERTION FAILED: Unexpected state" crash.
+  // ── Step 3a: Firestore web — PERSISTENCE DISABLED ──────────────────────
+  // v9.1.1 DECISION: IndexedDB persistence on web is PERMANENTLY DISABLED.
   //
-  // Strategy:
-  //   1. Check for version upgrade → clear caches if needed (BEFORE settings)
-  //   2. Set Firestore settings exactly ONCE
-  //   3. If persistence fails → clearPersistence + disable
+  // History of persistence-related crashes:
+  //   - v8.9.4: "INTERNAL ASSERTION FAILED: Unexpected state" on multi-tab
+  //   - v9.0.0: Corrupted cache after nuclear purge caused blank screens
+  //   - v9.1.0: Double Settings call → assertion crash froze admin panel
+  //   - v9.1.1: clearPersistence() on partially-initialized instance → crash
+  //
+  // The cost of disabling persistence: Firestore re-fetches from server on
+  // each page load (~200ms extra). This is acceptable because:
+  //   1. The nuclear purge already forces fresh data on every version bump
+  //   2. StreamBuilder listeners get real-time updates after initial fetch
+  //   3. CacheService (in-memory TTL) handles short-lived caching
+  //
+  // This single Settings call is the ONLY Firestore configuration.
+  // It runs BEFORE any Firestore read/write, and is NEVER called again.
   if (kIsWeb) {
-    // Version upgrade: wipe caches BEFORE Firestore settings are applied
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final lastVersion = prefs.getString('last_app_version');
-      if (lastVersion != null && lastVersion != currentAppVersion) {
-        debugPrint('🧹 Version upgrade ($lastVersion → $currentAppVersion) — clearing caches');
-        await clearWebCaches();
-        // Also clear Firestore persistence to prevent corrupted IndexedDB
-        try { await FirebaseFirestore.instance.clearPersistence(); } catch (_) {}
-      }
-      await prefs.setString('last_app_version', currentAppVersion);
-    } catch (e) {
-      debugPrint('⚠️ Version cache-clear failed: $e');
-    }
-
-    // Single Firestore settings call — NEVER called again after this point
     try {
       FirebaseFirestore.instance.settings = const Settings(
-        persistenceEnabled: true,
-        cacheSizeBytes: 40 * 1024 * 1024, // 40 MB
+        persistenceEnabled: false,
       );
-      debugPrint('✅ Firestore Web: persistence ON (40 MB)');
+      debugPrint('✅ Firestore Web: persistence OFF (stable mode)');
     } catch (e) {
-      debugPrint('⚠️ Firestore persistence init failed: $e');
-      // Corrupted IndexedDB — clear and disable persistence
-      try { await FirebaseFirestore.instance.clearPersistence(); } catch (_) {}
-      try {
-        FirebaseFirestore.instance.settings = const Settings(persistenceEnabled: false);
-        debugPrint('ℹ️ Firestore Web: persistence DISABLED (recovery)');
-      } catch (_) {
-        debugPrint('⚠️ Firestore settings failed entirely — using SDK defaults');
-      }
+      debugPrint('⚠️ Firestore settings failed: $e — using SDK defaults');
     }
+
+    // Version tracking (uses localStorage, not Firestore)
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_app_version', currentAppVersion);
+    } catch (_) {}
   }
 
   // ── Step 3b: Web Auth persistence ──────────────────────────────────────

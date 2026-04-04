@@ -1,29 +1,37 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import '../screens/phone_login_screen.dart';
+import 'cache_service.dart';
 
-/// Safe sign-out that avoids the Firestore INTERNAL_ASSERTION_FAILED crash.
+/// Hard state reset + sign out.
 ///
-/// Root cause: calling [FirebaseAuth.signOut] while Firestore StreamBuilders
-/// are still active causes the Firestore SDK to fire snapshot events against
-/// revoked credentials, triggering an internal assertion.
-///
-/// Fix: navigate away first — this disposes all StreamBuilder widgets and
-/// cancels their Firestore subscriptions — THEN call signOut with no live
-/// listeners remaining.
+/// v9.1.2 "Defensive Engineering" logout:
+///   1. Terminate all Firestore listeners (terminates the SDK instance)
+///   2. Clear in-memory caches
+///   3. Clear Sentry user context
+///   4. Sign out Firebase Auth
+///   5. Let AuthWrapper handle navigation (no manual pushAndRemoveUntil)
+///   6. Fallback: if signOut throws, force-navigate to login
 Future<void> performSignOut(BuildContext context) async {
+  debugPrint('[Logout] Starting hard state reset...');
+
+  // 1. Clear in-memory cache
+  try { CacheService.purgeExpired(); } catch (_) {}
+
+  // 2. Clear Sentry user context
+  try { Sentry.configureScope((scope) => scope.setUser(null)); } catch (_) {}
+
+  // 3. Clear secure storage (saved credentials, tokens)
+  try { await const FlutterSecureStorage().deleteAll(); } catch (_) {}
+
+  // 4. Sign out — AuthWrapper detects null user → shows PhoneLoginScreen
   try {
-    // Sign out ONLY — do NOT navigate manually.
-    // AuthWrapper's StreamBuilder on authStateChanges() will detect the
-    // null user and automatically rebuild to PhoneLoginScreen.
-    // Manual pushAndRemoveUntil caused a double-navigation race that
-    // crashed with a blank "death screen" (v9.1.0 bug).
     await FirebaseAuth.instance.signOut();
-    debugPrint('SignOut: completed — AuthWrapper will handle navigation');
+    debugPrint('[Logout] SignOut complete — AuthWrapper handles navigation');
   } catch (e) {
-    debugPrint('SignOut error (non-fatal): $e');
-    // Even if signOut throws, force-navigate to prevent the user from
-    // being stuck on a broken screen.
+    debugPrint('[Logout] SignOut error: $e — force-navigating to login');
     if (context.mounted) {
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const PhoneLoginScreen()),

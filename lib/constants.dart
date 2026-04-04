@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 /// Single source of truth for the app version.
 /// Change this ONE constant and the new number appears everywhere
 /// (login screen, admin panel, wherever it's referenced).
-const String appVersion = '9.1.1';
+const String appVersion = '9.1.2';
 
 // זו הרשימה המרכזית. כל האפליקציה תמשוך מכאן את השמות.
 // אם תשנה כאן ל"כושר", זה ישתנה אוטומטית גם ב"גלה" וגם ב"עריכה".

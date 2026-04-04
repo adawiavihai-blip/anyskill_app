@@ -26,7 +26,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | Monitoring | Sentry (sentry_flutter ^8.0.0), Firebase Crashlytics, Watchtower |
 | Hosting | Firebase Hosting (SPA) |
 
-**Version:** 9.1.1 &bull; **Firebase Project:** anyskill-6fdf3
+**Version:** 9.1.2 &bull; **Firebase Project:** anyskill-6fdf3
 
 ---
 
@@ -1318,15 +1318,31 @@ verification miss — logs instead of throwing.
 - Shows empty state instead of infinite skeleton shimmer
 - Same pattern as provider history timeout
 
-### Law 23: Infrastructure Integrity (v9.1.1)
+### Law 23: Infrastructure Integrity (v9.1.2)
 
-**Firestore persistence must be set exactly ONCE:**
-- `main.dart` Step 3a: version-upgrade cache wipe runs BEFORE Settings call
-- `clearPersistence()` called if IndexedDB is corrupted
-- Settings applied ONCE — never called again
-- On failure: `clearPersistence()` + `persistenceEnabled: false`
-- The duplicate settings call (v8.9.4 → v9.1.0) that caused
-  "INTERNAL ASSERTION FAILED: Unexpected state" is eliminated
+**Firestore IndexedDB persistence is PERMANENTLY DISABLED on web.**
+
+This is not a temporary workaround — it is a permanent architecture decision.
+
+**Why:** IndexedDB persistence on web caused 4 major crash cycles:
+- v8.9.4: "INTERNAL ASSERTION FAILED" on multi-tab conflict
+- v9.0.0: Corrupted cache after nuclear purge → blank screens
+- v9.1.0: Double Settings call → assertion crash froze admin panel
+- v9.1.1: `clearPersistence()` on partially-initialized instance → crash loop
+
+**The fix (`main.dart` Step 3a):**
+```dart
+FirebaseFirestore.instance.settings = const Settings(
+  persistenceEnabled: false,
+);
+```
+One line. No try-catch chains. No clearPersistence. No race conditions.
+
+**What replaces persistence:**
+- `CacheService` (in-memory TTL) handles short-lived caching
+- `StreamBuilder` listeners get real-time updates from server
+- Nuclear purge in `app_init.js` forces fresh data on version bumps
+- ~200ms extra on first page load (server round-trip) — acceptable
 
 **Logout must NOT manually navigate:**
 - `performSignOut()` calls ONLY `FirebaseAuth.instance.signOut()`
@@ -2036,4 +2052,4 @@ firebase deploy --only firestore:indexes # Deploy indexes
 
 ---
 
-*Last updated: 2026-04-04 | Version: 9.1.1 (STABLE)*
+*Last updated: 2026-04-04 | Version: 9.1.2 (STABLE)*
