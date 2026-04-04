@@ -945,10 +945,19 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     return StreamBuilder<QuerySnapshot>(
       stream: _expertStream,
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
+        if (snapshot.hasError) {
+          debugPrint('[History] Error: ${snapshot.error}');
+          return Center(
+            child: Text('שגיאה בטעינת היסטוריה',
+                style: TextStyle(color: Colors.grey[500])),
+          );
+        }
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
         final docs = snapshot.data?.docs ?? [];
+        debugPrint('[History] Provider stream: ${docs.length} total docs');
         final historyDocs = docs.where((d) {
           final status = (d.data() as Map<String, dynamic>)['status'] as String? ?? '';
           return !_activeStatuses.contains(status) && status.isNotEmpty;
@@ -959,6 +968,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
             if (ta is Timestamp && tb is Timestamp) return tb.compareTo(ta);
             return 0;
           });
+        debugPrint('[History] After filter: ${historyDocs.length} history docs');
 
         if (historyDocs.isEmpty) {
           return _buildEmptyState(isExpert: true, isHistory: true);
@@ -2834,6 +2844,25 @@ class _ExpertJobCardState extends State<_ExpertJobCard>
     super.dispose();
   }
 
+  Future<void> _markOnTheWay() async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('jobs')
+          .doc(widget.jobId)
+          .update({
+        'expertOnWay':    true,
+        'expertOnWayAt':  FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: Colors.red,
+          content: Text('שגיאה: $e'),
+        ));
+      }
+    }
+  }
+
   Future<void> _markWorkStarted() async {
     setState(() => _startingWork = true);
     try {
@@ -2947,6 +2976,7 @@ class _ExpertJobCardState extends State<_ExpertJobCard>
             0.0)
         .toDouble();
     final workStartedTs = job['workStartedAt'] as Timestamp?;
+    final expertOnWay   = job['expertOnWay'] == true;
     final workMinutes   = workStartedTs != null
         ? DateTime.now().difference(workStartedTs.toDate()).inMinutes
         : 0;
@@ -3199,8 +3229,32 @@ class _ExpertJobCardState extends State<_ExpertJobCard>
                     const SizedBox(height: 8),
                   ],
 
-                  // Start Work button (only if not yet started)
-                  if (workStartedTs == null) ...[
+                  // ── Two-step flow: "On My Way" → "Arrived — Start Work" ──
+                  if (workStartedTs == null && !expertOnWay) ...[
+                    // Step 1: "בדרך" (On My Way)
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFF59E0B),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          minimumSize: const Size(double.infinity, 52),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                        ),
+                        icon: const Icon(Icons.directions_car_rounded, size: 20),
+                        label: const Text('אני בדרך 🚗',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15)),
+                        onPressed: () => _markOnTheWay(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  if (workStartedTs == null && expertOnWay) ...[
+                    // Step 2: "הגעתי — התחל עבודה" (Arrived — Start Work)
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
@@ -3211,8 +3265,6 @@ class _ExpertJobCardState extends State<_ExpertJobCard>
                           minimumSize: const Size(double.infinity, 52),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14)),
-                          shadowColor: const Color(0xFF6366F1)
-                              .withValues(alpha: 0.4),
                         ),
                         icon: _startingWork
                             ? const SizedBox(

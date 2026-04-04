@@ -26,7 +26,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | Monitoring | Sentry (sentry_flutter ^8.0.0), Firebase Crashlytics, Watchtower |
 | Hosting | Firebase Hosting (SPA) |
 
-**Version:** 9.0.4 &bull; **Firebase Project:** anyskill-6fdf3
+**Version:** 9.0.5 &bull; **Firebase Project:** anyskill-6fdf3
 
 ---
 
@@ -1154,6 +1154,33 @@ the customer History tab: `!_activeStatuses.contains(status)`.
 - Tap when story exists → view story; long-press → delete
 - The "+" icon changes to a play icon when a story exists
 
+### Law 17: Workflow Resilience — Stepper + Review Visibility
+
+**Provider job stepper must include "On the Way" before "Arrived":**
+
+| Step | Provider button | Field written | Customer sees |
+|------|----------------|---------------|---------------|
+| 1. התקבלה | (automatic on payment) | `status: 'paid_escrow'` | "ההזמנה התקבלה" |
+| 2. בדרך | "אני בדרך 🚗" (amber) | `expertOnWay: true, expertOnWayAt` | "המומחה בדרך אליך" |
+| 3. בעבודה | "הגעתי — התחל עבודה 🛠️" (indigo) | `workStartedAt, expertOnWay: false` | "המומחה עובד" |
+| 4. הושלם | "סיימתי את העבודה" (green) | `status: 'expert_completed'` | "ממתין לאישור" |
+
+The "בדרך" button only appears when `expertOnWay == false && workStartedTs == null`.
+The "הגעתי" button only appears when `expertOnWay == true && workStartedTs == null`.
+
+**Files:** `my_bookings_screen.dart` (`_markOnTheWay`, `_markWorkStarted`,
+`_ExpertJobCard` button logic)
+
+**Review visibility rules (already implemented in `review_service.dart`):**
+1. Both client AND expert submitted → `_checkAndPublish()` publishes immediately
+2. Only one side submitted → stays hidden (unpublished) for 7 days
+3. After 7 days → `lazyPublish()` publishes on next profile view
+
+**iPhone resilience (`main.dart` `_resilientUserFetch`):**
+- Cache-first: tries `Source.cache` BEFORE server (instant on repeat visits)
+- Server timeout reduced to 3 seconds (was 4)
+- Three-tier fallback: cache → server(3s) → default(3s)
+
 ---
 
 ## 9c. v9.0.4 Changelog — Major Fixes Implemented 2026-04-04
@@ -1847,4 +1874,4 @@ firebase deploy --only firestore:indexes # Deploy indexes
 
 ---
 
-*Last updated: 2026-04-04 | Version: 9.0.4 (STABLE)*
+*Last updated: 2026-04-04 | Version: 9.0.5 (STABLE)*

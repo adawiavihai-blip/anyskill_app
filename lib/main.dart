@@ -873,24 +873,27 @@ class _OnboardingGateState extends State<OnboardingGate> {
   /// Never throws — always returns a DocumentSnapshot.
   static Future<DocumentSnapshot> _resilientUserFetch(String uid) async {
     final docRef = FirebaseFirestore.instance.collection('users').doc(uid);
-    // Tier 1: server with short timeout (mobile-friendly)
+    // iPhone fix: try CACHE FIRST (instant) then server in background.
+    // This eliminates the 4s wait on cold starts where the server is slow.
+    // Tier 1: cache — instant, from IndexedDB (may be from previous session)
+    try {
+      final cached = await docRef.get(const GetOptions(source: Source.cache));
+      if (cached.exists) {
+        debugPrint('[OnboardingGate] Cache hit — instant load');
+        return cached;
+      }
+    } catch (_) {}
+    // Tier 2: server with 3s timeout (reduced from 4s for iPhone)
     try {
       return await docRef
           .get(const GetOptions(source: Source.server))
-          .timeout(const Duration(seconds: 4));
+          .timeout(const Duration(seconds: 3));
     } catch (_) {}
-    // Tier 2: cache (may have data from a previous session)
+    // Tier 3: default get (Firestore picks best source) with 3s timeout
     try {
-      final cached = await docRef.get(const GetOptions(source: Source.cache));
-      if (cached.exists) return cached;
-    } catch (_) {}
-    // Tier 3: default get (Firestore picks best source)
-    try {
-      return await docRef.get().timeout(const Duration(seconds: 4));
+      return await docRef.get().timeout(const Duration(seconds: 3));
     } catch (_) {
-      // Return whatever we can get — even if it's a non-existent doc
-      return await docRef.get(const GetOptions(source: Source.cache))
-          .catchError((_) => docRef.get());
+      return docRef.get();
     }
   }
 
