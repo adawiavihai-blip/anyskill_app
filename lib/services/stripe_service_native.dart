@@ -176,6 +176,20 @@ class StripeService {
     }
   }
 
+  /// Detaches a saved payment method from the customer's Stripe account.
+  /// Returns null on success, error string on failure.
+  static Future<String?> removeCard(String paymentMethodId) async {
+    try {
+      await _fn.httpsCallable('detachPaymentMethod').call({
+        'paymentMethodId': paymentMethodId,
+      });
+      return null;
+    } catch (e) {
+      debugPrint('removeCard error: $e');
+      return 'שגיאה בהסרת הכרטיס';
+    }
+  }
+
   static Future<List<SavedCard>> listSavedCards() async {
     try {
       final result = await _fn.httpsCallable('listPaymentMethods').call({});

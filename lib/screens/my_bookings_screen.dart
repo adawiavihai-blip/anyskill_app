@@ -836,6 +836,8 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         }
 
         final all = snapshot.data?.docs ?? [];
+        debugPrint('[Customer${isHistory ? "History" : "Active"}] '
+            'Stream returned ${all.length} docs for uid=$currentUserId');
         final filtered = all.where((d) {
           final status =
               (d.data() as Map<String, dynamic>)['status'] as String? ?? '';
@@ -1061,15 +1063,16 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     final sorted = [...docs]
       ..sort((a, b) => _jobTimestamp(b).compareTo(_jobTimestamp(a)));
 
-    // Use the class-level _activeStatuses set for consistency
-    final activeDocs  = sorted
+    // ACTIVE ONLY — history lives in the dedicated History tab (v9.0.7).
+    // Previous versions showed both active + history here, which confused users.
+    final activeDocs = sorted
         .where((d) => _activeStatuses.contains(
             (d.data() as Map<String, dynamic>)['status'] as String? ?? ''))
         .toList();
-    final historyDocs = sorted
-        .where((d) => !_activeStatuses.contains(
-            (d.data() as Map<String, dynamic>)['status'] as String? ?? ''))
-        .toList();
+
+    if (activeDocs.isEmpty) {
+      return _buildEmptyState(isExpert: true, isHistory: false);
+    }
 
     // Sum expected earnings from pending (paid_escrow) jobs
     double todayEarnings = 0;
@@ -1087,78 +1090,42 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
       children: [
-        // ── Today earnings summary ──────────────────────────────────
-        if (activeDocs.isNotEmpty) ...[
-          _ExpertEarningsSummary(
-              expectedEarnings: todayEarnings,
-              activeCount: activeDocs
-                  .where((d) =>
-                      (d.data() as Map<String, dynamic>)['status'] ==
-                      'paid_escrow')
-                  .length),
-          const SizedBox(height: 16),
-          _groupHeader('פעיל', activeDocs.length),
-          const SizedBox(height: 10),
-          for (final doc in activeDocs)
-            _ExpertJobCard(
-              key: ValueKey(doc.id),
-              job: doc.data() as Map<String, dynamic>,
-              jobId: doc.id,
-              onMarkDone: (jobId, chatRoomId) =>
-                  _markJobDone(context, jobId, chatRoomId),
-              onCancel: (jobId) => _providerCancelBooking(
-                  context, jobId, doc.data() as Map<String, dynamic>),
-              onDetails: () => _showJobDetailsSheet(
-                  context, doc.data() as Map<String, dynamic>, doc.id),
-              onReceipt: () =>
-                  _showReceiptFor(context, doc.data() as Map<String, dynamic>),
-              onRate: () {
-                final d = doc.data() as Map<String, dynamic>;
-                Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => ReviewScreen(
-                    jobId:          doc.id,
-                    revieweeId:     d['customerId']?.toString()   ?? '',
-                    revieweeName:   d['customerName']?.toString() ?? 'לקוח',
-                    revieweeAvatar: '',
-                    isClientReview: false,
-                  ),
-                ));
-              },
-            ),
-          const SizedBox(height: 20),
-        ],
-
-        // ── History ─────────────────────────────────────────────────
-        if (historyDocs.isNotEmpty) ...[
-          _groupHeader('היסטוריה', historyDocs.length),
-          const SizedBox(height: 10),
-          for (final doc in historyDocs)
-            _ExpertJobCard(
-              key: ValueKey(doc.id),
-              job: doc.data() as Map<String, dynamic>,
-              jobId: doc.id,
-              onMarkDone: (jobId, chatRoomId) =>
-                  _markJobDone(context, jobId, chatRoomId),
-              onCancel: (jobId) => _providerCancelBooking(
-                  context, jobId, doc.data() as Map<String, dynamic>),
-              onDetails: () => _showJobDetailsSheet(
-                  context, doc.data() as Map<String, dynamic>, doc.id),
-              onReceipt: () =>
-                  _showReceiptFor(context, doc.data() as Map<String, dynamic>),
-              onRate: () {
-                final d = doc.data() as Map<String, dynamic>;
-                Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => ReviewScreen(
-                    jobId:          doc.id,
-                    revieweeId:     d['customerId']?.toString()   ?? '',
-                    revieweeName:   d['customerName']?.toString() ?? 'לקוח',
-                    revieweeAvatar: '',
-                    isClientReview: false,
-                  ),
-                ));
-              },
-            ),
-        ],
+        _ExpertEarningsSummary(
+            expectedEarnings: todayEarnings,
+            activeCount: activeDocs
+                .where((d) =>
+                    (d.data() as Map<String, dynamic>)['status'] ==
+                    'paid_escrow')
+                .length),
+        const SizedBox(height: 16),
+        _groupHeader('פעיל', activeDocs.length),
+        const SizedBox(height: 10),
+        for (final doc in activeDocs)
+          _ExpertJobCard(
+            key: ValueKey(doc.id),
+            job: doc.data() as Map<String, dynamic>,
+            jobId: doc.id,
+            onMarkDone: (jobId, chatRoomId) =>
+                _markJobDone(context, jobId, chatRoomId),
+            onCancel: (jobId) => _providerCancelBooking(
+                context, jobId, doc.data() as Map<String, dynamic>),
+            onDetails: () => _showJobDetailsSheet(
+                context, doc.data() as Map<String, dynamic>, doc.id),
+            onReceipt: () =>
+                _showReceiptFor(context, doc.data() as Map<String, dynamic>),
+            onRate: () {
+              final d = doc.data() as Map<String, dynamic>;
+              Navigator.push(context, MaterialPageRoute(
+                builder: (_) => ReviewScreen(
+                  jobId:          doc.id,
+                  revieweeId:     d['customerId']?.toString()   ?? '',
+                  revieweeName:   d['customerName']?.toString() ?? 'לקוח',
+                  revieweeAvatar: '',
+                  isClientReview: false,
+                ),
+              ));
+            },
+          ),
       ],
     );
   }

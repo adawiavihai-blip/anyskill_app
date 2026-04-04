@@ -26,7 +26,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | Monitoring | Sentry (sentry_flutter ^8.0.0), Firebase Crashlytics, Watchtower |
 | Hosting | Firebase Hosting (SPA) |
 
-**Version:** 9.0.6 &bull; **Firebase Project:** anyskill-6fdf3
+**Version:** 9.0.8 &bull; **Firebase Project:** anyskill-6fdf3
 
 ---
 
@@ -1212,6 +1212,64 @@ The `chatListTitle` was already "הודעות"/"Messages" — no change needed.
 
 ---
 
+### Law 19: Order Segmentation — Active vs History (v9.0.7)
+
+**Terminal statuses must strictly reside in the History tab. My Tasks must
+remain active-only.**
+
+**Provider tabs (3 tabs):**
+
+| Tab | Shows | Statuses |
+|-----|-------|----------|
+| משימות שלי | Active jobs ONLY | `paid_escrow`, `expert_completed`, `disputed`, `pending`, `accepted`, `in_progress`, `awaiting_payment` |
+| יומן | Calendar view | All jobs (visual only) |
+| היסטוריה | Completed/cancelled | Everything NOT in `_activeStatuses` (catch-all) |
+
+**Previous bug (fixed in v9.0.7):** `_buildExpertTasksList` showed BOTH active
+and history sections in the same ListView. Completed jobs appeared in the tasks
+tab with a "היסטוריה" header. Now the tasks tab filters to `_activeStatuses`
+only and shows empty state if no active jobs exist.
+
+**Customer tabs (2 tabs):**
+
+| Tab | Shows | Filter |
+|-----|-------|--------|
+| פעילות | Active bookings | `_activeStatuses.contains(status)` |
+| היסטוריה | Past bookings | `!_activeStatuses.contains(status)` (catch-all) |
+
+**Debug logging:** Both customer and provider history builders print
+`[CustomerHistory] Stream returned N docs` and `[History] Provider stream: N total docs`
+to the console for diagnosis.
+
+**Story upload resilience:** Server verification uses retry with 1-second delay
+between attempts, 3-second timeout per attempt. Removed hard failure on
+verification miss — logs instead of throwing.
+
+### Law 20: Wallet Management & Support Path (v9.0.8)
+
+**Users must be able to remove saved credit cards:**
+
+- `_buildSavedCardTile()` in `finance_screen.dart` shows an X button on each card
+- `_confirmRemoveCard()` shows a confirmation dialog before deletion
+- `StripeService.removeCard(paymentMethodId)` calls `detachPaymentMethod` CF
+- After removal, `_loadSavedCards()` refreshes the list to show "Add Card" state
+- Both native and web StripeService implementations have the method
+
+**Community Support must link to internal Messages, not WhatsApp:**
+
+- `_WhatsAppSosButton` in `category_results_screen.dart` renamed to internal support
+- Button label: "תמיכה" (Support) with `support_agent_rounded` icon
+- Navigates to `SupportCenterScreen(jobCategory: 'volunteer')`
+- No external WhatsApp link — all support is handled internally
+- `_kCoordinatorPhone` and `url_launcher` import removed
+
+**Rules:**
+- Never link to external WhatsApp for support — use `SupportCenterScreen`
+- Every saved card must have a visible remove option
+- Card removal must go through `detachPaymentMethod` CF, never direct Firestore delete
+
+---
+
 ## 9c. v9.0.4 Changelog — Major Fixes Implemented 2026-04-04
 
 ### Double Booking Prevention (`expert_profile_screen.dart`)
@@ -1903,4 +1961,4 @@ firebase deploy --only firestore:indexes # Deploy indexes
 
 ---
 
-*Last updated: 2026-04-04 | Version: 9.0.6 (STABLE)*
+*Last updated: 2026-04-04 | Version: 9.0.8 (STABLE)*

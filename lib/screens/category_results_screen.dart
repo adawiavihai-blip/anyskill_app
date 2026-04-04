@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../widgets/favorite_button.dart';
 import '../widgets/pro_badge.dart';
@@ -17,6 +16,7 @@ import '../constants/quick_tags.dart';
 import '../l10n/app_localizations.dart';
 import 'search_screen/widgets/stories_row.dart';
 import '../utils/safe_image_provider.dart';
+import 'support_center_screen.dart';
 
 // Brand colours (shared with the rest of the app)
 const _kPurple     = Color(0xFF6366F1);
@@ -1030,7 +1030,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
   // ── Volunteer Hub Header ──────────────────────────────────────────────────
 
-  static const String _kCoordinatorPhone = '972501234567'; // ← replace with real number
+  // Coordinator phone removed in v9.0.8 — support is now internal via SupportCenterScreen
 
   Widget _buildVolunteerHeader() {
     return Container(
@@ -1528,27 +1528,28 @@ class _CommunityActionButton extends StatelessWidget {
   }
 }
 
-// ── WhatsApp SOS FAB ──────────────────────────────────────────────────────────
+// ── Internal Support FAB (replaces WhatsApp — v9.0.8) ───────────────────────
 class _WhatsAppSosButton extends StatelessWidget {
-  static const _phone = _CategoryResultsScreenState._kCoordinatorPhone;
-
   @override
   Widget build(BuildContext context) {
     return FloatingActionButton.extended(
-      backgroundColor: const Color(0xFF25D366),
+      backgroundColor: const Color(0xFF6366F1),
       elevation: 6,
-      icon: const Icon(Icons.chat_rounded, color: Colors.white),
+      icon: const Icon(Icons.support_agent_rounded, color: Colors.white),
       label: const Text(
-        'דברו עם רכז קהילה',
+        'תמיכה',
         style: TextStyle(
             color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
       ),
-      onPressed: () async {
-        const msg = 'שלום, אני צריך עזרה בפרסום בקשת התנדבות ב-AnySkill';
-        final uri = Uri.parse('https://wa.me/$_phone?text=${Uri.encodeComponent(msg)}');
-        if (await canLaunchUrl(uri)) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        }
+      onPressed: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const SupportCenterScreen(
+              jobCategory: 'volunteer',
+            ),
+          ),
+        );
       },
     );
   }

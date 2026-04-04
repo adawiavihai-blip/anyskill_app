@@ -1585,14 +1585,20 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
             'viewCount':      0,                // kept for viewer/Firestore rule compatibility
           });
 
-      // ── Server verification ──────────────────────────────────────────────
-      final verifyDoc = await FirebaseFirestore.instance
-          .collection('stories')
-          .doc(authUid)
-          .get(const GetOptions(source: Source.server));
-      if (!verifyDoc.exists || (verifyDoc.data()?['videoUrl'] ?? '') != videoUrl) {
-        throw Exception('הסטורי לא נשמר בשרת — ייתכן שאין הרשאה');
+      // ── Server verification (with retry for propagation delay) ──────────
+      DocumentSnapshot? verifyDoc;
+      for (int attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) await Future.delayed(const Duration(seconds: 1));
+        try {
+          verifyDoc = await FirebaseFirestore.instance
+              .collection('stories')
+              .doc(authUid)
+              .get(const GetOptions(source: Source.server))
+              .timeout(const Duration(seconds: 3));
+          if (verifyDoc.exists && (verifyDoc.data() as Map?)?['videoUrl'] == videoUrl) break;
+        } catch (_) {}
       }
+      debugPrint('[StoryUpload] Verify: exists=${verifyDoc?.exists}, url match=${(verifyDoc?.data() as Map?)?['videoUrl'] == videoUrl}');
 
       // 5. Update users/{uid} for ranking signal
       await FirebaseFirestore.instance

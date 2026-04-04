@@ -780,8 +780,62 @@ class _FinanceScreenState extends State<FinanceScreen>
               ],
             ),
           ),
-          const Icon(Icons.check_circle_rounded,
-              size: 18, color: Color(0xFF6EE7B7)),
+          // Remove card button
+          GestureDetector(
+            onTap: () => _confirmRemoveCard(card),
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.10),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.close_rounded,
+                  size: 14, color: Colors.white.withValues(alpha: 0.6)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmRemoveCard(SavedCard card) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('הסר כרטיס אשראי',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        content: Text('להסיר את הכרטיס ${card.brandDisplayName} •••• ${card.last4}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('ביטול'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final error = await StripeService.removeCard(card.id);
+              if (!mounted) return;
+              if (error == null) {
+                await _loadSavedCards();
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('הכרטיס הוסר בהצלחה ✓'),
+                  backgroundColor: Color(0xFF16A34A),
+                ));
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(error),
+                  backgroundColor: Colors.red,
+                ));
+              }
+            },
+            child: const Text('הסר', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
         ],
       ),
     );
