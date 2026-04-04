@@ -852,6 +852,33 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen>
     ]).animate(_floatCtrl);
   }
 
+  /// Re-fetches the download URL from Firestore and retries video init.
+  Future<void> _retryWithFreshUrl() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('stories')
+          .doc(widget.providerUid)
+          .get();
+      final freshUrl = (doc.data()?['videoUrl'] as String?) ?? '';
+      if (freshUrl.isNotEmpty && freshUrl != widget.videoUrl) {
+        debugPrint('[StoryViewer] Fresh URL differs — retrying with new URL');
+      }
+      if (freshUrl.isEmpty) {
+        if (mounted) setState(() => _error = true);
+        return;
+      }
+      _ctrl = VideoPlayerController.networkUrl(Uri.parse(freshUrl));
+      await _ctrl.initialize().timeout(const Duration(seconds: 10));
+      if (!mounted) return;
+      _ctrl.addListener(_onUpdate);
+      await _ctrl.play();
+      setState(() { _initialized = true; _error = false; });
+    } catch (e) {
+      debugPrint('[StoryViewer] Retry with fresh URL failed: $e');
+      if (mounted) setState(() => _error = true);
+    }
+  }
+
   Future<void> _initVideo() async {
     final url = widget.videoUrl;
     if (url.isEmpty) {
@@ -1050,15 +1077,30 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen>
                       ),
                     )
                   : _error
-                      ? const Center(
+                      ? Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.broken_image_rounded,
+                              const Icon(Icons.broken_image_rounded,
                                   color: Colors.white54, size: 64),
-                              SizedBox(height: 12),
-                              Text('לא ניתן לטעון את הסיפור',
+                              const SizedBox(height: 12),
+                              const Text('לא ניתן לטעון את הסיפור',
                                   style: TextStyle(color: Colors.white54)),
+                              const SizedBox(height: 16),
+                              ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF6366F1),
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12)),
+                                ),
+                                icon: const Icon(Icons.refresh_rounded, size: 18),
+                                label: const Text('נסה שוב'),
+                                onPressed: () {
+                                  setState(() { _error = false; _initialized = false; });
+                                  _retryWithFreshUrl();
+                                },
+                              ),
                             ],
                           ),
                         )

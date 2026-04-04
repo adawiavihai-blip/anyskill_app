@@ -26,7 +26,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | Monitoring | Sentry (sentry_flutter ^8.0.0), Firebase Crashlytics, Watchtower |
 | Hosting | Firebase Hosting (SPA) |
 
-**Version:** 9.1.2 &bull; **Firebase Project:** anyskill-6fdf3
+**Version:** 9.1.4 &bull; **Firebase Project:** anyskill-6fdf3
 
 ---
 
@@ -1396,6 +1396,24 @@ Step 8: bfcache disable
 No step depends on a previous step's success. Each step has try/catch.
 If any step fails, the app still launches with degraded functionality.
 
+### Law 25: Support Intelligence (v9.1.3)
+
+**Admin inbox must resolve sender UIDs to full user profiles:**
+
+- `_TicketCard` in `admin_support_inbox_tab.dart` is now `StatefulWidget`
+- On init: fetches `users/{userId}` to get `profileImage`, `name`, `phone`, `email`
+- Avatar uses `safeImageProvider(profileImg)` with initials fallback
+- Contact info (phone or email) shown below the name
+- Falls back to `data['userName']` if user doc fetch fails
+
+**Story playback retry with fresh URL:**
+
+- Error state shows "נסה שוב" (Retry) button
+- `_retryWithFreshUrl()` re-reads `stories/{uid}.videoUrl` from Firestore
+- If URL changed (re-upload), uses the new URL
+- 10s timeout on `VideoPlayerController.initialize()`
+- 2-attempt retry loop on initial load
+
 ---
 
 ## 9c. v9.0.4 Changelog — Major Fixes Implemented 2026-04-04
@@ -2089,4 +2107,4 @@ firebase deploy --only firestore:indexes # Deploy indexes
 
 ---
 
-*Last updated: 2026-04-04 | Version: 9.1.2 (STABLE)*
+*Last updated: 2026-04-04 | Version: 9.1.4 (STABLE)*

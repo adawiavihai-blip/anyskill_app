@@ -1,7 +1,7 @@
 name: anyskill_app
 description: "A new Flutter project for AnySkill."
 publish_to: 'none'
-version: 9.1.2+1
+version: 9.1.4+1
 
 environment:
   sdk: ^3.7.0

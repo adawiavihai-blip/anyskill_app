@@ -96,6 +96,13 @@ class _AdminBannersTabState extends State<AdminBannersTab>
           .orderBy('order')
           .snapshots(),
       builder: (context, snap) {
+        if (snap.hasError) {
+          debugPrint('[Banners] Stream error: ${snap.error}');
+          return const Center(child: Text('שגיאה בטעינת באנרים'));
+        }
+        if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
         final all   = snap.data?.docs ?? [];
         final place = _placements[_tabs.index];
         final docs  = place == 'all'

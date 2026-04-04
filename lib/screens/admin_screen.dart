@@ -43,6 +43,21 @@ class AdminScreen extends ConsumerStatefulWidget {
 }
 
 class _AdminScreenState extends ConsumerState<AdminScreen> {
+  /// Reusable error/loading guard for StreamBuilder snapshots.
+  /// Returns a widget if the stream is in error or waiting state,
+  /// or null if the stream has data and is ready to render.
+  Widget? _streamGuard(AsyncSnapshot snap, {String label = 'נתונים'}) {
+    if (snap.hasError) {
+      debugPrint('[Admin] Stream error ($label): ${snap.error}');
+      return Center(child: Text('שגיאה בטעינת $label',
+          style: const TextStyle(color: Color(0xFF94A3B8))));
+    }
+    if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return null;
+  }
+
   int    _sectionIndex = 0; // 0 = ניהול, 1 = תוכן, 2 = מערכת
   double _feePct        = 10.0;
   double _urgencyFeePct = 5.0;
@@ -823,9 +838,8 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
           .limit(100)
           .get(),
       builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+        final guard = _streamGuard(snap, label: 'ביקורות');
+        if (guard != null) return guard;
         final allDocs = snap.data?.docs ?? [];
         // Filter client-side: only reviews with a non-empty privateAdminComment
         final docs = allDocs.where((doc) {
@@ -978,9 +992,8 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
           .limit(50)
           .snapshots(),
       builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+        final guard = _streamGuard(snap, label: 'סטוריז');
+        if (guard != null) return guard;
         final docs = snap.data?.docs ?? [];
         if (docs.isEmpty) {
           return const Center(
@@ -1092,9 +1105,8 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
           .limit(50)
           .snapshots(),
       builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+        final guard = _streamGuard(snap, label: 'קורסים');
+        if (guard != null) return guard;
         final docs = snap.data?.docs ?? [];
 
         return ListView(
@@ -4718,9 +4730,8 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
           .limit(50)
           .snapshots(),
       builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+        final guard = _streamGuard(snap, label: 'הזמנות פעילות');
+        if (guard != null) return guard;
         final docs = snap.data?.docs ?? [];
         if (docs.isEmpty) {
           return Center(
@@ -4974,9 +4985,8 @@ class _VideoVerificationTabContent extends StatelessWidget {
           .limit(200)
           .get(),
       builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+        if (snap.hasError) return Center(child: Text('שגיאה בטעינת וידאו', style: TextStyle(color: Colors.grey[500])));
+        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final docs = (snap.data?.docs ?? []).where((d) {
           final data = d.data() as Map<String, dynamic>;
           final url  = data['verificationVideoUrl'] as String?;

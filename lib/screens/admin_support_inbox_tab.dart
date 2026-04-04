@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'support_center_screen.dart';
+import '../utils/safe_image_provider.dart';
 
 class AdminSupportInboxTab extends StatelessWidget {
   const AdminSupportInboxTab({super.key});
@@ -100,15 +101,49 @@ class AdminSupportInboxTab extends StatelessWidget {
   }
 }
 
-class _TicketCard extends StatelessWidget {
+class _TicketCard extends StatefulWidget {
   final String ticketId;
   final Map<String, dynamic> data;
 
   const _TicketCard({required this.ticketId, required this.data});
 
   @override
+  State<_TicketCard> createState() => _TicketCardState();
+}
+
+class _TicketCardState extends State<_TicketCard> {
+  Map<String, dynamic>? _userProfile;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserProfile();
+  }
+
+  Future<void> _loadUserProfile() async {
+    final userId = widget.data['userId'] as String? ?? '';
+    if (userId.isEmpty) return;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .get();
+      if (mounted && doc.exists) {
+        setState(() => _userProfile = doc.data());
+      }
+    } catch (_) {}
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final userName = data['userName'] as String? ?? 'משתמש';
+    final data = widget.data;
+    final ticketId = widget.ticketId;
+    final resolvedName = _userProfile?['name'] as String? ??
+        data['userName'] as String? ?? 'משתמש';
+    final userName = resolvedName;
+    final profileImg = _userProfile?['profileImage'] as String?;
+    final phone = _userProfile?['phone'] as String? ?? '';
+    final email = _userProfile?['email'] as String? ?? '';
     final category = data['category'] as String? ?? '';
     final subject = data['subject'] as String? ?? '';
     final status = data['status'] as String? ?? 'open';
@@ -175,13 +210,16 @@ class _TicketCard extends StatelessWidget {
                   radius: 18,
                   backgroundColor:
                       const Color(0xFF6366F1).withValues(alpha: 0.1),
-                  child: Text(
-                    userName.isNotEmpty ? userName[0] : '?',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF6366F1),
-                    ),
-                  ),
+                  backgroundImage: safeImageProvider(profileImg),
+                  child: safeImageProvider(profileImg) == null
+                      ? Text(
+                          userName.isNotEmpty ? userName[0] : '?',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF6366F1),
+                          ),
+                        )
+                      : null,
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -196,11 +234,18 @@ class _TicketCard extends StatelessWidget {
                           color: Color(0xFF1A1A2E),
                         ),
                       ),
-                      Text(
-                        ageLabel,
-                        style: const TextStyle(
-                            fontSize: 11, color: Color(0xFF9CA3AF)),
-                      ),
+                      if (phone.isNotEmpty || email.isNotEmpty)
+                        Text(
+                          phone.isNotEmpty ? phone : email,
+                          style: const TextStyle(
+                              fontSize: 11, color: Color(0xFF6366F1)),
+                        )
+                      else
+                        Text(
+                          ageLabel,
+                          style: const TextStyle(
+                              fontSize: 11, color: Color(0xFF9CA3AF)),
+                        ),
                     ],
                   ),
                 ),
