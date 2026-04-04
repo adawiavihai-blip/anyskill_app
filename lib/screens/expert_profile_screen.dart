@@ -20,6 +20,7 @@ import '../services/service_architect.dart';
 import '../models/pricing_model.dart';
 import '../widgets/xp_progress_bar.dart';
 import '../utils/safe_image_provider.dart';
+import '../constants.dart' show appVersion;
 
 // Brand tokens
 const _kPurple     = Color(0xFF6366F1);
@@ -56,6 +57,10 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // ── Dynamic pricing state ──────────────────────────────────────────────────
   /// Indices of add-ons the client has checked in the order sheet.
   final Set<int> _selectedAddOnIndices = {};
+
+  /// Slots already booked for the selected day — grayed out in the time picker.
+  Set<String> _bookedSlots = {};
+  bool _loadingSlots = false;
 
   final List<String> _timeSlots = [
     "08:00", "09:00", "10:00", "11:00",
@@ -759,10 +764,12 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         },
         onDaySelected: (selectedDay, focusedDay) {
           setState(() {
-            _selectedDay     = selectedDay;
-            _focusedDay      = focusedDay;
+            _selectedDay      = selectedDay;
+            _focusedDay       = focusedDay;
             _selectedTimeSlot = null;
+            _bookedSlots      = {};
           });
+          _loadBookedSlots(selectedDay);
         },
         calendarBuilders: CalendarBuilders(
           disabledBuilder: (context, day, _) {
@@ -798,6 +805,37 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // ─────────────────────────────────────────────────────────────────────────
   // UI: Time slots
   // ─────────────────────────────────────────────────────────────────────────
+
+  /// Fetches already-booked slots for [day] from the bookingSlots collection.
+  Future<void> _loadBookedSlots(DateTime day) async {
+    setState(() => _loadingSlots = true);
+    try {
+      final datePrefix =
+          '${widget.expertId}_'
+          '${day.year}${day.month.toString().padLeft(2, '0')}${day.day.toString().padLeft(2, '0')}_';
+      // bookingSlots doc IDs follow the pattern: {expertId}_{YYYYMMDD}_{HHmm}
+      // Query all slots for this expert + date.
+      final snap = await FirebaseFirestore.instance
+          .collection('bookingSlots')
+          .where(FieldPath.documentId, isGreaterThanOrEqualTo: datePrefix)
+          .where(FieldPath.documentId, isLessThan: '${datePrefix}z')
+          .limit(20)
+          .get();
+
+      final booked = <String>{};
+      for (final doc in snap.docs) {
+        // Extract HHmm from doc ID → "HH:mm"
+        final suffix = doc.id.replaceFirst(datePrefix, '');
+        if (suffix.length == 4) {
+          booked.add('${suffix.substring(0, 2)}:${suffix.substring(2)}');
+        }
+      }
+      if (mounted) setState(() { _bookedSlots = booked; _loadingSlots = false; });
+    } catch (e) {
+      debugPrint('[Booking] Failed to load booked slots: $e');
+      if (mounted) setState(() => _loadingSlots = false);
+    }
+  }
 
   /// Generates time slots from the provider's `workingHours` for [_selectedDay].
   /// Falls back to hardcoded [_timeSlots] if the provider hasn't set hours.
@@ -841,8 +879,18 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Text(l10n.expertSelectTime,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            if (_loadingSlots)
+              const SizedBox(
+                width: 14, height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2, color: _kPurple),
+              ),
+            Text(l10n.expertSelectTime,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          ],
+        ),
         const SizedBox(height: 10),
         SizedBox(
           height: 48,
@@ -852,19 +900,26 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             itemCount: slots.length,
             itemBuilder: (context, index) {
               final slot       = slots[index];
+              final isBooked   = _bookedSlots.contains(slot);
               final isSelected = _selectedTimeSlot == slot;
               return GestureDetector(
-                onTap: () => setState(() => _selectedTimeSlot = slot),
+                onTap: isBooked
+                    ? null  // tapping a booked slot does nothing
+                    : () => setState(() => _selectedTimeSlot = slot),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 150),
                   margin: const EdgeInsets.only(left: 8),
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   decoration: BoxDecoration(
-                    color: isSelected ? _kPurple : Colors.white,
+                    color: isBooked
+                        ? Colors.grey.shade200
+                        : isSelected ? _kPurple : Colors.white,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                        color: isSelected ? _kPurple : Colors.grey.shade300),
-                    boxShadow: isSelected
+                        color: isBooked
+                            ? Colors.grey.shade300
+                            : isSelected ? _kPurple : Colors.grey.shade300),
+                    boxShadow: isSelected && !isBooked
                         ? [
                             BoxShadow(
                                 color: _kPurple.withValues(alpha: 0.25),
@@ -874,10 +929,16 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                         : [],
                   ),
                   child: Center(
-                    child: Text(slot,
-                        style: TextStyle(
-                            color: isSelected ? Colors.white : Colors.black87,
-                            fontWeight: FontWeight.bold)),
+                    child: isBooked
+                        ? Text(slot,
+                            style: TextStyle(
+                                color: Colors.grey.shade500,
+                                fontWeight: FontWeight.w500,
+                                decoration: TextDecoration.lineThrough))
+                        : Text(slot,
+                            style: TextStyle(
+                                color: isSelected ? Colors.white : Colors.black87,
+                                fontWeight: FontWeight.bold)),
                   ),
                 ),
               );
@@ -1591,7 +1652,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             ),
             const SizedBox(height: 10),
             Text(
-              'VERSION: 4.3.0',
+              'AnySkill v$appVersion',
               style: TextStyle(fontSize: 10, color: Colors.grey[400]),
             ),
           ],

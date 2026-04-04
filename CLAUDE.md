@@ -26,7 +26,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | Monitoring | Sentry (sentry_flutter ^8.0.0), Firebase Crashlytics, Watchtower |
 | Hosting | Firebase Hosting (SPA) |
 
-**Version:** 9.0.0 &bull; **Firebase Project:** anyskill-6fdf3
+**Version:** 9.0.3 &bull; **Firebase Project:** anyskill-6fdf3
 
 ---
 
@@ -1111,7 +1111,7 @@ but won't crash the `FutureBuilder`).
 - The watchdog timer must be ≥ 10 seconds (Flutter engine needs ~5s on slow devices)
 - `_resilientUserFetch` must never throw — all tiers wrapped in try/catch
 
-### Law 16: UI Context Awareness
+### Law 16: UI Context Awareness + Provider Workspace
 
 **Floating buttons must strictly adhere to their assigned screens and never
 persist during sub-navigation.**
@@ -1135,6 +1135,24 @@ persist during sub-navigation.**
 - Requires `jobExpertId == currentUserId` (only the expert reviews)
 - Requires `jobExpertId != jobCustomerId` (never self-rate)
 - `_reviewTriggeredFor` in-memory set prevents re-trigger within same session
+
+**Provider Workspace — Orders must be segmented into 3 tabs (v9.0.3):**
+
+| Tab # | Name | Content | Stream |
+|-------|------|---------|--------|
+| 1 (leftmost) | משימות שלי | Active/pending jobs (`_activeStatuses`) | `_expertStream` |
+| 2 | יומן | Calendar view with unavailable dates | `_expertStream` |
+| 3 | היסטוריה | Completed/cancelled/refunded jobs | `_expertStream` (catch-all `!_activeStatuses`) |
+
+`DefaultTabController(length: _isProvider ? 3 : 2)` — provider has 3 tabs,
+customer has 2. The provider History tab uses the same catch-all pattern as
+the customer History tab: `!_activeStatuses.contains(status)`.
+
+**StoriesRow "+" badge (`stories_row.dart`):**
+- ALWAYS visible for providers — green (has story) or indigo (no story)
+- Tap when no story → upload sheet
+- Tap when story exists → view story; long-press → delete
+- The "+" icon changes to a play icon when a story exists
 
 ---
 
@@ -1764,4 +1782,4 @@ firebase deploy --only firestore:indexes # Deploy indexes
 
 ---
 
-*Last updated: 2026-04-04 | Version: 9.0.0 (STABLE)*
+*Last updated: 2026-04-04 | Version: 9.0.3 (STABLE)*

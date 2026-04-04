@@ -422,24 +422,29 @@ class _MyStorySlotState extends State<_MyStorySlot>
                     ClipOval(
                       child: _safeAvatarImage(avatar, name, 56),
                     ),
-                    // "+" badge when no story
-                    if (!_hasStory)
-                      Positioned(
-                        bottom: 0,
-                        left: 0,
-                        child: Container(
-                          width: 20,
-                          height: 20,
-                          decoration: BoxDecoration(
-                            color: _kGradStart,
-                            shape: BoxShape.circle,
-                            border:
-                                Border.all(color: Colors.white, width: 1.5),
-                          ),
-                          child: const Icon(Icons.add,
-                              color: Colors.white, size: 13),
+                    // "+" badge — ALWAYS visible for providers.
+                    // When no story: tapping opens upload sheet.
+                    // When story exists: tapping views it, long-press deletes,
+                    //   and the "+" indicates they can upload a replacement.
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      child: Container(
+                        width: 20,
+                        height: 20,
+                        decoration: BoxDecoration(
+                          color: _hasStory
+                              ? const Color(0xFF22C55E)  // green = has story
+                              : _kGradStart,              // indigo = no story
+                          shape: BoxShape.circle,
+                          border:
+                              Border.all(color: Colors.white, width: 1.5),
                         ),
+                        child: Icon(
+                          _hasStory ? Icons.play_arrow_rounded : Icons.add,
+                          color: Colors.white, size: 13),
                       ),
+                    ),
                   ],
                 ),
               ),

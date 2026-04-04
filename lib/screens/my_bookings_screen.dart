@@ -742,7 +742,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     }
 
     return DefaultTabController(
-      length: 2, // Both provider (יומן + משימות) and customer (פעילות + היסטוריה) have 2 tabs
+      length: _isProvider ? 3 : 2, // Provider: Tasks+Calendar+History, Customer: Activity+History
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F5F7),
         appBar: AppBar(
@@ -781,7 +781,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                 unselectedLabelStyle:
                     const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
                 tabs: _isProvider
-                    ? const [Tab(text: 'יומן'), Tab(text: 'משימות שלי')]
+                    ? const [Tab(text: 'משימות שלי'), Tab(text: 'יומן'), Tab(text: 'היסטוריה')]
                     : const [Tab(text: 'פעילות'), Tab(text: 'היסטוריה')],
               ),
             ),
@@ -794,8 +794,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
           // Firestore round-trip, causing the freeze Avi reported on iPhone.
           children: _isProvider
               ? [
-                  _KeepAlivePage(child: _buildCalendarView()),
                   _KeepAlivePage(child: _buildProviderTasksTab()),
+                  _KeepAlivePage(child: _buildCalendarView()),
+                  _KeepAlivePage(child: _buildProviderHistoryTab()),
                 ]
               : [
                   _KeepAlivePage(
@@ -939,6 +940,34 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   }
 
   /// Standard single-stream view for providers (expert-side jobs only).
+  /// Provider History tab — shows completed, cancelled, refunded jobs.
+  Widget _buildProviderHistoryTab() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: _expertStream,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final docs = snapshot.data?.docs ?? [];
+        final historyDocs = docs.where((d) {
+          final status = (d.data() as Map<String, dynamic>)['status'] as String? ?? '';
+          return !_activeStatuses.contains(status) && status.isNotEmpty;
+        }).toList()
+          ..sort((a, b) {
+            final ta = (a.data() as Map)['createdAt'];
+            final tb = (b.data() as Map)['createdAt'];
+            if (ta is Timestamp && tb is Timestamp) return tb.compareTo(ta);
+            return 0;
+          });
+
+        if (historyDocs.isEmpty) {
+          return _buildEmptyState(isExpert: true, isHistory: true);
+        }
+        return _buildGroupedList(historyDocs, isExpert: true, isHistory: true);
+      },
+    );
+  }
+
   Widget _buildSingleTasksStream(Stream<QuerySnapshot> stream) {
     return StreamBuilder<QuerySnapshot>(
       stream: stream,
