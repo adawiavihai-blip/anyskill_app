@@ -1929,22 +1929,42 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                 ),
               ),
               const SizedBox(width: 16),
-              // ── RIGHT: profile photo ─────────────────────────────────────
-              CircleAvatar(
-                radius: 52,
-                backgroundColor: imgProvider != null
-                    ? _kPurpleSoft
-                    : const Color(0xFFE5E7EB),
-                backgroundImage: imgProvider,
-                child: imgProvider != null
-                    ? null
-                    : Text(
-                        name.isNotEmpty ? name[0].toUpperCase() : '?',
-                        style: const TextStyle(
-                            fontSize: 34,
+              // ── RIGHT: profile photo + volunteer heart overlay ──────────
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  CircleAvatar(
+                    radius: 52,
+                    backgroundColor: imgProvider != null
+                        ? _kPurpleSoft
+                        : const Color(0xFFE5E7EB),
+                    backgroundImage: imgProvider,
+                    child: imgProvider != null
+                        ? null
+                        : Text(
+                            name.isNotEmpty ? name[0].toUpperCase() : '?',
+                            style: const TextStyle(
+                                fontSize: 34,
                             fontWeight: FontWeight.w700,
                             color: Color(0xFF374151)),
                       ),
+                  ),
+                  // ── Golden heart overlay for volunteers ──────────────────
+                  if (isVolunteer)
+                    Positioned(
+                      bottom: -2,
+                      right: -2,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.favorite_rounded,
+                            color: Color(0xFFEF4444), size: 18),
+                      ),
+                    ),
+                ],
               ),
             ],
           ),

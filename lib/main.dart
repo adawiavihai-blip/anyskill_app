@@ -399,6 +399,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   bool _updateNotified = false;
   bool _bannerVisible = false;
   bool _startupGrace  = true; // suppress banner for 3s after app start
+  bool _authTimedOut  = false; // iOS supervisor: force past auth wait
   // The version string from Firestore that triggered the current banner.
   // Stored so we can persist "dismissed for this version" when user taps × or Update.
   String? _latestVersion;
@@ -410,6 +411,12 @@ class _AuthWrapperState extends State<AuthWrapper> {
     // interrupting auth redirects (Google/Apple sign-in on mobile web).
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) setState(() => _startupGrace = false);
+    });
+    // iOS Connection Supervisor: if auth hasn't resolved in 5 seconds,
+    // force past the waiting state so the user sees login or home screen
+    // instead of an infinite splash logo.
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted && !_authTimedOut) setState(() => _authTimedOut = true);
     });
     _handleWebUpdates();
     _setupPushNotifications();
@@ -826,7 +833,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
         StreamBuilder<User?>(
           stream: FirebaseAuth.instance.authStateChanges(),
           builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
+            // Show splash only while waiting AND the 5s supervisor hasn't fired.
+            // On iOS, Firebase Auth can stall indefinitely — this ensures
+            // the user always gets past the splash within 5 seconds.
+            if (snapshot.connectionState == ConnectionState.waiting && !_authTimedOut) {
               return const Scaffold(
                 backgroundColor: Colors.white,
                 body: Center(child: _SplashLogo()),

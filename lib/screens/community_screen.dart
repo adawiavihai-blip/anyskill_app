@@ -7,6 +7,7 @@ import 'category_results_screen.dart';
 import 'expert_profile_screen.dart';
 import 'edit_profile_screen.dart';
 import 'login_screen.dart';
+import '../utils/safe_image_provider.dart';
 
 class CommunityScreen extends StatefulWidget {
   const CommunityScreen({super.key});
@@ -808,16 +809,17 @@ class _CommunityScreenState extends State<CommunityScreen> {
           children: [
             CircleAvatar(
               radius: 32,
-              backgroundImage: imageUrl != null
-                  ? NetworkImage(imageUrl)
-                  : const AssetImage('assets/default_avatar.png') as ImageProvider,
-              onBackgroundImageError: imageUrl != null
-                  ? (_, __) {
-                      // Handle image load error
-                    }
-                  : null,
-              child: imageUrl == null
-                  ? const Icon(Icons.person, color: Colors.white)
+              backgroundColor: const Color(0xFFEEEBFF),
+              backgroundImage: safeImageProvider(imageUrl),
+              child: safeImageProvider(imageUrl) == null
+                  ? Text(
+                      name.isNotEmpty ? name[0].toUpperCase() : '?',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF6366F1),
+                      ),
+                    )
                   : null,
             ),
             const SizedBox(height: 6),

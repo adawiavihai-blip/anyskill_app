@@ -26,7 +26,7 @@ customers with verified service providers (experts). Flutter + Firebase, deploye
 | Monitoring | Sentry (sentry_flutter ^8.0.0), Firebase Crashlytics, Watchtower |
 | Hosting | Firebase Hosting (SPA) |
 
-**Version:** 9.0.8 &bull; **Firebase Project:** anyskill-6fdf3
+**Version:** 9.0.9 &bull; **Firebase Project:** anyskill-6fdf3
 
 ---
 
@@ -1270,6 +1270,31 @@ verification miss — logs instead of throwing.
 
 ---
 
+### Law 21: Resilience & Visual Badges (v9.0.9)
+
+**iOS Connection Supervisor (`main.dart` AuthWrapper):**
+- 5-second timeout on `authStateChanges()` waiting state
+- `_authTimedOut = true` after 5s → forces past splash screen
+- If auth hasn't resolved, user sees `PhoneLoginScreen` (can retry)
+- If auth HAS resolved (just slow stream), `snapshot.data` is checked normally
+
+**History tab timeout (`my_bookings_screen.dart`):**
+- 6-second timeout on `_buildProviderHistoryTab` stream
+- `_historyTimedOut = true` → shows empty state instead of infinite spinner
+- Prevents iOS users from seeing a permanent loading indicator
+
+**Volunteer Golden Heart badge (`expert_profile_screen.dart`):**
+- `Stack` wraps the profile `CircleAvatar` in the specialist card
+- When `isVolunteer == true`: red heart icon (❤️) at bottom-right with white circle border
+- Visible on the expert's full profile page (was previously only on search cards)
+
+**Rules:**
+- Auth splash screen must NEVER exceed 5 seconds on any platform
+- History/task streams must ALWAYS have a timeout fallback (≤ 10 seconds)
+- `isVolunteer` badge must appear on: search cards, expert profile, public profile
+
+---
+
 ## 9c. v9.0.4 Changelog — Major Fixes Implemented 2026-04-04
 
 ### Double Booking Prevention (`expert_profile_screen.dart`)
@@ -1961,4 +1986,4 @@ firebase deploy --only firestore:indexes # Deploy indexes
 
 ---
 
-*Last updated: 2026-04-04 | Version: 9.0.8 (STABLE)*
+*Last updated: 2026-04-04 | Version: 9.0.9 (STABLE)*

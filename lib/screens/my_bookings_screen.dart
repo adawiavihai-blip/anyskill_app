@@ -810,13 +810,25 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   }
 
   // ── Customer filtered list ─────────────────────────────────────────────────
+  bool _customerStreamTimedOut = false;
+
   Widget _buildFilteredCustomerList(Set<String> statusFilter) {
     final isHistory = statusFilter == _historyStatuses;
+
+    // 6s timeout — if the customer stream hasn't delivered data,
+    // show empty state instead of infinite skeleton.
+    if (!_customerStreamTimedOut) {
+      Future.delayed(const Duration(seconds: 6), () {
+        if (mounted && !_customerStreamTimedOut) {
+          setState(() => _customerStreamTimedOut = true);
+        }
+      });
+    }
+
     return StreamBuilder<QuerySnapshot>(
       stream: _customerStream,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
+        if (!snapshot.hasData && !_customerStreamTimedOut) {
           return const _BookingsShimmer();
         }
         if (snapshot.hasError) {
@@ -943,7 +955,16 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
 
   /// Standard single-stream view for providers (expert-side jobs only).
   /// Provider History tab — shows completed, cancelled, refunded jobs.
+  bool _historyTimedOut = false;
+
   Widget _buildProviderHistoryTab() {
+    // Start a 6s timeout — if the stream hasn't delivered, show empty state.
+    if (!_historyTimedOut) {
+      Future.delayed(const Duration(seconds: 6), () {
+        if (mounted && !_historyTimedOut) setState(() => _historyTimedOut = true);
+      });
+    }
+
     return StreamBuilder<QuerySnapshot>(
       stream: _expertStream,
       builder: (context, snapshot) {
@@ -954,8 +975,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                 style: TextStyle(color: Colors.grey[500])),
           );
         }
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
+        if (!snapshot.hasData && !_historyTimedOut) {
           return const Center(child: CircularProgressIndicator());
         }
         final docs = snapshot.data?.docs ?? [];
