@@ -184,6 +184,28 @@ class _TaskCard extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                     fontSize: 13, color: TasksPalette.textSecondary)),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(
+                    task.isRemote
+                        ? Icons.public_rounded
+                        : Icons.location_on_outlined,
+                    size: 13,
+                    color: TasksPalette.textSecondary),
+                const SizedBox(width: 3),
+                Expanded(
+                  child: Text(
+                    task.locationDisplay,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 11,
+                        color: TasksPalette.textSecondary),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 12),
             Row(
               children: [

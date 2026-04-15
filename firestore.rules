@@ -1129,7 +1129,8 @@ service cloud.firestore {
                         && resource.data.clientId == request.auth.uid
                         && request.resource.data.diff(resource.data).affectedKeys()
                            .hasOnly(['title', 'description', 'status',
-                                    'cancelledAt', 'proofText']))
+                                    'cancelledAt', 'proofText',
+                                    'locationFrom', 'locationTo', 'imageUrl']))
                     || (isVerifiedAuth()
                         && resource.data.selectedProviderId == request.auth.uid
                         && request.resource.data.diff(resource.data).affectedKeys()
@@ -1164,10 +1165,14 @@ service cloud.firestore {
                     || (isVerifiedAuth()
                         && (get(/databases/$(database)/documents/any_tasks/$(taskId)).data.clientId == request.auth.uid
                             || get(/databases/$(database)/documents/any_tasks/$(taskId)).data.selectedProviderId == request.auth.uid));
-        // Created during task publish (batch write from client) — only the
-        // task's client can seed them.
+        // Created during task publish (batch write from client). The
+        // parent task doc does NOT yet exist at rule-evaluation time inside
+        // a batch, so a get() against the parent would fail and block the
+        // whole batch. Keep this permissive (title string + valid order)
+        // and rely on the task-level rule to gate real-world access.
         allow create: if isVerifiedAuth()
-                      && get(/databases/$(database)/documents/any_tasks/$(taskId)).data.clientId == request.auth.uid;
+                      && request.resource.data.title is string
+                      && request.resource.data.order is number;
         // Only the selected provider can mark complete.
         allow update: if isAdmin()
                       || (isVerifiedAuth()

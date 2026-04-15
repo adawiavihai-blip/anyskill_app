@@ -8,10 +8,15 @@
 ///   • Commitment — 2000-char description invites investment
 library;
 
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../models/any_task.dart';
 import '../services/any_task_service.dart';
@@ -30,7 +35,8 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
   final _title = TextEditingController();
   final _desc = TextEditingController();
   final _budget = TextEditingController();
-  final _location = TextEditingController();
+  final _locationFrom = TextEditingController();
+  final _locationTo = TextEditingController();
 
   String _category = 'other';
   String _urgency = 'flexible';
@@ -40,6 +46,72 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
   bool _isRemote = false;
   bool _submitting = false;
   bool _aiLoading = false;
+
+  // ── Image attachment ────────────────────────────────────────────
+  File? _pickedImageFile;        // mobile path
+  Uint8List? _pickedImageBytes;  // web path
+  String? _pickedImageMime;
+  bool _uploadingImage = false;
+
+  Future<void> _pickImage() async {
+    try {
+      final picker = ImagePicker();
+      final x = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 80,
+        maxWidth: 1024,
+      );
+      if (x == null) return;
+      if (kIsWeb) {
+        final bytes = await x.readAsBytes();
+        setState(() {
+          _pickedImageBytes = bytes;
+          _pickedImageFile = null;
+          _pickedImageMime = x.mimeType ?? 'image/jpeg';
+        });
+      } else {
+        setState(() {
+          _pickedImageFile = File(x.path);
+          _pickedImageBytes = null;
+          _pickedImageMime = x.mimeType ?? 'image/jpeg';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('שגיאה בבחירת תמונה: $e'),
+        backgroundColor: TasksPalette.danger,
+      ));
+    }
+  }
+
+  void _removeImage() {
+    setState(() {
+      _pickedImageFile = null;
+      _pickedImageBytes = null;
+      _pickedImageMime = null;
+    });
+  }
+
+  Future<String?> _uploadImageIfAny(String taskId) async {
+    if (_pickedImageFile == null && _pickedImageBytes == null) return null;
+    setState(() => _uploadingImage = true);
+    try {
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final ref = FirebaseStorage.instance
+          .ref('any_tasks/$taskId/task_image_$ts.jpg');
+      final metadata = SettableMetadata(
+          contentType: _pickedImageMime ?? 'image/jpeg');
+      if (kIsWeb && _pickedImageBytes != null) {
+        await ref.putData(_pickedImageBytes!, metadata);
+      } else if (_pickedImageFile != null) {
+        await ref.putFile(_pickedImageFile!, metadata);
+      }
+      return await ref.getDownloadURL();
+    } finally {
+      if (mounted) setState(() => _uploadingImage = false);
+    }
+  }
 
   Future<void> _runAi() async {
     final title = _title.text.trim();
@@ -79,7 +151,8 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
     _title.dispose();
     _desc.dispose();
     _budget.dispose();
-    _location.dispose();
+    _locationFrom.dispose();
+    _locationTo.dispose();
     super.dispose();
   }
 
@@ -94,6 +167,8 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
           await FirebaseFirestore.instance.collection('users').doc(uid).get();
       final name = (userSnap.data()?['name'] ?? 'לקוח') as String;
 
+      final from = _locationFrom.text.trim();
+      final to = _locationTo.text.trim();
       final task = AnyTask(
         clientId: uid,
         clientName: name,
@@ -104,14 +179,29 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
         budgetNis: int.parse(_budget.text.trim()),
         urgency: _urgency,
         deadline: _deadline,
-        locationName: _location.text.trim().isEmpty ? null : _location.text.trim(),
+        locationFrom: _isRemote || from.isEmpty ? null : from,
+        locationTo: _isRemote || to.isEmpty ? null : to,
         isRemote: _isRemote,
         proofType: _proofType,
       );
 
       final id = await AnyTaskService.instance.publishTask(task);
-      if (!mounted) return;
 
+      // Upload attachment if the user picked one. Non-fatal on failure —
+      // the task is already live; a failed image upload just logs.
+      try {
+        final url = await _uploadImageIfAny(id);
+        if (url != null) {
+          await FirebaseFirestore.instance
+              .collection('any_tasks')
+              .doc(id)
+              .update({'imageUrl': url});
+        }
+      } catch (e) {
+        debugPrint('[PublishTask] image upload failed: $e');
+      }
+
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('✨ המשימה פורסמה! נודיע לך כשמגיעות הצעות ($id)'),
@@ -176,6 +266,11 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
               ),
             ),
             _section(
+              title: 'הוסף תמונה (רשות)',
+              hint: 'תמונה עוזרת לנותני שירות להבין את המשימה מהר יותר',
+              child: _imagePickerTile(),
+            ),
+            _section(
               title: 'קטגוריה',
               child: _categoryGrid(),
             ),
@@ -210,15 +305,30 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
               title: 'מיקום',
               child: Column(
                 children: [
-                  TextFormField(
-                    controller: _location,
-                    enabled: !_isRemote,
-                    decoration: _inputDecoration('רחוב, עיר').copyWith(
-                      prefixIcon: const Icon(Icons.location_on_outlined,
-                          color: TasksPalette.clientPrimary),
+                  if (!_isRemote) ...[
+                    TextFormField(
+                      controller: _locationFrom,
+                      decoration:
+                          _inputDecoration('כתובת איסוף / נקודת התחלה')
+                              .copyWith(
+                        labelText: 'מיקום (מאיפה)',
+                        prefixIcon: const Icon(Icons.my_location_rounded,
+                            color: TasksPalette.clientPrimary),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
+                    const SizedBox(height: 10),
+                    TextFormField(
+                      controller: _locationTo,
+                      decoration:
+                          _inputDecoration('כתובת יעד / נקודת סיום')
+                              .copyWith(
+                        labelText: 'יעד (לאיפה)',
+                        prefixIcon: const Icon(Icons.flag_outlined,
+                            color: TasksPalette.coral),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   CheckboxListTile(
                     value: _isRemote,
                     onChanged: (v) => setState(() => _isRemote = v ?? false),
@@ -412,6 +522,71 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
     );
   }
 
+  Widget _imagePickerTile() {
+    final hasImage =
+        _pickedImageFile != null || _pickedImageBytes != null;
+    if (hasImage) {
+      final preview = _pickedImageBytes != null
+          ? Image.memory(_pickedImageBytes!, fit: BoxFit.cover)
+          : Image.file(_pickedImageFile!, fit: BoxFit.cover);
+      return Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(TasksPalette.rButton),
+            child: SizedBox(
+                height: 160, width: double.infinity, child: preview),
+          ),
+          PositionedDirectional(
+            top: 6,
+            end: 6,
+            child: Material(
+              color: Colors.black54,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: _uploadingImage ? null : _removeImage,
+                child: const Padding(
+                  padding: EdgeInsets.all(6),
+                  child: Icon(Icons.close_rounded,
+                      color: Colors.white, size: 18),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    return InkWell(
+      onTap: _pickImage,
+      borderRadius: BorderRadius.circular(TasksPalette.rButton),
+      child: Container(
+        height: 120,
+        decoration: BoxDecoration(
+          color: TasksPalette.scaffoldBg,
+          borderRadius: BorderRadius.circular(TasksPalette.rButton),
+          border: Border.all(
+            color: TasksPalette.clientPrimary.withValues(alpha: 0.4),
+            style: BorderStyle.solid,
+            width: 1.5,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            Icon(Icons.add_photo_alternate_outlined,
+                color: TasksPalette.clientPrimary, size: 32),
+            SizedBox(height: 6),
+            Text('לחץ להעלאת תמונה',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: TasksPalette.clientPrimary)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _deadlineTile() {
     return InkWell(
       onTap: () async {
@@ -522,7 +697,7 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
                 children: const [
                   Icon(Icons.rocket_launch_rounded, size: 20),
                   SizedBox(width: 8),
-                  Text('פרסם משימה — ללא עמלת פרסום',
+                  Text('פרסם משימה',
                       style: TextStyle(
                           fontSize: 15, fontWeight: FontWeight.w700)),
                 ],

@@ -2,17 +2,40 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
+    // ── Helpers ────────────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    function isAdmin() {
+      // Admin flag lives in Firestore — single source of truth.
+      return isSignedIn() && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+    function isImageContentType() {
+      return request.resource.contentType.matches('image/.*');
+    }
+    function isMediaContentType() {
+      return request.resource.contentType.matches('image/.*')
+          || request.resource.contentType.matches('video/.*');
+    }
+    function underSize(maxMb) {
+      return request.resource.size < maxMb * 1024 * 1024;
+    }
+
     // ── Profile images ─────────────────────────────────────────────────────
     // Public read (appears in search); only the owner may upload.
     match /profile_images/{userId}/{allPaths=**} {
-      allow read:  if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow read:  if isSignedIn();
+      allow write: if isOwner(userId) && isImageContentType() && underSize(5);
     }
 
     // ── Chat files (images & voice notes) ──────────────────────────────────
     // Only participants whose UID appears in the chatId segment may read/write.
     match /chats/{chatId}/{allPaths=**} {
-      allow read, write: if request.auth != null
+      allow read, write: if isSignedIn()
                          && request.auth.uid in chatId.split('_');
     }
 
@@ -22,32 +45,157 @@ service firebase.storage {
     // A provider may write only a file whose name starts with their own UID,
     // preventing one user from overwriting another's story.
     match /stories/{storyFile} {
-      allow read:  if request.auth != null;
-      allow write: if request.auth != null
-                   && storyFile.matches(request.auth.uid + '_.*');
+      allow read:  if isSignedIn();
+      allow write: if isSignedIn()
+                   && storyFile.matches(request.auth.uid + '_.*')
+                   && isMediaContentType()
+                   && underSize(50);
     }
 
     // ── Gallery / portfolio images ─────────────────────────────────────────
     match /gallery/{userId}/{allPaths=**} {
-      allow read:  if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow read:  if isSignedIn();
+      allow write: if isOwner(userId) && isImageContentType() && underSize(10);
+    }
+
+    // ── Intro videos (provider registration — 60s max) ────────────────────
+    // Path: intro_videos/{uid}/v_{timestamp}.{ext}
+    match /intro_videos/{userId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isOwner(userId) && isMediaContentType() && underSize(50);
     }
 
     // ── ID / Passport verification images ─────────────────────────────────
-    // Sensitive: owner may upload their own, only admin (or owner) may read.
+    // Sensitive: owner may upload their own; only admin or owner may read.
     match /id_verifications/{userId}/{allPaths=**} {
-      allow write: if request.auth != null && request.auth.uid == userId;
-      allow read:  if request.auth != null
-                   && (request.auth.uid == userId
-                       || request.auth.token.email == 'adawiavihai@gmail.com');
+      allow write: if isOwner(userId) && isImageContentType() && underSize(10);
+      allow read:  if isOwner(userId) || isAdmin();
     }
 
-    // ── Fallback: other authenticated uploads ─────────────────────────────
-    // Covers category_images, banners, business_docs, compliance_docs,
-    // tax_certificates, and any future paths.
+    // ── Live selfie verification (Law 8) ──────────────────────────────────
+    // Path: verification_selfies/{uid}.jpg
+    // Owner uploads from front camera; admin reads side-by-side with ID doc.
+    match /verification_selfies/{selfieFile} {
+      allow write: if isSignedIn()
+                   && selfieFile.matches(request.auth.uid + '\\..*')
+                   && isImageContentType()
+                   && underSize(5);
+      allow read:  if isSignedIn()
+                   && (selfieFile.matches(request.auth.uid + '\\..*') || isAdmin());
+    }
+
+    // ── Provider verification video ───────────────────────────────────────
+    // Path: users/{uid}/verification_video.mp4
+    match /users/{userId}/{allPaths=**} {
+      allow read:  if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) && isMediaContentType() && underSize(100);
+    }
+
+    // ── Business documents (license, tax certificate) ─────────────────────
+    // Path: business_docs/{uid}/license_*.{ext}
+    match /business_docs/{userId}/{allPaths=**} {
+      allow read:  if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) && underSize(10);
+    }
+
+    // ── ID documents (identity verification — v3 provider registration) ───
+    // Path: id_docs/{uid}/id_*.{ext}
+    // Owner writes (JPG/PNG only), owner + admin read.
+    match /id_docs/{userId}/{allPaths=**} {
+      allow read:  if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) && isImageContentType() && underSize(10);
+    }
+
+    // ── Job photos (customer uploads attached to a booking) ───────────────
+    // Path: job_photos/{uid}/{timestamp}.{ext}
+    match /job_photos/{userId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isOwner(userId) && isImageContentType() && underSize(10);
+    }
+
+    // ── Booking requirement images (uploaded at checkout) ────────────────
+    // Path: booking_requirements/{customerUid}/{requirementId}_{ts}.{ext}
+    // Used by Home-Services schemas (pest control, plumbing, etc.) to
+    // collect a "visual diagnosis" photo from the customer before payment.
+    // Customer uploads under their own UID; provider/admin can read.
+    match /booking_requirements/{userId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isOwner(userId) && isImageContentType() && underSize(10);
+    }
+
+    // ── Dog-walk route map snapshots (provider posts on End Walk) ────────
+    // Path: dog_walks/{walkId}/route_map.png
+    match /dog_walks/{walkId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isSignedIn() && isImageContentType() && underSize(5);
+    }
+
+    // ── Boarding daily proofs (provider uploads photo + video per day) ───
+    // Path: boarding_proofs/{jobId}/{date}_{kind}.{ext}  (kind = photo|video)
+    match /boarding_proofs/{jobId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      // Allow both image and video — the file size cap rises to 50 MB.
+      allow write: if isSignedIn() && underSize(50);
+    }
+
+    // ── Community evidence (photo proof for volunteer task) ──────────────
+    // Path: community_evidence/{docId}_{ts}.{ext}
+    match /community_evidence/{evidenceFile} {
+      allow read:  if isSignedIn();
+      allow write: if isSignedIn() && isImageContentType() && underSize(10);
+    }
+
+    // ── AnyTask proofs (provider's "work done" evidence) ─────────────────
+    // Path: anytask_proofs/{taskId}/proof_*.{ext}
+    match /anytask_proofs/{taskId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isSignedIn() && isMediaContentType() && underSize(20);
+    }
+
+    // ── AnyTasks v14.0.0 — client task attachments + provider proof ──────
+    // Path: any_tasks/{taskId}/{file}  (task_image_*, proof_*, etc.)
+    match /any_tasks/{taskId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isSignedIn() && isImageContentType() && underSize(10);
+    }
+
+    // ── Banners (admin-managed home screen carousel) ─────────────────────
+    match /banners/{bannerFile} {
+      allow read:  if isSignedIn();
+      allow write: if isAdmin() && isImageContentType() && underSize(5);
+    }
+
+    // ── Category images (admin-managed catalog) ──────────────────────────
+    match /category_images/{categoryFile} {
+      allow read:  if isSignedIn();
+      allow write: if isAdmin() && isImageContentType() && underSize(5);
+    }
+    match /categories/{docId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isAdmin() && isImageContentType() && underSize(5);
+    }
+
+    // ── Demo expert avatars (admin-managed) ──────────────────────────────
+    match /demo_experts/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isAdmin() && isImageContentType() && underSize(5);
+    }
+
+    // ── Dog profile photos (Pet Stay Tracker v13.0.0) ─────────────────────
+    // Owner uploads their pet's photo. Any signed-in user can read (the
+    // provider sees the photo via the job-side snapshot; the Storage rule
+    // itself just needs to allow a signed-in GET on the canonical URL).
+    match /dog_profiles/{ownerId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isOwner(ownerId) && isImageContentType() && underSize(5);
+    }
+
+    // ── DEFAULT DENY ──────────────────────────────────────────────────────
+    // Any path not explicitly matched above is rejected.
+    // To add a new feature that needs storage, add a `match` block above this
+    // line — never relax the default deny.
     match /{allPaths=**} {
-      allow read:  if request.auth != null;
-      allow write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }

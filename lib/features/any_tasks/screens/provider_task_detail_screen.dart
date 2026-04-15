@@ -333,6 +333,25 @@ class _DescriptionCard extends StatelessWidget {
                   fontSize: 14,
                   height: 1.5,
                   color: TasksPalette.textPrimary)),
+          if (task.imageUrl != null && task.imageUrl!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(TasksPalette.rButton),
+              child: Image.network(
+                task.imageUrl!,
+                width: double.infinity,
+                height: 180,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  height: 120,
+                  color: TasksPalette.scaffoldBg,
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.broken_image_outlined,
+                      color: TasksPalette.textHint),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -345,14 +364,13 @@ class _MetaGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final locationLabel = task.locationDisplay;
     return Row(
       children: [
         _MetaTile(
           icon: Icons.location_on_outlined,
           label: 'מיקום',
-          value: task.isRemote
-              ? 'מרחוק'
-              : (task.locationName ?? 'לא צוין'),
+          value: locationLabel,
         ),
         const SizedBox(width: 8),
         _MetaTile(

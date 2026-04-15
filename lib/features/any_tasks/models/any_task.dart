@@ -86,9 +86,12 @@ class AnyTask {
   final DateTime? deadline;      // null = flexible
 
   // ── Location ───────────────────────────────────────────────────
-  final GeoPoint? location;
-  final String? locationName;    // human-readable (e.g. "רחוב הרצל 12, תל אביב")
+  final String? locationFrom;    // pickup / start address (optional)
+  final String? locationTo;      // destination / end address (optional)
   final bool isRemote;
+
+  // ── Attachment ─────────────────────────────────────────────────
+  final String? imageUrl;        // optional task photo, uploaded to Storage
 
   // ── Proof requirements ─────────────────────────────────────────
   final String proofType;        // kTaskProofTypes
@@ -124,9 +127,10 @@ class AnyTask {
     this.agreedPriceNis,
     required this.urgency,
     this.deadline,
-    this.location,
-    this.locationName,
+    this.locationFrom,
+    this.locationTo,
     this.isRemote = false,
+    this.imageUrl,
     required this.proofType,
     this.proofUrl,
     this.proofText,
@@ -155,9 +159,10 @@ class AnyTask {
         agreedPriceNis: (d['agreedPriceNis'] as num?)?.toInt(),
         urgency: (d['urgency'] ?? 'flexible') as String,
         deadline: (d['deadline'] as Timestamp?)?.toDate(),
-        location: d['location'] as GeoPoint?,
-        locationName: d['locationName'] as String?,
+        locationFrom: d['locationFrom'] as String?,
+        locationTo: d['locationTo'] as String?,
         isRemote: (d['isRemote'] ?? false) as bool,
+        imageUrl: d['imageUrl'] as String?,
         proofType: (d['proofType'] ?? 'photo') as String,
         proofUrl: d['proofUrl'] as String?,
         proofText: d['proofText'] as String?,
@@ -185,9 +190,10 @@ class AnyTask {
         if (agreedPriceNis != null) 'agreedPriceNis': agreedPriceNis,
         'urgency': urgency,
         if (deadline != null) 'deadline': Timestamp.fromDate(deadline!),
-        if (location != null) 'location': location,
-        if (locationName != null) 'locationName': locationName,
+        if (locationFrom != null) 'locationFrom': locationFrom,
+        if (locationTo != null) 'locationTo': locationTo,
         'isRemote': isRemote,
+        if (imageUrl != null) 'imageUrl': imageUrl,
         'proofType': proofType,
         if (proofUrl != null) 'proofUrl': proofUrl,
         if (proofText != null) 'proofText': proofText,
@@ -204,4 +210,17 @@ class AnyTask {
   /// Callers pass feePercent in [0.0..1.0]. Matches spec section 7.
   static int computeNet(int gross, double feePercent) =>
       (gross - (gross * feePercent).round()).clamp(0, gross);
+
+  /// Human-readable single-line location used on task cards + details.
+  /// Rules: remote → "משימה מרחוק"; both → "from → to"; only from → "from";
+  /// only to → "to"; neither → "לא צוין".
+  String get locationDisplay {
+    if (isRemote) return 'משימה מרחוק';
+    final from = locationFrom?.trim() ?? '';
+    final to = locationTo?.trim() ?? '';
+    if (from.isNotEmpty && to.isNotEmpty) return '$from ← $to';
+    if (from.isNotEmpty) return from;
+    if (to.isNotEmpty) return to;
+    return 'לא צוין';
+  }
 }
