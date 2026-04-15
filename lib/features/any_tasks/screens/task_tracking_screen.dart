@@ -13,6 +13,7 @@ import '../models/any_task.dart';
 import '../models/task_milestone.dart';
 import '../services/any_task_service.dart';
 import '../theme/any_tasks_palette.dart';
+import '../widgets/milestone_stepper.dart';
 
 class TaskTrackingScreen extends StatelessWidget {
   final String taskId;
@@ -190,11 +191,13 @@ class _MilestoneStepper extends StatelessWidget {
         final total = items.isEmpty ? 1 : items.length;
         final pct = done / total;
         return Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: TasksPalette.cardBg,
+            color: TasksPalette.cardWhite,
             borderRadius: BorderRadius.circular(TasksPalette.rCard),
-            border: Border.all(color: TasksPalette.border),
+            border:
+                Border.all(color: TasksPalette.borderLight, width: 0.5),
+            boxShadow: TasksPalette.cardShadow,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -203,83 +206,34 @@ class _MilestoneStepper extends StatelessWidget {
                 children: [
                   const Text('שלבי הביצוע',
                       style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: TasksPalette.textPrimary)),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: TasksPalette.textSecondary)),
                   const Spacer(),
                   Text('$done / $total',
                       style: const TextStyle(
                           fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w500,
                           color: TasksPalette.clientPrimary)),
                 ],
               ),
               const SizedBox(height: 10),
               ClipRRect(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(4),
                 child: LinearProgressIndicator(
                   value: pct,
                   minHeight: 8,
-                  backgroundColor: TasksPalette.clientPrimarySoft,
+                  backgroundColor: TasksPalette.clientLight,
                   valueColor: const AlwaysStoppedAnimation(
                       TasksPalette.clientPrimary),
                 ),
               ),
-              const SizedBox(height: 14),
-              ...items.map((m) => _MilestoneRow(m: m)),
+              const SizedBox(height: 16),
+              MilestoneStepper(items: items),
             ],
           ),
         );
       },
-    );
-  }
-}
-
-class _MilestoneRow extends StatelessWidget {
-  final TaskMilestone m;
-  const _MilestoneRow({required this.m});
-
-  @override
-  Widget build(BuildContext context) {
-    final done = m.isDone;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          Container(
-            width: 22,
-            height: 22,
-            decoration: BoxDecoration(
-              color: done
-                  ? TasksPalette.success
-                  : TasksPalette.scaffoldBg,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: done
-                    ? TasksPalette.success
-                    : TasksPalette.border,
-              ),
-            ),
-            child: done
-                ? const Icon(Icons.check_rounded,
-                    size: 14, color: Colors.white)
-                : null,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              m.title,
-              style: TextStyle(
-                fontSize: 13,
-                color: done
-                    ? TasksPalette.textPrimary
-                    : TasksPalette.textSecondary,
-                fontWeight: done ? FontWeight.w600 : FontWeight.w500,
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

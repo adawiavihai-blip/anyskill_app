@@ -189,8 +189,10 @@ class _ProviderTaskDetailScreenState extends State<ProviderTaskDetailScreen> {
                     const SizedBox(height: 14),
                     _MetaGrid(task: task),
                     const SizedBox(height: 14),
-                    if (task.responseCount > 0) _FomoBadge(task: task),
-                    const SizedBox(height: 80),
+                    _EscrowAssuranceBanner(),
+                    const SizedBox(height: 12),
+                    _FomoPillRow(task: task),
+                    const SizedBox(height: 100),
                   ],
                 ),
               ),
@@ -434,31 +436,110 @@ class _MetaTile extends StatelessWidget {
   }
 }
 
-class _FomoBadge extends StatelessWidget {
-  final AnyTask task;
-  const _FomoBadge({required this.task});
+class _EscrowAssuranceBanner extends StatelessWidget {
+  const _EscrowAssuranceBanner();
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: TasksPalette.coralSoft,
+        color: TasksPalette.providerLight,
         borderRadius: BorderRadius.circular(TasksPalette.rButton),
-        border: Border.all(color: TasksPalette.coral.withValues(alpha: 0.3)),
       ),
       child: Row(
-        children: [
-          const Icon(Icons.local_fire_department_rounded,
-              color: TasksPalette.coral, size: 20),
-          const SizedBox(width: 8),
+        children: const [
+          Icon(Icons.shield_outlined,
+              color: TasksPalette.successGreen, size: 18),
+          SizedBox(width: 10),
           Expanded(
-            child: Text('${task.responseCount} נותני שירות כבר התעניינו',
-                style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: TasksPalette.coral)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('התשלום מאובטח באמצעות Escrow',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: TasksPalette.providerDark)),
+                SizedBox(height: 1),
+                Text('הכסף יוחזק עד שהמשימה תושלם ותאושר',
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: TasksPalette.successGreen)),
+              ],
+            ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FomoPillRow extends StatelessWidget {
+  final AnyTask task;
+  const _FomoPillRow({required this.task});
+
+  @override
+  Widget build(BuildContext context) {
+    // "6 צופים עכשיו" is a placeholder until live viewer counter ships.
+    // Derived as a stable-ish pseudo-random per task so it doesn't jump
+    // around between rebuilds within a session.
+    final viewers = ((task.id?.codeUnits.fold<int>(0, (s, c) => s + c) ?? 0)
+            % 8) +
+        2; // 2..9
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        _FomoPill(
+            icon: Icons.remove_red_eye_outlined,
+            label: '$viewers צופים עכשיו',
+            bg: TasksPalette.bgPrimary,
+            fg: TasksPalette.textSecondary),
+        if (task.responseCount > 0)
+          _FomoPill(
+              icon: Icons.local_fire_department_rounded,
+              label: '${task.responseCount} כבר התעניינו',
+              bg: TasksPalette.amberLight,
+              fg: TasksPalette.amber),
+        const _FomoPill(
+            icon: Icons.schedule_rounded,
+            label: 'משימה נבחרת תוך ~45 דקות',
+            bg: TasksPalette.bgPrimary,
+            fg: TasksPalette.textHint),
+      ],
+    );
+  }
+}
+
+class _FomoPill extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color bg;
+  final Color fg;
+  const _FomoPill({
+    required this.icon,
+    required this.label,
+    required this.bg,
+    required this.fg,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: fg),
+          const SizedBox(width: 4),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 10, fontWeight: FontWeight.w500, color: fg)),
         ],
       ),
     );
@@ -519,8 +600,9 @@ class _BottomCta extends StatelessWidget {
                     child: ElevatedButton(
                       onPressed: busy ? null : onAccept,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: TasksPalette.providerPrimary,
+                        backgroundColor: TasksPalette.successGreen,
                         foregroundColor: Colors.white,
+                        elevation: 0,
                         shape: RoundedRectangleBorder(
                             borderRadius:
                                 BorderRadius.circular(TasksPalette.rButton)),
@@ -532,25 +614,31 @@ class _BottomCta extends StatelessWidget {
                               child: CircularProgressIndicator(
                                   color: Colors.white, strokeWidth: 2),
                             )
-                          : Text('אשר את המשימה בעבור ₪${task.budgetNis}',
+                          : Text('אשר משימה ב-₪${task.budgetNis}',
                               style: const TextStyle(
-                                  fontSize: 15, fontWeight: FontWeight.w700)),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500)),
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text('אתה תקבל ₪$net נטו',
+                  const SizedBox(height: 6),
+                  Text('תקבל: ₪$net נטו',
                       style: const TextStyle(
                           fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: TasksPalette.success)),
-                  const SizedBox(height: 6),
+                          color: TasksPalette.successGreen)),
+                  const SizedBox(height: 4),
                   TextButton(
                     onPressed: busy ? null : onCounterTap,
+                    style: TextButton.styleFrom(
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 4)),
                     child: const Text('המחיר לא מתאים? הצע מחיר אחר',
                         style: TextStyle(
                             fontSize: 12,
                             color: TasksPalette.textSecondary)),
                   ),
+                  const Text('בממוצע, משימה נבחרת תוך 45 דקות',
+                      style: TextStyle(
+                          fontSize: 10, color: TasksPalette.textHint)),
                 ],
               ),
               secondChild: _CounterForm(

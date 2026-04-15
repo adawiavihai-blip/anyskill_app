@@ -18,6 +18,7 @@ import '../models/any_task.dart';
 import '../models/task_milestone.dart';
 import '../services/any_task_service.dart';
 import '../theme/any_tasks_palette.dart';
+import '../widgets/milestone_stepper.dart';
 
 class ProviderActiveTaskScreen extends StatelessWidget {
   final String taskId;
@@ -191,85 +192,44 @@ class _StepperSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: TasksPalette.cardBg,
+        color: TasksPalette.cardWhite,
         borderRadius: BorderRadius.circular(TasksPalette.rCard),
-        border: Border.all(color: TasksPalette.border),
+        border: Border.all(color: TasksPalette.borderLight, width: 0.5),
+        boxShadow: TasksPalette.cardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('שלבי העבודה',
+          const Text('שלבי ביצוע',
               style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: TasksPalette.textPrimary)),
-          const SizedBox(height: 10),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: TasksPalette.textSecondary)),
+          const SizedBox(height: 14),
           StreamBuilder<List<TaskMilestone>>(
             stream: AnyTaskService.instance.streamMilestones(task.id!),
             builder: (context, snap) {
               final items = snap.data ?? const <TaskMilestone>[];
-              if (items.isEmpty) {
-                return const Text('אין שלבים',
-                    style: TextStyle(
-                        color: TasksPalette.textSecondary, fontSize: 12));
-              }
-              return Column(
-                children: items.map((m) {
-                  final done = m.isDone;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 22,
-                          height: 22,
-                          decoration: BoxDecoration(
-                            color: done
-                                ? TasksPalette.success
-                                : TasksPalette.scaffoldBg,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                                color: done
-                                    ? TasksPalette.success
-                                    : TasksPalette.border),
-                          ),
-                          child: done
-                              ? const Icon(Icons.check_rounded,
-                                  size: 14, color: Colors.white)
-                              : null,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(m.title,
-                              style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: done
-                                      ? TasksPalette.textPrimary
-                                      : TasksPalette.textSecondary)),
-                        ),
-                        if (!done && task.status == 'in_progress')
-                          TextButton(
-                            onPressed: () => AnyTaskService.instance
-                                .completeMilestone(
-                                    taskId: task.id!,
-                                    milestoneId: m.id!),
-                            style: TextButton.styleFrom(
-                                foregroundColor:
-                                    TasksPalette.providerPrimary,
-                                visualDensity:
-                                    VisualDensity.compact),
-                            child: const Text('סמן כהושלם',
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700)),
-                          ),
-                      ],
-                    ),
+              return MilestoneStepper(
+                items: items,
+                trailingBuilder: (m, _) {
+                  if (m.isDone || task.status != 'in_progress') return null;
+                  return TextButton(
+                    onPressed: () => AnyTaskService.instance
+                        .completeMilestone(
+                            taskId: task.id!, milestoneId: m.id!),
+                    style: TextButton.styleFrom(
+                        foregroundColor: TasksPalette.successGreen,
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 8)),
+                    child: const Text('סמן כהושלם',
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500)),
                   );
-                }).toList(),
+                },
               );
             },
           ),

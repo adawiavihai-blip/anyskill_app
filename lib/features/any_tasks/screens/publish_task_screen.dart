@@ -681,27 +681,20 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
         style: ElevatedButton.styleFrom(
           backgroundColor: TasksPalette.clientPrimary,
           foregroundColor: Colors.white,
+          elevation: 0,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(TasksPalette.rPill),
+            borderRadius: BorderRadius.circular(TasksPalette.rButton),
           ),
         ),
         child: _submitting
             ? const SizedBox(
                 width: 20,
                 height: 20,
-                child:
-                    CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                child: CircularProgressIndicator(
+                    color: Colors.white, strokeWidth: 2),
               )
-            : Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-                  Icon(Icons.rocket_launch_rounded, size: 20),
-                  SizedBox(width: 8),
-                  Text('פרסם משימה',
-                      style: TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w700)),
-                ],
-              ),
+            : const Text('פרסם משימה',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
       ),
     );
   }
