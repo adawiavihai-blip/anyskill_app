@@ -1,11 +1,12 @@
-/// AnySkill — My Tasks Screen (AnyTasks v14.1.0 — UI Overhaul)
+/// AnySkill — My Tasks Screen (AnyTasks v14.2.0 — Redesign)
 ///
-/// Client home for the AnyTasks module. Layout per design spec:
-///   • White header (avatar + greeting + bell)
-///   • Pill search bar
-///   • Horizontal category icon row
-///   • "המשימות שלי" section + task cards
-///   • Sticky bottom CTA "פרסם משימה חדשה" (dark, pill)
+/// Client home for the AnyTasks module. Per the April-15 redesign spec:
+///   • Dark-navy gradient header (avatar + greeting + back)
+///   • Horizontal row of 5 main categories (משלוחים, ניקיון, תיקונים,
+///     הובלות, טיפול בחיות) — tap routes to Publish pre-filled
+///   • Upgraded task cards with colored status pill, offer count and
+///     two CTAs ("צפה בהצעות" / "פרטי המשימה")
+///   • No search bar, no suitcase icon, explicit back navigation
 library;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -16,30 +17,18 @@ import '../models/any_task.dart';
 import '../services/any_task_service.dart';
 import '../theme/any_tasks_palette.dart';
 import 'compare_offers_screen.dart';
-import 'provider_hub_screen.dart';
 import 'publish_task_screen.dart';
 import 'task_tracking_screen.dart';
 
-class MyTasksScreen extends StatefulWidget {
+class MyTasksScreen extends StatelessWidget {
   const MyTasksScreen({super.key});
 
-  @override
-  State<MyTasksScreen> createState() => _MyTasksScreenState();
-}
-
-class _MyTasksScreenState extends State<MyTasksScreen> {
-  final _searchCtrl = TextEditingController();
-
-  @override
-  void dispose() {
-    _searchCtrl.dispose();
-    super.dispose();
-  }
-
-  void _openPublish() {
+  void _openPublish(BuildContext context, {String? presetCategory}) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const PublishTaskScreen()),
+      MaterialPageRoute(
+        builder: (_) => PublishTaskScreen(presetCategory: presetCategory),
+      ),
     );
   }
 
@@ -48,81 +37,83 @@ class _MyTasksScreenState extends State<MyTasksScreen> {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     return Scaffold(
       backgroundColor: TasksPalette.bgPrimary,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _Header(onProvider: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ProviderHubScreen()),
-              );
-            }),
-            Expanded(
-              child: uid == null
-                  ? const _SignInEmpty()
-                  : _Body(uid: uid, searchCtrl: _searchCtrl),
-            ),
-            _StickyCta(onTap: _openPublish),
-          ],
-        ),
+      body: Column(
+        children: [
+          const _GradientHeader(),
+          Expanded(
+            child: uid == null
+                ? const _SignInEmpty()
+                : _Body(
+                    uid: uid,
+                    onCategoryTap: (cat) =>
+                        _openPublish(context, presetCategory: cat),
+                  ),
+          ),
+          _StickyCta(onTap: () => _openPublish(context)),
+        ],
       ),
     );
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// HEADER
+// HEADER — dark gradient, back + avatar + greeting
 // ═══════════════════════════════════════════════════════════════════
 
-class _Header extends StatelessWidget {
-  final VoidCallback onProvider;
-  const _Header({required this.onProvider});
+class _GradientHeader extends StatelessWidget {
+  const _GradientHeader();
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       decoration: const BoxDecoration(
-        color: TasksPalette.cardWhite,
-        border: Border(
-            bottom: BorderSide(color: TasksPalette.borderLight, width: 0.5)),
+        gradient: LinearGradient(
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+          colors: [TasksPalette.darkNavy, TasksPalette.darkNavy2],
+        ),
       ),
-      child: FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        future: _loadUser(),
-        builder: (context, snap) {
-          final name = snap.data?.data()?['name']?.toString() ?? 'אורח';
-          final image = snap.data?.data()?['profileImage']?.toString();
-          return Row(
-            children: [
-              TasksAvatar(name: name, size: 34, imageUrl: image),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('היי $name',
-                        style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: TasksPalette.textPrimary)),
-                    const SizedBox(height: 1),
-                    const Text('מה צריך לעשות היום?',
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: TasksPalette.textSecondary)),
-                  ],
-                ),
-              ),
-              IconButton(
-                tooltip: 'נותן שירות',
-                onPressed: onProvider,
-                icon: const Icon(Icons.work_outline_rounded,
-                    color: TasksPalette.providerPrimary, size: 22),
-              ),
-              const _NotificationBell(),
-            ],
-          );
-        },
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 8, 16, 18),
+          child: FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            future: _loadUser(),
+            builder: (context, snap) {
+              final name = snap.data?.data()?['name']?.toString() ?? 'אורח';
+              final image = snap.data?.data()?['profileImage']?.toString();
+              return Row(
+                children: [
+                  IconButton(
+                    onPressed: () => Navigator.maybePop(context),
+                    icon: const Icon(Icons.arrow_forward_rounded,
+                        color: Colors.white, size: 22),
+                  ),
+                  const SizedBox(width: 2),
+                  TasksAvatar(name: name, size: 42, imageUrl: image),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('היי $name 👋',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 2),
+                        const Text('מה צריך לעשות היום?',
+                            style: TextStyle(
+                                color: Color(0xFFCBD5E1),
+                                fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
       ),
     );
   }
@@ -136,74 +127,27 @@ class _Header extends StatelessWidget {
   }
 }
 
-class _NotificationBell extends StatelessWidget {
-  const _NotificationBell();
-
-  @override
-  Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    return StreamBuilder<QuerySnapshot>(
-      stream: uid == null
-          ? const Stream.empty()
-          : FirebaseFirestore.instance
-              .collection('notifications')
-              .where('userId', isEqualTo: uid)
-              .where('isRead', isEqualTo: false)
-              .limit(1)
-              .snapshots(),
-      builder: (context, snap) {
-        final hasUnread = snap.data?.docs.isNotEmpty ?? false;
-        return Stack(
-          clipBehavior: Clip.none,
-          children: [
-            IconButton(
-              onPressed: () {},
-              icon: const Icon(Icons.notifications_none_rounded,
-                  color: TasksPalette.textPrimary, size: 22),
-            ),
-            if (hasUnread)
-              Positioned(
-                top: 10,
-                left: 10,
-                child: Container(
-                  width: 7,
-                  height: 7,
-                  decoration: const BoxDecoration(
-                    color: TasksPalette.dangerRed,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════════
-// BODY (search + categories + tasks)
+// BODY
 // ═══════════════════════════════════════════════════════════════════
 
 class _Body extends StatelessWidget {
   final String uid;
-  final TextEditingController searchCtrl;
-  const _Body({required this.uid, required this.searchCtrl});
+  final ValueChanged<String> onCategoryTap;
+  const _Body({required this.uid, required this.onCategoryTap});
 
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
       children: [
-        _SearchBar(controller: searchCtrl),
-        const SizedBox(height: 16),
-        const _CategoryRow(),
-        const SizedBox(height: 18),
+        _CategoryRow(onTap: onCategoryTap),
+        const SizedBox(height: 20),
         StreamBuilder<List<AnyTask>>(
           stream: AnyTaskService.instance.streamMyTasks(uid),
           builder: (context, snap) {
             final tasks = snap.data ?? const <AnyTask>[];
-            final activeCount = tasks
+            final active = tasks
                 .where((t) => !['completed', 'cancelled', 'expired']
                     .contains(t.status))
                 .length;
@@ -212,28 +156,25 @@ class _Body extends StatelessWidget {
               children: [
                 Padding(
                   padding: const EdgeInsetsDirectional.only(start: 4),
-                  child: Text(
-                    'המשימות שלי ($activeCount פעילות)',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: TasksPalette.textPrimary,
-                    ),
-                  ),
+                  child: Text('המשימות שלי ($active פעילות)',
+                      style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: TasksPalette.darkNavy)),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 if (!snap.hasData)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 30),
                     child: Center(
                         child: CircularProgressIndicator(
-                            color: TasksPalette.clientPrimary)),
+                            color: TasksPalette.primaryGreen)),
                   )
                 else if (tasks.isEmpty)
                   const _EmptyState()
                 else
                   ...tasks.map((t) => Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.only(bottom: 12),
                         child: _TaskCard(task: t),
                       )),
               ],
@@ -245,91 +186,60 @@ class _Body extends StatelessWidget {
   }
 }
 
-class _SearchBar extends StatelessWidget {
-  final TextEditingController controller;
-  const _SearchBar({required this.controller});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: TasksPalette.bgPrimary,
-        borderRadius: BorderRadius.circular(TasksPalette.rPill),
-        border: Border.all(color: TasksPalette.borderLight, width: 0.5),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: controller,
-              style: const TextStyle(
-                  fontSize: 13, color: TasksPalette.textPrimary),
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(vertical: 11),
-                hintText: 'תאר מה אתה צריך ו-AI ימצא את האיש הנכון...',
-                hintStyle: TextStyle(
-                    fontSize: 13, color: TasksPalette.textHint),
-                border: InputBorder.none,
-              ),
-            ),
-          ),
-          const Icon(Icons.search_rounded,
-              size: 18, color: TasksPalette.textSecondary),
-        ],
-      ),
-    );
-  }
-}
+// ═══════════════════════════════════════════════════════════════════
+// CATEGORY ROW — 5 main categories per redesign spec
+// ═══════════════════════════════════════════════════════════════════
 
 class _CategoryRow extends StatelessWidget {
-  const _CategoryRow();
+  final ValueChanged<String> onTap;
+  const _CategoryRow({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final items = <_CatItem>[
-      _CatItem('צילום', Icons.photo_camera_outlined,
-          TasksPalette.coralLight, TasksPalette.coral),
-      _CatItem('מחקר', Icons.travel_explore_outlined,
-          TasksPalette.escrowBlueLight, TasksPalette.escrowBlue),
-      _CatItem('משלוחים', Icons.local_shipping_outlined,
-          TasksPalette.providerLight, TasksPalette.providerPrimary),
-      _CatItem('עריכה', Icons.edit_outlined,
+      _CatItem('delivery', 'משלוחים', Icons.local_shipping_rounded,
+          const Color(0xFFE0F2FE), const Color(0xFF0369A1)),
+      _CatItem('cleaning', 'ניקיון', Icons.cleaning_services_rounded,
+          const Color(0xFFDCFCE7), const Color(0xFF15803D)),
+      _CatItem('handyman', 'תיקונים', Icons.build_rounded,
           TasksPalette.amberLight, TasksPalette.amber),
-      _CatItem('תרגום', Icons.translate_outlined,
+      _CatItem('moving', 'הובלות', Icons.fire_truck_rounded,
+          const Color(0xFFFFE4E6), const Color(0xFFBE123C)),
+      _CatItem('pet_care', 'חיות', Icons.pets_rounded,
           TasksPalette.pinkLight, TasksPalette.pink),
-      _CatItem('עוד', Icons.more_horiz_rounded,
-          TasksPalette.bgPrimary, TasksPalette.textSecondary),
     ];
     return SizedBox(
-      height: 88,
+      height: 94,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
-        padding: EdgeInsets.zero,
         itemCount: items.length,
         separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (_, i) {
           final c = items[i];
-          return Column(
-            children: [
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: c.bg,
-                  borderRadius: BorderRadius.circular(14),
+          return InkWell(
+            onTap: () => onTap(c.id),
+            borderRadius: BorderRadius.circular(16),
+            child: Column(
+              children: [
+                Container(
+                  width: 62,
+                  height: 62,
+                  decoration: BoxDecoration(
+                    color: c.bg,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(c.icon, color: c.fg, size: 28),
                 ),
-                alignment: Alignment.center,
-                child: Icon(c.icon, color: c.fg, size: 22),
-              ),
-              const SizedBox(height: 8),
-              Text(c.label,
-                  style: const TextStyle(
-                      fontSize: 10,
-                      color: TasksPalette.textSecondary)),
-            ],
+                const SizedBox(height: 8),
+                Text(c.label,
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: TasksPalette.darkNavy)),
+              ],
+            ),
           );
         },
       ),
@@ -338,190 +248,215 @@ class _CategoryRow extends StatelessWidget {
 }
 
 class _CatItem {
+  final String id;
   final String label;
   final IconData icon;
   final Color bg;
   final Color fg;
-  _CatItem(this.label, this.icon, this.bg, this.fg);
+  _CatItem(this.id, this.label, this.icon, this.bg, this.fg);
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// TASK CARD
+// TASK CARD — upgraded with status pill + offer count + two CTAs
 // ═══════════════════════════════════════════════════════════════════
 
 class _TaskCard extends StatelessWidget {
   final AnyTask task;
   const _TaskCard({required this.task});
 
-  void _open(BuildContext context) {
-    final next = task.status == 'open'
-        ? CompareOffersScreen(taskId: task.id!) as Widget
-        : TaskTrackingScreen(taskId: task.id!);
-    Navigator.push(context, MaterialPageRoute(builder: (_) => next));
-  }
-
   String _timeAgo() {
     final c = task.createdAt;
     if (c == null) return '';
     final d = DateTime.now().difference(c);
-    if (d.inMinutes < 60) return 'פורסם לפני ${d.inMinutes}ד׳';
-    if (d.inHours < 24) return 'פורסם לפני ${d.inHours} שעות';
-    return 'פורסם לפני ${d.inDays} ימים';
+    if (d.inMinutes < 60) return 'לפני ${d.inMinutes}ד׳';
+    if (d.inHours < 24) return 'לפני ${d.inHours} שעות';
+    return 'לפני ${d.inDays} ימים';
   }
 
   @override
   Widget build(BuildContext context) {
-    final isOpenWithOffers =
-        task.status == 'open' && task.responseCount > 0;
-    return InkWell(
-      onTap: () => _open(context),
-      borderRadius: BorderRadius.circular(TasksPalette.rCard),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: TasksPalette.cardWhite,
-          borderRadius: BorderRadius.circular(TasksPalette.rCard),
-          border: Border.all(color: TasksPalette.borderLight, width: 0.5),
-          boxShadow: TasksPalette.cardShadow,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(task.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: TasksPalette.textPrimary)),
-                ),
-                const SizedBox(width: 8),
-                _BudgetPill(amount: task.agreedPriceNis ?? task.budgetNis),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                _StatusBadge(task: task),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(_timeAgo(),
-                      style: const TextStyle(
-                          fontSize: 11, color: TasksPalette.textHint)),
-                ),
-              ],
-            ),
-            if (isOpenWithOffers) ...[
-              const SizedBox(height: 10),
-              Row(
+    final hasOffers = task.status == 'open' && task.responseCount > 0;
+    final inProgress =
+        task.status == 'in_progress' || task.status == 'proof_submitted';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: TasksPalette.cardWhite,
+        borderRadius: BorderRadius.circular(TasksPalette.rCard),
+        boxShadow: TasksPalette.cardShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(task.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: TasksPalette.darkNavy)),
+              ),
+              const SizedBox(width: 8),
+              _StatusPill(status: task.status),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Text(_timeAgo(),
+                  style: const TextStyle(
+                      fontSize: 12, color: TasksPalette.textMuted)),
+              const SizedBox(width: 8),
+              const Text('·',
+                  style:
+                      TextStyle(color: TasksPalette.textMuted, fontSize: 12)),
+              const SizedBox(width: 8),
+              Text('₪${task.agreedPriceNis ?? task.budgetNis}',
+                  style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: TasksPalette.primaryGreenDark)),
+            ],
+          ),
+          if (hasOffers) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: TasksPalette.escrowBlueLight,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
                 children: [
-                  _AvatarStack(count: task.responseCount.clamp(1, 4)),
-                  const SizedBox(width: 8),
+                  const Icon(Icons.people_alt_rounded,
+                      size: 16, color: TasksPalette.escrowBlue),
+                  const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                         '${task.responseCount} נותני שירות הגישו הצעה',
                         style: const TextStyle(
-                            fontSize: 11,
-                            color: TasksPalette.textSecondary)),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: TasksPalette.escrowBlue)),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 42,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => hasOffers
+                              ? CompareOffersScreen(taskId: task.id!)
+                              : TaskTrackingScreen(taskId: task.id!)),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: hasOffers
+                          ? TasksPalette.primaryGreen
+                          : TasksPalette.darkNavy,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(TasksPalette.rButton)),
+                    ),
+                    child: Text(
+                        hasOffers
+                            ? 'צפה בהצעות (${task.responseCount})'
+                            : inProgress
+                                ? 'מעקב משימה'
+                                : 'פרטי המשימה',
+                        style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => _open(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: TasksPalette.textPrimary,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
+                height: 42,
+                child: OutlinedButton(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) =>
+                            TaskTrackingScreen(taskId: task.id!)),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: TasksPalette.darkNavy,
+                    side: const BorderSide(
+                        color: TasksPalette.borderLight, width: 1),
                     shape: RoundedRectangleBorder(
                         borderRadius:
                             BorderRadius.circular(TasksPalette.rButton)),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14),
                   ),
-                  child: const Text('השווה הצעות ובחר',
+                  child: const Text('פרטים',
                       style: TextStyle(
                           fontSize: 13, fontWeight: FontWeight.w500)),
                 ),
               ),
             ],
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _BudgetPill extends StatelessWidget {
-  final int amount;
-  const _BudgetPill({required this.amount});
+class _StatusPill extends StatelessWidget {
+  final String status;
+  const _StatusPill({required this.status});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: TasksPalette.amberLight,
-        borderRadius: BorderRadius.circular(TasksPalette.rCard),
-      ),
-      child: Text('₪$amount',
-          style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-              color: TasksPalette.amber)),
-    );
-  }
-}
-
-class _StatusBadge extends StatelessWidget {
-  final AnyTask task;
-  const _StatusBadge({required this.task});
-
-  @override
-  Widget build(BuildContext context) {
-    String label;
-    Color bg;
-    Color fg;
-    if (task.status == 'open' && task.responseCount > 0) {
-      label = '${task.responseCount} הצעות חדשות!';
-      bg = TasksPalette.escrowBlueLight;
-      fg = TasksPalette.escrowBlue;
-    } else {
-      switch (task.status) {
-        case 'open':
-          label = 'פתוחה';
-          bg = TasksPalette.escrowBlueLight;
-          fg = TasksPalette.escrowBlue;
-          break;
-        case 'in_progress':
-          label = 'בביצוע';
-          bg = TasksPalette.amberLight;
-          fg = TasksPalette.amber;
-          break;
-        case 'proof_submitted':
-          label = 'ממתין לאישור';
-          bg = TasksPalette.clientLight;
-          fg = TasksPalette.clientPrimary;
-          break;
-        case 'completed':
-          label = 'הושלמה';
-          bg = TasksPalette.providerLight;
-          fg = TasksPalette.successGreen;
-          break;
-        case 'disputed':
-          label = 'מחלוקת';
-          bg = TasksPalette.coralLight;
-          fg = TasksPalette.coral;
-          break;
-        default:
-          label = task.status == 'cancelled' ? 'בוטלה' : 'פגה';
-          bg = TasksPalette.bgPrimary;
-          fg = TasksPalette.textHint;
-      }
+    late final String label;
+    late final Color bg;
+    late final Color fg;
+    switch (status) {
+      case 'open':
+        label = 'פתוחה';
+        bg = TasksPalette.escrowBlueLight;
+        fg = TasksPalette.escrowBlue;
+        break;
+      case 'in_progress':
+        label = 'בביצוע';
+        bg = TasksPalette.amberLight;
+        fg = TasksPalette.amber;
+        break;
+      case 'proof_submitted':
+        label = 'ממתין לאישור';
+        bg = TasksPalette.clientLight;
+        fg = TasksPalette.clientPrimary;
+        break;
+      case 'completed':
+        label = 'הושלמה';
+        bg = const Color(0xFFDCFCE7);
+        fg = TasksPalette.primaryGreenDark;
+        break;
+      case 'disputed':
+        label = 'מחלוקת';
+        bg = TasksPalette.coralLight;
+        fg = TasksPalette.coral;
+        break;
+      default:
+        label = status == 'cancelled' ? 'בוטלה' : 'פגה';
+        bg = const Color(0xFFF1F5F9);
+        fg = TasksPalette.textMuted;
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -531,42 +466,7 @@ class _StatusBadge extends StatelessWidget {
       ),
       child: Text(label,
           style: TextStyle(
-              fontSize: 11, fontWeight: FontWeight.w500, color: fg)),
-    );
-  }
-}
-
-class _AvatarStack extends StatelessWidget {
-  final int count;
-  const _AvatarStack({required this.count});
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = [
-      TasksPalette.providerLight,
-      TasksPalette.amberLight,
-      TasksPalette.clientLight,
-      TasksPalette.pinkLight,
-    ];
-    return SizedBox(
-      width: 26.0 + (count - 1) * 18,
-      height: 26,
-      child: Stack(
-        children: List.generate(count, (i) {
-          return Positioned(
-            right: i * 18.0,
-            child: Container(
-              width: 26,
-              height: 26,
-              decoration: BoxDecoration(
-                color: palette[i % palette.length],
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 1.5),
-              ),
-            ),
-          );
-        }),
-      ),
+              fontSize: 11, fontWeight: FontWeight.w700, color: fg)),
     );
   }
 }
@@ -581,20 +481,20 @@ class _EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 36),
+      padding: const EdgeInsets.symmetric(vertical: 40),
       alignment: Alignment.center,
       child: Column(
         children: const [
           Icon(Icons.assignment_outlined,
-              size: 56, color: TasksPalette.textHint),
+              size: 56, color: TasksPalette.textMuted),
           SizedBox(height: 12),
           Text('עוד לא פרסמת משימה',
               style: TextStyle(
                   fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: TasksPalette.textPrimary)),
-          SizedBox(height: 4),
-          Text('לחץ "פרסם משימה חדשה" כדי להתחיל',
+                  fontWeight: FontWeight.w700,
+                  color: TasksPalette.darkNavy)),
+          SizedBox(height: 6),
+          Text('בחר קטגוריה למעלה או לחץ "פרסם משימה חדשה"',
               style: TextStyle(
                   fontSize: 12, color: TasksPalette.textSecondary)),
         ],
@@ -628,20 +528,24 @@ class _StickyCta extends StatelessWidget {
         border: Border(
             top: BorderSide(color: TasksPalette.borderLight, width: 0.5)),
       ),
-      child: SizedBox(
-        width: double.infinity,
-        height: 48,
-        child: ElevatedButton.icon(
-          onPressed: onTap,
-          icon: const Icon(Icons.add_rounded, size: 18, color: Colors.white),
-          label: const Text('פרסם משימה חדשה',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: TasksPalette.textPrimary,
-            foregroundColor: Colors.white,
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(TasksPalette.rPill)),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: ElevatedButton.icon(
+            onPressed: onTap,
+            icon: const Icon(Icons.add_rounded, size: 20, color: Colors.white),
+            label: const Text('פרסם משימה חדשה',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: TasksPalette.primaryGreen,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.circular(TasksPalette.rButton)),
+            ),
           ),
         ),
       ),

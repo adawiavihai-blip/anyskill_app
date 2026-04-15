@@ -6,11 +6,18 @@ import 'package:flutter/material.dart';
 /// Mirrors the design-system spec dropped by product. Same structure as
 /// `MapPalette` (v12.9.0) — keeps the rest of the app on `Brand.*`.
 abstract final class TasksPalette {
-  // ── Client (purple) ────────────────────────────────────────────
+  // ── Primary (v14.2.0 spec) — green CTA / active status ─────────
+  static const primaryGreen       = Color(0xFF10B981);
+  static const primaryGreenDark   = Color(0xFF059669);
+
+  // ── Dark navy (headers + primary text) ─────────────────────────
+  static const darkNavy           = Color(0xFF0F172A);
+  static const darkNavy2          = Color(0xFF1E293B);
+
+  // ── Client (purple) — kept for backwards-compat w/ older widgets
   static const clientPrimary      = Color(0xFF6C63FF);
   static const clientLight        = Color(0xFFEEEDFE);
   static const clientDark         = Color(0xFF3C3489);
-  // Back-compat aliases used by older code (Phase 1-5 widgets).
   static const clientPrimaryDark  = clientDark;
   static const clientPrimarySoft  = clientLight;
 
@@ -52,25 +59,29 @@ abstract final class TasksPalette {
   static const textSecondary      = Color(0xFF6B7280);
   static const textHint           = Color(0xFF9CA3AF);
 
-  // ── Surfaces ───────────────────────────────────────────────────
-  static const bgPrimary          = Color(0xFFF8F9FA);
+  // ── Surfaces (v14.2.0 spec) ─────────────────────────────────────
+  static const bgPrimary          = Color(0xFFFAFBFC);
   static const scaffoldBg         = bgPrimary; // back-compat
   static const cardWhite          = Color(0xFFFFFFFF);
   static const cardBg             = cardWhite; // back-compat
-  static const borderLight        = Color(0xFFE0E0E0);
+  static const borderLight        = Color(0xFFE2E8F0);
   static const border             = borderLight; // back-compat
   static const borderSoft         = Color(0xFFF0F0F0);
+  // v14.2.0 text aliases
+  static const textMuted          = Color(0xFF94A3B8);
 
   // ── Shadow (consistent across cards) ───────────────────────────
   static const cardShadow = [
-    BoxShadow(color: Color(0x0F000000), blurRadius: 3, offset: Offset(0, 1)),
+    BoxShadow(color: Color(0x0A000000), blurRadius: 16, offset: Offset(0, 2)),
   ];
 
-  // ── Radii ──────────────────────────────────────────────────────
-  static const rCard    = 12.0;
-  static const rButton  = 8.0;
+  // ── Radii (v14.2.0 spec) ───────────────────────────────────────
+  static const rCard    = 20.0;
+  static const rButton  = 14.0;
+  static const rInput   = 14.0;
   static const rPill    = 24.0;
   static const rChip    = 20.0;
+  static const rAvatar  = 16.0;
 
   // ── Avatar palette — pick consistent color per uid via hash ────
   static const _avatarBgs = <Color>[
