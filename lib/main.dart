@@ -222,6 +222,11 @@ void main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
     debugPrint('✅ Firebase initialized');
+    // Now that Firestore is ready, subscribe LocaleProvider to CMS overrides.
+    // (Init was kept pref-only to avoid a Firestore-not-ready crash on boot.)
+    try {
+      LocaleProvider.subscribeOverrides();
+    } catch (_) {}
   } catch (e) {
     debugPrint('⚠️ Firebase.initializeApp failed: $e');
     // Firebase is required — but still call runApp() so we show an error UI

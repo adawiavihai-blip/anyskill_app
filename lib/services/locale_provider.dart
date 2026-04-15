@@ -38,8 +38,10 @@ class LocaleProvider extends ChangeNotifier {
     Locale('ar'),
   ];
 
-  /// Reads the saved locale from SharedPreferences and subscribes to CMS overrides.
-  /// Must be awaited before runApp().
+  /// Reads the saved locale from SharedPreferences.
+  /// Must be awaited before runApp(). CMS override subscription is deferred
+  /// to [subscribeOverrides] (called AFTER Firebase.initializeApp) because
+  /// [ContentManagementService] uses Firestore which isn't ready at init time.
   static Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     final saved  = prefs.getString(_prefKey);
@@ -47,17 +49,31 @@ class LocaleProvider extends ChangeNotifier {
         LocaleProvider.supported.any((l) => l.languageCode == saved)) {
       instance._locale = Locale(saved);
     }
-    instance._subscribeToOverrides();
   }
 
+  /// Subscribes to CMS overrides for the current locale. MUST be called
+  /// AFTER Firebase.initializeApp() — uses Firestore internally.
+  /// Safe to call multiple times; previous subscription is cancelled.
+  static void subscribeOverrides() => instance._subscribeToOverrides();
+
   /// Subscribes to CMS overrides for the current locale.
+  /// Wrapped in try/catch so a transient Firestore issue never breaks init.
   void _subscribeToOverrides() {
     _overridesSub?.cancel();
-    _overridesSub = ContentManagementService.streamOverrides(_locale.languageCode)
-        .listen((overrides) {
-          // AppLocalizations.overrides = overrides; // setter not available on generated class
-          notifyListeners();
-        });
+    try {
+      _overridesSub = ContentManagementService.streamOverrides(_locale.languageCode)
+          .listen(
+            (overrides) {
+              // AppLocalizations.overrides = overrides; // setter not available on generated class
+              notifyListeners();
+            },
+            onError: (e) {
+              // Don't crash — overrides are a nice-to-have, not load-bearing.
+            },
+          );
+    } catch (_) {
+      // Firestore not ready / transient error — CMS overrides stay disabled.
+    }
   }
 
   /// Persists and applies a new locale, rebuilding any ListenableBuilder.

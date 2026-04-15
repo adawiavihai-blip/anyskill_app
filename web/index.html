@@ -105,9 +105,9 @@
                  worker-src 'self' blob:;
                  object-src 'none';
                  base-uri 'self';">
-  <!-- Prevents this page from being embedded in iframes (clickjacking) -->
-  <meta http-equiv="X-Frame-Options" content="SAMEORIGIN">
-  <!-- Stops browsers from MIME-sniffing the content type -->
+  <!-- Anti-clickjacking: X-Frame-Options must be an HTTP header (browsers
+       ignore it in <meta>). Set via firebase.json headers instead.
+       X-Content-Type-Options is also set as header but the meta is accepted. -->
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <!-- Referrer policy: send origin only, no full URL in Referer header -->
   <meta name="referrer" content="strict-origin-when-cross-origin">
