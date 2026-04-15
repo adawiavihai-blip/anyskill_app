@@ -249,13 +249,15 @@ void main() async {
     try {
       FirebaseFirestore.instance.settings = const Settings(
         persistenceEnabled: false,
-        // CRITICAL: Do NOT set experimentalForceLongPolling: true.
-        // Long-polling causes AsyncQueue deadlocks on Chrome when a
-        // snapshot listener and a write hit the same document simultaneously.
-        // The default (auto-detect) uses WebChannel/WebSockets which is stable.
-        // experimentalAutoDetectLongPolling is true by default — we leave it.
+        // EXPLICIT: enable auto long-polling detection (2026-04-15 hang fix).
+        // Some users' networks/browsers silently block Firestore WebChannel —
+        // streams look connected but reads never return. Auto-detect tries
+        // WebChannel first, falls back to HTTP long-polling if it stalls.
+        // Unlike `experimentalForceLongPolling`, this is SAFE (no AsyncQueue
+        // deadlocks) because it only uses long-polling when WebChannel fails.
+        webExperimentalAutoDetectLongPolling: true,
       );
-      debugPrint('✅ Firestore Web: persistence OFF, standard WebChannel');
+      debugPrint('✅ Firestore Web: persistence OFF, WebChannel + auto long-polling fallback');
     } catch (e) {
       debugPrint('⚠️ Firestore settings failed: $e — using SDK defaults');
     }

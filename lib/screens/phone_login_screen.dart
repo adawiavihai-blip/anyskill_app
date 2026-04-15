@@ -9,7 +9,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
-import '../main.dart' show currentAppVersion, OnboardingGate;
+import '../main.dart' show currentAppVersion;
 import '../widgets/anyskill_logo.dart';
 import 'otp_screen.dart';
 import '../services/private_data_service.dart';
@@ -642,14 +642,12 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
       // ignore: avoid_print
       print('✅ [Google] Firebase signIn SUCCESS: uid=${cred.user?.uid}');
 
-      final ok = await _createProfileIfNew(cred);
-      if (!ok) return; // duplicate — guard already signed out + showed dialog
-      if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const OnboardingGate()),
-          (_) => false,
-        );
-      }
+      // AuthWrapper already rendered OnboardingGate via authStateChanges
+      // stream — do NOT Navigator.push here. Let the profile create happen
+      // in the background without blocking the UI. Any failure in
+      // _createProfileIfNew is non-fatal: OnboardingGate's own fallbacks
+      // handle missing profiles via cached role + HomeScreen routing.
+      unawaited(_createProfileIfNew(cred));
     } on FirebaseAuthException catch (e) {
       // ignore: avoid_print
       print('🔴 [Google] FirebaseAuthException: code=${e.code}, message=${e.message}');
@@ -692,14 +690,8 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
         // ignore: avoid_print
         print('✅ [Apple] signInWithPopup SUCCESS: uid=${cred.user?.uid}');
 
-        final ok = await _createProfileIfNew(cred);
-        if (!ok) return; // duplicate — guard already signed out + showed dialog
-        if (mounted) {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const OnboardingGate()),
-            (_) => false,
-          );
-        }
+        // Fire-and-forget profile create — AuthWrapper handles routing.
+        unawaited(_createProfileIfNew(cred));
         return;
       }
 
@@ -743,15 +735,8 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
         await user.updateDisplayName(displayName);
       }
 
-      final ok = await _createProfileIfNew(cred);
-      if (!ok) return; // duplicate — guard already signed out + showed dialog
-
-      if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const OnboardingGate()),
-          (_) => false,
-        );
-      }
+      // Fire-and-forget profile create — AuthWrapper handles routing.
+      unawaited(_createProfileIfNew(cred));
     } on FirebaseAuthException catch (e) {
       // ignore: avoid_print
       print('🔴 [Apple] FirebaseAuthException: code=${e.code}, message=${e.message}');
