@@ -14,6 +14,7 @@ import '../models/task_milestone.dart';
 import '../services/any_task_service.dart';
 import '../theme/any_tasks_palette.dart';
 import '../widgets/milestone_stepper.dart';
+import 'task_review_screen.dart';
 
 class TaskTrackingScreen extends StatelessWidget {
   final String taskId;
@@ -57,8 +58,11 @@ class TaskTrackingScreen extends StatelessWidget {
               const SizedBox(height: 20),
               if (task.status == 'proof_submitted')
                 _ConfirmButton(task: task),
-              if (task.status == 'completed')
+              if (task.status == 'completed') ...[
                 const _CompletedBanner(),
+                const SizedBox(height: 14),
+                _RateButton(task: task, isClientReview: true),
+              ],
             ],
           );
         },
@@ -508,3 +512,40 @@ class _Chip extends StatelessWidget {
   }
 }
 
+
+/// "דרג עכשיו" CTA shown after task completes. Routes to the shared
+/// TaskReviewScreen which wraps ReviewService with sourceCollection:'any_tasks'.
+class _RateButton extends StatelessWidget {
+  final AnyTask task;
+  final bool isClientReview;
+  const _RateButton({required this.task, required this.isClientReview});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: ElevatedButton.icon(
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TaskReviewScreen(
+                task: task, isClientReview: isClientReview),
+          ),
+        ),
+        icon: const Icon(Icons.star_rounded, size: 20, color: Colors.white),
+        label: Text(
+          isClientReview ? 'דרג את נותן השירות' : 'דרג את הלקוח',
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: TasksPalette.primaryGreen,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(TasksPalette.rButton)),
+        ),
+      ),
+    );
+  }
+}

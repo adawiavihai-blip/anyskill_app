@@ -19,6 +19,7 @@ import '../models/task_milestone.dart';
 import '../services/any_task_service.dart';
 import '../theme/any_tasks_palette.dart';
 import '../widgets/milestone_stepper.dart';
+import 'task_review_screen.dart';
 
 class ProviderActiveTaskScreen extends StatelessWidget {
   final String taskId;
@@ -59,7 +60,36 @@ class ProviderActiveTaskScreen extends StatelessWidget {
               if (task.status == 'in_progress') _ProofSection(task: task),
               if (task.status == 'proof_submitted')
                 const _WaitingClient(),
-              if (task.status == 'completed') const _CompletedBanner(),
+              if (task.status == 'completed') ...[
+                const _CompletedBanner(),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton.icon(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => TaskReviewScreen(
+                            task: task, isClientReview: false),
+                      ),
+                    ),
+                    icon: const Icon(Icons.star_rounded,
+                        size: 20, color: Colors.white),
+                    label: const Text('דרג את הלקוח',
+                        style: TextStyle(
+                            fontSize: 15, fontWeight: FontWeight.w700)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: TasksPalette.primaryGreen,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                              TasksPalette.rButton)),
+                    ),
+                  ),
+                ),
+              ],
             ],
           );
         },

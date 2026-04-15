@@ -1130,12 +1130,14 @@ service cloud.firestore {
                         && request.resource.data.diff(resource.data).affectedKeys()
                            .hasOnly(['title', 'description', 'status',
                                     'cancelledAt', 'proofText',
-                                    'locationFrom', 'locationTo', 'imageUrl']))
+                                    'locationFrom', 'locationTo', 'imageUrl',
+                                    'clientReviewDone']))
                     || (isVerifiedAuth()
                         && resource.data.selectedProviderId == request.auth.uid
                         && request.resource.data.diff(resource.data).affectedKeys()
                            .hasOnly(['proofUrl', 'proofText', 'status',
-                                    'proofSubmittedAt']));
+                                    'proofSubmittedAt',
+                                    'providerReviewDone']));
 
       // Delete: never from client. Admins only (e.g. fraud cleanup).
       allow delete: if isAdmin();
