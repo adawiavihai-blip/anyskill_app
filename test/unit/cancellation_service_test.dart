@@ -186,10 +186,10 @@ void main() {
   });
 
   group('kPolicies', () {
-    test('contains exactly 3 policies', () {
-      expect(CancellationPolicyService.kPolicies.length, 3);
+    test('contains exactly 4 policies', () {
+      expect(CancellationPolicyService.kPolicies.length, 4);
       expect(CancellationPolicyService.kPolicies,
-          ['flexible', 'moderate', 'strict']);
+          ['flexible', 'moderate', 'strict', 'nonRefundable']);
     });
   });
 }

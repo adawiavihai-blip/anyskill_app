@@ -62,7 +62,7 @@ class _SignUpScreenState extends State<SignUpScreen>
   // Expert-only fields
   String?          _businessType;
   final            _descCtrl = TextEditingController(); // free-text occupation
-  bool             _isClassifying = false;
+  final bool       _isClassifying = false;
   CategoryResult?  _aiResult;
 
   // ID / Passport image
@@ -696,33 +696,6 @@ class _SignUpScreenState extends State<SignUpScreen>
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ));
-  }
-
-  Future<void> _classifyWithAI() async {
-    final text = _descCtrl.text.trim();
-    if (text.length < 6) {
-      _snack('תאר את השירות שלך בכמה מילים לפחות', Colors.orange);
-      return;
-    }
-    setState(() { _isClassifying = true; _aiResult = null; });
-    try {
-      final result = await CategoryAiService.categorize(text);
-      if (!mounted) return;
-      setState(() {
-        _aiResult        = result;
-        _isClassifying   = false;
-        if (result.categoryName != null) _category = result.categoryName!;
-        _subCategory = result.subCategoryName;
-      });
-    } on CategoryAiException catch (e) {
-      if (!mounted) return;
-      setState(() => _isClassifying = false);
-      _snack(e.message, _kRed);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isClassifying = false);
-      _snack('שגיאה לא צפויה: $e', _kRed);
-    }
   }
 
   void _setType(UserRole t) {
@@ -1770,47 +1743,6 @@ class _SignUpScreenState extends State<SignUpScreen>
                   fontWeight: FontWeight.w600)),
         ],
       ),
-    );
-  }
-
-  Widget _buildCategoryPicker() {
-    final cats = APP_CATEGORIES.map((c) => c['name'] as String).toList();
-    // If AI set _category to a value not in APP_CATEGORIES (e.g. an auto-created
-    // category like "טיפול בחיות מחמד"), add it at the top so the dropdown
-    // never throws "There should be exactly one item with this value".
-    if (!cats.contains(_category)) cats.insert(0, _category);
-
-    return DropdownButtonFormField<String>(
-      value: _category,
-      isExpanded: true,
-      decoration: InputDecoration(
-        labelText: 'תחום עיסוק',
-        labelStyle: TextStyle(color: Colors.grey[500], fontSize: 14),
-        prefixIcon: const Icon(Icons.work_outline_rounded,
-            size: 20, color: Color(0xFF6366F1)),
-        filled: true,
-        fillColor: const Color(0xFFF0F0FF),
-        contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16, vertical: 14),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(
-              color: Color(0xFF6366F1), width: 1.2),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(
-              color: Color(0xFF6366F1), width: 1.6),
-        ),
-        border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14)),
-      ),
-      items: cats.map((c) => DropdownMenuItem(
-        value: c,
-        child: Text(c, textAlign: TextAlign.right,
-            style: const TextStyle(fontSize: 14)),
-      )).toList(),
-      onChanged: (v) => setState(() => _category = v ?? _category),
     );
   }
 
