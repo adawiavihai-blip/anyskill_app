@@ -4,6 +4,7 @@ import '../services/category_service.dart';
 import '../services/ai_schema_service.dart';
 import '../services/cache_service.dart';
 import '../services/schema_migration_service.dart';
+import '../services/category_tags_service.dart';
 import '../widgets/category_specs_widget.dart';
 
 /// Admin Catalog Manager — CRUD for categories with multi-locale names,
@@ -59,6 +60,16 @@ class _AdminCatalogTabState extends State<AdminCatalogTab> {
                   style: OutlinedButton.styleFrom(
                     foregroundColor: const Color(0xFF6366F1),
                     side: const BorderSide(color: Color(0xFF6366F1)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _seedCategoryTags,
+                  icon: const Icon(Icons.local_offer_rounded, size: 18),
+                  label: const Text('זרע תגי קטגוריה'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF8B5CF6),
+                    side: const BorderSide(color: Color(0xFF8B5CF6)),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -198,6 +209,51 @@ class _AdminCatalogTabState extends State<AdminCatalogTab> {
         duration: const Duration(seconds: 6),
       ),
     );
+  }
+
+  /// Seeds the `category_tags` collection with the 6 per-category catalogs
+  /// (idempotent — existing docs are skipped unless the admin confirms
+  /// "overwrite"). See [CategoryTagsService.seedAll].
+  Future<void> _seedCategoryTags() async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('זריעת תגי קטגוריה'),
+        content: const Text(
+            'תרצה לכתוב מחדש תגים קיימים (overwrite) או רק להוסיף חסרים?',
+            style: TextStyle(fontSize: 14)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, null),
+              child: const Text('ביטול')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, 'skip'),
+              child: const Text('דלג על קיימים')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, 'overwrite'),
+              child: const Text('כתוב מחדש')),
+        ],
+      ),
+    );
+    if (choice == null || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final summary = await CategoryTagsService.seedAll(
+          overwrite: choice == 'overwrite');
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text('✅ $summary'),
+        backgroundColor: const Color(0xFF8B5CF6),
+        duration: const Duration(seconds: 5),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text('שגיאה בזריעה: $e'),
+        backgroundColor: Colors.red,
+      ));
+    }
   }
 
   /// Surgically enables Pet Stay flags on the two sub-categories by name.

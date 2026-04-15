@@ -491,6 +491,14 @@ service cloud.firestore {
       allow write: if isAdmin() || isCmsAdmin();
     }
 
+    match /category_tags/{catId} {
+      // Read-only catalog of category-specific tags. Any authenticated
+      // user (provider or customer) reads to render chip labels; only
+      // admins write via the seeder or manual edits.
+      allow read:  if isAuth() || isAppCheckValid();
+      allow write: if isAdmin();
+    }
+
     match /application_content/{locale} {
       // CMS content overrides: readable by authenticated users, writable only by CMS admin.
       allow read:  if isAuth() || isAppCheckValid();

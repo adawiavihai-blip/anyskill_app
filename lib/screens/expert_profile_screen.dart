@@ -22,6 +22,7 @@ import '../widgets/xp_progress_bar.dart';
 import '../utils/safe_image_provider.dart';
 import '../constants.dart' show appVersion;
 import '../widgets/price_list_widget.dart';
+import '../widgets/provider_category_tags_display.dart';
 import '../widgets/category_specs_widget.dart';
 import '../features/pet_stay/models/dog_profile.dart';
 import '../features/pet_stay/models/pet_stay.dart';
@@ -137,6 +138,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         if (listing['pricePerHour'] != null) userData['pricePerHour'] = listing['pricePerHour'];
         if (listing['serviceType'] != null) userData['serviceType'] = listing['serviceType'];
         if (listing['quickTags'] != null) userData['quickTags'] = listing['quickTags'];
+        if (listing['categoryTags'] != null) userData['categoryTags'] = listing['categoryTags'];
         if (listing['categoryDetails'] != null) userData['categoryDetails'] = listing['categoryDetails'];
         if (listing['priceList'] != null) userData['priceList'] = listing['priceList'];
         if (listing['cancellationPolicy'] != null) userData['cancellationPolicy'] = listing['cancellationPolicy'];
@@ -3269,7 +3271,27 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                 _buildQuickTagsSection(data),
                                 if ((data['quickTags'] as List? ?? [])
                                     .isNotEmpty)
+                                  const SizedBox(height: 10),
+
+                                // ── Category-specific tags (all, no cap) ──
+                                if ((data['categoryTags'] as List?)
+                                        ?.isNotEmpty ==
+                                    true) ...[
+                                  ProviderCategoryTagsDisplay(
+                                    category:
+                                        (data['serviceType'] as String? ?? '')
+                                            .trim(),
+                                    tagIds: ((data['categoryTags']
+                                                as List?) ??
+                                            const [])
+                                        .cast<String>(),
+                                    maxVisible: null,
+                                    compact: false,
+                                  ),
                                   const SizedBox(height: 24),
+                                ] else if ((data['quickTags'] as List? ?? [])
+                                    .isNotEmpty)
+                                  const SizedBox(height: 14),
 
                                 // ── Service Menu ───────────────────────────
                                 _sectionHeader(l10n.expertSectionService),

@@ -13,6 +13,7 @@ import '../services/category_service.dart';
 import '../services/cancellation_policy_service.dart';
 import '../widgets/category_specs_widget.dart';
 import '../constants/quick_tags.dart';
+import '../widgets/category_tags_selector.dart';
 import '../widgets/price_list_widget.dart';
 import '../services/provider_listing_service.dart';
 import '../services/view_mode_service.dart';
@@ -60,6 +61,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   int? _responseTimeMinutes;
   String _cancellationPolicy = 'flexible';
   Set<String> _selectedQuickTags = {};
+  Set<String> _selectedCategoryTags = {};
 
   /// Weekly working hours — keys are weekday indices (0=Sunday..6=Saturday),
   /// values are `{"from": "09:00", "to": "17:00"}`.
@@ -124,6 +126,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
     _selectedQuickTags = Set<String>.from(
       (widget.userData['quickTags'] as List? ?? []).cast<String>(),
+    );
+    _selectedCategoryTags = Set<String>.from(
+      (widget.userData['categoryTags'] as List? ?? []).cast<String>(),
     );
     _profileImageUrl = widget.userData['profileImage'];
     _verificationVideoUrl = widget.userData['verificationVideoUrl'] as String?;
@@ -284,6 +289,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         final catDetails = Map<String, dynamic>.from(activeListing['categoryDetails'] as Map? ?? {});
         final prices = Map<String, dynamic>.from(activeListing['priceList'] as Map? ?? {});
         final tags = Set<String>.from((activeListing['quickTags'] as List? ?? []).cast<String>());
+        final catTags = Set<String>.from((activeListing['categoryTags'] as List? ?? []).cast<String>());
         final listingServiceType = (activeListing['serviceType'] as String? ?? '').trim();
         _activeListingServiceType = listingServiceType;
 
@@ -295,6 +301,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           _categoryDetails = catDetails;
           _priceList = prices;
           _selectedQuickTags = tags;
+          _selectedCategoryTags = catTags;
         });
 
         // Re-resolve main/sub category IDs against the listing's serviceType.
@@ -649,6 +656,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         payload['gallery'] = _galleryImages;
         payload['taxId'] = taxResult!.value; // ← sanitized
         payload['quickTags'] = _selectedQuickTags.toList();
+        payload['categoryTags'] = _selectedCategoryTags.toList();
         payload['cancellationPolicy'] = _cancellationPolicy;
         payload['videoUrl'] = videoUrlResult?.value ?? ''; // ← sanitized
         if (_responseTimeMinutes != null) {
@@ -972,6 +980,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (payload.containsKey('pricePerHour')) listingUpdate['pricePerHour'] = payload['pricePerHour'];
     if (payload.containsKey('gallery')) listingUpdate['gallery'] = payload['gallery'];
     if (payload.containsKey('quickTags')) listingUpdate['quickTags'] = payload['quickTags'];
+    if (payload.containsKey('categoryTags')) listingUpdate['categoryTags'] = payload['categoryTags'];
     if (payload.containsKey('cancellationPolicy')) listingUpdate['cancellationPolicy'] = payload['cancellationPolicy'];
     if (payload.containsKey('workingHours')) listingUpdate['workingHours'] = payload['workingHours'];
     if (payload.containsKey('categoryDetails')) listingUpdate['categoryDetails'] = payload['categoryDetails'];
@@ -1969,6 +1978,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                     ),
                                   );
                                 }).toList(),
+                          ),
+
+                          // ── Category-specific tags (complements quickTags) ────────
+                          // Shows up to 5 additional chips drawn from the seeded
+                          // `category_tags/{serviceType}` catalog. Hidden when the
+                          // category has no catalog doc.
+                          const SizedBox(height: 20),
+                          CategoryTagsSelector(
+                            category: _activeListingServiceType,
+                            initialSelected: _selectedCategoryTags,
+                            onChanged: (s) =>
+                                setState(() => _selectedCategoryTags = s),
                           ),
 
                           const SizedBox(height: 25),

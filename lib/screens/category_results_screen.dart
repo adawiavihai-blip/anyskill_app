@@ -15,6 +15,7 @@ import '../services/category_service.dart';
 import '../widgets/category_specs_widget.dart';
 import '../widgets/level_badge.dart';
 import '../constants/quick_tags.dart';
+import '../widgets/provider_category_tags_display.dart';
 import '../l10n/app_localizations.dart';
 import 'search_screen/widgets/stories_row.dart';
 import '../utils/safe_image_provider.dart';
@@ -952,6 +953,18 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
               // ── Quick Tags ─────────────────────────────────────────────
               _buildQuickTagsRow(tagKeys),
               if (tagKeys.isNotEmpty) const SizedBox(height: 4),
+
+              // ── Category-specific tags (max 5, compact) ────────────────
+              if ((data['categoryTags'] as List?)?.isNotEmpty == true) ...[
+                ProviderCategoryTagsDisplay(
+                  category:
+                      (data['serviceType'] as String? ?? '').trim(),
+                  tagIds: ((data['categoryTags'] as List?) ?? const [])
+                      .cast<String>(),
+                  maxVisible: 3,
+                ),
+                const SizedBox(height: 4),
+              ],
 
               // ── Rating + location ──────────────────────────────────────
               Row(
