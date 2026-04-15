@@ -398,7 +398,7 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
                 Text(AppLocalizations.of(context).xpEventsSection, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
                 const Spacer(),
                 StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance.collection('settings_gamification').snapshots(),
+                  stream: FirebaseFirestore.instance.collection('settings_gamification').limit(100).snapshots(),
                   builder: (_, snap) {
                     final count = (snap.data?.docs ?? []).where((d) => d.id != _levelsDocId).length;
                     return Container(
@@ -417,6 +417,7 @@ class _XpManagerScreenState extends State<XpManagerScreen> {
               stream: FirebaseFirestore.instance
                   .collection('settings_gamification')
                   .orderBy('points', descending: true)
+                  .limit(100)
                   .snapshots(),
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {

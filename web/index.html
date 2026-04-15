@@ -38,24 +38,23 @@
                    https://accounts.google.com
                    https://www.recaptcha.net
                    https://recaptcha.google.com
-                   https://js.stripe.com
+                   https://www.googletagmanager.com
                    https://appleid.cdn-apple.com;
                  style-src 'self' 'unsafe-inline'
                    https://fonts.googleapis.com
                    https://accounts.google.com;
                  font-src 'self'
-                   https://fonts.gstatic.com;
-                 img-src 'self' data: blob:
+                   https://fonts.gstatic.com
+                   data:;
+                 img-src 'self' data: blob: https:;
+                 media-src 'self' blob:
                    https://*.googleapis.com
-                   https://*.gstatic.com
-                   https://firebasestorage.googleapis.com
                    https://*.firebasestorage.app
-                   https://img.youtube.com
-                   https://images.unsplash.com
-                   https://*.stripe.com;
+                   https://firebasestorage.googleapis.com;
                  connect-src 'self' blob:
                    https://*.googleapis.com
                    https://*.gstatic.com
+                   https://*.google.com
                    https://*.firebaseio.com
                    https://*.firebasestorage.app
                    https://firebasestorage.googleapis.com
@@ -63,19 +62,35 @@
                    https://identitytoolkit.googleapis.com
                    https://securetoken.googleapis.com
                    https://firebase.googleapis.com
+                   https://firebaseinstallations.googleapis.com
+                   https://fcmregistrations.googleapis.com
+                   https://content-firebaseappcheck.googleapis.com
                    https://*.firebaseapp.com
                    https://*.web.app
                    https://www.google.com
                    https://accounts.google.com
                    https://apis.google.com
                    https://www.recaptcha.net
+                   https://recaptcha.google.com
+                   https://www.googletagmanager.com
+                   https://*.google-analytics.com
+                   https://*.analytics.google.com
                    https://*.cloudfunctions.net
                    https://*.run.app
                    https://*.a.run.app
                    wss://*.firebaseio.com
-                   https://api.stripe.com
-                   https://*.stripe.com
-                   https://appleid.apple.com;
+                   https://appleid.apple.com
+                   https://api.unsplash.com
+                   https://*.unsplash.com
+                   https://images.unsplash.com
+                   https://*.ingest.sentry.io
+                   https://*.sentry.io
+                   https://*.basemaps.cartocdn.com
+                   https://basemaps.cartocdn.com
+                   https://*.tile.openstreetmap.org
+                   https://tile.openstreetmap.org
+                   https://staticmap.openstreetmap.de
+                   https://*.tile.openstreetmap.de;
                  frame-src 'self'
                    https://www.youtube.com
                    https://www.google.com
@@ -85,9 +100,8 @@
                    https://recaptcha.google.com
                    https://anyskill-6fdf3.firebaseapp.com
                    https://anyskill-6fdf3.web.app
-                   https://js.stripe.com
-                   https://hooks.stripe.com
-                   https://appleid.apple.com;
+                   https://appleid.apple.com
+                   https://studio.d-id.com;
                  worker-src 'self' blob:;
                  object-src 'none';
                  base-uri 'self';">
@@ -97,9 +111,13 @@
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <!-- Referrer policy: send origin only, no full URL in Referer header -->
   <meta name="referrer" content="strict-origin-when-cross-origin">
+  <!-- Prevent iOS Safari from aggressively caching the compiled Flutter app -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>AnySkill Elite</title>
   <!-- app version — bump this string on every release to bust browser cache -->
-  <meta name="app-version" content="9.2.0">
+  <meta name="app-version" content="10.5.1">
   <meta name="build-id" content="20260604-v5-nuclear">
 
   <!-- ── Google Sign-In client ID (used by google_sign_in web plugin) ──── -->
@@ -127,11 +145,8 @@
   <!-- Google Maps -->
   <script src="Maps.js" defer></script>
 
-  <!-- Stripe.js — must load before Flutter initialises the Stripe SDK.
-       flutter_stripe injects this dynamically, but an explicit tag is more
-       reliable and ensures it is available before any Stripe call fires.
-       The CSP above whitelists js.stripe.com for both script-src and frame-src. -->
-  <script src="https://js.stripe.com/v3/" async></script>
+  <!-- Phase 2 NOTE: Stripe.js was removed pending Israeli payment provider
+       integration. The new provider's JS SDK script tag will go here. -->
 
   <!-- ══════════════════════════════════════════════════════════════════════ -->
   <!-- BFCACHE BUSTER — MUST be inline (not deferred) so it survives        -->

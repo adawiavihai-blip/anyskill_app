@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'sign_up_screen.dart';
 import '../services/credentials_service.dart';
 import '../l10n/app_localizations.dart';
@@ -119,73 +122,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _showForgotPassword() {
     final ctrl = TextEditingController();
-    final l10n = AppLocalizations.of(context);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-        child: Container(
-          margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 36),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)))),
-              const SizedBox(height: 20),
-              Text(l10n.forgotPasswordTitle, textAlign: TextAlign.start, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Text(l10n.forgotPasswordSubtitle, textAlign: TextAlign.start, style: TextStyle(color: Colors.grey[600], fontSize: 14)),
-              const SizedBox(height: 20),
-              TextField(
-                controller: ctrl,
-                textAlign: TextAlign.start,
-                keyboardType: TextInputType.emailAddress,
-                decoration: InputDecoration(
-                  labelText: l10n.forgotPasswordEmail,
-                  prefixIcon: const Icon(Icons.email_outlined, size: 20),
-                  filled: true,
-                  fillColor: const Color(0xFFF5F5FF),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: Colors.grey.shade200)),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: _kPurple, width: 1.5)),
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () async {
-                    final email = ctrl.text.trim();
-                    if (!_emailValid(email)) {
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.errorInvalidEmail), backgroundColor: Colors.orange));
-                      return;
-                    }
-                    try {
-                      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
-                      if (ctx.mounted) Navigator.pop(ctx);
-                      if (mounted) _snack(l10n.forgotPasswordSuccess, _kGreen);
-                    } catch (_) {
-                      if (mounted) _snack(l10n.forgotPasswordError, _kRed);
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _kPurple,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  child: Text(l10n.forgotPasswordSubmit,
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      builder: (ctx) => _ForgotPasswordSheet(ctrl: ctrl),
     ).whenComplete(() => ctrl.dispose());
   }
 
@@ -781,5 +722,203 @@ class _WavePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_WavePainter old) => old.color != color;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Forgot Password — bottom sheet with diagnostics + cooldown (v9.4.8)
+// ═════════════════════════════════════════════════════════════════════════════
+
+class _ForgotPasswordSheet extends StatefulWidget {
+  final TextEditingController ctrl;
+  const _ForgotPasswordSheet({required this.ctrl});
+
+  @override
+  State<_ForgotPasswordSheet> createState() => _ForgotPasswordSheetState();
+}
+
+class _ForgotPasswordSheetState extends State<_ForgotPasswordSheet> {
+  bool _sending = false;
+  bool _sent = false;
+  int _cooldown = 0;
+  Timer? _timer;
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _startCooldown() {
+    _cooldown = 60;
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) { t.cancel(); return; }
+      setState(() {
+        _cooldown--;
+        if (_cooldown <= 0) t.cancel();
+      });
+    });
+  }
+
+  Future<void> _sendReset() async {
+    final email = widget.ctrl.text.trim().toLowerCase();
+    if (email.isEmpty || !email.contains('@') || !email.contains('.')) {
+      _showMsg('כתובת אימייל לא תקינה', Colors.orange);
+      return;
+    }
+
+    setState(() => _sending = true);
+
+    try {
+      // Step 1: Check if email exists in Firestore users collection.
+      // Firebase Auth hides user-not-found by default (email enumeration
+      // protection), so we check Firestore directly.
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: email)
+          .limit(1)
+          .get()
+          .timeout(const Duration(seconds: 5));
+
+      if (snap.docs.isEmpty) {
+        debugPrint('[ForgotPassword] Email not found in Firestore: $email');
+        if (mounted) _showMsg('המייל לא נמצא במערכת — נסה מייל אחר או הירשם מחדש', _kRed);
+        if (mounted) setState(() => _sending = false);
+        return;
+      }
+
+      // Step 2: Send the reset email
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      debugPrint('[ForgotPassword] Reset email sent to: $email');
+
+      if (mounted) {
+        setState(() { _sending = false; _sent = true; });
+        _startCooldown();
+      }
+    } on FirebaseAuthException catch (e) {
+      debugPrint('[ForgotPassword] FirebaseAuth error: code=${e.code} msg=${e.message}');
+      final msg = switch (e.code) {
+        'invalid-email'   => 'כתובת אימייל לא תקינה',
+        'user-not-found'  => 'המייל לא נמצא במערכת',
+        'too-many-requests' => 'יותר מדי ניסיונות — נסה שוב מאוחר יותר',
+        _ => 'שגיאה: ${e.code}',
+      };
+      if (mounted) _showMsg(msg, _kRed);
+      if (mounted) setState(() => _sending = false);
+    } catch (e) {
+      debugPrint('[ForgotPassword] Unexpected error: $e');
+      if (mounted) _showMsg('שגיאה בשליחת קישור איפוס', _kRed);
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  void _showMsg(String msg, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: color,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)))),
+            const SizedBox(height: 20),
+            Text(l10n.forgotPasswordTitle, textAlign: TextAlign.start, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text(l10n.forgotPasswordSubtitle, textAlign: TextAlign.start, style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+            const SizedBox(height: 20),
+
+            // Email field
+            TextField(
+              controller: widget.ctrl,
+              textAlign: TextAlign.start,
+              keyboardType: TextInputType.emailAddress,
+              enabled: !_sending,
+              decoration: InputDecoration(
+                labelText: l10n.forgotPasswordEmail,
+                prefixIcon: const Icon(Icons.email_outlined, size: 20),
+                filled: true,
+                fillColor: const Color(0xFFF5F5FF),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: Colors.grey.shade200)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: _kPurple, width: 1.5)),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Success state: show confirmation + spam tip
+            if (_sent) ...[
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFECFDF5),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFF6EE7B7)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(children: [
+                      Icon(Icons.check_circle_rounded, color: Color(0xFF10B981), size: 20),
+                      SizedBox(width: 8),
+                      Expanded(child: Text('קישור איפוס נשלח בהצלחה!', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF065F46)))),
+                    ]),
+                    const SizedBox(height: 8),
+                    Text(
+                      'בדוק את תיבת הדואר הנכנס שלך.\n'
+                      'לא מצאת? בדוק גם בתיקיית ספאם / דואר זבל.\n'
+                      'המייל נשלח מ-noreply@anyskill-6fdf3.firebaseapp.com',
+                      style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+            ],
+
+            // Send / Resend button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: (_sending || _cooldown > 0) ? null : _sendReset,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _kPurple,
+                  disabledBackgroundColor: Colors.grey.shade300,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: _sending
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : Text(
+                        _cooldown > 0
+                            ? 'שלח שוב ($_cooldown שניות)'
+                            : (_sent ? 'שלח שוב' : l10n.forgotPasswordSubmit),
+                        style: TextStyle(
+                          color: (_cooldown > 0) ? Colors.grey[600] : Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 

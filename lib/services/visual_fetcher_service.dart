@@ -121,6 +121,10 @@ class VisualFetcherService {
         debugPrint('VisualFetcher: RATE LIMITED — pausing backfill');
         return null; // return null so backfill skips without writing generic fallback
       }
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        debugPrint('VisualFetcher: AUTH ERROR ${response.statusCode} — API key may be invalid/expired, stopping');
+        return null; // stop backfill entirely (same as rate-limit)
+      }
       if (response.statusCode != 200) {
         debugPrint('VisualFetcher: non-200 response ${response.statusCode}');
         return curated; // use curated (may be null)

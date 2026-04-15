@@ -7,4 +7,5 @@ void pageReload() {}
 void triggerCsvDownload(String content, String filename) {}
 void openUrl(String url) {}
 Future<void> clearWebCaches() async {}
+Future<void> forceHardRefresh() async {}
 void disableBfcache() {}

@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>AnySkill — הרשמה כנותן שירות</title>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800;900&family=Rubik:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F5F6FA;
+    --surface: #FFFFFF;
+    --surface-alt: #FAFBFE;
+    --border: #E2E6F0;
+    --text-primary: #171B2E;
+    --text-secondary: #5A6180;
+    --text-muted: #959CB8;
+    --accent: #6C5CE7;
+    --accent-dark: #5A49D6;
+    --accent-light: #EDEAFD;
+    --accent-glow: rgba(108, 92, 231, 0.18);
+    --success: #10B981;
+    --success-light: #ECFDF5;
+    --error: #EF4444;
+    --gradient-btn: linear-gradient(135deg, #6C5CE7 0%, #5A49D6 100%);
+    --gradient-hero: linear-gradient(160deg, #6C5CE7 0%, #4834D4 60%, #2D1F8A 100%);
+    --shadow-xs: 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-sm: 0 2px 8px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 20px rgba(0,0,0,0.08);
+    --shadow-focus: 0 0 0 3px var(--accent-glow);
+    --radius-sm: 10px;
+    --radius-md: 14px;
+    --radius-lg: 18px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Heebo', sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ===== TOP HEADER ===== */
+  .top-header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 200;
+    background: var(--gradient-hero);
+    padding: 16px 20px 18px;
+    text-align: center;
+  }
+
+  .top-header-brand {
+    font-family: 'Rubik', sans-serif;
+    font-size: 20px;
+    font-weight: 800;
+    color: white;
+    letter-spacing: -0.5px;
+    margin-bottom: 2px;
+  }
+
+  .top-header-subtitle {
+    font-size: 12px;
+    color: rgba(255,255,255,0.65);
+    font-weight: 400;
+  }
+
+  /* ===== PROGRESS BAR ===== */
+  .progress-bar-container {
+    position: fixed;
+    top: 68px;
+    left: 0; right: 0;
+    z-index: 100;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .progress-inner {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 12px 20px 10px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .progress-back {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border);
+    background: var(--surface);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    color: var(--text-primary);
+    flex-shrink: 0;
+  }
+  .progress-back:hover { border-color: var(--accent); color: var(--accent); }
+  .progress-back svg { width: 16px; height: 16px; }
+
+  .progress-center { flex: 1; }
+
+  .progress-step-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+
+  .progress-step-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    transition: color 0.3s;
+  }
+  .progress-step-label.active { color: var(--accent); font-weight: 700; }
+  .progress-step-label.done { color: var(--success); }
+
+  .progress-track {
+    height: 4px;
+    border-radius: 4px;
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: var(--gradient-btn);
+    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+  }
+
+  .progress-fill::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+    animation: shimmer 2.5s infinite;
+  }
+
+  @keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+
+  .progress-counter {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-align: left;
+    flex-shrink: 0;
+    min-width: 32px;
+  }
+
+  /* ===== MAIN CONTAINER ===== */
+  .main-container {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 136px 18px 130px;
+  }
+
+  /* ===== STEP SECTIONS ===== */
+  .step-section {
+    display: none;
+    animation: fadeUp 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .step-section.active { display: block; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .step-header { margin-bottom: 28px; }
+
+  .step-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent-light);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 14px;
+    border-radius: 50px;
+    margin-bottom: 14px;
+  }
+
+  .step-title {
+    font-family: 'Rubik', sans-serif;
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+    line-height: 1.3;
+  }
+
+  .step-subtitle {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  /* ===== FORM FIELDS ===== */
+  .form-group { margin-bottom: 18px; }
+
+  .form-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 7px;
+  }
+
+  .required-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--error);
+    display: inline-block;
+  }
+
+  .input-wrapper { position: relative; }
+
+  .input-wrapper .field-icon {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px; height: 18px;
+    color: var(--text-muted);
+    pointer-events: none;
+    transition: color 0.25s;
+  }
+
+  .form-input,
+  .form-select,
+  .form-textarea {
+    width: 100%;
+    padding: 13px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: 'Heebo', sans-serif;
+    font-size: 14px;
+    color: var(--text-primary);
+    background: var(--surface);
+    transition: all 0.25s;
+    outline: none;
+    -webkit-appearance: none;
+  }
+
+  .form-input.has-icon { padding-right: 44px; }
+
+  .form-input::placeholder,
+  .form-textarea::placeholder { color: var(--text-muted); }
+
+  .form-input:focus,
+  .form-select:focus,
+  .form-textarea:focus {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-focus);
+  }
+
+  .form-input:focus ~ .field-icon { color: var(--accent); }
+
+  .form-textarea {
+    min-height: 90px;
+    resize: vertical;
+    line-height: 1.6;
+  }
+
+  .form-select {
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23959CB8' stroke-width='2.5' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: left 14px center;
+  }
+
+  .input-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 5px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .input-hint svg { width: 13px; height: 13px; flex-shrink: 0; }
+
+  .input-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .input-row .form-group { margin-bottom: 0; }
+
+  /* ===== SUBCATEGORY CHIPS ===== */
+  .subcategory-area {
+    display: none;
+    animation: fadeUp 0.3s ease;
+    margin-top: 4px;
+  }
+  .subcategory-area.visible { display: block; }
+
+  .sub-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 18px 0 12px;
+  }
+  .sub-divider::before,
+  .sub-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .sub-divider span {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .chip-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .chip {
+    padding: 9px 18px;
+    border: 1.5px solid var(--border);
+    border-radius: 50px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--surface);
+    user-select: none;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip.selected {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px rgba(108, 92, 231, 0.3);
+  }
+
+  /* ===== BIO SECTION ===== */
+  .bio-area {
+    display: none;
+    animation: fadeUp 0.3s ease;
+  }
+  .bio-area.visible { display: block; }
+
+  /* ===== UPLOAD AREA ===== */
+  .upload-area {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius-lg);
+    padding: 28px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    background: var(--surface-alt);
+  }
+  .upload-area:hover {
+    border-color: var(--accent);
+    background: var(--accent-light);
+  }
+
+  .upload-circle {
+    width: 52px; height: 52px;
+    border-radius: 50%;
+    background: var(--gradient-btn);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 10px;
+    box-shadow: 0 6px 20px rgba(108, 92, 231, 0.3);
+  }
+  .upload-circle svg { width: 22px; height: 22px; color: white; }
+
+  .upload-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 3px; }
+  .upload-hint { font-size: 12px; color: var(--text-muted); }
+
+  .upload-ok {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: var(--success-light);
+    border: 1.5px solid var(--success);
+    border-radius: var(--radius-sm);
+    margin-top: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--success);
+  }
+  .upload-ok svg { width: 18px; height: 18px; flex-shrink: 0; }
+  .upload-ok.visible { display: flex; }
+
+  /* ===== VERIFICATION BOX ===== */
+  .verification-box {
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    margin-top: 6px;
+  }
+
+  .v-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .v-icon {
+    width: 34px; height: 34px;
+    border-radius: 10px;
+    background: var(--accent-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .v-icon svg { width: 18px; height: 18px; color: var(--accent); }
+
+  .v-title { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+
+  .v-tag {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 50px;
+    background: var(--accent-light);
+    color: var(--accent);
+    margin-right: auto;
+  }
+
+  .privacy-row {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 10px;
+  }
+
+  .p-tag {
+    font-size: 10px;
+    padding: 4px 10px;
+    border-radius: 50px;
+    background: var(--surface-alt);
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    border: 1px solid var(--border);
+  }
+  .p-tag svg { width: 11px; height: 11px; }
+
+  .privacy-note {
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 8px;
+  }
+
+  /* ===== BANK SECTION ===== */
+  .bank-card {
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    margin-bottom: 18px;
+  }
+
+  .bank-card-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-alt);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .bank-icon {
+    width: 34px; height: 34px;
+    border-radius: 10px;
+    background: #E8F5E9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+  }
+
+  .bank-card-title { font-size: 14px; font-weight: 700; }
+  .bank-card-sub { font-size: 11px; color: var(--text-muted); }
+
+  .bank-card-body { padding: 16px 18px; }
+
+  /* ===== INFO CARD ===== */
+  .info-card {
+    background: linear-gradient(135deg, #F8F7FF 0%, #EFEDFB 100%);
+    border: 1px solid rgba(108, 92, 231, 0.12);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    margin-bottom: 18px;
+  }
+
+  .info-card-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--accent-dark);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .info-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .info-row:last-child { margin-bottom: 0; }
+  .info-row-icon { font-size: 18px; line-height: 1; flex-shrink: 0; }
+  .info-row-text { font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
+  .info-row-text strong { color: var(--text-primary); font-weight: 600; }
+
+  /* ===== TERMS ===== */
+  .terms-box {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s;
+    user-select: none;
+  }
+  .terms-box:hover { border-color: var(--accent); }
+  .terms-box.checked { border-color: var(--accent); background: var(--accent-light); }
+
+  .cb {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    border: 2px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    margin-top: 1px;
+  }
+  .terms-box.checked .cb { background: var(--accent); border-color: var(--accent); }
+  .cb svg { width: 14px; height: 14px; color: white; opacity: 0; transition: 0.2s; }
+  .terms-box.checked .cb svg { opacity: 1; }
+
+  .terms-txt {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+  .terms-txt a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .terms-txt a:hover { text-decoration: underline; }
+
+  /* ===== SCROLLABLE TERMS CONTAINER ===== */
+  .terms-scroll-container {
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+
+  .terms-scroll-header {
+    padding: 14px 18px;
+    background: var(--surface-alt);
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .terms-scroll-body {
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 18px;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--text-secondary);
+    background: var(--surface);
+    scroll-behavior: smooth;
+  }
+
+  .terms-scroll-body h3 {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 18px 0 8px;
+  }
+  .terms-scroll-body h3:first-child { margin-top: 0; }
+
+  .terms-scroll-body p {
+    margin-bottom: 10px;
+  }
+
+  .terms-scroll-hint {
+    text-align: center;
+    padding: 10px;
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 600;
+    background: var(--accent-light);
+    border-top: 1px solid rgba(108,92,231,0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: opacity 0.3s;
+  }
+
+  .terms-scroll-hint.hidden {
+    opacity: 0;
+    height: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .terms-scroll-hint svg {
+    width: 16px; height: 16px;
+    animation: bounceDown 1.5s infinite;
+  }
+
+  @keyframes bounceDown {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(4px); }
+  }
+
+  .terms-box.disabled {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  /* ===== BOTTOM CTA ===== */
+  .bottom-cta {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 100;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 14px 18px;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .bottom-cta-inner { max-width: 560px; margin: 0 auto; }
+
+  .btn-primary {
+    width: 100%;
+    padding: 15px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: var(--gradient-btn);
+    color: white;
+    font-family: 'Heebo', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    letter-spacing: 0.2px;
+  }
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(108, 92, 231, 0.35);
+  }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-primary:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+  .btn-primary svg {
+    width: 16px; height: 16px;
+    transition: transform 0.3s;
+  }
+  .btn-primary:not(:disabled):hover svg { transform: translateX(-3px); }
+
+  /* ===== RESPONSIVE ===== */
+  @media (max-width: 400px) {
+    .step-title { font-size: 22px; }
+    .main-container { padding: 130px 14px 120px; }
+  }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<!-- TOP HEADER -->
+<div class="top-header">
+  <div class="top-header-brand">AnySkill</div>
+  <div class="top-header-subtitle">הרשמה כנותן שירות</div>
+</div>
+
+<!-- PROGRESS BAR -->
+<div class="progress-bar-container">
+  <div class="progress-inner">
+    <button class="progress-back" id="backBtn" onclick="prevStep()" style="visibility: hidden;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg>
+    </button>
+    <div class="progress-center">
+      <div class="progress-step-labels">
+        <span class="progress-step-label active" id="lbl1">פרטים אישיים</span>
+        <span class="progress-step-label" id="lbl2">תחום עיסוק</span>
+        <span class="progress-step-label" id="lbl3">מיקום ואימות</span>
+        <span class="progress-step-label" id="lbl4">עסק ובנק</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progressFill" style="width: 25%"></div>
+      </div>
+    </div>
+    <span class="progress-counter" id="progressCounter">1/4</span>
+  </div>
+</div>
+
+<div class="main-container">
+
+  <!-- ===== STEP 1: פרטים אישיים ===== -->
+  <div class="step-section active" id="step1">
+    <div class="step-header">
+      <div class="step-badge">שלב 1 מתוך 4</div>
+      <h1 class="step-title">ספרו לנו קצת על עצמכם</h1>
+      <p class="step-subtitle">המידע ישמש ליצירת הפרופיל המקצועי שלכם ב-AnySkill</p>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label"><span class="required-dot"></span> שם מלא</label>
+      <div class="input-wrapper">
+        <input type="text" class="form-input has-icon" id="fullName" placeholder="השם שיוצג ללקוחות">
+        <svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label"><span class="required-dot"></span> מספר טלפון</label>
+      <div class="input-wrapper">
+        <input type="tel" class="form-input has-icon" id="phone" placeholder="05X-XXXXXXX" dir="ltr" style="text-align: right;">
+        <svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label"><span class="required-dot"></span> כתובת אימייל</label>
+      <div class="input-wrapper">
+        <input type="email" class="form-input has-icon" id="email" placeholder="your@email.com" dir="ltr" style="text-align: right;">
+        <svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== STEP 2: תחום עיסוק ===== -->
+  <div class="step-section" id="step2">
+    <div class="step-header">
+      <div class="step-badge">שלב 2 מתוך 4</div>
+      <h1 class="step-title">מהו תחום העיסוק שלכם?</h1>
+      <p class="step-subtitle">בחרו את התחום ותת-הקטגוריה — הלקוחות ימצאו אתכם לפי הבחירה</p>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label"><span class="required-dot"></span> קטגוריה ראשית</label>
+      <select class="form-select" id="categorySelect" onchange="onCategoryChange()">
+        <option value="">בחרו תחום עיסוק</option>
+      </select>
+    </div>
+
+    <div class="subcategory-area" id="subArea">
+      <div class="sub-divider"><span>בחרו התמחות</span></div>
+      <div class="chip-grid" id="subChips"></div>
+    </div>
+
+    <div class="bio-area" id="bioArea">
+      <div class="sub-divider"><span>תיאור העיסוק שלכם</span></div>
+      <div class="form-group" style="margin-bottom: 0;">
+        <label class="form-label"><span class="required-dot"></span> תארו את השירות שאתם מציעים</label>
+        <textarea class="form-textarea" id="bio" placeholder="ספרו על הניסיון שלכם, סוגי השירות, זמינות, ומה מייחד אתכם... (מינימום 20 תווים)"></textarea>
+        <div class="input-hint">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+          <span>תיאור מפורט מגדיל את הסיכוי לקבל הזמנות עד פי 3</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== STEP 3: מיקום + אימות זהות ===== -->
+  <div class="step-section" id="step3">
+    <div class="step-header">
+      <div class="step-badge">שלב 3 מתוך 4</div>
+      <h1 class="step-title">מיקום ואימות זהות</h1>
+      <p class="step-subtitle">היכן אתם פועלים ואימות זהות לבניית אמון מול לקוחות</p>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label"><span class="required-dot"></span> מדינה</label>
+      <select class="form-select" id="country">
+        <option value="">בחרו מדינה</option>
+        <option value="ישראל" selected>ישראל</option>
+        <option value="ארצות הברית">ארצות הברית</option>
+        <option value="בריטניה">בריטניה</option>
+        <option value="גרמניה">גרמניה</option>
+        <option value="צרפת">צרפת</option>
+        <option value="קנדה">קנדה</option>
+        <option value="אוסטרליה">אוסטרליה</option>
+        <option value="אחר">אחר</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label"><span class="required-dot"></span> עיר</label>
+      <select class="form-select" id="city">
+        <option value="">בחרו עיר</option>
+        <option>תל אביב - יפו</option>
+        <option>ירושלים</option>
+        <option>חיפה</option>
+        <option>ראשון לציון</option>
+        <option>פתח תקווה</option>
+        <option>אשדוד</option>
+        <option>נתניה</option>
+        <option>באר שבע</option>
+        <option>חולון</option>
+        <option>בני ברק</option>
+        <option>רמת גן</option>
+        <option>אשקלון</option>
+        <option>הרצליה</option>
+        <option>כפר סבא</option>
+        <option>רעננה</option>
+        <option>מודיעין</option>
+        <option>אילת</option>
+        <option>נצרת</option>
+        <option>עכו</option>
+        <option>בת ים</option>
+        <option>אחר</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label"><span class="required-dot"></span> רחוב ומספר</label>
+      <input type="text" class="form-input" id="street" placeholder="לדוגמא: הרצל 15">
+    </div>
+
+    <!-- ID Verification -->
+    <div class="verification-box" style="margin-top: 22px;">
+      <div class="v-header">
+        <div class="v-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <div>
+          <div class="v-title">אימות זהות</div>
+        </div>
+        <span class="v-tag">חובה</span>
+      </div>
+      <div class="upload-area" onclick="document.getElementById('idDoc').click()" id="idUploadArea">
+        <div class="upload-circle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M15 8h2"/><path d="M15 12h2"/><path d="M7 16h10"/></svg>
+        </div>
+        <div class="upload-title">צילום תעודת זהות / דרכון</div>
+        <div class="upload-hint">לחצו לבחירת תמונה או צילום חדש • JPG, PNG, PDF</div>
+      </div>
+      <input type="file" id="idDoc" accept=".jpg,.jpeg,.png,.pdf" style="display:none;" onchange="handleUpload('id', this)">
+      <div class="upload-ok" id="idOk">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span id="idFileName"></span>
+      </div>
+      <div class="privacy-row">
+        <span class="p-tag">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          מוצפן
+        </span>
+        <span class="p-tag">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          פרטי
+        </span>
+        <span class="p-tag">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          ממתין לאישור
+        </span>
+      </div>
+      <p class="privacy-note">המסמך מאוחסן בהצפנה ומשמש לאימות בלבד — לא יוצג ללקוחות</p>
+    </div>
+  </div>
+
+  <!-- ===== STEP 4: עסק + בנק + סיום ===== -->
+  <div class="step-section" id="step4">
+    <div class="step-header">
+      <div class="step-badge">שלב 4 מתוך 4 — אחרון!</div>
+      <h1 class="step-title">פרטי עסק וחשבון בנק</h1>
+      <p class="step-subtitle">כדי שנוכל להעביר לכם את התשלומים בצורה מהירה ומאובטחת</p>
+    </div>
+
+    <!-- Business Type -->
+    <div class="form-group">
+      <label class="form-label"><span class="required-dot"></span> סוג העסק</label>
+      <select class="form-select" id="bizType" onchange="onBizTypeChange()">
+        <option value="">בחרו סוג עסק</option>
+        <option value="עוסק פטור">עוסק פטור</option>
+        <option value="עוסק מורשה">עוסק מורשה</option>
+        <option value="חברה בע&quot;מ">חברה בע"מ</option>
+        <option value="חשבונית למשכיר">חשבונית למשכיר</option>
+      </select>
+    </div>
+
+    <!-- Business Doc Upload -->
+    <div class="form-group" id="bizDocSection" style="display: none;">
+      <label class="form-label"><span class="required-dot"></span> העלאת אישור עוסק</label>
+      <div class="upload-area" onclick="document.getElementById('bizDoc').click()" id="bizUploadArea" style="padding: 22px 16px;">
+        <div class="upload-circle" style="width: 46px; height: 46px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:20px;height:20px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div class="upload-title">אישור ניהול ספרים / אישור עוסק</div>
+        <div class="upload-hint">PDF, JPG או PNG עד 10MB</div>
+      </div>
+      <input type="file" id="bizDoc" accept=".pdf,.jpg,.jpeg,.png" style="display:none;" onchange="handleUpload('biz', this)">
+      <div class="upload-ok" id="bizOk">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span id="bizFileName"></span>
+      </div>
+    </div>
+
+    <!-- Bank Details -->
+    <div class="bank-card">
+      <div class="bank-card-header">
+        <div class="bank-icon">🏦</div>
+        <div>
+          <div class="bank-card-title">פרטי חשבון בנק</div>
+          <div class="bank-card-sub">לקבלת תשלומים על השירותים שלכם</div>
+        </div>
+      </div>
+      <div class="bank-card-body">
+        <div class="form-group">
+          <label class="form-label"><span class="required-dot"></span> שם הבנק</label>
+          <select class="form-select" id="bankName" onchange="onBankChange()">
+            <option value="">בחרו בנק</option>
+            <option value="12">בנק הפועלים (12)</option>
+            <option value="11">בנק דיסקונט (11)</option>
+            <option value="10">בנק לאומי (10)</option>
+            <option value="20">בנק מזרחי טפחות (20)</option>
+            <option value="31">בנק הבינלאומי (31)</option>
+            <option value="14">בנק אוצר החייל (14)</option>
+            <option value="13">בנק איגוד (13)</option>
+            <option value="17">בנק מרכנתיל דיסקונט (17)</option>
+            <option value="09">בנק הדואר (09)</option>
+            <option value="46">בנק מסד (46)</option>
+            <option value="54">בנק ירושלים (54)</option>
+            <option value="26">יובנק (26)</option>
+            <option value="04">בנק יהב (04)</option>
+            <option value="34">בנק ערבי ישראלי (34)</option>
+          </select>
+        </div>
+
+        <div class="form-group" id="bankNumRow" style="display:none;">
+          <label class="form-label">מספר בנק</label>
+          <input type="text" class="form-input" id="bankNum" readonly style="background: var(--surface-alt); color: var(--text-secondary);">
+        </div>
+
+        <div class="input-row" style="margin-bottom: 18px;">
+          <div class="form-group">
+            <label class="form-label"><span class="required-dot"></span> מספר סניף</label>
+            <input type="text" class="form-input" id="bankBranch" placeholder="לדוגמא: 185" inputmode="numeric" maxlength="4">
+          </div>
+          <div class="form-group">
+            <label class="form-label"><span class="required-dot"></span> מספר חשבון</label>
+            <input type="text" class="form-input" id="bankAccount" placeholder="לדוגמא: 123456" inputmode="numeric" maxlength="9">
+          </div>
+        </div>
+
+        <div class="input-hint" style="margin-top: -10px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span>פרטי הבנק מוצפנים ומשמשים להעברת תשלומים בלבד</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Info Card — FOR PROVIDERS -->
+    <div class="info-card">
+      <div class="info-card-title">✨ חשוב לדעת — AnySkill בקיצור</div>
+      <div class="info-row">
+        <span class="info-row-icon">🔒</span>
+        <span class="info-row-text"><strong>הכסף שלך בטוח:</strong> ברגע שלקוח מבצע הזמנה, התשלום נכנס לנאמנות. בסיום השירות ואישור הלקוח — הכסף מועבר אליך.</span>
+      </div>
+      <div class="info-row">
+        <span class="info-row-icon">🤝</span>
+        <span class="info-row-text"><strong>תיווך בלבד:</strong> AnySkill מחברת בינך לבין הלקוח. האחריות המקצועית על ביצוע העבודה היא שלך.</span>
+      </div>
+      <div class="info-row">
+        <span class="info-row-icon">📋</span>
+        <span class="info-row-text"><strong>מדיניות ביטולים:</strong> הגדירו מדיניות ביטולים ברורה בפרופיל שלכם — הלקוחות רואים אותה לפני ההזמנה.</span>
+      </div>
+      <div class="info-row">
+        <span class="info-row-icon">💰</span>
+        <span class="info-row-text"><strong>העברות מהירות:</strong> לאחר אישור סיום השירות, התשלום מועבר ישירות לחשבון הבנק שלכם.</span>
+      </div>
+    </div>
+
+    <!-- Terms of Service — Scrollable, must read all -->
+    <div class="terms-scroll-container">
+      <div class="terms-scroll-header">📜 תנאי שימוש ומדיניות פרטיות</div>
+      <div class="terms-scroll-body" id="termsScrollBody" onscroll="checkTermsScroll()">
+        <h3>תנאי שימוש מלאים — AnySkill (גרסה 2.0)</h3>
+        <p style="text-align:center;color:var(--text-muted);margin-bottom:14px;">בלחיצה על אישור, אתה מסכים לתנאי השימוש</p>
+
+        <p><strong>1. מהי AnySkill?</strong></p>
+        <p>AnySkill היא פלטפורמת תיווך דיגיטלית ("הפלטפורמה") המאפשרת חיבור בין לקוחות לבין נותני שירות מקצועיים ("ספקים") בתחומים שונים. AnySkill מספקת תשתית טכנולוגית בלבד — לרבות מנגנון חיפוש, מערכת תשלומי נאמנות (Escrow), מערכת הודעות, ומנגנון דירוג.</p>
+        <p>גישה לפלטפורמה ושימוש בה כפופים להסכמה מלאה לכל הסעיפים שלהלן. שימוש ראשון מהווה הסכמה מחייבת. גיל מינימום לשימוש: 18.</p>
+
+        <p><strong>2. סטטוס ספקים — קבלן עצמאי</strong></p>
+        <p>AnySkill אינה מעסיקה את הספקים בכל אופן שהוא. הספקים הם קבלנים עצמאיים הפועלים על אחריותם הבלעדית.</p>
+        <p>בין AnySkill לספק לא מתקיימים יחסי עובד-מעביד, שליחות, שותפות, או כל מסגרת אחרת המקימה אחריות של AnySkill כלפי צד שלישי בשל מעשי הספק.</p>
+        <p>הספק אחראי באופן בלעדי ל:</p>
+        <p>• כלים, ציוד, חומרים ורישיונות מקצועיים הנדרשים לביצוע השירות.</p>
+        <p>• ביטוח צד שלישי, ביטוח אחריות מקצועית, וביטוח בריאות.</p>
+        <p>• זכויות סוציאליות, פנסיה, דמי אבטלה — AnySkill אינה נושאת בכל אלה.</p>
+        <p>• עמידה בכל חוק, תקן, ורגולציה החלים על מקצועו.</p>
+        <p>AnySkill שומרת לעצמה את הזכות להשעות או לסיים חשבון ספק שנפגעה אמינותו, ללא יצירת יחסי עבודה.</p>
+
+        <p><strong>3. מודל תשלום — נאמנות (Escrow)</strong></p>
+        <p>AnySkill פועלת כ"נאמן" (Trustee) על כספי העסקה בלבד. היא אינה בעלים של הכסף ואינה מרוויחה ממנו ריבית.</p>
+        <p>זרימת הכספים:</p>
+        <p>• עם אישור ההזמנה, הלקוח מעביר את סכום העסקה המלא לחשבון הנאמנות של AnySkill.</p>
+        <p>• הכסף מוקפא ואינו מועבר לספק עד להשלמת אחד מהתנאים הבאים:</p>
+        <p>(א) הלקוח אישר ידנית "שחרור תשלום" לאחר השלמת השירות.</p>
+        <p>(ב) חלפו 72 שעות ממועד סימון "הושלם" על ידי הספק ללא פעולה מצד הלקוח — השחרור יתבצע אוטומטית (אלא אם נפתחה מחלוקת).</p>
+        <p>(ג) צוות AnySkill הוציא החלטת בוררות המורה על שחרור.</p>
+        <p>AnySkill תנכה את עמלת השירות מהסכום המועבר לספק. הלקוח לא יחויב בסכום נוסף מעבר למה שאושר בהזמנה.</p>
+
+        <p><strong>4. עמלות ודמי שירות</strong></p>
+        <p>AnySkill גובה עמלת שירות מסכום כל עסקה מוצלחת. שיעור העמלה המעודכן מוצג בהגדרות האפליקציה ובדף האישור לפני כל תשלום.</p>
+        <p>• העמלה מנוכה אוטומטית מהסכום המועבר לספק — הלקוח לא מחויב בנפרד.</p>
+        <p>• AnySkill רשאית לשנות את שיעור העמלה בהתראה של 14 ימים מראש.</p>
+        <p>• עסקאות שבוטלו לפני תחילת השירות יזוכו במלואן ללקוח ללא ניכוי עמלה.</p>
+
+        <p><strong>5. מדיניות ביטולים</strong></p>
+        <p>כל ספק קובע את מדיניות הביטול שלו בעת פתיחת הפרופיל. שלושה מסלולים אפשריים:</p>
+        <p>🟢 גמישה — ביטול חינם עד 4 שעות לפני המפגש. ביטול מאוחר: קנס 50% לספק.</p>
+        <p>🟡 בינונית — ביטול חינם עד 24 שעות לפני. ביטול מאוחר: קנס 50%.</p>
+        <p>🔴 קפדנית — ביטול חינם עד 48 שעות לפני. ביטול מאוחר: קנס 100%.</p>
+        <p>ביטול מצד הספק — ללא קשר למועד — מזכה את הלקוח בהחזר מלא של 100%.</p>
+        <p>קנס הביטול מועבר לספק בניכוי עמלת AnySkill הרגילה.</p>
+        <p>חלון הביטול המדויק מוצג בסיכום ההזמנה לפני האישור הסופי.</p>
+
+        <p><strong>6. ציות מס ואחריות פיסקלית</strong></p>
+        <p>הספק הוא האחראי הבלעדי לדיווח ותשלום כל מס, היטל, וכל חיוב חוקי אחר הנובע מהכנסותיו דרך הפלטפורמה. AnySkill אינה גורמת מנכה-מס-במקור ואינה אחראית להגשת כל דיווח מס עבור הספק.</p>
+        <p>חובות הספק:</p>
+        <p>• בעל עסק מורשה / חברה בע"מ: להוציא חשבונית מס כדין ללקוח ו/או ל-AnySkill בגין כל עסקה, בהתאם לחובות חוק מע"מ.</p>
+        <p>• עוסק פטור: להוציא קבלה כדין ולציין סטטוס עוסק פטור.</p>
+        <p>• פרילנסר ששכרו מגיע לסף חייב ברישום: מחובתו להירשם ברשויות המס.</p>
+        <p>• ספקים המשתמשים בשירותי הפקת חשבוניות דרך צד שלישי מורשה אחראים לוודא כי השירות עומד בדרישות פקיד שומה.</p>
+        <p>AnySkill שומרת לעצמה הזכות להשעות משיכת כספים אם יש חשש לאי-ציות לחובות הדיווח.</p>
+
+        <p><strong>7. אחריות משתמשים והתנהגות אסורה</strong></p>
+        <p>כל משתמש (לקוח וספק כאחד) מתחייב:</p>
+        <p>• לספק מידע אמיתי, מדויק ועדכני בעת הרישום ובמהלך השימוש.</p>
+        <p>• לנהוג בכבוד, ביושר ובהגינות כלפי כל משתמש אחר בפלטפורמה.</p>
+        <p>• שלא לבצע עסקאות מחוץ לפלטפורמה כדי לעקוף עמלת AnySkill.</p>
+        <p>שימושים אסורים:</p>
+        <p>• הטרדה, איומים, שפה פוגענית או גזענית, ציוד מיני.</p>
+        <p>• פרסום שירותים בלתי חוקיים, מזויפים, או מטעים.</p>
+        <p>• העלאת תוכן הפוגע בזכויות יוצרים של צד שלישי.</p>
+        <p>• ניסיון לפרוץ, לסרוק, לסרוק לפגיעויות, או לשבש את הפלטפורמה.</p>
+        <p>• יצירת חשבונות כפולים לצורך הטיה בדירוגים.</p>
+        <p>הפרה של כל אחד מהאמור לעיל עלולה לגרור השעיה מיידית ו/או הפניה לרשויות אכיפת החוק.</p>
+
+        <p><strong>8. אבטחת חשבון ואחריות אישית</strong></p>
+        <p>המשתמש אחראי באופן מלא לשמירת סיסמתו ופרטי הגישה לחשבונו.</p>
+        <p>• חל איסור מוחלט להעביר גישה לחשבון לאדם אחר.</p>
+        <p>• כל פעולה שתתבצע מתוך חשבון המשתמש תיחשב כפעולה שבוצעה על ידיו, אלא אם דיווח על גישה לא מורשית בתוך 24 שעות.</p>
+        <p>• AnySkill ממליצה להפעיל אימות דו-שלבי (2FA) ולהשתמש בסיסמה חזקה ייחודית.</p>
+        <p>• במקרה של חשד לפריצה לחשבון יש לפנות מיידית לתמיכה ב-support@anyskill.app.</p>
+        <p>AnySkill תחסום חשבון חשוד בפעילות בלתי מורשית ותחקור. AnySkill לא תישא באחריות להפסדים שנגרמו כתוצאה מגישה לא מורשית שנבעה מרשלנות המשתמש.</p>
+
+        <p><strong>9. הגבלת אחריות</strong></p>
+        <p>AnySkill מספקת פלטפורמה טכנולוגית בלבד ואינה צד לחוזה השירות בין הלקוח לבין הספק. בהתאם, AnySkill לא תישא בכל אחריות ל:</p>
+        <p>• איכות, בטיחות, חוקיות, או תוצאות של שירות שסיפק ספק.</p>
+        <p>• נזק גוף, נזק לרכוש, או כל נזק אחר שנגרם ללקוח על ידי ספק.</p>
+        <p>• אובדן הכנסה, אובדן נתונים, נזק עקיף או תוצאתי מכל סיבה שהיא.</p>
+        <p>• הפסקות שירות, תקלות טכניות, עיכובים, או שגיאות בפלטפורמה.</p>
+        <p>• מידע שגוי שסיפק משתמש בפרופיל, בהזמנה, או בצ'אט.</p>
+        <p>בכל מקרה, האחריות הכוללת של AnySkill כלפי כל משתמש לא תעלה על הסכום הכולל ששילם אותו משתמש ל-AnySkill בשלושת החודשים שקדמו לאירוע הנזק.</p>
+        <p>הגבלה זו חלה במידה המרבית המותרת על פי הדין החל בישראל.</p>
+
+        <p><strong>10. יישוב מחלוקות ובוררות</strong></p>
+        <p>מחלוקת בין משתמשים תטופל בשלבים הבאים:</p>
+        <p>(א) פנייה ישירה — הצדדים מעודדים לנסות ליישב את המחלוקת ביניהם דרך מערכת הצ'אט בתוך 24 שעות.</p>
+        <p>(ב) בקשת בוררות — אם לא הושגה הסכמה, כל צד רשאי לפתוח "בקשת בוררות" דרך האפליקציה. הכספים ימשיכו להיות מוחזקים בנאמנות עד לפתרון.</p>
+        <p>(ג) סקירת AnySkill — צוות ה-Trust & Safety יבחן ראיות (הודעות, צילומי מסך, תיאורים) ויוציא החלטה תוך 48 שעות עסקים.</p>
+        <p>(ד) אפשרויות ההחלטה:</p>
+        <p>• החזר מלא ללקוח.</p>
+        <p>• שחרור מלא לספק.</p>
+        <p>• פשרה יחסית לפי שיקול דעת הצוות.</p>
+        <p>החלטת הצוות סופית בתוך מסגרת הפלטפורמה. הצדדים שומרים על זכותם לפנות לערכאות משפטיות חיצוניות.</p>
+
+        <p><strong>11. קניין רוחני</strong></p>
+        <p>כל הזכויות בפלטפורמה AnySkill — לרבות קוד, עיצוב, לוגו, שם המותג, וחוויית המשתמש — שייכות ל-AnySkill בלבד.</p>
+        <p>• המשתמש מקבל רישיון שימוש אישי, מוגבל, ולא-ייחודי לגישה לפלטפורמה.</p>
+        <p>• אין להעתיק, לשכפל, לפרסם מחדש, לבצע הנדסה לאחור, או ליצור יצירות נגזרות מהפלטפורמה.</p>
+        <p>• תוכן שהמשתמש מעלה לפלטפורמה (תמונות, ביקורות, פרופיל) מעניק ל-AnySkill רישיון להציגו בתוך הפלטפורמה.</p>
+
+        <h3>12. מדיניות פרטיות</h3>
+        <p>AnySkill אוספת ומעבדת מידע אישי הנדרש לתפעול השירות:</p>
+        <p>• מידע זיהוי: שם, אימייל, מספר טלפון, תמונה.</p>
+        <p>• מידע פיננסי: גרסה מוצפנת של פרטי תשלום בתקן PCI DSS. AnySkill לא שומרת מספרי כרטיסי אשראי שלמים על שרתיה.</p>
+        <p>• מידע שימוש: היסטוריית הזמנות, עסקאות, שיחות תמיכה.</p>
+        <p>• מידע מיקום: משוער, לצורך תצוגת ספקים בקרבת מקום.</p>
+        <p>עקרונות שימוש:</p>
+        <p>• AnySkill לא תמכור, תשכיר, או תעביר מידע אישי לצדדים שלישיים למטרות שיווק.</p>
+        <p>• שיתוף מוגבל עם שותפים טכנולוגיים (Firebase / Google) כחלק מתפעול השירות, בכפוף לתנאי הפרטיות שלהם.</p>
+        <p>• המשתמש רשאי לבקש עיון, תיקון, או מחיקת מידע אישי בפנייה ל-support@anyskill.app. מחיקת חשבון תתבצע תוך 30 יום ממועד הבקשה.</p>
+
+        <p><strong>13. שינויים בתנאים</strong></p>
+        <p>AnySkill שומרת לעצמה הזכות לעדכן תנאים אלה בכל עת. שינויים מהותיים יימסרו בהודעה דחיפה (Push) ו/או בבאנר באפליקציה לפחות 14 ימים לפני כניסתם לתוקף.</p>
+        <p>המשך שימוש בפלטפורמה לאחר מועד כניסת השינויים לתוקף מהווה הסכמה מלאה ובלתי חוזרת לתנאים המעודכנים. גרסה ארכיונית של כל עדכון שמורה וזמינה לעיון לפי בקשה.</p>
+
+        <p><strong>14. דין חל ושיפוט</strong></p>
+        <p>הסכם זה כפוף לדיני מדינת ישראל.</p>
+        <p>כל מחלוקת משפטית שלא הוכרעה דרך מנגנון הבוררות הפנימי תובא בפני בתי המשפט המוסמכים במחוז תל אביב בלבד, והצדדים מקבלים עליהם את סמכות השיפוט הייחודית של בתי משפט אלה.</p>
+        <p>ויתור של AnySkill על הפעלת זכות מסוימת לא ייחשב כוויתור גורף. אם ייקבע שסעיף כלשהו בהסכם זה אינו אכיף, יתר הסעיפים יישארו בתוקף מלא.</p>
+        <p style="text-align:center;color:var(--text-muted);margin-top:20px;">© AnySkill 2026. כל הזכויות שמורות.<br>support@anyskill.app</p>
+      </div>
+      <div class="terms-scroll-hint" id="termsScrollHint">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+        גללו למטה כדי לקרוא את כל התנאים
+      </div>
+    </div>
+
+    <!-- Checkbox — disabled until scrolled to bottom -->
+    <div class="terms-box disabled" id="termsBox" onclick="toggleTerms()">
+      <div class="cb">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <span class="terms-txt">
+        אני מאשר/ת שקראתי והסכמתי לתנאי השימוש ולמדיניות הפרטיות של AnySkill (גרסה 2.0)
+      </span>
+    </div>
+  </div>
+
+</div>
+
+<!-- BOTTOM CTA -->
+<div class="bottom-cta">
+  <div class="bottom-cta-inner">
+    <button class="btn-primary" id="ctaBtn" onclick="handleCTA()">
+      <span id="ctaText">המשך</span>
+      <svg id="ctaArrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+  </div>
+</div>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js" defer></script><script>
+  // ===== CATEGORIES (synced with AnySkill app) =====
+  const CATEGORIES = [
+    { id:'cleaning', name:'ניקיון', subs:['ניקיון דירות','ניקיון משרדים','ניקיון חלונות','ניקיון אחרי שיפוץ','ניקיון שטיחים','ניקיון ספות'] },
+    { id:'handyman', name:'תיקונים ושיפוצים', subs:['אינסטלציה','חשמל','צבע','ריצוף','גבס','נגרות','מיזוג אוויר'] },
+    { id:'moving', name:'הובלות', subs:['הובלת דירה','הובלת משרד','הובלת פריט בודד','אריזה ופריקה','שירותי מנוף'] },
+    { id:'beauty', name:'יופי וטיפוח', subs:['תספורת','צבע שיער','מניקור פדיקור','איפור','טיפולי פנים','הסרת שיער'] },
+    { id:'fitness', name:'כושר וספורט', subs:['מאמן כושר','פילאטיס','יוגה','אימון קבוצתי','שחייה','אומנויות לחימה'] },
+    { id:'tutoring', name:'שיעורים פרטיים', subs:['מתמטיקה','אנגלית','פיזיקה','מדעי המחשב','מוזיקה','שפות'] },
+    { id:'photography', name:'צילום', subs:['חתונות ואירועים','צילום מוצרים','צילום פורטרט','צילום אוויר','עריכת וידאו'] },
+    { id:'pets', name:'חיות מחמד', subs:['פנסיון כלבים','דוג ווקר','טיפוח','אילוף','וטרינר ביתי','שמרטף חתולים'] },
+    { id:'tech', name:'טכנולוגיה', subs:['תיקון מחשבים','בניית אתרים','אפליקציות','גרפיקה ועיצוב','IT ותמיכה טכנית','שיווק דיגיטלי'] },
+    { id:'events', name:'אירועים', subs:['הפקת אירועים','DJ','קייטרינג','עיצוב אירועים','הפעלות ילדים','שף פרטי'] },
+    { id:'garden', name:'גינון', subs:['גיזום','דשא','השקיה','עיצוב גינות','הדברה','גינון שוטף'] },
+    { id:'driving', name:'הסעות ושליחויות', subs:['הסעות VIP','שליחויות','הסעות לשדה תעופה','הסעות ילדים','שליח אופנוע'] }
+  ];
+
+  let currentStep = 1;
+  let selectedSub = null;
+  let termsAccepted = false;
+  let termsScrolledToBottom = false;
+
+  // ===== TERMS SCROLL TRACKING =====
+  function checkTermsScroll() {
+    const el = document.getElementById('termsScrollBody');
+    const tolerance = 20;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - tolerance) {
+      termsScrolledToBottom = true;
+      document.getElementById('termsBox').classList.remove('disabled');
+      document.getElementById('termsScrollHint').classList.add('hidden');
+    }
+  }
+
+  // ===== POPULATE CATEGORY SELECT =====
+  function initCategorySelect() {
+    const sel = document.getElementById('categorySelect');
+    CATEGORIES.forEach(cat => {
+      const opt = document.createElement('option');
+      opt.value = cat.id;
+      opt.textContent = cat.name;
+      sel.appendChild(opt);
+    });
+  }
+
+  function onCategoryChange() {
+    const sel = document.getElementById('categorySelect');
+    const catId = sel.value;
+    const subArea = document.getElementById('subArea');
+    const bioArea = document.getElementById('bioArea');
+
+    selectedSub = null;
+    bioArea.classList.remove('visible');
+
+    if (!catId) {
+      subArea.classList.remove('visible');
+      return;
+    }
+
+    const cat = CATEGORIES.find(c => c.id === catId);
+    const chips = document.getElementById('subChips');
+    chips.innerHTML = cat.subs.map(s => 
+      `<div class="chip" onclick="pickSub(this, '${s}')">${s}</div>`
+    ).join('');
+
+    subArea.classList.add('visible');
+    setTimeout(() => subArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+  }
+
+  function pickSub(el, name) {
+    selectedSub = name;
+    document.querySelectorAll('#subChips .chip').forEach(c => c.classList.remove('selected'));
+    el.classList.add('selected');
+
+    const bioArea = document.getElementById('bioArea');
+    bioArea.classList.add('visible');
+    setTimeout(() => bioArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+  }
+
+  // ===== BUSINESS TYPE =====
+  function onBizTypeChange() {
+    const val = document.getElementById('bizType').value;
+    document.getElementById('bizDocSection').style.display = val ? 'block' : 'none';
+  }
+
+  // ===== BANK =====
+  function onBankChange() {
+    const sel = document.getElementById('bankName');
+    const numRow = document.getElementById('bankNumRow');
+    const numInput = document.getElementById('bankNum');
+    if (sel.value) {
+      numRow.style.display = 'block';
+      numInput.value = sel.value;
+    } else {
+      numRow.style.display = 'none';
+    }
+  }
+
+  // ===== UPLOADS =====
+  function handleUpload(type, input) {
+    if (input.files.length > 0) {
+      const ok = document.getElementById(type + 'Ok');
+      const fname = document.getElementById(type + 'FileName');
+      const area = document.getElementById(type === 'id' ? 'idUploadArea' : 'bizUploadArea');
+      ok.classList.add('visible');
+      fname.textContent = input.files[0].name;
+      area.style.borderColor = 'var(--success)';
+      area.style.background = 'var(--success-light)';
+    }
+  }
+
+  // ===== TERMS =====
+  function toggleTerms() {
+    if (!termsScrolledToBottom) return; // Can't check until scrolled
+    termsAccepted = !termsAccepted;
+    document.getElementById('termsBox').classList.toggle('checked', termsAccepted);
+    updateCTA();
+  }
+
+  // ===== NAVIGATION =====
+  function updateProgress() {
+    document.getElementById('progressFill').style.width = (currentStep / 4 * 100) + '%';
+    document.getElementById('progressCounter').textContent = currentStep + '/4';
+    document.getElementById('backBtn').style.visibility = currentStep > 1 ? 'visible' : 'hidden';
+
+    ['lbl1','lbl2','lbl3','lbl4'].forEach((id, i) => {
+      const el = document.getElementById(id);
+      el.classList.remove('active', 'done');
+      if (i + 1 === currentStep) el.classList.add('active');
+      else if (i + 1 < currentStep) el.classList.add('done');
+    });
+    updateCTA();
+  }
+
+  function updateCTA() {
+    const btn = document.getElementById('ctaBtn');
+    const text = document.getElementById('ctaText');
+    const arrow = document.getElementById('ctaArrow');
+
+    if (currentStep === 4) {
+      text.textContent = 'שלח בקשת הצטרפות ל-AnySkill';
+      arrow.style.display = 'none';
+      btn.disabled = !termsAccepted;
+    } else {
+      text.textContent = 'המשך';
+      arrow.style.display = '';
+      btn.disabled = false;
+    }
+  }
+
+  function goToStep(n) {
+    document.getElementById('step' + currentStep).classList.remove('active');
+    currentStep = n;
+    document.getElementById('step' + currentStep).classList.add('active');
+    updateProgress();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function handleCTA() {
+    if (currentStep === 4) {
+      if (!termsAccepted) return;
+      const text = document.getElementById('ctaText');
+      const btn = document.getElementById('ctaBtn');
+      text.textContent = '...שולח בקשה';
+      btn.disabled = true;
+      setTimeout(() => {
+        alert('🎉 בקשת ההצטרפות שלך נשלחה בהצלחה!\nהצוות שלנו יבדוק ויאשר את הפרופיל בהקדם.\nברוכים הבאים ל-AnySkill!');
+        text.textContent = 'שלח בקשת הצטרפות ל-AnySkill';
+        btn.disabled = false;
+      }

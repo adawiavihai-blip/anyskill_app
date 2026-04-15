@@ -111,7 +111,7 @@ class AnalyticsService {
   static void logPaymentCompleted({
     required String jobId,
     required double amount,
-    required String method, // 'stripe' or 'credits'
+    required String method, // 'credits' (Stripe removed pending Israeli provider)
   }) {
     _fa.logPurchase(
       value: amount,

@@ -7,17 +7,35 @@ import '../l10n/app_localizations.dart';
 import '../utils/input_sanitizer.dart';
 import 'price_settings_screen.dart';
 import 'dart:convert';
-import 'package:anyskill_app/screens/provider_stripe_onboarding_screen.dart';
 import 'dart:async';
 import 'dart:typed_data';
 import '../services/category_service.dart';
 import '../services/cancellation_policy_service.dart';
 import '../widgets/category_specs_widget.dart';
 import '../constants/quick_tags.dart';
+import '../widgets/price_list_widget.dart';
+import '../services/provider_listing_service.dart';
+import '../services/view_mode_service.dart';
+import '../utils/safe_image_provider.dart';
+import '../features/pet_stay/models/dog_profile.dart';
+import '../features/pet_stay/services/dog_profile_service.dart';
+import '../features/pet_stay/screens/dog_profile_builder_screen.dart';
+import '../features/pet_stay/screens/dog_profile_list_screen.dart';
+import 'identity_onboarding_screen.dart';
 
 class EditProfileScreen extends StatefulWidget {
   final Map<String, dynamic> userData;
-  const EditProfileScreen({super.key, required this.userData});
+  /// v10.3.2: Optional listingId — when provided, loads identity-specific
+  /// fields (serviceType, price, gallery, aboutMe) from that listing doc
+  /// instead of the user doc. Shared fields (name, phone, image) always
+  /// come from the user doc.
+  final String? listingId;
+
+  const EditProfileScreen({
+    super.key,
+    required this.userData,
+    this.listingId,
+  });
 
   @override
   State<EditProfileScreen> createState() => _EditProfileScreenState();
@@ -34,8 +52,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String? _selectedSubCatId; // doc ID of selected sub-category (nullable)
   List<Map<String, dynamic>> _mainCategories = [];
   List<Map<String, dynamic>> _subCategories = []; // subs for selected main
-  List<SchemaField> _categorySchema = [];
+  List<SchemaField> _categorySchema = []; // v1 legacy — kept for fallback
+  ServiceSchema _serviceSchema = ServiceSchema.empty(); // v2 — full schema
   Map<String, dynamic> _categoryDetails = {};
+  Map<String, dynamic> _priceList = {};
 
   int? _responseTimeMinutes;
   String _cancellationPolicy = 'flexible';
@@ -70,9 +90,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   List<Map<String, dynamic>> _categories = [];
   late StreamSubscription<List<Map<String, dynamic>>> _categorySub;
 
+  // v10.3.2: Active listing tracking
+  String? _activeListingId;
+  // ignore: unused_field
+  int _activeIdentityIndex = 0;
+  String _activeListingServiceType = '';
+  List<Map<String, dynamic>> _allListings = [];
+
   @override
   void initState() {
     super.initState();
+    _activeListingId = widget.listingId;
+    _loadListingsAndApply();
     _nameController = TextEditingController(text: widget.userData['name']);
     _aboutController = TextEditingController(
       text: widget.userData['aboutMe'] ?? widget.userData['bio'] ?? "",
@@ -89,6 +118,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _galleryImages = List.from(widget.userData['gallery'] ?? []);
     _categoryDetails = Map<String, dynamic>.from(
       widget.userData['categoryDetails'] as Map? ?? {},
+    );
+    _priceList = Map<String, dynamic>.from(
+      widget.userData['priceList'] as Map? ?? {},
     );
     _selectedQuickTags = Set<String>.from(
       (widget.userData['quickTags'] as List? ?? []).cast<String>(),
@@ -131,7 +163,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (!mounted) return;
       final mains =
           cats.where((c) => (c['parentId'] as String? ?? '').isEmpty).toList();
-      final serviceType = widget.userData['serviceType'] as String?;
+      // v13.3.0: prefer the active listing's serviceType over the user
+      // doc's — ensures dual-identity providers see the right category
+      // resolved when they switch identities.
+      final serviceType = _activeListingServiceType.isNotEmpty
+          ? _activeListingServiceType
+          : widget.userData['serviceType'] as String?;
 
       // Resolve existing serviceType into main-category ID + optional sub-category ID
       final subMatch = cats.firstWhere(
@@ -164,14 +201,40 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         _subCategories = subs;
         _selectedSubCatId = _selectedSubCatId ?? subId;
       });
-      // Load schema for the resolved category
+      // Load v2 schema for the resolved category. `serviceType` always
+      // holds the most specific name (sub-category if one is set, else
+      // parent), which is exactly what the schema is keyed by.
       final resolvedCatName = widget.userData['serviceType'] as String? ?? '';
-      if (resolvedCatName.isNotEmpty && _categorySchema.isEmpty) {
-        loadSchemaForCategory(resolvedCatName).then((schema) {
-          if (mounted) setState(() => _categorySchema = schema);
-        });
+      if (resolvedCatName.isNotEmpty && _serviceSchema.isEmpty) {
+        _loadV2SchemaFor(resolvedCatName);
       }
     });
+  }
+
+  /// Loads the v2 [ServiceSchema] for the given category name and merges
+  /// its defaults into provider state. If the provider has not yet picked
+  /// a cancellation policy, the schema's `defaultPolicy` is auto-selected.
+  Future<void> _loadV2SchemaFor(String categoryName) async {
+    if (categoryName.trim().isEmpty) return;
+    try {
+      final schema = await loadServiceSchemaFor(categoryName);
+      if (!mounted) return;
+      setState(() {
+        _serviceSchema = schema;
+        // Keep the v1 list in sync for any legacy display widget
+        _categorySchema = schema.fields;
+        // Auto-apply default policy ONLY when the provider hasn't set one
+        // (i.e. they're a brand-new account or the field is null/empty).
+        final hasPolicy = (widget.userData['cancellationPolicy'] as String?)
+                ?.isNotEmpty ??
+            false;
+        if (!hasPolicy && schema.defaultPolicy.isNotEmpty) {
+          _cancellationPolicy = schema.defaultPolicy;
+        }
+      });
+    } catch (_) {
+      // Schema is optional — silent fallback to empty
+    }
   }
 
   @override
@@ -183,6 +246,102 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _taxIdController.dispose();
     _videoUrlController.dispose();
     super.dispose();
+  }
+
+  /// v10.3.2: Load all listings for this user and apply identity-specific
+  /// fields from the active listing (overrides the user-doc defaults).
+  Future<void> _loadListingsAndApply() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    try {
+      final listings = await ProviderListingService.getListings(uid);
+      if (!mounted) return;
+      _allListings = listings;
+
+      // Determine which listing is active
+      Map<String, dynamic>? activeListing;
+      if (_activeListingId != null) {
+        activeListing = listings.firstWhere(
+          (l) => l['listingId'] == _activeListingId,
+          orElse: () => <String, dynamic>{},
+        );
+        if (activeListing.isEmpty) activeListing = null;
+      }
+      // Default to primary listing if no specific one requested
+      activeListing ??= listings.isNotEmpty ? listings.first : null;
+
+      if (activeListing != null) {
+        _activeListingId = activeListing['listingId'] as String?;
+        _activeIdentityIndex = (activeListing['identityIndex'] as num?)?.toInt() ?? 0;
+
+        // Override identity-specific fields from the listing doc.
+        // v13.3.0: apply ALL identity-scoped fields (including serviceType +
+        // category selection) so switching between identities actually
+        // flips the fields shown below the identity picker.
+        final about = activeListing['aboutMe'] as String? ?? '';
+        final price = (activeListing['pricePerHour'] as num?)?.toDouble() ?? 0;
+        final gallery = List<dynamic>.from(activeListing['gallery'] ?? []);
+        final catDetails = Map<String, dynamic>.from(activeListing['categoryDetails'] as Map? ?? {});
+        final prices = Map<String, dynamic>.from(activeListing['priceList'] as Map? ?? {});
+        final tags = Set<String>.from((activeListing['quickTags'] as List? ?? []).cast<String>());
+        final listingServiceType = (activeListing['serviceType'] as String? ?? '').trim();
+        _activeListingServiceType = listingServiceType;
+
+        setState(() {
+          // aboutMe / price / gallery / details always follow the listing
+          _aboutController.text = about;
+          if (price > 0) _priceController.text = price.toString();
+          _galleryImages = gallery;
+          _categoryDetails = catDetails;
+          _priceList = prices;
+          _selectedQuickTags = tags;
+        });
+
+        // Re-resolve main/sub category IDs against the listing's serviceType.
+        if (listingServiceType.isNotEmpty && _categories.isNotEmpty) {
+          _applyListingCategoryFromServiceType(listingServiceType);
+        }
+      }
+    } catch (e) {
+      debugPrint('[EditProfile] Listing load error: $e');
+    }
+  }
+
+  /// Resolves listing's serviceType → (mainCatId, subCatId) against the
+  /// loaded categories, and re-loads the v2 schema so the pricing fields
+  /// re-render with the correct category-specific UI.
+  void _applyListingCategoryFromServiceType(String serviceType) {
+    final subMatch = _categories.firstWhere(
+      (c) =>
+          c['name'] == serviceType &&
+          (c['parentId'] as String? ?? '').isNotEmpty,
+      orElse: () => <String, dynamic>{},
+    );
+    String? mainId;
+    String? subId;
+    if (subMatch.isNotEmpty) {
+      subId = subMatch['id'] as String?;
+      mainId = subMatch['parentId'] as String?;
+    } else {
+      final mainMatch = _categories.firstWhere(
+        (c) =>
+            c['name'] == serviceType &&
+            (c['parentId'] as String? ?? '').isEmpty,
+        orElse: () => <String, dynamic>{},
+      );
+      mainId = mainMatch.isNotEmpty ? mainMatch['id'] as String? : null;
+    }
+    final subs = mainId != null
+        ? _categories.where((c) => c['parentId'] == mainId).toList()
+        : <Map<String, dynamic>>[];
+    setState(() {
+      _selectedMainCatId = mainId;
+      _subCategories = subs;
+      _selectedSubCatId = subId;
+      _serviceSchema = ServiceSchema.empty();
+      _categorySchema = [];
+    });
+    _loadV2SchemaFor(serviceType);
   }
 
   Future<void> _pickProfileImage() async {
@@ -431,13 +590,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     try {
       // Resolve the most-specific category name (sub → main → null)
+      // serviceType = sub-category name if selected, else main category name
+      // parentCategory = main category name (only when sub-category is used)
       String? serviceTypeName;
+      String? parentCategoryName;
       if (_selectedSubCatId != null) {
         final sub = _categories.firstWhere(
           (c) => c['id'] == _selectedSubCatId,
           orElse: () => <String, dynamic>{},
         );
         serviceTypeName = sub.isNotEmpty ? sub['name'] as String? : null;
+        // Resolve parent category name for the fallback search query
+        if (_selectedMainCatId != null) {
+          final main = _mainCategories.firstWhere(
+            (c) => c['id'] == _selectedMainCatId,
+            orElse: () => <String, dynamic>{},
+          );
+          parentCategoryName = main.isNotEmpty ? main['name'] as String? : null;
+        }
       } else if (_selectedMainCatId != null) {
         final main = _mainCategories.firstWhere(
           (c) => c['id'] == _selectedMainCatId,
@@ -461,6 +631,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           'serviceType': serviceTypeName
         else if (!_isProvider)
           'serviceType': 'לקוח',
+        if (_isProvider && parentCategoryName != null)
+          'parentCategory': parentCategoryName
+        else if (_isProvider && _selectedSubCatId == null)
+          'parentCategory': FieldValue.delete(),
         if (_isProvider && _selectedSubCatId != null)
           'subCategoryId': _selectedSubCatId
         else if (_isProvider && _selectedSubCatId == null)
@@ -488,9 +662,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         } else {
           payload['workingHours'] = FieldValue.delete();
         }
-        // Dynamic service schema fields
-        if (_categoryDetails.isNotEmpty) {
-          payload['categoryDetails'] = _categoryDetails;
+        // Dynamic v2 service schema values: fields + _bundles + _surcharge.
+        // We always write the map (even empty) so deletes propagate too.
+        payload['categoryDetails'] = _categoryDetails;
+        // Structured price list (category-specific, e.g. balloon decorators)
+        if (_priceList.isNotEmpty) {
+          payload['priceList'] = _priceList;
         }
       }
 
@@ -498,6 +675,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           .collection('users')
           .doc(uid)
           .update(payload);
+
+      // v10.1.0: Dual-write — sync identity-specific fields to provider_listings
+      if (_isProvider && uid != null) {
+        try {
+          await _syncToProviderListing(uid, payload, serviceTypeName, parentCategoryName);
+        } catch (e) {
+          debugPrint('[EditProfile] Listing sync error: $e');
+        }
+      }
+
       if (mounted) {
         navigator.pop();
         messenger.showSnackBar(
@@ -508,6 +695,303 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       messenger.showSnackBar(SnackBar(content: Text(saveErrMsg(e))));
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // ── v10.1.2: Safe gallery image builder ─────────────────────────────────────
+  /// Renders a gallery image that could be an HTTPS URL or a base64 string.
+  /// Prevents FormatException crashes from base64Decode on URL strings.
+  Widget _buildGalleryImage(String raw) {
+    if (raw.isEmpty) {
+      return Container(color: Colors.grey[200]);
+    }
+    // HTTPS URL — use network image
+    if (raw.startsWith('http')) {
+      return Image.network(
+        raw,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (_, __, ___) => Container(
+          color: Colors.grey[200],
+          child: const Icon(Icons.broken_image_rounded, color: Colors.grey),
+        ),
+      );
+    }
+    // Base64 data URI or raw base64 string
+    try {
+      final b64 = raw.contains(',') ? raw.split(',').last : raw;
+      return Image.memory(
+        base64Decode(b64),
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      );
+    } catch (_) {
+      return Container(
+        color: Colors.grey[200],
+        child: const Icon(Icons.broken_image_rounded, color: Colors.grey),
+      );
+    }
+  }
+
+  // ── v10.1.0: Second Identity Card ──────────────────────────────────────────
+
+  Widget _buildSecondIdentityCard() {
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    // Use cached listings if available, otherwise fetch
+    final listingsToShow = _allListings.isNotEmpty
+        ? _allListings
+        : null;
+
+    if (listingsToShow != null) {
+      return _buildIdentityCards(listingsToShow);
+    }
+
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: ProviderListingService.getListings(uid),
+      builder: (context, snap) {
+        final listings = snap.data ?? [];
+        return _buildIdentityCards(listings);
+      },
+    );
+  }
+
+  Widget _buildIdentityCards(List<Map<String, dynamic>> listings) {
+    final hasSecond = listings.length >= 2;
+
+    return Column(
+      children: [
+        // ── Show ALL identity cards (not just the "other" one) ─────────
+        if (listings.isNotEmpty) ...[
+          for (final listing in listings) _buildIdentityTile(listing),
+          const SizedBox(height: 12),
+        ],
+
+        // ── Add second identity CTA (only if fewer than 2) ────────────
+        if (!hasSecond)
+          GestureDetector(
+            onTap: _openAddSecondIdentity,
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFF8FAFC), Color(0xFFF0F0FF)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: const Color(0xFF6366F1).withValues(alpha: 0.2),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 48, height: 48,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Icon(Icons.add_business_rounded, color: Colors.white, size: 24),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('הוסף זהות מקצועית שנייה',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1A1A2E),
+                            )),
+                        const SizedBox(height: 4),
+                        Text(
+                          'הרוויחו יותר — הציעו שירות נוסף תחת אותו חשבון',
+                          style: TextStyle(fontSize: 12.5, color: Colors.grey[600], height: 1.3),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_left_rounded, color: Color(0xFF6366F1)),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// v10.3.2: Builds a single identity tile with "current" badge or "switch" action.
+  Widget _buildIdentityTile(Map<String, dynamic> listing) {
+    final listingId = listing['listingId'] as String? ?? '';
+    final serviceType = listing['serviceType'] as String? ?? '';
+    final index = (listing['identityIndex'] as num?)?.toInt() ?? 0;
+    final isCurrent = listingId == _activeListingId;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: GestureDetector(
+        onTap: isCurrent
+            ? null
+            : () {
+                // Navigate to same screen with the other listing
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => EditProfileScreen(
+                      userData: widget.userData,
+                      listingId: listingId,
+                    ),
+                  ),
+                );
+              },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: isCurrent ? const Color(0xFFEEF2FF) : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isCurrent
+                  ? const Color(0xFF6366F1)
+                  : Colors.grey.shade200,
+              width: isCurrent ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              // Icon
+              Container(
+                width: 40, height: 40,
+                decoration: BoxDecoration(
+                  color: isCurrent
+                      ? const Color(0xFF6366F1).withValues(alpha: 0.12)
+                      : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  index == 0 ? Icons.work_rounded : Icons.add_business_rounded,
+                  size: 20,
+                  color: isCurrent ? const Color(0xFF6366F1) : Colors.grey[600],
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Info
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      serviceType,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: isCurrent ? const Color(0xFF6366F1) : const Color(0xFF1A1A2E),
+                      ),
+                    ),
+                    Text(
+                      index == 0 ? 'זהות ראשית' : 'זהות שנייה',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                    ),
+                  ],
+                ),
+              ),
+              // Badge or switch icon
+              if (isCurrent)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF6366F1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('עורך כעת',
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700)),
+                )
+              else
+                const Icon(Icons.swap_horiz_rounded,
+                    color: Color(0xFF6366F1), size: 22),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openAddSecondIdentity() async {
+    // v10.2.0: Full-screen premium onboarding flow instead of basic bottom sheet
+    final created = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const IdentityOnboardingScreen()),
+    );
+    if (created == true && mounted) setState(() {}); // Rebuild to show new identity
+  }
+
+  // _openSecondIdentityEditor removed in v10.3.2 — replaced by
+  // _buildIdentityTile + Navigator.pushReplacement to the same screen
+  // with the target listingId.
+
+  /// v10.3.2: Dual-write — sync identity fields to the ACTIVE provider_listing.
+  /// Uses _activeListingId when available, falls back to primary (index 0).
+  Future<void> _syncToProviderListing(
+    String uid,
+    Map<String, dynamic> payload,
+    String? serviceTypeName,
+    String? parentCategoryName,
+  ) async {
+    final db = FirebaseFirestore.instance;
+
+    // Use the active listing if we know it, else find index 0
+    QuerySnapshot<Map<String, dynamic>>? snap;
+    if (_activeListingId != null) {
+      // Direct doc reference — no query needed
+    } else {
+      snap = await db
+          .collection('provider_listings')
+          .where('uid', isEqualTo: uid)
+          .where('identityIndex', isEqualTo: 0)
+          .limit(1)
+          .get();
+    }
+
+    final listingUpdate = <String, dynamic>{
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+
+    // Mirror identity-specific fields
+    if (payload.containsKey('name')) listingUpdate['name'] = payload['name'];
+    if (payload.containsKey('profileImage')) listingUpdate['profileImage'] = payload['profileImage'];
+    if (payload.containsKey('serviceType')) listingUpdate['serviceType'] = payload['serviceType'];
+    if (payload.containsKey('parentCategory')) listingUpdate['parentCategory'] = payload['parentCategory'];
+    if (payload.containsKey('aboutMe')) listingUpdate['aboutMe'] = payload['aboutMe'];
+    if (payload.containsKey('pricePerHour')) listingUpdate['pricePerHour'] = payload['pricePerHour'];
+    if (payload.containsKey('gallery')) listingUpdate['gallery'] = payload['gallery'];
+    if (payload.containsKey('quickTags')) listingUpdate['quickTags'] = payload['quickTags'];
+    if (payload.containsKey('cancellationPolicy')) listingUpdate['cancellationPolicy'] = payload['cancellationPolicy'];
+    if (payload.containsKey('workingHours')) listingUpdate['workingHours'] = payload['workingHours'];
+    if (payload.containsKey('categoryDetails')) listingUpdate['categoryDetails'] = payload['categoryDetails'];
+    if (payload.containsKey('priceList')) listingUpdate['priceList'] = payload['priceList'];
+    if (payload.containsKey('isVolunteer')) listingUpdate['isVolunteer'] = payload['isVolunteer'];
+
+    // Remove FieldValue.delete() entries — can't write them to a doc that may not have the field
+    listingUpdate.removeWhere((_, v) => v is FieldValue);
+
+    if (_activeListingId != null) {
+      // Direct update to the known active listing
+      await db.collection('provider_listings').doc(_activeListingId).update(listingUpdate);
+      debugPrint('[EditProfile] Active listing synced: $_activeListingId');
+    } else if (snap != null && snap.docs.isNotEmpty) {
+      await db.collection('provider_listings').doc(snap.docs.first.id).update(listingUpdate);
+      debugPrint('[EditProfile] Primary listing synced: ${snap.docs.first.id}');
+    } else {
+      // No listing yet — auto-migrate on save
+      final listingId = await ProviderListingService.migrateIfNeeded(uid);
+      debugPrint('[EditProfile] Listing migrated on save: $listingId');
     }
   }
 
@@ -697,6 +1181,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'priority': 'high',
         'timestamp': FieldValue.serverTimestamp(),
         'message': 'בקשה להצטרפות כמומחה: ${widget.userData['name'] ?? uid}',
+        'expireAt': Timestamp.fromDate(
+            DateTime.now().add(const Duration(days: 30))),
       });
       await batch.commit();
       if (mounted) {
@@ -745,6 +1231,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
+                        // v12.7.0 — View-mode toggle.
+                        //  Provider → 2 chips (נותן שירות / לקוח)
+                        //  Admin    → 3 chips (ניהול / נותן שירות / לקוח)
+                        if (_isProvider || widget.userData['isAdmin'] == true)
+                          _buildViewModeToggleCard(context),
+                        if (_isProvider || widget.userData['isAdmin'] == true)
+                          const SizedBox(height: 16),
+                        // ── Dogs (customers only — private, owner-only view) ──
+                        if (!_isProvider) ...[
+                          _buildMyDogsSection(context),
+                          const SizedBox(height: 18),
+                        ],
                         // --- תמונת פרופיל ---
                         Center(
                           child: Column(
@@ -756,24 +1254,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                     CircleAvatar(
                                       radius: 55,
                                       backgroundColor: Colors.grey[200],
+                                      // v10.1.2: Use safeImageProvider to handle
+                                      // both HTTPS URLs and base64 data URIs
+                                      // without FormatException crashes.
                                       backgroundImage:
-                                          (_profileImageUrl != null &&
-                                                  _profileImageUrl!.isNotEmpty)
-                                              ? (_profileImageUrl!.startsWith(
-                                                    'http',
-                                                  )
-                                                  ? NetworkImage(
-                                                    _profileImageUrl!,
-                                                  )
-                                                  : MemoryImage(
-                                                        base64Decode(
-                                                          _profileImageUrl!
-                                                              .split(',')
-                                                              .last,
-                                                        ),
-                                                      )
-                                                      as ImageProvider)
-                                              : null,
+                                          safeImageProvider(_profileImageUrl),
                                       child:
                                           (_profileImageUrl == null ||
                                                   _profileImageUrl!.isEmpty)
@@ -950,7 +1435,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         ],
 
                         if (_isProvider) ...[
+                          // v10.1.0 → v13.2.0: identity switcher moved above
+                          // "תחום עיסוק" so providers can instantly flip between
+                          // identities and see the right fields loaded.
                           const SizedBox(height: 25),
+                          const Align(
+                            alignment: AlignmentDirectional.centerEnd,
+                            child: Text(
+                              'הזהויות המקצועיות שלך',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 14),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          _buildSecondIdentityCard(),
+                          const SizedBox(height: 25),
+
                           // ── Main Category dropdown ──────────────────────────────
                           Text(
                             l10n.profileFieldCategoryMain,
@@ -1004,18 +1504,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                       .where((c) => c['parentId'] == val)
                                       .toList();
                                   _categorySchema = [];
+                                  _serviceSchema = ServiceSchema.empty();
                                   _categoryDetails = {};
                                 });
-                                // Load schema for new category
+                                // Load schema for the parent category as a
+                                // baseline. Will be replaced when the user
+                                // picks a sub-category (more specific).
                                 if (val != null) {
                                   final catName = _mainCategories
                                       .where((c) => c['id'] == val)
                                       .map((c) => c['name'] as String? ?? '')
                                       .firstOrNull ?? '';
                                   if (catName.isNotEmpty) {
-                                    loadSchemaForCategory(catName).then((s) {
-                                      if (mounted) setState(() => _categorySchema = s);
-                                    });
+                                    _loadV2SchemaFor(catName);
                                   }
                                 }
                               },
@@ -1057,9 +1558,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                         ),
                                       )
                                       .toList(),
-                              onChanged:
-                                  (val) =>
-                                      setState(() => _selectedSubCatId = val),
+                              onChanged: (val) {
+                                setState(() {
+                                  _selectedSubCatId = val;
+                                  _serviceSchema = ServiceSchema.empty();
+                                  _categoryDetails = {};
+                                });
+                                // Load the most specific schema available.
+                                if (val != null) {
+                                  final subName = _subCategories
+                                      .where((c) => c['id'] == val)
+                                      .map((c) => c['name'] as String? ?? '')
+                                      .firstOrNull ?? '';
+                                  if (subName.isNotEmpty) {
+                                    _loadV2SchemaFor(subName);
+                                  }
+                                }
+                              },
                               decoration: const InputDecoration(
                                 border: OutlineInputBorder(),
                               ),
@@ -1099,31 +1614,32 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           const SizedBox(height: 20),
 
                           // ── הגדרות תשלום (Payment Settings) ─────────────────────────────────
+                          // Phase 2: Stripe Connect was removed pending Israeli payment provider
+                          // integration. Provider payouts are temporarily handled via the manual
+                          // withdrawal flow (admin reviews requests in the Withdrawals tab).
                           Container(
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFF5F3FF),
+                              color: const Color(0xFFFFFBEB),
                               borderRadius: BorderRadius.circular(14),
                               border: Border.all(
-                                color: const Color(
-                                  0xFF6366F1,
-                                ).withValues(alpha: 0.2),
+                                color: const Color(0xFFF59E0B).withValues(alpha: 0.3),
                               ),
                             ),
-                            child: Column(
+                            child: const Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                const Row(
+                                Row(
                                   children: [
                                     Icon(
-                                      Icons.account_balance_wallet_rounded,
-                                      color: Color(0xFF6366F1),
+                                      Icons.construction_rounded,
+                                      color: Color(0xFFF59E0B),
                                       size: 20,
                                     ),
                                     SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        'הגדרות תשלום',
+                                        'הגדרות תשלום בקרוב',
                                         style: TextStyle(
                                           fontWeight: FontWeight.bold,
                                           fontSize: 15,
@@ -1133,16 +1649,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 4),
-                                const Text(
-                                  'חבר חשבון בנק דרך Stripe כדי לקבל תשלומים מלקוחות',
+                                SizedBox(height: 6),
+                                Text(
+                                  'אנו עוברים לספק תשלומים ישראלי. בינתיים בקשות משיכה מטופלות ידנית על ידי הצוות.',
                                   style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey,
+                                    fontSize: 12,
+                                    color: Color(0xFF7C2D12),
+                                    height: 1.4,
                                   ),
                                 ),
-                                const SizedBox(height: 14),
-                                _StripePayoutButton(userData: widget.userData),
                               ],
                             ),
                           ),
@@ -1251,12 +1766,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             ),
                           ),
 
-                          // ── Dynamic service schema fields ───────────
-                          if (_categorySchema.isNotEmpty)
+                          // ── v2 Service Schema (fields + bundles + surcharge + deposit) ──
+                          if (!_serviceSchema.isEmpty)
+                            DynamicServiceSchemaForm(
+                              key: ValueKey(
+                                  'svc_schema_${_selectedSubCatId ?? _selectedMainCatId ?? ''}'),
+                              schema: _serviceSchema,
+                              initialValues: _categoryDetails,
+                              onChanged: (vals) => _categoryDetails = vals,
+                            )
+                          else if (_categorySchema.isNotEmpty)
+                            // Legacy v1 fallback (only fires for categories
+                            // whose serviceSchema is still in List shape).
                             DynamicSchemaForm(
                               schema: _categorySchema,
                               initialValues: _categoryDetails,
                               onChanged: (vals) => _categoryDetails = vals,
+                            ),
+
+                          // ── Structured price list (category-specific) ──
+                          if (hasPriceList(widget.userData))
+                            PriceListEditor(
+                              type: priceListType(widget.userData),
+                              initialData: _priceList,
+                              onChanged: (val) => _priceList = val,
                             ),
 
                           const SizedBox(height: 20),
@@ -1636,35 +2169,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             ),
                           ),
 
-                          const SizedBox(height: 20),
-
-                          // ── Intro Video (YouTube URL) ───────────────────────────
-                          const Text(
-                            'וידאו היכרות (YouTube)',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 6),
-                          TextField(
-                            controller: _videoUrlController,
-                            textAlign: TextAlign.start,
-                            keyboardType: TextInputType.url,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              hintText:
-                                  'https://youtu.be/xxxxx  או  https://youtube.com/watch?v=xxxxx',
-                              prefixIcon: Icon(
-                                Icons.play_circle_outline_rounded,
-                                color: Color(0xFF6366F1),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          const Text(
-                            'הוסף קישור YouTube לסרטון הצגה עצמית. הוא יוצג ללקוחות בפרופיל שלך.',
-                            style: TextStyle(fontSize: 11, color: Colors.grey),
-                            textAlign: TextAlign.start,
-                          ),
-
                           const SizedBox(height: 30),
 
                           // ── Work Gallery / Portfolio ────────────────────────────
@@ -1708,11 +2212,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                 children: [
                                   ClipRRect(
                                     borderRadius: BorderRadius.circular(10),
-                                    child: Image.memory(
-                                      base64Decode(_galleryImages[index]),
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      height: double.infinity,
+                                    // v10.1.2: Gallery items can be HTTPS URLs
+                                    // (Firebase Storage) or base64 strings.
+                                    // safeImageProvider handles both formats.
+                                    child: _buildGalleryImage(
+                                      _galleryImages[index] as String? ?? '',
                                     ),
                                   ),
                                   Positioned(
@@ -1891,6 +2395,358 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   );
                 },
               ), // Builder
+    );
+  }
+
+  // v12.7.0: View-mode toggle card.
+  //  - Non-admin provider: 2 chips (נותן שירות / לקוח)
+  //  - Admin: 3 chips     (ניהול / נותן שירות / לקוח)
+  Widget _buildViewModeToggleCard(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final isAdmin = widget.userData['isAdmin'] == true;
+    final current = ViewModeService.instance.mode;
+
+    Future<void> apply(ViewMode target, String successMsg) async {
+      await ViewModeService.instance.setMode(uid: uid, mode: target);
+      if (!context.mounted) return;
+      Navigator.of(context).popUntil((r) => r.isFirst);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(successMsg),
+          backgroundColor: const Color(0xFF10B981),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+
+    final chips = <Widget>[
+      if (isAdmin)
+        _buildModeChip(
+          label: 'ניהול',
+          icon: Icons.admin_panel_settings_rounded,
+          selected: current == ViewMode.normal,
+          gradient: const [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+          onTap: () => apply(ViewMode.normal, 'מצב ניהול פעיל'),
+        ),
+      _buildModeChip(
+        label: 'נותן שירות',
+        icon: Icons.work_outline_rounded,
+        // For admin: providerOnly. For non-admin provider: normal = provider.
+        selected: isAdmin
+            ? current == ViewMode.providerOnly
+            : current == ViewMode.normal,
+        gradient: const [Color(0xFF0EA5E9), Color(0xFF3B82F6)],
+        onTap: () => apply(
+          isAdmin ? ViewMode.providerOnly : ViewMode.normal,
+          'מצב נותן שירות פעיל',
+        ),
+      ),
+      _buildModeChip(
+        label: 'לקוח',
+        icon: Icons.visibility_rounded,
+        selected: current == ViewMode.customer,
+        gradient: const [Color(0xFF10B981), Color(0xFF22C55E)],
+        onTap: () => apply(ViewMode.customer, 'מצב לקוח פעיל'),
+      ),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(right: 2, bottom: 8),
+            child: Text(
+              'מצב תצוגה',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF6B7280),
+              ),
+            ),
+          ),
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              for (int i = 0; i < chips.length; i++) ...[
+                if (i > 0) const SizedBox(width: 8),
+                Expanded(child: chips[i]),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModeChip({
+    required String label,
+    required IconData icon,
+    required bool selected,
+    required List<Color> gradient,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+          decoration: BoxDecoration(
+            gradient: selected
+                ? LinearGradient(
+                    begin: Alignment.topRight,
+                    end: Alignment.bottomLeft,
+                    colors: gradient,
+                  )
+                : null,
+            color: selected ? null : Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? Colors.transparent : const Color(0xFFE5E7EB),
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: gradient.first.withValues(alpha: 0.30),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Column(
+            children: [
+              Icon(
+                icon,
+                size: 20,
+                color: selected ? Colors.white : const Color(0xFF6B7280),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: selected ? Colors.white : const Color(0xFF1A1A2E),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // My Dogs — customer-only, private. Owner sees + edits their own dog
+  // profiles from inside the Edit Profile screen.
+  // ─────────────────────────────────────────────────────────────────────
+  Widget _buildMyDogsSection(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return const SizedBox.shrink();
+
+    return StreamBuilder<List<DogProfile>>(
+      stream: DogProfileService.instance.streamForOwner(uid),
+      builder: (ctx, snap) {
+        if (snap.hasError) return const SizedBox.shrink();
+        final dogs = snap.data ?? const <DogProfile>[];
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEEF2FF),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.pets_rounded,
+                      color: Color(0xFF6366F1), size: 18),
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('הכלבים שלי',
+                      style: TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w800)),
+                ),
+                if (dogs.isNotEmpty)
+                  TextButton(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const DogProfileListScreen()),
+                    ),
+                    style: TextButton.styleFrom(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: const Text('הצג הכל',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF6366F1),
+                            fontWeight: FontWeight.w700)),
+                  ),
+              ]),
+              const SizedBox(height: 10),
+              if (dogs.isEmpty)
+                InkWell(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const DogProfileBuilderScreen()),
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      borderRadius: BorderRadius.circular(14),
+                      border:
+                          Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: const Column(
+                      children: [
+                        Icon(Icons.add_circle_outline_rounded,
+                            size: 28, color: Color(0xFF6366F1)),
+                        SizedBox(height: 6),
+                        Text('הוסף פרופיל כלב',
+                            style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF6366F1))),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                SizedBox(
+                  height: 116,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: dogs.length + 1,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (_, i) {
+                      if (i == dogs.length) {
+                        return InkWell(
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) =>
+                                    const DogProfileBuilderScreen()),
+                          ),
+                          borderRadius: BorderRadius.circular(14),
+                          child: Container(
+                            width: 92,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEEF2FF),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                  color: const Color(0xFF6366F1),
+                                  width: 1.2),
+                            ),
+                            child: const Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.add_rounded,
+                                    color: Color(0xFF6366F1)),
+                                SizedBox(height: 4),
+                                Text('כלב חדש',
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        color: Color(0xFF6366F1),
+                                        fontWeight: FontWeight.w700)),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+                      final d = dogs[i];
+                      final photo = safeImageProvider(d.photoUrl);
+                      return InkWell(
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) =>
+                                  DogProfileBuilderScreen(existing: d)),
+                        ),
+                        borderRadius: BorderRadius.circular(14),
+                        child: Container(
+                          width: 92,
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(14),
+                            border:
+                                Border.all(color: Colors.grey.shade200),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black
+                                    .withValues(alpha: 0.04),
+                                blurRadius: 6,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              CircleAvatar(
+                                radius: 28,
+                                backgroundColor:
+                                    const Color(0xFFEEF2FF),
+                                backgroundImage: photo,
+                                child: photo == null
+                                    ? const Icon(Icons.pets_rounded,
+                                        color: Color(0xFF6366F1))
+                                    : null,
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                d.name.isEmpty ? 'ללא שם' : d.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF1A1A2E)),
+                              ),
+                              if (d.breed.isNotEmpty)
+                                Text(
+                                  d.breed,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 10,
+                                      color: Color(0xFF6B7280)),
+                                ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -2117,164 +2973,367 @@ class _ExpertApplicationSheetState extends State<_ExpertApplicationSheet> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// _StripePayoutButton — Payment Settings section widget for Edit Profile.
-//
-// Three states driven by Firestore fields on the user doc:
-//   • not connected   → indigo "Connect Bank Account for Payouts" button
-//   • pending KYC     → amber "Complete Onboarding" button
-//   • fully connected → green "Bank Account Connected" status badge
-//
-// After the provider completes the Stripe onboarding flow, re-fetches the
-// user doc so the badge updates immediately without requiring a screen reload.
-// ─────────────────────────────────────────────────────────────────────────────
-class _StripePayoutButton extends StatefulWidget {
-  final Map<String, dynamic> userData;
-  const _StripePayoutButton({required this.userData});
+// ═══════════════════════════════════════════════════════════════════════════════
+// v10.1.0: ADD SECOND IDENTITY BOTTOM SHEET
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class _AddSecondIdentitySheet extends StatefulWidget {
+  final List<Map<String, dynamic>> mainCategories;
+  final VoidCallback onCreated;
+
+  const _AddSecondIdentitySheet({
+    required this.mainCategories,
+    required this.onCreated,
+  });
 
   @override
-  State<_StripePayoutButton> createState() => _StripePayoutButtonState();
+  State<_AddSecondIdentitySheet> createState() => _AddSecondIdentitySheetState();
 }
 
-class _StripePayoutButtonState extends State<_StripePayoutButton> {
-  bool _loading = false;
-
-  // Live stripe state — seeded from userData, refreshed after onboarding.
-  late bool _payoutsEnabled;
-  late bool _onboardingDone;
-  late bool _hasAccount;
+class _AddSecondIdentitySheetState extends State<_AddSecondIdentitySheet> {
+  String? _selectedCatId;
+  final _aboutCtrl = TextEditingController();
+  final _priceCtrl = TextEditingController();
+  bool _saving = false;
 
   @override
-  void initState() {
-    super.initState();
-    _payoutsEnabled = widget.userData['stripePayoutsEnabled'] == true;
-    _onboardingDone = widget.userData['stripeOnboardingComplete'] == true;
-    _hasAccount =
-        (widget.userData['stripeAccountId'] as String? ?? '').isNotEmpty;
+  void dispose() {
+    _aboutCtrl.dispose();
+    _priceCtrl.dispose();
+    super.dispose();
   }
 
-  Future<void> _onTap() async {
-    if (_loading) return;
-    setState(() => _loading = true);
+  Future<void> _create() async {
+    if (_selectedCatId == null) return;
+    final price = double.tryParse(_priceCtrl.text.trim());
+    if (price == null || price <= 0) return;
 
-    final completed = await showStripeOnboardingPrompt(context);
+    setState(() => _saving = true);
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final cat = widget.mainCategories.firstWhere(
+      (c) => c['id'] == _selectedCatId,
+      orElse: () => <String, dynamic>{},
+    );
+    final catName = cat['name'] as String? ?? '';
 
-    if (!mounted) return;
-    setState(() => _loading = false);
+    try {
+      // Ensure primary listing exists first
+      await ProviderListingService.migrateIfNeeded(uid);
 
-    if (completed) {
-      // Re-read Firestore so the badge reflects the new onboarding status
-      // without requiring the user to close and reopen Edit Profile.
-      final uid = FirebaseAuth.instance.currentUser?.uid;
-      if (uid != null) {
-        final snap =
-            await FirebaseFirestore.instance.collection('users').doc(uid).get();
-        if (mounted) {
-          final d = snap.data() ?? {};
-          setState(() {
-            _payoutsEnabled = d['stripePayoutsEnabled'] == true;
-            _onboardingDone = d['stripeOnboardingComplete'] == true;
-            _hasAccount = (d['stripeAccountId'] as String? ?? '').isNotEmpty;
-          });
-        }
+      await ProviderListingService.createListing(
+        uid: uid,
+        identityIndex: 1,
+        serviceType: catName,
+        aboutMe: _aboutCtrl.text.trim(),
+        pricePerHour: price,
+      );
+
+      if (mounted) {
+        Navigator.pop(context);
+        widget.onCreated();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Color(0xFF22C55E),
+            content: Text('זהות מקצועית שנייה נוצרה בהצלחה! 🎉'),
+          ),
+        );
       }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // ── Fully connected ──────────────────────────────────────────────────────
-    if (_payoutsEnabled && _onboardingDone) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-        decoration: BoxDecoration(
-          color: const Color(0xFFECFDF5),
-          border: Border.all(color: const Color(0xFF10B981), width: 1.5),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+          24, 12, 24, MediaQuery.of(context).viewInsets.bottom + 24),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Icon(
-              Icons.check_circle_rounded,
-              color: Color(0xFF10B981),
-              size: 18,
+            Center(child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+            )),
+            const SizedBox(height: 20),
+            const Text('הוספת זהות מקצועית שנייה',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center),
+            const SizedBox(height: 6),
+            Text('בחר קטגוריה חדשה, מחיר ותיאור — הפרופיל השני יוצג בנפרד בחיפוש',
+                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                textAlign: TextAlign.center),
+            const SizedBox(height: 24),
+
+            // Category dropdown
+            DropdownButtonFormField<String>(
+              value: _selectedCatId,
+              decoration: InputDecoration(
+                labelText: 'קטגוריה מקצועית',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              items: widget.mainCategories.map((c) => DropdownMenuItem(
+                value: c['id'] as String?,
+                child: Text(c['name'] as String? ?? ''),
+              )).toList(),
+              onChanged: (v) => setState(() => _selectedCatId = v),
             ),
-            SizedBox(width: 8),
-            Text(
-              'חשבון בנק מחובר ופעיל',
-              style: TextStyle(
-                color: Color(0xFF065F46),
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
+            const SizedBox(height: 16),
+
+            // Price
+            TextFormField(
+              controller: _priceCtrl,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: 'מחיר לשעה (₪)',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                prefixText: '₪ ',
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // About
+            TextFormField(
+              controller: _aboutCtrl,
+              maxLines: 3,
+              decoration: InputDecoration(
+                labelText: 'תיאור השירות',
+                hintText: 'ספרו ללקוחות על השירות השני שלכם...',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Create button
+            SizedBox(
+              height: 52,
+              child: ElevatedButton(
+                onPressed: _saving ? null : _create,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6366F1),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  elevation: 0,
+                ),
+                child: _saving
+                    ? const SizedBox(width: 22, height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('צור זהות מקצועית',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
           ],
         ),
-      );
-    }
-
-    // ── Account exists but KYC not yet complete ──────────────────────────────
-    if (_hasAccount && !_onboardingDone) {
-      return OutlinedButton.icon(
-        onPressed: _loading ? null : _onTap,
-        icon:
-            _loading
-                ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Color(0xFFF59E0B),
-                  ),
-                )
-                : const Icon(
-                  Icons.hourglass_top_rounded,
-                  size: 18,
-                  color: Color(0xFFF59E0B),
-                ),
-        label: const Text(
-          'השלם הגדרת חשבון התשלומים',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Color(0xFFF59E0B),
-          ),
-        ),
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(double.infinity, 48),
-          side: const BorderSide(color: Color(0xFFF59E0B), width: 1.5),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-      );
-    }
-
-    // ── Not connected yet ────────────────────────────────────────────────────
-    return ElevatedButton.icon(
-      onPressed: _loading ? null : _onTap,
-      icon:
-          _loading
-              ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-              : const Icon(Icons.account_balance_rounded, size: 18),
-      label: const Text(
-        'חבר חשבון בנק לקבלת תשלומים',
-        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
       ),
-      style: ElevatedButton.styleFrom(
-        minimumSize: const Size(double.infinity, 48),
-        backgroundColor: const Color(0xFF6366F1),
-        foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        elevation: 0,
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// v10.1.0: EDIT SECOND IDENTITY BOTTOM SHEET
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class _EditSecondIdentitySheet extends StatefulWidget {
+  final Map<String, dynamic> listing;
+  final List<Map<String, dynamic>> mainCategories;
+  final VoidCallback onSaved;
+
+  const _EditSecondIdentitySheet({
+    required this.listing,
+    required this.mainCategories,
+    required this.onSaved,
+  });
+
+  @override
+  State<_EditSecondIdentitySheet> createState() => _EditSecondIdentitySheetState();
+}
+
+class _EditSecondIdentitySheetState extends State<_EditSecondIdentitySheet> {
+  late final TextEditingController _aboutCtrl;
+  late final TextEditingController _priceCtrl;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _aboutCtrl = TextEditingController(text: widget.listing['aboutMe'] as String? ?? '');
+    _priceCtrl = TextEditingController(
+      text: ((widget.listing['pricePerHour'] as num?) ?? 0).toString(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _aboutCtrl.dispose();
+    _priceCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final price = double.tryParse(_priceCtrl.text.trim());
+    if (price == null || price <= 0) return;
+
+    setState(() => _saving = true);
+    final listingId = widget.listing['listingId'] as String? ?? '';
+
+    try {
+      await ProviderListingService.updateListing(listingId, {
+        'aboutMe': _aboutCtrl.text.trim(),
+        'pricePerHour': price,
+      });
+      if (mounted) {
+        Navigator.pop(context);
+        widget.onSaved();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Color(0xFF22C55E),
+            content: Text('הזהות המקצועית עודכנה בהצלחה'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _delete() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('מחיקת זהות מקצועית'),
+        content: const Text('האם למחוק את הזהות המקצועית השנייה? הפעולה לא ניתנת לביטול.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('ביטול')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('מחק', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    setState(() => _saving = true);
+    try {
+      final uid = widget.listing['uid'] as String? ?? '';
+      final listingId = widget.listing['listingId'] as String? ?? '';
+      await ProviderListingService.deleteListing(listingId, uid);
+      if (mounted) {
+        Navigator.pop(context);
+        widget.onSaved();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Color(0xFFEF4444),
+            content: Text('הזהות המקצועית נמחקה'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('שגיאה: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final serviceType = widget.listing['serviceType'] as String? ?? '';
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+          24, 12, 24, MediaQuery.of(context).viewInsets.bottom + 24),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+            )),
+            const SizedBox(height: 20),
+            Text('עריכת $serviceType',
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center),
+            const SizedBox(height: 20),
+
+            TextFormField(
+              controller: _priceCtrl,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: 'מחיר לשעה (₪)',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                prefixText: '₪ ',
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            TextFormField(
+              controller: _aboutCtrl,
+              maxLines: 3,
+              decoration: InputDecoration(
+                labelText: 'תיאור השירות',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Save button
+            SizedBox(
+              height: 52,
+              child: ElevatedButton(
+                onPressed: _saving ? null : _save,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6366F1),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  elevation: 0,
+                ),
+                child: _saving
+                    ? const SizedBox(width: 22, height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('שמור שינויים',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Delete button
+            TextButton.icon(
+              onPressed: _saving ? null : _delete,
+              icon: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 18),
+              label: const Text('מחק זהות מקצועית',
+                  style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
       ),
     );
   }

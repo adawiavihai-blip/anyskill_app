@@ -2,6 +2,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+/// Payment helpers used by the chat job lifecycle.
+///
+/// **Phase 2 NOTE:** Stripe Connect was removed from the codebase pending
+/// integration with an Israeli payment provider. All payment flows below
+/// now operate exclusively on the legacy internal-credits ledger
+/// (`users.balance` / `users.pendingBalance`) and the existing
+/// `processPaymentRelease` / `processCancellation` Cloud Functions in
+/// `functions/index.js`. When the new provider is wired up, gate each
+/// branch on a job-level field (e.g. `paymentProvider`) the same way the
+/// old code switched on `stripePaymentIntentId`.
 class PaymentModule {
   // ── Cancel booking: refund full amount to customer ───────────────────────
   static Future<bool> cancelEscrow({
@@ -13,45 +23,35 @@ class PaymentModule {
   }) async {
     final firestore = db ?? FirebaseFirestore.instance;
     try {
-      // Detect Stripe vs legacy job before touching anything.
       final jobSnap = await firestore.collection('jobs').doc(jobId).get();
       if (!jobSnap.exists) throw Exception('Job $jobId not found');
-      final jobData      = jobSnap.data() as Map<String, dynamic>;
+      final jobData       = jobSnap.data() as Map<String, dynamic>;
       final currentStatus = jobData['status'] as String? ?? '';
       if (currentStatus == 'cancelled') return true; // idempotent
       if (currentStatus != 'paid_escrow') {
         throw Exception('Cannot cancel job in status "$currentStatus"');
       }
 
-      final isStripeJob = jobData['stripePaymentIntentId'] != null;
-
-      if (isStripeJob) {
-        // Stripe path: CF issues a full refund back to the customer's card.
-        await FirebaseFunctions.instance
-            .httpsCallable('processRefund')
-            .call({'jobId': jobId, 'reason': 'booking_cancelled'});
-      } else {
-        // Legacy path: return internal credits to customer's Firestore balance.
-        final authorisedAmount =
-            (jobData['totalAmount'] as num? ?? totalAmount).toDouble();
-        await firestore.runTransaction((tx) async {
-          tx.update(firestore.collection('jobs').doc(jobId), {
-            'status': 'cancelled',
-            'cancelledAt': FieldValue.serverTimestamp(),
-          });
-          tx.update(firestore.collection('users').doc(customerId), {
-            'balance': FieldValue.increment(authorisedAmount),
-          });
-          tx.set(firestore.collection('transactions').doc(), {
-            'userId':    customerId,
-            'amount':    authorisedAmount,
-            'title':     'ביטול הזמנה — החזר כספי',
-            'timestamp': FieldValue.serverTimestamp(),
-            'type':      'refund',
-            'jobId':     jobId,
-          });
+      // Legacy credits path: return internal credits to the customer's balance.
+      final authorisedAmount =
+          (jobData['totalAmount'] as num? ?? totalAmount).toDouble();
+      await firestore.runTransaction((tx) async {
+        tx.update(firestore.collection('jobs').doc(jobId), {
+          'status': 'cancelled',
+          'cancelledAt': FieldValue.serverTimestamp(),
         });
-      }
+        tx.update(firestore.collection('users').doc(customerId), {
+          'balance': FieldValue.increment(authorisedAmount),
+        });
+        tx.set(firestore.collection('transactions').doc(), {
+          'userId':    customerId,
+          'amount':    authorisedAmount,
+          'title':     'ביטול הזמנה — החזר כספי',
+          'timestamp': FieldValue.serverTimestamp(),
+          'type':      'refund',
+          'jobId':     jobId,
+        });
+      });
 
       if (chatRoomId.isNotEmpty) {
         await firestore
@@ -87,37 +87,28 @@ class PaymentModule {
       final currentStatus = jobData['status'] as String? ?? '';
       if (currentStatus == 'refunded') return true; // idempotent
 
-      final isStripeJob = jobData['stripePaymentIntentId'] != null;
-
-      if (isStripeJob) {
-        // Stripe path: admin-triggered full refund via CF.
-        await FirebaseFunctions.instance
-            .httpsCallable('processRefund')
-            .call({'jobId': jobId, 'reason': 'dispute_resolved_customer'});
-      } else {
-        // Legacy path: return internal credits.
-        final authorisedAmount =
-            (jobData['totalAmount'] as num? ?? totalAmount).toDouble();
-        await firestore.runTransaction((tx) async {
-          tx.update(firestore.collection('jobs').doc(jobId), {
-            'status':     'refunded',
-            'resolvedAt': FieldValue.serverTimestamp(),
-            'resolvedBy': 'admin',
-            'resolution': 'refund',
-          });
-          tx.update(firestore.collection('users').doc(customerId), {
-            'balance': FieldValue.increment(authorisedAmount),
-          });
-          tx.set(firestore.collection('transactions').doc(), {
-            'userId':    customerId,
-            'amount':    authorisedAmount,
-            'title':     'החזר כספי — מחלוקת נפתרה לטובתך',
-            'timestamp': FieldValue.serverTimestamp(),
-            'type':      'refund',
-            'jobId':     jobId,
-          });
+      // Legacy credits path: return internal credits.
+      final authorisedAmount =
+          (jobData['totalAmount'] as num? ?? totalAmount).toDouble();
+      await firestore.runTransaction((tx) async {
+        tx.update(firestore.collection('jobs').doc(jobId), {
+          'status':     'refunded',
+          'resolvedAt': FieldValue.serverTimestamp(),
+          'resolvedBy': 'admin',
+          'resolution': 'refund',
         });
-      }
+        tx.update(firestore.collection('users').doc(customerId), {
+          'balance': FieldValue.increment(authorisedAmount),
+        });
+        tx.set(firestore.collection('transactions').doc(), {
+          'userId':    customerId,
+          'amount':    authorisedAmount,
+          'title':     'החזר כספי — מחלוקת נפתרה לטובתך',
+          'timestamp': FieldValue.serverTimestamp(),
+          'type':      'refund',
+          'jobId':     jobId,
+        });
+      });
       return true;
     } catch (e) {
       debugPrint('refundDisputedJob error: $e');
@@ -134,34 +125,17 @@ class PaymentModule {
     required double totalAmount,
   }) async {
     try {
-      // Check whether this job was paid via Stripe or the legacy Firestore
-      // credits system, and route to the correct Cloud Function accordingly.
-      final jobSnap = await FirebaseFirestore.instance
-          .collection('jobs')
-          .doc(jobId)
-          .get();
-      final isStripeJob =
-          (jobSnap.data() ?? {})['stripePaymentIntentId'] != null;
-
-      if (isStripeJob) {
-        // Stripe path: CF transfers net to provider's Express account.
-        debugPrint("[RELEASE] Stripe job — calling releaseEscrow: $jobId");
-        await FirebaseFunctions.instance
-            .httpsCallable('releaseEscrow')
-            .call({'jobId': jobId});
-      } else {
-        // Legacy path: CF moves Firestore credits between balance fields.
-        debugPrint("[RELEASE] Legacy job — calling processPaymentRelease: $jobId");
-        await FirebaseFunctions.instance
-            .httpsCallable('processPaymentRelease')
-            .call({
-          'jobId':        jobId,
-          'expertId':     expertId,
-          'expertName':   expertName,
-          'customerName': customerName,
-          'totalAmount':  totalAmount,
-        });
-      }
+      // Legacy credits path: CF moves Firestore credits between balance fields.
+      debugPrint("[RELEASE] calling processPaymentRelease: $jobId");
+      await FirebaseFunctions.instance
+          .httpsCallable('processPaymentRelease')
+          .call({
+        'jobId':        jobId,
+        'expertId':     expertId,
+        'expertName':   expertName,
+        'customerName': customerName,
+        'totalAmount':  totalAmount,
+      });
       return null;
     } on FirebaseFunctionsException catch (e) {
       final msg = "[${e.code}] ${e.message}${e.details != null ? ' | details: ${e.details}' : ''}";

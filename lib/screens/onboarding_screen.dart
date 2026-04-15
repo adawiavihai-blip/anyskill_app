@@ -9,6 +9,9 @@ import 'dart:convert';
 import 'dart:typed_data';
 import '../constants.dart';
 import '../services/category_service.dart';
+import '../services/provider_listing_service.dart';
+import '../services/private_data_service.dart';
+import '../utils/safe_image_provider.dart';
 import 'home_screen.dart';
 import 'pending_verification_screen.dart';
 import 'terms_of_service_screen.dart';
@@ -269,7 +272,16 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             ? ''
             : (_selectedSubCategory ?? '');
 
-        updates['serviceType']    = effectiveCategory;
+        // serviceType = most-specific name (sub-category if selected, else main)
+        // parentCategory = main category (only when sub-category is used)
+        // This ensures CategoryResultsScreen finds the provider when:
+        //   a) User taps the exact sub-category → serviceType match
+        //   b) User taps "Show All" on parent → parentCategory fallback match
+        final hasSubCat = effectiveSubCategory.isNotEmpty;
+        updates['serviceType'] = hasSubCat ? effectiveSubCategory : effectiveCategory;
+        if (hasSubCat) {
+          updates['parentCategory'] = effectiveCategory;
+        }
         updates['subCategory']    = effectiveSubCategory;
         updates['businessType']   = _businessType;
         updates['idNumber']       = _idController.text.trim();
@@ -311,6 +323,40 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
       debugPrint('[Onboarding] Writing fields: ${updates.keys.toList()}');
       await FirebaseFirestore.instance.collection('users').doc(uid).update(updates);
+
+      // PR 1 (v11.9.x): Also mirror KYC fields into private/kyc subcollection.
+      // This is a dual-write during migration — legacy readers still hit the
+      // main doc, new readers (admin_id_verification_tab) pull from private.
+      if (_isProvider) {
+        await PrivateDataService.writeKycData(
+          uid,
+          idNumber:              _idController.text.trim(),
+          idDocUrl:              _idDocUrl,
+          selfieVerificationUrl: _selfieUrl,
+          businessDocUrl:        _businessDocUrl,
+        );
+      }
+
+      // PR 2a: Mirror contact fields into private/identity. All users.
+      // Main-doc `phone`/`email` writes above stay in place until every
+      // reader migrates to PrivateDataService.getContactData.
+      await PrivateDataService.writeContactData(
+        uid,
+        phone: _phoneController.text.trim(),
+        email: _emailController.text.trim().isEmpty
+            ? null
+            : _emailController.text.trim(),
+      );
+
+      // v10.1.0: Create primary provider_listing doc for dual-identity system
+      if (_isProvider && !_isOtherCategory) {
+        try {
+          await ProviderListingService.migrateIfNeeded(uid);
+          debugPrint('[Onboarding] Provider listing created for uid=$uid');
+        } catch (e) {
+          debugPrint('[Onboarding] Listing creation error (non-fatal): $e');
+        }
+      }
 
       // "Other" category request
       if (_isProvider && _isOtherCategory) {
@@ -1150,15 +1196,22 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             onTap: _pickProfileImage,
             child: Stack(
               children: [
-                CircleAvatar(
-                  radius: 44,
-                  backgroundColor: _kPurple.withValues(alpha: 0.10),
-                  backgroundImage: _profileImageBase64 != null
-                      ? MemoryImage(base64Decode(_profileImageBase64!))
-                      : null,
-                  child: _profileImageBase64 == null
-                      ? const Icon(Icons.camera_alt_rounded, size: 28, color: _kPurple)
-                      : null,
+                Builder(
+                  builder: (_) {
+                    // safeImageProvider swallows FormatException so a
+                    // malformed cached string (e.g. from a previous crash)
+                    // never propagates into the widget tree.
+                    final provider = safeImageProvider(_profileImageBase64);
+                    return CircleAvatar(
+                      radius: 44,
+                      backgroundColor: _kPurple.withValues(alpha: 0.10),
+                      backgroundImage: provider,
+                      child: provider == null
+                          ? const Icon(Icons.camera_alt_rounded,
+                              size: 28, color: _kPurple)
+                          : null,
+                    );
+                  },
                 ),
                 Positioned(
                   bottom: 0,

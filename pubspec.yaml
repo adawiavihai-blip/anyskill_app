@@ -1,7 +1,7 @@
 name: anyskill_app
 description: "A new Flutter project for AnySkill."
 publish_to: 'none'
-version: 9.2.0+1
+version: 11.9.0+1
 
 environment:
   sdk: ^3.7.0
@@ -22,6 +22,7 @@ dependencies:
   geolocator: ^14.0.2
   url_launcher: ^6.3.2
   flutter_map: ^8.2.2
+  flutter_map_marker_cluster: ^8.2.2
   cached_network_image: ^3.4.1
   latlong2: ^0.9.1
   http: ^1.6.0
@@ -45,8 +46,8 @@ dependencies:
   firebase_app_check: ^0.4.1+5      # caret — allows compatible upgrades
   youtube_player_iframe: ^5.2.2
   audioplayers: ^6.1.0
-  flutter_stripe: ^11.3.0          # Stripe Payment Sheet (web + mobile)
-  webview_flutter: ^4.10.0         # Stripe Express onboarding WebView
+  # Phase 2: flutter_stripe + webview_flutter (used for Stripe Express
+  # onboarding) were removed pending Israeli payment provider integration.
   flutter_riverpod: ^2.6.1         # State management (Riverpod 2.x)
   riverpod_annotation: ^2.6.1      # @riverpod code-gen annotations
   sentry_flutter: ^8.0.0           # Crash reporting + performance tracing

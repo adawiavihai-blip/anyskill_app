@@ -2,7 +2,7 @@
     "name": "AnySkill Elite",
     "short_name": "AnySkill",
     "id": "/",
-    "start_url": "/",
+    "start_url": "/?v=10.5.1",
     "scope": "/",
     "display": "standalone",
     "display_override": [

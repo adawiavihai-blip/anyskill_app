@@ -42,9 +42,17 @@
 			<string>UIInterfaceOrientationLandscapeRight</string>
 		</array>
 		<key>NSLocationWhenInUseUsageDescription</key>
-		<string>AnySkill משתמשת במיקומך כדי להציג ספקים קרובים אליך ולמיין תוצאות לפי מרחק.</string>
+		<string>AnySkill משתמשת במיקומך כדי להציג ספקים קרובים אליך, למיין תוצאות לפי מרחק, ולתעד מסלולי הליכון כלבים בזמן אמת.</string>
 		<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-		<string>AnySkill משתמשת במיקומך כדי להציג ספקים קרובים אליך ולמיין תוצאות לפי מרחק.</string>
+		<string>AnySkill צריכה גישה למיקום ברקע כדי להמשיך לתעד מסלולי הליכון כלבים גם כשהמסך כבוי, וכדי לחשב מרחק מדויק.</string>
+		<key>NSLocationAlwaysUsageDescription</key>
+		<string>AnySkill צריכה גישה למיקום ברקע כדי להמשיך לתעד מסלולי הליכון כלבים גם כשהמסך כבוי.</string>
+		<key>NSCameraUsageDescription</key>
+		<string>AnySkill צריכה גישה למצלמה לצורך אימות זהות, צילום עבודות, והעלאת תיעוד יומי במהלך הזמנות.</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>AnySkill צריכה גישה לגלריה כדי לבחור תמונות פרופיל וגלריית עבודות.</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>AnySkill צריכה גישה למיקרופון לצורך הקלטת וידאו במהלך עדכוני פנסיון יומיים.</string>
 		<!-- Google Sign-In: REVERSED_CLIENT_ID from GoogleService-Info.plist -->
 		<key>CFBundleURLTypes</key>
 		<array>
@@ -57,12 +65,15 @@
 				</array>
 			</dict>
 		</array>
-		<!-- ── Push Notifications ───────────────────────────────────────────── -->
-		<!-- Required for FCM background message delivery on iOS -->
+		<!-- ── Push Notifications + Background GPS ──────────────────────────── -->
+		<!-- fetch + remote-notification: required for FCM background delivery. -->
+		<!-- location: required for DogWalkService GPS tracking when the screen   -->
+		<!-- is locked or the app is backgrounded.                                -->
 		<key>UIBackgroundModes</key>
 		<array>
 			<string>fetch</string>
 			<string>remote-notification</string>
+			<string>location</string>
 		</array>
 		<!-- ── App Store compliance ─────────────────────────────────────────── -->
 		<!-- Set to false — the app uses only standard HTTPS, no custom encryption -->

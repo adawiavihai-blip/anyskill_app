@@ -12,7 +12,8 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../main.dart' show currentAppVersion, OnboardingGate;
 import '../widgets/anyskill_logo.dart';
 import 'otp_screen.dart';
-import 'login_screen.dart'; // email fallback for migrating users
+import '../services/private_data_service.dart';
+import '../services/auth_duplicate_guard.dart';
 
 // ── Brand tokens ──────────────────────────────────────────────────────────────
 const _kPurple      = Color(0xFF6366F1);
@@ -66,6 +67,19 @@ class PhoneLoginScreen extends StatefulWidget {
 }
 
 class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
+  /// True when running as iOS PWA (standalone mode from Home Screen).
+  /// Google/Apple OAuth require popups which iOS PWA blocks entirely.
+  /// Detection: on web, check if the URL contains the PWA manifest's
+  /// start_url query param (?v=) which is only present in standalone launches.
+  bool get _isIOSPwa {
+    if (!kIsWeb) return false;
+    // The manifest.json has start_url: "/?v=9.3.8" — only PWA launches have this
+    final hasManifestParam = Uri.base.queryParameters.containsKey('v');
+    if (hasManifestParam) return true;
+    // Fallback: check navigator.standalone (Safari iOS specific)
+    return false;
+  }
+
   final _phoneCtrl = TextEditingController();
 
   _Country  _country   = _kCountries[0]; // IL +972
@@ -188,11 +202,21 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5FF),
-      body: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(child: _buildHero()),
-          SliverToBoxAdapter(
-            child: Transform.translate(
+      resizeToAvoidBottomInset: true,
+      body: SingleChildScrollView(
+        // SingleChildScrollView instead of CustomScrollView — simpler touch
+        // handling that works reliably on iOS PWA standalone mode.
+        // The previous CustomScrollView + SliverToBoxAdapter + Transform.translate
+        // caused hit-test misalignment on iOS web.
+        child: Column(
+          children: [
+            _buildHero(),
+            // Pulls the card up to overlap the hero by 28px. Uses
+            // Transform.translate inside a SingleChildScrollView — hit-
+            // testing is transform-aware here (the previous bug was a
+            // CustomScrollView+Sliver combo, not this one). Container
+            // negative-margin would crash margin.isNonNegative assertion.
+            Transform.translate(
               offset: const Offset(0, -28),
               child: Container(
                 margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -208,9 +232,9 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                   ],
                 ),
                 padding: const EdgeInsets.fromLTRB(24, 32, 24, 36),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
                     const Text(
                       'כניסה / הרשמה',
                       textAlign: TextAlign.start,
@@ -222,91 +246,66 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'הזן את מספר הטלפון שלך ונשלח קוד אימות',
+                      _isIOSPwa
+                          ? 'הזן את מספר הטלפון שלך ונשלח קוד אימות'
+                          : 'התחבר/י עם Google, Apple או מספר טלפון',
                       textAlign: TextAlign.start,
                       style: TextStyle(fontSize: 13, color: Colors.grey[500]),
                     ),
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 24),
 
-                    // ── Phone field with country code ─────────────────────────
+                    // ── Social sign-in FIRST (hidden in iOS PWA) ──────────────
+                    // iOS PWA blocks popups → Google/Apple OAuth can't open,
+                    // so phone+OTP is the only option there.
+                    if (!_isIOSPwa) ...[
+                      Row(
+                        children: [
+                          Expanded(child: _buildSocialBtn(
+                            label: 'Google',
+                            icon: _buildGoogleIcon(),
+                            onTap: _loginGoogle,
+                            dark: false,
+                          )),
+                          const SizedBox(width: 12),
+                          Expanded(child: _buildSocialBtn(
+                            label: 'Apple',
+                            icon: const Icon(Icons.apple, size: 22, color: Colors.white),
+                            onTap: _loginApple,
+                            dark: true,
+                          )),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      Row(children: [
+                        Expanded(child: Divider(color: Colors.grey[300])),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
+                          child: Text('או',
+                              style: TextStyle(color: Colors.grey[400], fontSize: 13)),
+                        ),
+                        Expanded(child: Divider(color: Colors.grey[300])),
+                      ]),
+                      const SizedBox(height: 20),
+                    ],
+
+                    // ── Phone field + rate-limit hint ─────────────────────────
                     _buildPhoneField(),
                     const SizedBox(height: 10),
-
-                    // Rate-limit hint
                     Text(
                       'ניתן לשלוח עד $_kMaxSends קודים בכל $_kWindowMins דקות',
                       textAlign: TextAlign.start,
                       style: TextStyle(fontSize: 11, color: Colors.grey[400]),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
 
-                    // ── Send button ───────────────────────────────────────────
+                    // ── Send OTP button ───────────────────────────────────────
                     _buildSendButton(),
-                    const SizedBox(height: 20),
-
-                    // ── Social divider ────────────────────────────────────────
-                    Row(children: [
-                      Expanded(child: Divider(color: Colors.grey[300])),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 14),
-                        child: Text('או',
-                            style: TextStyle(color: Colors.grey[400], fontSize: 13)),
-                      ),
-                      Expanded(child: Divider(color: Colors.grey[300])),
-                    ]),
-                    const SizedBox(height: 16),
-
-                    // ── Social sign-in buttons ───────────────────────────────
-                    Row(
-                      children: [
-                        Expanded(child: _buildSocialBtn(
-                          label: 'Google',
-                          icon: _buildGoogleIcon(),
-                          onTap: _loginGoogle,
-                          dark: false,
-                        )),
-                        const SizedBox(width: 12),
-                        Expanded(child: _buildSocialBtn(
-                          label: 'Apple',
-                          icon: const Icon(Icons.apple, size: 22, color: Colors.white),
-                          onTap: _loginApple,
-                          dark: true,
-                        )),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-
-                    // ── Email fallback (migrating users) ──────────────────────
-                    Center(
-                      child: GestureDetector(
-                        onTap: () => Navigator.push(context,
-                          MaterialPageRoute(builder: (_) => const LoginScreen())),
-                        child: Text.rich(
-                          TextSpan(
-                            text: 'יש לך חשבון עם אימייל? ',
-                            style: TextStyle(color: Colors.grey[500], fontSize: 13),
-                            children: const [
-                              TextSpan(
-                                text: 'כניסה עם אימייל',
-                                style: TextStyle(
-                                  color: _kPurple,
-                                  fontWeight: FontWeight.w600,
-                                  decoration: TextDecoration.underline,
-                                  decorationColor: _kPurple,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
                   ],
-                ),
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
+                ), // closes inner Column (card content)
+              ), // closes Container (card with margin + padding)
+            ), // closes Transform.translate (pulls card up by 28px)
+            // Version footer
+            Padding(
               padding: const EdgeInsets.only(bottom: 36, top: 4),
               child: Center(
                 child: Text(
@@ -315,10 +314,10 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                 ),
               ),
             ),
-          ),
-        ],
-      ),
-    );
+          ],
+        ), // closes outer Column
+      ), // closes SingleChildScrollView
+    ); // closes Scaffold
   }
 
   // ── Phone field ───────────────────────────────────────────────────────────────
@@ -548,8 +547,15 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     required VoidCallback onTap,
     bool dark = false,
   }) {
-    return GestureDetector(
-      onTap: _isLoading ? null : onTap,
+    // Uses Listener (onPointerUp) instead of GestureDetector for iOS PWA.
+    // iOS standalone mode has a 300ms delay and sometimes swallows onTap.
+    // Listener fires at the pointer level before gesture disambiguation.
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerUp: _isLoading ? null : (_) {
+        debugPrint('[Login] Social button "$label" tapped (isLoading=$_isLoading)');
+        onTap();
+      },
       child: Container(
         height: 48,
         decoration: BoxDecoration(
@@ -636,7 +642,8 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
       // ignore: avoid_print
       print('✅ [Google] Firebase signIn SUCCESS: uid=${cred.user?.uid}');
 
-      await _createProfileIfNew(cred);
+      final ok = await _createProfileIfNew(cred);
+      if (!ok) return; // duplicate — guard already signed out + showed dialog
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const OnboardingGate()),
@@ -685,7 +692,8 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
         // ignore: avoid_print
         print('✅ [Apple] signInWithPopup SUCCESS: uid=${cred.user?.uid}');
 
-        await _createProfileIfNew(cred);
+        final ok = await _createProfileIfNew(cred);
+        if (!ok) return; // duplicate — guard already signed out + showed dialog
         if (mounted) {
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const OnboardingGate()),
@@ -735,7 +743,8 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
         await user.updateDisplayName(displayName);
       }
 
-      await _createProfileIfNew(cred);
+      final ok = await _createProfileIfNew(cred);
+      if (!ok) return; // duplicate — guard already signed out + showed dialog
 
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
@@ -761,11 +770,25 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
 
   // ── Shared: create Firestore profile for new social users ─────────────
 
-  Future<void> _createProfileIfNew(UserCredential cred) async {
+  /// Returns `true` if the profile was created/updated and it is safe to
+  /// navigate forward. Returns `false` if the Anti-Duplicate Guard found an
+  /// existing user doc with the same email under a different uid — in that
+  /// case the user has already been signed out and shown the conflict
+  /// dialog, so the caller MUST stop the flow (no navigation).
+  Future<bool> _createProfileIfNew(UserCredential cred) async {
     final user = cred.user!;
 
     // ignore: avoid_print
     print('📝 [Profile] uid=${user.uid}, email=${user.email}');
+
+    // PR-A Anti-Duplicate Guard — block if email is already used by another uid.
+    if (mounted) {
+      final safe = await AuthDuplicateGuard.enforceOrSignOut(
+        context: context,
+        cred: cred,
+      );
+      if (!safe) return false;
+    }
 
     await user.getIdToken(true);
     // ignore: avoid_print
@@ -773,15 +796,36 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
 
     final docRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
 
-    // Always use set(merge: true):
-    //   - Doc doesn't exist → creates it (create rule)
-    //   - Doc already exists → merges only these fields (update rule)
-    // NEVER include server-only fields (xp, balance, isAdmin, isVerified,
-    // isPromoted, isVerifiedProvider) — doesNotTouch() blocks them.
+    // v12.8.0 — CRITICAL: do NOT overwrite an existing profile on re-login.
+    // The old behavior was `set(merge:true)` with a full default payload on
+    // EVERY sign-in, which reset profileImage, rating, reviewsCount, gallery,
+    // aboutMe, isProvider, onboardingComplete, etc. every time a user tapped
+    // Google/Apple. We now:
+    //   1. Read the doc once.
+    //   2. If it exists, do nothing (existing profile is the source of truth).
+    //   3. If it doesn't exist, write the initial profile (first-time signup).
     for (int attempt = 1; attempt <= 3; attempt++) {
       try {
         // ignore: avoid_print
-        print('📝 [Profile] Attempt $attempt: set(merge:true) users/${user.uid}');
+        print('📝 [Profile] Attempt $attempt — checking existing doc');
+        final existing = await docRef.get();
+        if (existing.exists) {
+          // ignore: avoid_print
+          print('✅ [Profile] Existing doc preserved as-is (no overwrite).');
+          // Still mirror contact fields into private/identity (idempotent)
+          // so the dual-write invariant from the v12.2 migration holds.
+          await PrivateDataService.writeContactData(
+            user.uid,
+            phone: user.phoneNumber ?? '',
+            email: user.email ?? '',
+          );
+          return true;
+        }
+        // First-time signup — write the full initial profile.
+        // NEVER include server-only fields (xp, balance, isAdmin, isVerified,
+        // isPromoted, isVerifiedProvider) — doesNotTouch() blocks them.
+        // ignore: avoid_print
+        print('📝 [Profile] First-time doc create for ${user.uid}');
         await docRef.set({
           'uid':            user.uid,
           'name':           user.displayName ?? '',
@@ -802,10 +846,16 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           'onboardingComplete': false,
           'tourComplete':   false,
           'createdAt':      FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+        });
+        // Mirror contact fields into private/identity
+        await PrivateDataService.writeContactData(
+          user.uid,
+          phone: user.phoneNumber ?? '',
+          email: user.email ?? '',
+        );
         // ignore: avoid_print
-        print('✅ [Profile] SUCCESS on attempt $attempt');
-        return;
+        print('✅ [Profile] First-time doc created on attempt $attempt');
+        return true;
       } catch (e) {
         // ignore: avoid_print
         print('🔴 [Profile] Attempt $attempt FAILED: ${e.runtimeType}: $e');
@@ -819,6 +869,9 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
         }
       }
     }
+    // All attempts failed but no conflict — caller can still proceed and let
+    // OnboardingGate handle the missing profile.
+    return true;
   }
 
   static String _generateNonce([int length = 32]) {

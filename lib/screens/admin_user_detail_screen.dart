@@ -1608,56 +1608,27 @@ class _AdminUserDetailScreenState
   }
 
   void _showTopUpDialog(Map<String, dynamic> data) {
-    final amountCtrl = TextEditingController();
     final name = data['name'] as String? ?? 'משתמש';
-    final messenger = ScaffoldMessenger.of(context);
+    final currentBalance = (data['balance'] as num? ?? 0).toDouble();
+
+    // Generate a unique idempotency key per dialog open. Survives double-tap.
+    final clientReqId =
+        'grant_${DateTime.now().millisecondsSinceEpoch}_${widget.userId.substring(0, 6)}';
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('הטענת ארנק ל-$name'),
-        content: TextField(
-            controller: amountCtrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-                hintText: 'סכום', suffixText: '₪',
-                border: OutlineInputBorder())),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('ביטול')),
-          ElevatedButton(
-            onPressed: () async {
-              final val = double.tryParse(amountCtrl.text.trim());
-              if (val == null || val <= 0) return;
-              Navigator.pop(ctx);
-              await FirebaseFirestore.instance.runTransaction((tx) async {
-                final userRef = FirebaseFirestore.instance
-                    .collection('users')
-                    .doc(widget.userId);
-                tx.update(
-                    userRef, {'balance': FieldValue.increment(val)});
-                tx.set(
-                    FirebaseFirestore.instance
-                        .collection('transactions')
-                        .doc(),
-                    {
-                      'userId': widget.userId,
-                      'amount': val,
-                      'title': 'טעינת ארנק ע״י מנהל',
-                      'timestamp': FieldValue.serverTimestamp(),
-                      'type': 'admin_topup',
-                    });
-              });
-              _logAuditAction(
-                  'טעינת ארנק: ₪${val.toStringAsFixed(0)}', name);
-              messenger.showSnackBar(SnackBar(
-                  content: Text('נטענו ₪$val ל-$name'),
-                  backgroundColor: _kGreen));
-            },
-            child: const Text('אשר'),
-          ),
-        ],
+      barrierDismissible: false,
+      builder: (ctx) => _GrantCreditDialog(
+        targetUserId: widget.userId,
+        targetName: name,
+        currentBalance: currentBalance,
+        clientReqId: clientReqId,
+        onSuccess: (amount, reason, newBalance) {
+          _logAuditAction(
+            'זיכוי מנהל: ₪${amount.toStringAsFixed(0)} — $reason',
+            name,
+          );
+        },
       ),
     );
   }
@@ -2006,5 +1977,416 @@ class _AdminUserDetailScreenState
         'createdAt': FieldValue.serverTimestamp(),
       });
     } catch (_) {}
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _GrantCreditDialog
+//
+// Soft Launch tool (v11.9.x) — admin grants promotional/compensation credits
+// to a user via the `grantAdminCredit` Cloud Function. Replaces the previous
+// client-side direct Firestore write.
+//
+// Validation enforced server-side (CF) AND client-side:
+//   • Amount: > 0 and ≤ ₪5,000 (per-grant cap)
+//   • Reason: required, ≥ 10 characters (mandatory audit trail)
+//   • No self-grant (CF rejects)
+//   • Per-admin daily cap: ₪20,000 (CF rejects with failed-precondition)
+//
+// On success: writes to user.balance, transactions, admin_audit_log,
+// notifications — atomically inside a single Firestore transaction in the CF.
+// ─────────────────────────────────────────────────────────────────────────────
+class _GrantCreditDialog extends StatefulWidget {
+  final String targetUserId;
+  final String targetName;
+  final double currentBalance;
+  final String clientReqId;
+  final void Function(double amount, String reason, double newBalance) onSuccess;
+
+  const _GrantCreditDialog({
+    required this.targetUserId,
+    required this.targetName,
+    required this.currentBalance,
+    required this.clientReqId,
+    required this.onSuccess,
+  });
+
+  @override
+  State<_GrantCreditDialog> createState() => _GrantCreditDialogState();
+}
+
+class _GrantCreditDialogState extends State<_GrantCreditDialog> {
+  final _amountCtrl = TextEditingController();
+  final _reasonCtrl = TextEditingController();
+  bool _submitting = false;
+  String? _errorText;
+
+  // Quick-pick chips for common amounts
+  static const _quickAmounts = [50.0, 100.0, 250.0, 500.0, 1000.0];
+
+  @override
+  void dispose() {
+    _amountCtrl.dispose();
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _canSubmit {
+    final amount = double.tryParse(_amountCtrl.text.trim());
+    return !_submitting &&
+        amount != null &&
+        amount > 0 &&
+        amount <= 5000 &&
+        _reasonCtrl.text.trim().length >= 10;
+  }
+
+  Future<void> _submit() async {
+    final amount = double.tryParse(_amountCtrl.text.trim());
+    final reason = _reasonCtrl.text.trim();
+
+    if (amount == null || amount <= 0) {
+      setState(() => _errorText = 'סכום לא תקין');
+      return;
+    }
+    if (amount > 5000) {
+      setState(() => _errorText = 'תקרה לזיכוי בודד: ₪5,000');
+      return;
+    }
+    if (reason.length < 10) {
+      setState(() => _errorText = 'הסיבה חייבת להיות לפחות 10 תווים');
+      return;
+    }
+
+    setState(() {
+      _submitting = true;
+      _errorText = null;
+    });
+
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+
+    try {
+      final result = await FirebaseFunctions.instance
+          .httpsCallable('grantAdminCredit')
+          .call({
+        'targetUserId': widget.targetUserId,
+        'amount': amount,
+        'reason': reason,
+        'clientReqId': widget.clientReqId,
+      });
+
+      final data = Map<String, dynamic>.from(result.data as Map);
+      final newBalance = (data['afterBalance'] as num? ?? 0).toDouble();
+      final dailyRemaining = (data['dailyCapRemaining'] as num? ?? 0).toDouble();
+
+      widget.onSuccess(amount, reason, newBalance);
+
+      if (!mounted) return;
+      navigator.pop();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            '✅ נטענו ₪${amount.toStringAsFixed(0)} ל-${widget.targetName}.\n'
+            'יתרה חדשה: ₪${newBalance.toStringAsFixed(0)} • '
+            'נותר היום: ₪${dailyRemaining.toStringAsFixed(0)}',
+          ),
+          backgroundColor: const Color(0xFF10B981),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        // Friendly Hebrew error per CF error code
+        switch (e.code) {
+          case 'permission-denied':
+            _errorText = 'אין הרשאה לפעולה זו';
+            break;
+          case 'failed-precondition':
+            _errorText = 'הגעת למכסה היומית. ${e.message ?? ""}';
+            break;
+          case 'invalid-argument':
+            _errorText = e.message ?? 'נתונים לא תקינים';
+            break;
+          case 'not-found':
+            _errorText = 'המשתמש לא נמצא';
+            break;
+          default:
+            _errorText = 'שגיאה: ${e.message ?? e.code}';
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _errorText = 'שגיאה בלתי צפויה: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      titlePadding: const EdgeInsetsDirectional.fromSTEB(24, 20, 24, 0),
+      contentPadding: const EdgeInsetsDirectional.fromSTEB(24, 16, 24, 8),
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: const BoxDecoration(
+              color: Color(0xFFECFDF5),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.account_balance_wallet_rounded,
+              color: Color(0xFF10B981),
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'זיכוי מנהל',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                  ),
+                ),
+                Text(
+                  'ל-${widget.targetName}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF6B7280),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Current balance
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F3FF),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: const Color(0xFF6366F1).withValues(alpha: 0.2),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.account_balance_wallet_outlined,
+                      size: 18,
+                      color: Color(0xFF6366F1),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'יתרה נוכחית: ₪${widget.currentBalance.toStringAsFixed(0)}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          color: Color(0xFF1A1A2E),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Amount field
+              TextField(
+                controller: _amountCtrl,
+                keyboardType: TextInputType.number,
+                enabled: !_submitting,
+                onChanged: (_) => setState(() => _errorText = null),
+                decoration: InputDecoration(
+                  labelText: 'סכום',
+                  hintText: 'בין ₪1 ל-₪5,000',
+                  suffixText: '₪',
+                  prefixIcon: const Icon(Icons.payments_rounded, size: 20),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  helperText: 'תקרה לזיכוי בודד: ₪5,000',
+                  helperStyle: const TextStyle(fontSize: 11),
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // Quick-pick chips
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: _quickAmounts.map((amt) {
+                  return ActionChip(
+                    label: Text('₪${amt.toStringAsFixed(0)}'),
+                    onPressed: _submitting
+                        ? null
+                        : () {
+                            setState(() {
+                              _amountCtrl.text = amt.toStringAsFixed(0);
+                              _errorText = null;
+                            });
+                          },
+                    backgroundColor: const Color(0xFFF5F3FF),
+                    side: BorderSide(
+                      color: const Color(0xFF6366F1).withValues(alpha: 0.3),
+                    ),
+                    labelStyle: const TextStyle(
+                      color: Color(0xFF6366F1),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+
+              // Reason field — MANDATORY
+              TextField(
+                controller: _reasonCtrl,
+                enabled: !_submitting,
+                onChanged: (_) => setState(() => _errorText = null),
+                maxLines: 3,
+                maxLength: 500,
+                decoration: InputDecoration(
+                  labelText: 'סיבה (חובה — מינימום 10 תווים)',
+                  hintText: 'לדוגמה: פיצוי על בעיה בהזמנה #abc123',
+                  alignLabelWithHint: true,
+                  prefixIcon: const Padding(
+                    padding: EdgeInsetsDirectional.only(bottom: 50),
+                    child: Icon(Icons.description_outlined, size: 20),
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  helperText: 'נשמר בלוג הביקורת — חובה לפרט',
+                  helperStyle: const TextStyle(fontSize: 11),
+                ),
+              ),
+
+              // Error text
+              if (_errorText != null) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFFEF4444).withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.error_outline_rounded,
+                        size: 16,
+                        color: Color(0xFFEF4444),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _errorText!,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFFEF4444),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 8),
+
+              // Info banner about audit log
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFFBEB),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: const Color(0xFFF59E0B).withValues(alpha: 0.3),
+                  ),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(
+                      Icons.info_outline_rounded,
+                      size: 16,
+                      color: Color(0xFFF59E0B),
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'פעולה זו נרשמת בלוג הביקורת. מכסה יומית: ₪20,000.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF92400E),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actionsPadding: const EdgeInsetsDirectional.fromSTEB(20, 8, 20, 16),
+      actions: [
+        TextButton(
+          onPressed: _submitting ? null : () => Navigator.pop(context),
+          child: const Text('ביטול'),
+        ),
+        ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF10B981),
+            foregroundColor: Colors.white,
+            disabledBackgroundColor: const Color(0xFF10B981).withValues(alpha: 0.4),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+          ),
+          icon: _submitting
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Icon(Icons.check_rounded, size: 18),
+          label: Text(
+            _submitting ? 'מעבד...' : 'אשר זיכוי',
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          onPressed: _canSubmit ? _submit : null,
+        ),
+      ],
+    );
   }
 }

@@ -1,11 +1,14 @@
 // ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../services/stripe_service.dart';
+import '../../services/escrow_service.dart';
+import '../../services/offline_message_queue.dart';
 import '../../utils/safe_image_provider.dart';
+import '../walk_route_screen.dart';
 
 class ChatUIHelper {
   // ── Main entry point ──────────────────────────────────────────────────────
@@ -24,6 +27,14 @@ class ChatUIHelper {
     final dynamic ts   = data['timestamp'];
     final bool isRead  = data['isRead'] == true;
 
+    // v12.2 offline queue flags (added by OfflineMessageQueue.toDocMap).
+    final bool   isPending  = data['__isPending'] == true;
+    final String pendStatus = (data['__pendingStatus']?.toString()) ?? '';
+    final String localId    = (data['__localId']?.toString()) ?? '';
+    final int?   pendMs     = (data['__createdAtMs'] is num)
+        ? (data['__createdAtMs'] as num).toInt()
+        : null;
+
     // Full-width transaction cards
     if (type == 'payment_request') {
       return _TransactionCard(data: data, isMe: isMe, onTap: onPaymentTap);
@@ -38,6 +49,12 @@ class ChatUIHelper {
         currentUserId: currentUserId,
         chatRoomId:    chatRoomId,
       );
+    }
+    if (type == 'walk_summary') {
+      return _WalkSummaryCard(data: data, isMe: isMe);
+    }
+    if (type == 'boarding_proof') {
+      return _BoardingProofCard(data: data, isMe: isMe);
     }
 
     // ── Bubble container ────────────────────────────────────────────────────
@@ -74,15 +91,13 @@ class ChatUIHelper {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _Timestamp(ts: ts, isMe: isMe),
+              _Timestamp(ts: ts, isMe: isMe, fallbackMs: pendMs),
               if (isMe) ...[
                 const SizedBox(width: 3),
-                Icon(
-                  Icons.done_all_rounded,
-                  size: 12,
-                  color: isRead
-                      ? Colors.lightBlueAccent
-                      : Colors.white.withValues(alpha: 0.45),
+                _StatusIcon(
+                  isPending:  isPending,
+                  pendStatus: pendStatus,
+                  isRead:     isRead,
                 ),
               ],
             ],
@@ -90,6 +105,18 @@ class ChatUIHelper {
         ],
       ),
     );
+
+    // Failed messages are tappable to retry; long-press to cancel.
+    final bool isFailed = isPending && pendStatus == 'failed';
+    final Widget bubbleOrAction = (isFailed && localId.isNotEmpty)
+        ? GestureDetector(
+            onTap: () => OfflineMessageQueue.instance.retry(localId),
+            onLongPress: () => _showCancelSheet(context, localId),
+            child: Opacity(opacity: 0.75, child: bubble),
+          )
+        : (isPending
+            ? Opacity(opacity: 0.6, child: bubble)
+            : bubble);
 
     return Padding(
       padding: EdgeInsets.only(
@@ -101,16 +128,62 @@ class ChatUIHelper {
       child: Align(
         alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
         child: isMe
-            ? bubble
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  bubbleOrAction,
+                  if (isFailed)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2, right: 4),
+                      child: Text(
+                        'הקש לשליחה חוזרת',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.red.shade400,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                ],
+              )
             : Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _SenderAvatar(name: senderName, imageUrl: senderImageUrl),
                   const SizedBox(width: 6),
-                  Flexible(child: bubble),
+                  Flexible(child: bubbleOrAction),
                 ],
               ),
+      ),
+    );
+  }
+
+  static void _showCancelSheet(BuildContext context, String localId) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.refresh_rounded, color: Color(0xFF6366F1)),
+              title: const Text('נסה לשלוח שוב'),
+              onTap: () {
+                Navigator.pop(context);
+                OfflineMessageQueue.instance.retry(localId);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline_rounded, color: Colors.red),
+              title: const Text('בטל ומחק'),
+              onTap: () {
+                Navigator.pop(context);
+                OfflineMessageQueue.instance.remove(localId);
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -285,12 +358,18 @@ class _SenderAvatar extends StatelessWidget {
 class _Timestamp extends StatelessWidget {
   final dynamic ts;
   final bool isMe;
-  const _Timestamp({required this.ts, required this.isMe});
+  final int? fallbackMs; // used for offline/pending messages with no serverTimestamp
+  const _Timestamp({required this.ts, required this.isMe, this.fallbackMs});
 
   @override
   Widget build(BuildContext context) {
-    if (ts == null) return const SizedBox.shrink();
-    final date = ts is Timestamp ? (ts as Timestamp).toDate() : DateTime.now();
+    DateTime? date;
+    if (ts is Timestamp) {
+      date = (ts as Timestamp).toDate();
+    } else if (fallbackMs != null) {
+      date = DateTime.fromMillisecondsSinceEpoch(fallbackMs!);
+    }
+    if (date == null) return const SizedBox.shrink();
     return Text(
       DateFormat('HH:mm').format(date),
       style: TextStyle(
@@ -299,6 +378,48 @@ class _Timestamp extends StatelessWidget {
             ? Colors.white.withValues(alpha: 0.55)
             : Colors.grey[400],
       ),
+    );
+  }
+}
+
+/// WhatsApp-style delivery indicator for my own bubbles.
+///
+///   pending → rotating clock (still in local outbox)
+///   failed  → red exclamation (tap bubble to retry)
+///   sent    → single grey tick (reached Firestore, not yet read)
+///   read    → double blue tick (receiver marked it read)
+class _StatusIcon extends StatelessWidget {
+  final bool   isPending;
+  final String pendStatus;
+  final bool   isRead;
+  const _StatusIcon({
+    required this.isPending,
+    required this.pendStatus,
+    required this.isRead,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (isPending) {
+      if (pendStatus == 'failed') {
+        return const Icon(
+          Icons.error_outline_rounded,
+          size: 12,
+          color: Color(0xFFFCA5A5), // soft red, readable on indigo bubble
+        );
+      }
+      return Icon(
+        Icons.schedule_rounded,
+        size: 12,
+        color: Colors.white.withValues(alpha: 0.70),
+      );
+    }
+    return Icon(
+      Icons.done_all_rounded,
+      size: 12,
+      color: isRead
+          ? Colors.lightBlueAccent
+          : Colors.white.withValues(alpha: 0.45),
     );
   }
 }
@@ -554,18 +675,68 @@ class _OfficialQuoteCardState extends State<_OfficialQuoteCard> {
     if (_paying) return;
     setState(() => _paying = true);
 
-    final quoteId = widget.data['quoteId']?.toString() ?? '';
+    final messenger = ScaffoldMessenger.of(context);
+    final quoteId      = widget.data['quoteId']?.toString() ?? '';
+    final chatMessageId = widget.data['messageId']?.toString() ?? '';
+    final amount       = (widget.data['amount'] as num? ?? 0).toDouble();
+    final description  = widget.data['message']?.toString() ?? '';
 
-    // StripeService presents the native Payment Sheet and delegates all
-    // logic to the Cloud Function. No internal balance is touched here.
-    final result = await StripeService.payQuote(quoteId: quoteId);
+    if (quoteId.isEmpty) {
+      setState(() => _paying = false);
+      messenger.showSnackBar(const SnackBar(
+        content: Text('הצעת המחיר אינה תקינה'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
 
-    if (!mounted) return;
-    setState(() => _paying = false);
+    try {
+      // Fetch the quote document to resolve provider/client identities.
+      final db = FirebaseFirestore.instance;
+      final quoteSnap = await db.collection('quotes').doc(quoteId).get();
+      final qData = quoteSnap.data() ?? {};
+      final providerId = qData['providerId']?.toString() ?? '';
+      final clientId   = qData['clientId']?.toString()   ?? widget.currentUserId;
 
-    if (!result.ok) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(result.error ?? 'שגיאת תשלום'),
+      // Resolve display names from user docs (best-effort, fallback to '').
+      final results = await Future.wait([
+        db.collection('users').doc(providerId).get(),
+        db.collection('users').doc(clientId).get(),
+      ]);
+      final providerName =
+          (results[0].data() ?? {})['name']?.toString() ?? '';
+      final clientName =
+          (results[1].data() ?? {})['name']?.toString() ??
+          FirebaseAuth.instance.currentUser?.displayName ?? '';
+
+      // Phase 2 NOTE: this uses the legacy internal-credits escrow path.
+      // Stripe was removed pending Israeli payment provider integration.
+      final error = await EscrowService.payQuote(
+        quoteId:       quoteId,
+        chatMessageId: chatMessageId,
+        chatRoomId:    widget.chatRoomId,
+        providerId:    providerId,
+        providerName:  providerName,
+        clientId:      clientId,
+        clientName:    clientName,
+        amount:        amount,
+        description:   description,
+      );
+
+      if (!mounted) return;
+      setState(() => _paying = false);
+
+      if (error != null) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(error),
+          backgroundColor: Colors.red,
+        ));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _paying = false);
+      messenger.showSnackBar(SnackBar(
+        content: Text('שגיאה בעיבוד התשלום: $e'),
         backgroundColor: Colors.red,
       ));
     }
@@ -766,6 +937,281 @@ class _OfficialQuoteCardState extends State<_OfficialQuoteCard> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Walk Summary Card — pet services / walkTracking
+// Tapping the card opens an interactive route map (`WalkRouteScreen`).
+// ═══════════════════════════════════════════════════════════════════════════
+class _WalkSummaryCard extends StatelessWidget {
+  final Map<String, dynamic> data;
+  final bool isMe;
+  const _WalkSummaryCard({required this.data, required this.isMe});
+
+  @override
+  Widget build(BuildContext context) {
+    final mapUrl = data['mapUrl'] as String? ?? '';
+    final walkId = data['walkId'] as String? ?? '';
+    final message = (data['message'] as String? ?? '').trim();
+    final ts = data['timestamp'];
+
+    return Padding(
+      padding: EdgeInsets.only(
+        top: 4,
+        bottom: 4,
+        left: isMe ? 40 : 8,
+        right: isMe ? 8 : 40,
+      ),
+      child: GestureDetector(
+        onTap: walkId.isEmpty
+            ? null
+            : () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => WalkRouteScreen(walkId: walkId),
+                  ),
+                ),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFFED7AA), width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Static OSM map preview (full width, no API key required)
+              if (mapUrl.isNotEmpty)
+                ClipRRect(
+                  borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(16)),
+                  child: AspectRatio(
+                    aspectRatio: 3 / 2,
+                    child: CachedNetworkImage(
+                      imageUrl: mapUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => Container(
+                        color: const Color(0xFFF3F4F6),
+                        child: const Center(
+                            child: CircularProgressIndicator()),
+                      ),
+                      errorWidget: (_, __, ___) => Container(
+                        color: const Color(0xFFF3F4F6),
+                        child: const Icon(Icons.map_outlined,
+                            size: 48, color: Colors.grey),
+                      ),
+                    ),
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF7ED),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.pets_rounded,
+                              color: Color(0xFFF97316), size: 18),
+                        ),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'סיכום ההליכון',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                              color: Color(0xFF1A1A2E),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (message.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        message,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF374151),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.touch_app_rounded,
+                                size: 12, color: Color(0xFF6366F1)),
+                            SizedBox(width: 4),
+                            Text(
+                              'הקש לצפייה במפה אינטראקטיבית',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Color(0xFF6366F1),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                        _Timestamp(ts: ts, isMe: false),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Boarding Proof Card — pet services / dailyProof
+// Shows the daily photo + video updates the provider posts during boarding.
+// ═══════════════════════════════════════════════════════════════════════════
+class _BoardingProofCard extends StatelessWidget {
+  final Map<String, dynamic> data;
+  final bool isMe;
+  const _BoardingProofCard({required this.data, required this.isMe});
+
+  @override
+  Widget build(BuildContext context) {
+    final photoUrl = data['photoUrl'] as String? ?? '';
+    final videoUrl = data['videoUrl'] as String? ?? '';
+    final message = (data['message'] as String? ?? '').trim();
+    final ts = data['timestamp'];
+
+    return Padding(
+      padding: EdgeInsets.only(
+        top: 4,
+        bottom: 4,
+        left: isMe ? 40 : 8,
+        right: isMe ? 8 : 40,
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFFED7AA), width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (photoUrl.isNotEmpty)
+              ClipRRect(
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(16)),
+                child: AspectRatio(
+                  aspectRatio: 4 / 3,
+                  child: CachedNetworkImage(
+                    imageUrl: photoUrl,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(
+                      color: const Color(0xFFF3F4F6),
+                      child: const Center(
+                          child: CircularProgressIndicator()),
+                    ),
+                    errorWidget: (_, __, ___) => Container(
+                      color: const Color(0xFFF3F4F6),
+                      child: const Icon(Icons.broken_image_outlined,
+                          size: 48, color: Colors.grey),
+                    ),
+                  ),
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF7ED),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.pets_rounded,
+                            color: Color(0xFFF97316), size: 18),
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'עדכון יומי מהפנסיון',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: Color(0xFF1A1A2E),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (message.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      message,
+                      style: const TextStyle(
+                          fontSize: 12, color: Color(0xFF374151)),
+                    ),
+                  ],
+                  if (videoUrl.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFFF97316),
+                        side: const BorderSide(color: Color(0xFFF97316)),
+                      ),
+                      icon:
+                          const Icon(Icons.play_circle_outline, size: 16),
+                      label: const Text('צפה בוידאו'),
+                      onPressed: () async {
+                        final uri = Uri.tryParse(videoUrl);
+                        if (uri != null) {
+                          await launchUrl(uri,
+                              mode: LaunchMode.externalApplication);
+                        }
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: _Timestamp(ts: ts, isMe: false),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

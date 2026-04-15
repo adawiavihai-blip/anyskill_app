@@ -35,6 +35,7 @@ class CategoryService {
       // disappear.  We fetch all docs and sort client-side.
       FirebaseFirestore.instance
           .collection('categories')
+          .limit(100)
           .snapshots()
           .map((snap) {
             final cats = snap.docs

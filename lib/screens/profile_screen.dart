@@ -7,7 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 import 'dart:convert';
 import 'edit_profile_screen.dart';
-import 'provider_registration_screen.dart';
+import 'provider_registration_wizard_screen.dart';
 import 'terms_of_service_screen.dart';
 import '../widgets/vip_confetti.dart';
 import '../l10n/app_localizations.dart';
@@ -20,6 +20,7 @@ import '../widgets/anyskill_logo.dart';
 import '../main.dart' show currentAppVersion, rootNavigatorKey;
 import 'favorites_screen.dart';
 import 'phone_login_screen.dart';
+import '../features/pet_stay/screens/dog_profile_list_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -498,42 +499,62 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ],
 
-                          // ── Dynamic Volunteer Badge (active if task in last 30d) ──
-                          if (VolunteerService.hasActiveVolunteerBadge(data)) ...[
+                          // ── Community / Volunteer Badge ──────────────────────
+                          if (VolunteerService.hasActiveVolunteerBadge(data) ||
+                              data['volunteerHeart'] == true) ...[
                             const SizedBox(height: 12),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [Color(0xFF10B981), Color(0xFF6366F1)],
-                                  begin: AlignmentDirectional.centerEnd,
-                                  end: AlignmentDirectional.centerStart,
-                                ),
-                                borderRadius: BorderRadius.circular(20),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: const Color(0xFF10B981).withValues(alpha: 0.3),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 3),
+                            Builder(builder: (_) {
+                              final badges = data['communityBadges'] as List<dynamic>?;
+                              final isAngel = badges != null && badges.contains('angel');
+                              final isPillar = badges != null && badges.contains('pillar');
+                              final badgeLabel = isAngel
+                                  ? 'מלאך הקהילה'
+                                  : isPillar
+                                      ? 'עמוד תווך'
+                                      : 'מתנדב פעיל';
+                              final badgeIcon = isAngel
+                                  ? Icons.auto_awesome_rounded
+                                  : isPillar
+                                      ? Icons.shield_rounded
+                                      : Icons.favorite_rounded;
+                              return Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: isAngel
+                                        ? [const Color(0xFFF59E0B), const Color(0xFFEF4444)]
+                                        : isPillar
+                                            ? [const Color(0xFF6366F1), const Color(0xFFEC4899)]
+                                            : [const Color(0xFFEF4444), const Color(0xFFEC4899)],
+                                    begin: AlignmentDirectional.centerEnd,
+                                    end: AlignmentDirectional.centerStart,
                                   ),
-                                ],
-                              ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.volunteer_activism, color: Colors.white, size: 16),
-                                  SizedBox(width: 6),
-                                  Text(
-                                    'מתנדב פעיל',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13,
+                                  borderRadius: BorderRadius.circular(20),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: const Color(0xFFEF4444).withValues(alpha: 0.3),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 3),
                                     ),
-                                  ),
-                                ],
-                              ),
-                            ),
+                                  ],
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(badgeIcon, color: Colors.white, size: 16),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      badgeLabel,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }),
                           ],
                         ],
                       ),
@@ -707,80 +728,73 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
 
-                // ── Earn money CTA (clients only — hidden for providers/pending) ──
+                // ── My Dogs ───────────────────────────────────────────────
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 25),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(15),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: ListTile(
+                      leading: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEEF2FF),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.pets_rounded,
+                            color: Color(0xFF6366F1)),
+                      ),
+                      title: const Text('הכלבים שלי',
+                          style: TextStyle(fontWeight: FontWeight.w600)),
+                      subtitle: Text('פרופיל אחד → כל ההזמנות',
+                          style: TextStyle(
+                              color: Colors.grey[600], fontSize: 13)),
+                      trailing: const Icon(Icons.arrow_forward_ios_rounded,
+                          size: 15, color: Colors.grey),
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const DogProfileListScreen(),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // ── Join as Provider CTA (clients only) ──
                 if (data['isProvider'] != true && data['isPendingExpert'] != true) ...[
                   const SizedBox(height: 8),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 25),
-                    child: GestureDetector(
-                      onTap: () => Navigator.push(
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => ProviderRegistrationScreen(
-                            isExistingUser: true,
-                            prefillData: {
-                              'uid':         user?.uid ?? '',
-                              'name':        data['name'] ?? '',
-                              'phone':       data['phone'] ?? '',
-                              'email':       data['email'] ?? '',
-                              'profileImage': data['profileImage'] ?? '',
-                              'aboutMe':     data['aboutMe'] ?? '',
-                              'serviceType': data['serviceType'] ?? '',
-                              'pricePerHour': data['pricePerHour'] ?? 0,
-                            },
-                          ),
+                          builder: (_) => const ProviderRegistrationWizardScreen(),
                         ),
                       ),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 16),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF059669), Color(0xFF10B981)],
-                            begin: Alignment.centerRight,
-                            end: Alignment.centerLeft,
-                          ),
-                          borderRadius: BorderRadius.circular(18),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF059669).withValues(alpha: 0.28),
-                              blurRadius: 14,
-                              offset: const Offset(0, 5),
-                            ),
-                          ],
+                      icon: const Icon(Icons.work_outline_rounded,
+                          size: 18, color: Color(0xFF6366F1)),
+                      label: const Text(
+                        'להצטרפות ל-AnySkill כנותן שירות',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF6366F1),
                         ),
-                        child: Row(
-                          textDirection: TextDirection.rtl,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Icon(Icons.attach_money_rounded,
-                                  color: Colors.white, size: 22),
-                            ),
-                            const SizedBox(width: 12),
-                            const Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('רוצה להרוויח כסף?',
-                                      style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.bold)),
-                                  Text('הצטרף כנותן שירות ותתחיל להרוויח',
-                                      style: TextStyle(
-                                          color: Colors.white70, fontSize: 12)),
-                                ],
-                              ),
-                            ),
-                            const Icon(Icons.arrow_forward_ios_rounded,
-                                color: Colors.white70, size: 14),
-                          ],
-                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 50),
+                        side: const BorderSide(
+                            color: Color(0xFF6366F1), width: 1.4),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                        backgroundColor: Colors.white,
                       ),
                     ),
                   ),
@@ -926,7 +940,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  /// A single vertical stat cell — bold black number, black label.
+
   Widget _customerStat(String label, String value) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1101,6 +1115,67 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           const SizedBox(height: 16),
 
+          // ── Join as Provider CTA — moved above-the-fold for visibility ──
+          if ((data['isProvider'] != true) &&
+              (data['isSpecialist'] != true) &&
+              (data['isPendingExpert'] != true))
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ProviderRegistrationWizardScreen(),
+                  ),
+                ),
+                borderRadius: BorderRadius.circular(18),
+                child: Ink(
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      begin: Alignment.centerRight,
+                      end: Alignment.centerLeft,
+                      colors: [Color(0xFF6C5CE7), Color(0xFF4834D4)],
+                    ),
+                    borderRadius: BorderRadius.circular(18),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF6C5CE7).withValues(alpha: 0.28),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                      vertical: 18, horizontal: 18),
+                  child: const Row(
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      Icon(Icons.work_outline_rounded,
+                          color: Colors.white, size: 24),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'להצטרפות ל-AnySkill כנותן שירות',
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      Icon(Icons.arrow_back_rounded,
+                          color: Colors.white70, size: 18),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          if ((data['isProvider'] != true) &&
+              (data['isSpecialist'] != true) &&
+              (data['isPendingExpert'] != true))
+            const SizedBox(height: 16),
+
           // ── Two-card row: Services + Favorites ──────────────────────────
           Row(
             children: [
@@ -1187,42 +1262,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
             ],
-          ),
-
-          const SizedBox(height: 16),
-
-          // ── Monetization banner ──────────────────────────────────────────
-          InkWell(
-            onTap: () {},
-            borderRadius: BorderRadius.circular(24),
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-                  begin: Alignment.centerRight,
-                  end: Alignment.centerLeft,
-                ),
-                borderRadius: BorderRadius.circular(24),
-              ),
-              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-              child: const Row(
-                children: [
-                  Icon(Icons.monetization_on_outlined, color: Colors.white, size: 26),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'רוצה להרויח כסף? לחץ כאן',
-                      textAlign: TextAlign.start,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ),
 
           const SizedBox(height: 24),
@@ -1733,6 +1772,27 @@ class _SpecialistGalleryScreen extends StatelessWidget {
               itemBuilder: (context, index) {
                 final imgData = gallery[index].toString();
                 final isUrl = imgData.startsWith('http');
+                // Safely decode base64 OUTSIDE the build — if the stored
+                // string isn't valid base64 we fall through to the
+                // placeholder instead of crashing with FormatException.
+                Uint8List? decodedBytes;
+                if (!isUrl) {
+                  try {
+                    final b64 = imgData.contains(',')
+                        ? imgData.split(',').last
+                        : imgData;
+                    decodedBytes = base64Decode(b64);
+                  } catch (_) {
+                    decodedBytes = null;
+                  }
+                }
+                Widget brokenPlaceholder() => Container(
+                      color: Colors.grey[200],
+                      child: const Icon(
+                          Icons.broken_image_outlined,
+                          color: Colors.grey,
+                          size: 40),
+                    );
                 return ClipRRect(
                   borderRadius: BorderRadius.circular(16),
                   child: isUrl
@@ -1745,19 +1805,15 @@ class _SpecialistGalleryScreen extends StatelessWidget {
                                   color: Colors.grey[200],
                                   child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
                                 ),
-                          errorBuilder: (_, __, ___) => Container(
-                            color: Colors.grey[200],
-                            child: const Icon(Icons.broken_image_outlined, color: Colors.grey, size: 40),
-                          ),
+                          errorBuilder: (_, __, ___) => brokenPlaceholder(),
                         )
-                      : Image.memory(
-                          base64Decode(imgData.contains(',') ? imgData.split(',').last : imgData),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            color: Colors.grey[200],
-                            child: const Icon(Icons.broken_image_outlined, color: Colors.grey, size: 40),
-                          ),
-                        ),
+                      : (decodedBytes != null
+                          ? Image.memory(
+                              decodedBytes,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => brokenPlaceholder(),
+                            )
+                          : brokenPlaceholder()),
                 );
               },
             ),

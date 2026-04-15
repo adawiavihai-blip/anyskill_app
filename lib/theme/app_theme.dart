@@ -49,6 +49,72 @@ abstract final class Brand {
   static const ctaGradient      = [indigo, indigoDark];
 }
 
+// ── Map screen palette (v12.9.0) ─────────────────────────────────────────────
+// Scoped to the map view ONLY. Imports: providers_map_view.dart + the new
+// sections of category_results_screen.dart. Keeps the rest of the app on
+// Brand.* untouched so this experiment can be reverted in one commit.
+
+abstract final class MapPalette {
+  // Primary — CTA purple (matches the mockup)
+  static const primary       = Color(0xFF5B5FE6);
+  static const primaryLight  = Color(0xFFEDEDFD);  // selection / pill bg
+  static const primaryDark   = Color(0xFF4548C7);  // pressed state
+
+  // Semantic
+  static const online        = Color(0xFF22C55E);  // availability dot
+  static const gold          = Color(0xFFF5D98C);  // provider card border
+  static const goldActive    = Color(0xFFF59E0B);  // active marker ring / glow
+  static const red           = Color(0xFFEF4444);  // heart / unavailable
+
+  // Neutrals
+  static const textPrimary   = Color(0xFF1A1D26);
+  static const textSecondary = Color(0xFF6B7280);
+  static const textTertiary  = Color(0xFF9CA3AF);
+
+  // Surfaces
+  static const background    = Color(0xFFF8F9FB);
+  static const cardWhite     = Color(0xFFFFFFFF);
+  static const border        = Color(0xFFE5E7EB);
+  static const borderLight   = Color(0xFFFEF3C7);  // very-light gold
+
+  // Semantic tag backgrounds (from the mockup)
+  static const tagBlueBg     = Color(0xFFEEF2FF);  // "comes to your home"
+  static const tagBlueFg     = Color(0xFF4338CA);
+  static const tagGreenBg    = Color(0xFFF0FDF4);  // "certified"
+  static const tagGreenFg    = Color(0xFF15803D);
+  static const tagRoseBg     = Color(0xFFFFF1F2);  // "50% off first lesson"
+  static const tagRoseFg     = Color(0xFFBE123C);
+  static const tagGrayBg     = Color(0xFFF8F9FB);
+  static const tagGrayFg     = Color(0xFF6B7280);
+
+  // Pointer dot + glow on markers
+  static const markerGlow    = Color(0x4422C55E); // online halo (27% alpha)
+}
+
+abstract final class MapShadows {
+  static const card = [
+    BoxShadow(
+      color: Color(0x1A000000),  // 10% black
+      blurRadius: 14,
+      offset: Offset(0, 6),
+    ),
+  ];
+  static const chip = [
+    BoxShadow(
+      color: Color(0x0F000000),  // 6% black
+      blurRadius: 8,
+      offset: Offset(0, 2),
+    ),
+  ];
+  static const floatingControl = [
+    BoxShadow(
+      color: Color(0x1F000000),  // 12% black
+      blurRadius: 10,
+      offset: Offset(0, 3),
+    ),
+  ];
+}
+
 // ── Radii ────────────────────────────────────────────────────────────────────
 
 abstract final class Radii {
@@ -114,11 +180,11 @@ abstract final class AppTheme {
     final isLight = brightness == Brightness.light;
 
     // ── Typography ────────────────────────────────────────────────────────
-    // Heebo is the primary font (Hebrew-optimized with clean Latin glyphs).
-    // NotoSansHebrew is the offline/fallback.
-    final baseText = GoogleFonts.heeboTextTheme(
+    // Assistant is the primary font — clean, modern, high-tech feel with
+    // excellent Hebrew support. NotoSansHebrew is the offline/fallback.
+    final baseText = GoogleFonts.assistantTextTheme(
       ThemeData(brightness: brightness).textTheme,
-    ).apply(fontFamilyFallback: const ['NotoSansHebrew']);
+    ).apply(fontFamilyFallback: const ['NotoSansHebrew', 'sans-serif']);
 
     final textTheme = baseText.copyWith(
       // Display — splash screens, onboarding hero text

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -113,6 +114,87 @@ class LocationService {
     if (perm != LocationPermission.whileInUse &&
         perm != LocationPermission.always) { return null; }
     return _fetchPosition();
+  }
+
+  // ── v9.9.0: Provider location broadcasting ─────────────────────────────────
+  // When a provider toggles "Online", we start periodic location updates
+  // to Firestore. This powers the map view for customers.
+  // Location is stored as latitude/longitude + a geohash for efficient
+  // proximity queries. Updates stop when provider goes offline.
+
+  static Timer? _broadcastTimer;
+
+  /// Start broadcasting location every 60 seconds. Call when provider goes online.
+  static void startBroadcasting(String uid) {
+    stopBroadcasting();
+    // Immediate first update
+    _broadcastPosition(uid);
+    _broadcastTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      _broadcastPosition(uid);
+    });
+  }
+
+  /// Stop broadcasting. Call when provider goes offline or app disposes.
+  static void stopBroadcasting() {
+    _broadcastTimer?.cancel();
+    _broadcastTimer = null;
+  }
+
+  static Future<void> _broadcastPosition(String uid) async {
+    try {
+      final perm = await Geolocator.checkPermission();
+      if (perm != LocationPermission.whileInUse &&
+          perm != LocationPermission.always) {
+        return;
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          timeLimit: Duration(seconds: 5),
+        ),
+      );
+      _cached = pos;
+      final geohash = _encodeGeohash(pos.latitude, pos.longitude, precision: 7);
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'latitude': pos.latitude,
+        'longitude': pos.longitude,
+        'geohash': geohash,
+        'locationUpdatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('[Location] Broadcast error: $e');
+    }
+  }
+
+  /// Simple geohash encoder — produces a base-32 string of [precision] chars.
+  /// Used for efficient proximity prefix queries (e.g., all providers in the
+  /// same ~150m×150m cell share the same 7-char geohash prefix).
+  static String _encodeGeohash(double lat, double lng, {int precision = 7}) {
+    const base32 = '0123456789bcdefghjkmnpqrstuvwxyz';
+    var minLat = -90.0, maxLat = 90.0;
+    var minLng = -180.0, maxLng = 180.0;
+    var isLng = true;
+    var bit = 0;
+    var ch = 0;
+    final hash = StringBuffer();
+
+    while (hash.length < precision) {
+      final mid = isLng ? (minLng + maxLng) / 2 : (minLat + maxLat) / 2;
+      final val = isLng ? lng : lat;
+      if (val >= mid) {
+        ch |= (1 << (4 - bit));
+        if (isLng) { minLng = mid; } else { minLat = mid; }
+      } else {
+        if (isLng) { maxLng = mid; } else { maxLat = mid; }
+      }
+      isLng = !isLng;
+      if (++bit == 5) {
+        hash.write(base32[ch]);
+        bit = 0;
+        ch = 0;
+      }
+    }
+    return hash.toString();
   }
 
   // ── Distance helpers ───────────────────────────────────────────────────────

@@ -22,7 +22,6 @@ class ErrorMapper {
     final s = error.toString();
     if (s.contains('SocketException')) return 'network_error';
     if (s.contains('TimeoutException')) return 'timeout';
-    if (s.contains('StripeException')) return 'stripe_error';
     // Truncate raw message to avoid huge strings
     return s.length > 80 ? '${s.substring(0, 80)}...' : s;
   }
@@ -84,9 +83,9 @@ class ErrorMapper {
       return 'הבקשה לקחה יותר מדי זמן. נסה שוב.';
     }
 
-    // ── Stripe errors ─────────────────────────────────────────────────────
-    if (msg.contains('StripeException') || msg.contains('payment')) {
-      return 'בעיה בתהליך התשלום. בדוק את פרטי הכרטיס ונסה שוב.';
+    // ── Generic payment errors ────────────────────────────────────────────
+    if (msg.contains('payment')) {
+      return 'בעיה בתהליך התשלום. נסה שוב או פנה לתמיכה.';
     }
 
     // ── Generic fallback ──────────────────────────────────────────────────

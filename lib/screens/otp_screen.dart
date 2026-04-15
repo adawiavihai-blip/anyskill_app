@@ -5,6 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'provider_registration_screen.dart';
 import '../main.dart' show OnboardingGate;
+import '../services/private_data_service.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 // ── Brand tokens ──────────────────────────────────────────────────────────────
 const _kPurple      = Color(0xFF6366F1);
@@ -108,9 +110,31 @@ class _OtpScreenState extends State<OtpScreen> {
       final isNew = cred.additionalUserInfo?.isNewUser ?? false;
 
       if (isNew) {
+        // v12.7.0 — Legacy user guard. Firebase gave us a NEW uid, but the
+        // phone may already belong to a legacy Firestore user doc whose
+        // Auth account hasn't been backfilled yet (e.g. Sigalit — was an
+        // email/password user). Block the new signup and direct the user
+        // to support. An admin must run `backfillPhonesToAuth` so Firebase
+        // routes future phone logins to the correct legacy uid.
+        try {
+          final lookup = await FirebaseFunctions.instance
+              .httpsCallable('lookupLegacyUidByPhone')
+              .call({'phone': user.phoneNumber ?? widget.phoneDisplay});
+          final data = Map<String, dynamic>.from(lookup.data as Map);
+          final foundUid = data['uid'] as String?;
+          if (data['found'] == true && foundUid != null && foundUid != user.uid) {
+            // Tear down the empty new Auth account we just created.
+            try { await user.delete(); } catch (_) {}
+            try { await FirebaseAuth.instance.signOut(); } catch (_) {}
+            if (mounted) {
+              await _showLegacyAccountDialog();
+            }
+            return;
+          }
+        } catch (e) {
+          debugPrint('[OTP] Legacy lookup failed (continuing): $e');
+        }
         // First time — show role selection.
-        // _RoleSelectionSheet calls pushAndRemoveUntil(OnboardingGate) on success,
-        // so no navigation needed here after the sheet closes.
         if (mounted) await _showRoleSelection(user);
       } else {
         // Existing user — navigate directly to OnboardingGate and remove all
@@ -441,6 +465,33 @@ class _OtpScreenState extends State<OtpScreen> {
       ),
     );
   }
+
+  // v12.7.0: Legacy account conflict dialog — shown when the phone is
+  // already bound to a legacy user doc under a different Firebase Auth uid.
+  Future<void> _showLegacyAccountDialog() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('נמצא חשבון קיים'),
+        content: const Text(
+          'למספר הטלפון הזה כבר יש חשבון במערכת שנוצר דרך מייל/סיסמה.\n\n'
+          'כדי לחבר אותו לכניסה בטלפון, יש צורך בפעולה חד-פעמית של המנהל.\n\n'
+          'אנא פנה/י לתמיכה ונחבר את החשבון עבורך.',
+          textAlign: TextAlign.start,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              if (mounted) Navigator.of(context).pop();
+            },
+            child: const Text('הבנתי'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -501,6 +552,13 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
         'createdAt':          FieldValue.serverTimestamp(),
       }, SetOptions(merge: false));
 
+      // PR 2a: mirror contact fields into private/identity
+      await PrivateDataService.writeContactData(
+        uid,
+        phone: widget.phoneNumber,
+        email: widget.user.email,
+      );
+
       // Write activity_log entry for admin Live Feed
       await FirebaseFirestore.instance.collection('activity_log').add({
         'type':      isProvider ? 'expert_application' : 'registration',
@@ -512,6 +570,8 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
         'message':   isProvider
             ? 'בקשת הצטרפות כנותן שירות: $name ($uid)'
             : 'משתמש חדש נרשם: $name ($uid)',
+        'expireAt':  Timestamp.fromDate(
+            DateTime.now().add(const Duration(days: 30))),
       });
 
       if (mounted) {

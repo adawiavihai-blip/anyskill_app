@@ -73,6 +73,7 @@ class _BannerCarouselState extends State<BannerCarousel> {
     _sub = FirebaseFirestore.instance
         .collection('banners')
         .orderBy('order')
+        .limit(50)
         .snapshots()
         .listen(
       (snap) {

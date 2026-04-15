@@ -654,6 +654,8 @@ class _RegistrationFunnelTabState extends State<RegistrationFunnelTab>
         'priority':  'normal',
         'title':     '📲 נשלח ריאנגייג׳מנט ל${lead.name.isNotEmpty ? lead.name : "ליד"}',
         'detail':    'ערוץ: $channel · ${lead.contact}',
+        'expireAt':  Timestamp.fromDate(
+            DateTime.now().add(const Duration(days: 30))),
       },
     );
 

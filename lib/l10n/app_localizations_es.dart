@@ -515,7 +515,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get expertInsufficientBalance => 'Saldo insuficiente';
 
   @override
-  String get expertEscrowSuccess => '¡Pago confirmado! Fondos asegurados en depósito';
+  String get expertEscrowSuccess => 'Pago confirmado y protegido hasta finalizar la transacción';
 
   @override
   String expertTransactionTitle(String name) {

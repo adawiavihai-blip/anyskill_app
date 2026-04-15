@@ -6,7 +6,7 @@ import '../services/volunteer_service.dart';
 import 'category_results_screen.dart';
 import 'expert_profile_screen.dart';
 import 'edit_profile_screen.dart';
-import 'login_screen.dart';
+import 'phone_login_screen.dart';
 import '../utils/safe_image_provider.dart';
 
 class CommunityScreen extends StatefulWidget {
@@ -284,7 +284,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
             onPressed: () {
               Navigator.pop(c);
               Navigator.of(context, rootNavigator: true).pushReplacement(
-                MaterialPageRoute(builder: (_) => const LoginScreen()),
+                MaterialPageRoute(builder: (_) => const PhoneLoginScreen()),
               );
             },
             child: const Text('היכנס'),

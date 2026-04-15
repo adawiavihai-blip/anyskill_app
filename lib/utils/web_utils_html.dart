@@ -35,6 +35,29 @@ void disableBfcache() {
   });
 }
 
+/// Nuclear update: unregister SWs + clear all caches + reload.
+/// Used by the "Update" button — guarantees fresh assets on next load.
+Future<void> forceHardRefresh() async {
+  // 1. Unregister all service workers
+  try {
+    final regs = await html.window.navigator.serviceWorker!.getRegistrations();
+    for (final reg in regs) {
+      await reg.unregister();
+    }
+  } catch (_) {}
+  // 2. Clear ALL Cache Storage
+  try {
+    final keys = await html.window.caches!.keys();
+    for (final key in keys) {
+      await html.window.caches!.delete(key);
+    }
+  } catch (_) {}
+  // 3. Clear nuclear purge key so app_init.js runs the full purge
+  try { html.window.localStorage.remove('anyskill_purged_v'); } catch (_) {}
+  // 4. Hard reload (bypasses HTTP cache on supported browsers)
+  html.window.location.reload();
+}
+
 /// Clears browser caches (IndexedDB + Cache API) to force fresh Firestore
 /// and service-worker data after a version upgrade.
 /// Returns a Future that completes when cleanup is done (best-effort).

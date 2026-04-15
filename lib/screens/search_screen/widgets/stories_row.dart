@@ -1024,6 +1024,8 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen>
         'priority':     'normal',
         'title':        '❤️ לייק לסטורי של ${widget.providerName}',
         'detail':       '',
+        'expireAt':     Timestamp.fromDate(
+            DateTime.now().add(const Duration(days: 30))),
       }));
     } catch (_) {
       // Rollback optimistic update on failure
@@ -1721,6 +1723,8 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
         'priority':    'normal',
         'title':       '📱 סטורי חדש: $name',
         'detail':      'שירות: $serviceType',
+        'expireAt':    Timestamp.fromDate(
+            DateTime.now().add(const Duration(days: 30))),
       }));
 
       // ── Only NOW show success (server confirmed) ────────────────────────

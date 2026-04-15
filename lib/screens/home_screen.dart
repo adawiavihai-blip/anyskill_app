@@ -17,6 +17,7 @@ import 'my_bookings_screen.dart';
 import 'opportunities_screen.dart';
 import 'my_requests_screen.dart';
 import '../services/location_service.dart';
+import '../services/view_mode_service.dart';
 import '../services/ai_analysis_service.dart';
 import '../services/matchmaker_service.dart';
 import '../services/job_broadcast_service.dart';
@@ -39,7 +40,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int    _selectedIndex   = 0;
-  double _tabFadeOpacity  = 1.0;   // drives fade-in animation on tab switch
   final User? currentUser = FirebaseAuth.instance.currentUser;
 
   /// One navigator key per tab slot (max 8 tabs: 5 common + opp + admin + system).
@@ -62,6 +62,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _bookingsCustBadge   = 0;  // jobs needing customer approval (expert_completed)
   int _bookingsExpertBadge = 0;  // jobs needing expert to finish (paid_escrow)
   int _opportunitiesBadge  = 0;  // new job_requests in provider's category
+  int _chatUnreadBadge     = 0;  // total unread messages across all chats
   int get _bookingsBadge => _bookingsCustBadge + _bookingsExpertBadge;
 
   // ── Bookings badge "seen" logic ───────────────────────────────────────────
@@ -81,18 +82,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   StreamSubscription<QuerySnapshot>? _bookingsCustSub;
   StreamSubscription<QuerySnapshot>? _bookingsExpertSub;
   StreamSubscription<QuerySnapshot>? _opportunitiesSub;
+  Timer? _chatBadgeTimer;
+  final GlobalKey<dynamic> _chatListKey = GlobalKey();
 
   String    _oppServiceType = '';   // cached to detect serviceType changes
   Timestamp? _oppLastViewed;        // users/{uid}.lastViewedOpportunitiesAt
 
   // Streams מאוחסנים ב-initState — מניעת subscribe/unsubscribe מחדש בכל rebuild
   late final Stream<DocumentSnapshot> _userStream;
-  late final Stream<QuerySnapshot> _chatStream;
+
+  // v12.6.0: Rebuild tabs when the provider toggles customer-view mode.
+  void _onViewModeChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    ViewModeService.instance.addListener(_onViewModeChanged);
     _setOnlineStatus(true);
     // Offline detection — shows/hides banner in real time
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
@@ -116,15 +124,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final flag = data['isAdmin'] == true;
       if (flag != _isAdmin && mounted) setState(() => _isAdmin = flag);
     });
-    _chatStream = FirebaseFirestore.instance
-        .collection('chats')
-        .where('users', arrayContains: uid)
-        .limit(50)       // 🔒 cap: prevents unbounded read for power users
-        .snapshots();
-    // Handle notification tap: switch to the tab indicated by main.dart
+    // v9.6.3: Chat badge uses periodic get() instead of a snapshot listener.
+    // This eliminates one of the 12+ concurrent Firestore listeners that were
+    // overloading the AsyncQueue on Web and causing INTERNAL ASSERTION FAILED.
+    // The chat_list_screen has its own stream for real-time display — we don't
+    // need a second listener just for the badge number.
+    if (uid != null) {
+      _pollChatBadge(uid);
+      _chatBadgeTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+        _pollChatBadge(uid);
+      });
+    }
+    // Handle notification tap: switch to the tab AND deep-link to content
     final pendingTab = PendingNotification.tabIndex;
+    final pendingChatRoomId = PendingNotification.chatRoomId;
     if (pendingTab != null) {
       _selectedIndex = pendingTab;
+
+      // Deep-link to specific chat room if available
+      if (pendingChatRoomId != null && pendingChatRoomId.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          // Extract the other user's ID from the chatRoomId (format: uid1_uid2)
+          final parts = pendingChatRoomId.split('_');
+          final otherUid = parts.firstWhere(
+            (p) => p != uid,
+            orElse: () => parts.isNotEmpty ? parts.first : '',
+          );
+          if (otherUid.isNotEmpty) {
+            Navigator.push(context, MaterialPageRoute(
+              builder: (_) => ChatScreen(
+                receiverId: otherUid,
+                receiverName: '', // will be loaded from Firestore
+              ),
+            ));
+          }
+        });
+      }
+
       PendingNotification.clear();
     }
 
@@ -152,21 +189,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     _setOnlineStatus(false);
+    LocationService.stopBroadcasting();
     WidgetsBinding.instance.removeObserver(this);
+    ViewModeService.instance.removeListener(_onViewModeChanged);
     _adminFlagSub?.cancel();
     _connectivitySub?.cancel();
     _bookingsCustSub?.cancel();
     _bookingsExpertSub?.cancel();
     _opportunitiesSub?.cancel();
+    _chatBadgeTimer?.cancel();
     super.dispose();
   }
 
   void _setOnlineStatus(bool isOnline, {bool showFeedback = false}) async {
     if (currentUser != null) {
-      await FirebaseFirestore.instance.collection('users').doc(currentUser!.uid).update({
+      final uid = currentUser!.uid;
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
         'isOnline': isOnline,
         'lastSeen': FieldValue.serverTimestamp(),
       }).catchError((e) => debugPrint("Status error: $e"));
+
+      // v9.9.0: Start/stop location broadcasting for map view
+      if (isOnline) {
+        LocationService.startBroadcasting(uid);
+      } else {
+        LocationService.stopBroadcasting();
+      }
 
       if (showFeedback && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -209,7 +257,45 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return StreamBuilder<DocumentSnapshot>(
       stream: _userStream,
       builder: (context, snapshot) {
-        if (snapshot.hasError) return const Scaffold(body: Center(child: Text("שגיאה בטעינת הפרופיל")));
+        if (snapshot.hasError) {
+          debugPrint('[HomeScreen] User stream error: ${snapshot.error}');
+          // v9.4.9: Do NOT auto-signOut on stream error — this caused a
+          // logout loop on iPhone when Firestore returned 500s.
+          // Show a retry screen instead. Only sign out if user taps the button.
+          return Scaffold(
+            backgroundColor: Colors.white,
+            body: Center(child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.wifi_off_rounded, size: 56, color: Color(0xFF6366F1)),
+                const SizedBox(height: 16),
+                const Text('בעיית חיבור', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text('לא הצלחנו לטעון את הפרופיל. בדוק את החיבור לאינטרנט ונסה שוב.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 14, color: Colors.grey[600])),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6366F1),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+                  label: const Text('נסה שוב', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  onPressed: () {
+                    if (mounted) setState(() {}); // trigger StreamBuilder rebuild
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: () => performSignOut(context),
+                  child: const Text('התנתקות', style: TextStyle(color: Color(0xFF6B7280))),
+                ),
+              ]),
+            )),
+          );
+        }
         if (!snapshot.hasData) return const Scaffold(body: Center(child: CircularProgressIndicator()));
 
         var data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
@@ -225,7 +311,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           });
         }
         // Use the freshest value (from data, not the potentially-stale state var)
-        final effectiveAdmin = isAdmin || isAdminFromData;
+        final bool actualIsAdmin = isAdmin || isAdminFromData;
+        // v12.7.0: `effectiveAdmin` is shadowed by the view-mode — set below
+        // after we read `ViewModeService.instance.mode`.
+        bool effectiveAdmin = actualIsAdmin;
 
         bool isBanned = data['isBanned'] ?? false;
         if (isBanned && !effectiveAdmin) return _buildBannedScreen();
@@ -235,7 +324,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         // QA: סידור רשימת הדפים לפי סדר הלשוניות החדש
         void goToSearch() => setState(() => _selectedIndex = 0);
 
-        bool isProvider = data['isProvider'] ?? false;
+        final bool actualIsProvider = data['isProvider'] ?? false;
+        // v12.7.0: tri-state view-mode (enum).
+        //   normal       → full privileges (admin + provider + customer)
+        //   customer     → hide admin + provider tabs (see as customer)
+        //   providerOnly → admin hides admin tabs, keeps provider tabs
+        // `_isAdmin` is shadowed via `effectiveAdmin` below; the local
+        // `isProvider` here is the effective value used by the tab builder
+        // + everything downstream.
+        final viewMode = ViewModeService.instance.mode;
+        final bool inCustomerView = viewMode == ViewMode.customer;
+        final bool inProviderOnly = viewMode == ViewMode.providerOnly;
+        // Apply view-mode overrides:
+        //   customer     → hide BOTH admin + provider tabs
+        //   providerOnly → hide admin tabs, keep provider (admin-only path)
+        //   normal       → no override
+        effectiveAdmin = actualIsAdmin
+            && !inCustomerView
+            && !inProviderOnly;
+        bool isProvider = actualIsProvider && !inCustomerView;
+        // v12.10.0 — Admin "provider preview" mode.
+        // An admin is often `isProvider:false` in Firestore. When they pick
+        // the "נותן שירות" chip, they still need to see the FULL provider
+        // UX (Opportunities tab, provider home, provider bookings, etc.).
+        // Force isProvider=true for admins in providerOnly mode so the tab
+        // builder and every downstream widget renders the provider side.
+        if (actualIsAdmin && inProviderOnly) {
+          isProvider = true;
+        }
         String serviceType = (data['serviceType'] ?? '') as String;
         String userName = (data['name'] ?? '') as String;
 
@@ -307,7 +423,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               onGoToProfile: () => setState(() => _selectedIndex = profileTabPos),
             )),
             _nestedTab(1, MyBookingsScreen(onGoToSearch: goToSearch)),
-            _nestedTab(2, ChatListScreen(onGoToSearch: goToSearch)),
+            _nestedTab(2, ChatListScreen(key: _chatListKey, onGoToSearch: goToSearch)),
             _nestedTab(3, const FinanceScreen()),
             _nestedTab(4, const ProfileScreen()),
           ];
@@ -377,18 +493,74 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       )
                     : null,
               ),
+              // ── View-mode banner (v12.7.0) ───────────────────────────
+              // Shown when the user is browsing in a non-default view mode.
+              // One tap → back to normal (full privileges).
+              if (inCustomerView || inProviderOnly)
+                Material(
+                  color: inProviderOnly
+                      ? const Color(0xFF0EA5E9)   // sky — provider preview
+                      : const Color(0xFF6366F1),  // indigo — customer preview
+                  child: InkWell(
+                    onTap: () {
+                      ViewModeService.instance.setMode(
+                        uid: currentUser?.uid ?? '',
+                        mode: ViewMode.normal,
+                      );
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(actualIsAdmin
+                              ? 'חזרת למצב ניהול'
+                              : 'חזרת למצב נותן שירות'),
+                          duration: const Duration(seconds: 2),
+                          backgroundColor: const Color(0xFF10B981),
+                        ),
+                      );
+                    },
+                    child: SizedBox(
+                      height: 34,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            inProviderOnly
+                                ? Icons.work_outline_rounded
+                                : Icons.visibility_rounded,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            inProviderOnly
+                                ? 'מצב נותן שירות פעיל'
+                                : 'מצב לקוח פעיל',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            actualIsAdmin
+                                ? '· חזור לניהול'
+                                : '· חזור לנותן שירות',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                decoration: TextDecoration.underline),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               // ── Main content ─────────────────────────────────────────
               Expanded(
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 240),
-                  curve: Curves.easeOut,
-                  opacity: _tabFadeOpacity,
-                  child: IndexedStack(index: safeIndex, children: tabs),
-                ),
+                child: IndexedStack(index: safeIndex, children: tabs),
               ),
             ],
           ),
-          bottomNavigationBar: _buildEliteBottomNav(isAdmin, isProvider, serviceType, safeIndex, data),
+          bottomNavigationBar: _buildEliteBottomNav(effectiveAdmin, isProvider, serviceType, safeIndex, data),
           // ── Wolt-style floating "Urgent Search" button ────────────────
           // AnimatedScale + AnimatedOpacity give a smooth shrink-fade when
           // switching tabs. IgnorePointer blocks hit-tests while invisible so
@@ -492,7 +664,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       query = query.where('createdAt', isGreaterThan: lastViewed);
     }
 
-    _opportunitiesSub = query.snapshots().listen((s) {
+    _opportunitiesSub = query.limit(100).snapshots().listen((s) {
       if (mounted) setState(() => _opportunitiesBadge = s.docs.length);
     });
   }
@@ -512,6 +684,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _setupOpportunitiesBadge(_oppServiceType, now);
   }
 
+  /// v9.6.3: Polls chat unread count via one-shot get() instead of a
+  /// persistent snapshot listener. Reduces concurrent listeners from 12 to 11.
+  Future<void> _pollChatBadge(String uid) async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('chats')
+          .where('users', arrayContains: uid)
+          .limit(50)
+          .get();
+      int total = 0;
+      for (final doc in snap.docs) {
+        final d = doc.data();
+        final raw = d['unreadCount_$uid'];
+        if (raw is num) total += raw.toInt();
+      }
+      if (total != _chatUnreadBadge && mounted) {
+        setState(() => _chatUnreadBadge = total);
+      }
+    } catch (e) {
+      debugPrint('[HomeScreen] _pollChatBadge error: $e');
+    }
+  }
+
   Widget _buildEliteBottomNav(
     bool isAdmin,
     bool isProvider,
@@ -519,36 +714,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     int safeIndex,
     Map<String, dynamic> userData,
   ) {
-    // שאילתת chat docs (קטנות) במקום collectionGroup על כל ההודעות
-    return StreamBuilder<QuerySnapshot>(
-      stream: _chatStream,
-      builder: (context, snapshot) {
-        final l10n = AppLocalizations.of(context);
-        int unreadCount = 0;
-        if (snapshot.hasData) {
-          for (final doc in snapshot.data!.docs) {
-            final d = doc.data() as Map<String, dynamic>;
-            unreadCount += ((d['unreadCount_${currentUser?.uid}'] ?? 0) as num).toInt();
-          }
-        }
+    // v9.6.2: Badge computed via _chatUnreadSub (StreamSubscription + setState)
+    // instead of a nested StreamBuilder. Proven pattern — same as bookings badges.
+    final l10n = AppLocalizations.of(context);
+    final unreadCount = _chatUnreadBadge;
 
-        // Tab list positions:
-        //   0=Home, 1=Bookings, 2=Chat, 3=Wallet, 4=Profile(avatar only)
-        //   5=Opp (provider), 6=Admin, 7=System (or 5=Admin,6=System without Opp)
-        final int oppTabPos   = isProvider ? 5 : -1;
-        final int adminTabPos = isProvider ? 6 : 5;
+    // Tab list positions:
+    //   0=Home, 1=Bookings, 2=Chat, 3=Wallet, 4=Profile(avatar only)
+    //   5=Opp (provider), 6=Admin, 7=System (or 5=Admin,6=System without Opp)
+    final int oppTabPos   = isProvider ? 5 : -1;
+    final int adminTabPos = isProvider ? 6 : 5;
         final int sysTabPos   = isProvider ? 7 : 6;
 
         void onNavTap(int pos) {
+          // v9.6.6: Single setState per tap — the old 2-setState fade animation
+          // caused a full StreamBuilder rebuild cascade on every tab switch.
+          // IndexedStack switches instantly; the AnimatedOpacity handles the
+          // visual transition without needing a delayed second setState.
           setState(() {
             _selectedIndex = pos;
             if (pos == 1) _bookingsLastCleared = _bookingsBadge;
-            _tabFadeOpacity = 0.0;
-          });
-          Future.delayed(const Duration(milliseconds: 40), () {
-            if (mounted) setState(() => _tabFadeOpacity = 1.0);
           });
           if (isProvider && pos == oppTabPos) _markOpportunitiesSeen();
+          // v9.6.4: Trigger immediate refresh when switching to Messages tab
+          if (pos == 2) {
+            try {
+              (_chatListKey.currentState as dynamic)?.refresh();
+            } catch (_) {}
+            final uid = currentUser?.uid;
+            if (uid != null) _pollChatBadge(uid);
+          }
         }
 
         final double bottomPad = MediaQuery.of(context).padding.bottom;
@@ -655,8 +850,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           ),
         );
-      },
-    );
   }
 
   /// Single nav item for the custom bottom bar.
@@ -677,10 +870,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     Widget iconWidget = Icon(active ? activeIcon : icon, color: color, size: 24);
     if (badge > 0) {
-      iconWidget = Badge(
-        label: Text(badge.toString()),
-        isLabelVisible: true,
-        child: iconWidget,
+      // Red badge matching the notification bell style
+      iconWidget = Stack(
+        clipBehavior: Clip.none,
+        children: [
+          iconWidget,
+          Positioned(
+            top: -6,
+            right: -8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEF4444),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.white, width: 1.5),
+              ),
+              child: Center(
+                child: Text(
+                  badge > 9 ? '9+' : '$badge',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                    height: 1.1,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       );
     }
     if (tourKey != null && tourTitle != null && tourDesc != null) {

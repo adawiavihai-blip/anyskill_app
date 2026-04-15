@@ -117,18 +117,18 @@ class _SubCategoryScreenState extends State<SubCategoryScreen> {
                     Expanded(
                       child: LayoutBuilder(
                         builder: (context, constraints) {
-                          const cols       = 4;
-                          const spacing    = 6.0;
-                          // Fixed ratio — uniform across all items.
-                          const childRatio = 0.75;
-
+                          // Match the home tab's horizontal sub-cat strip size
+                          // (card ~100 wide, ~126 tall). maxCrossAxisExtent
+                          // caps cell width regardless of screen size so cards
+                          // stay small on tablets too.
+                          const spacing = 10.0;
                           return GridView.builder(
                             gridDelegate:
-                                SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount:   cols,
-                              crossAxisSpacing: spacing,
-                              mainAxisSpacing:  spacing,
-                              childAspectRatio: childRatio,
+                                const SliverGridDelegateWithMaxCrossAxisExtent(
+                              maxCrossAxisExtent: 116,
+                              crossAxisSpacing:   spacing,
+                              mainAxisSpacing:    spacing,
+                              childAspectRatio:   100 / 128,
                             ),
                             itemCount: subs.length,
                             itemBuilder: (context, index) {
@@ -344,8 +344,8 @@ class _SubCategoryCardState extends State<_SubCategoryCard> {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color:      Colors.black,
-                  fontSize:   13,
+                  color:      Color(0xFF111827),
+                  fontSize:   11.5,
                   fontWeight: FontWeight.w600,
                   height:     1.2,
                 ),

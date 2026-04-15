@@ -8,7 +8,6 @@ import '../widgets/banner_carousel.dart';
 import 'withdrawal_modal.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/hint_icon.dart';
-import '../services/stripe_service.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const _kCardStart = Color(0xFF1A0E3C);
@@ -37,11 +36,6 @@ class _FinanceScreenState extends State<FinanceScreen>
   double   _pendingWeekly  = 0;
   double   _finalizedTotal = 0;
   DateTime? _nextPayoutDate;
-
-  // ── Saved payment methods (client only) ──────────────────────────────────
-  List<SavedCard> _savedCards  = [];
-  bool _cardsLoading           = true;
-  bool _didLoadCards           = false;  // guard: load exactly once
 
   @override
   void initState() {
@@ -132,31 +126,6 @@ class _FinanceScreenState extends State<FinanceScreen>
     }
   }
 
-  // ── Client: saved cards ───────────────────────────────────────────────────
-  Future<void> _loadSavedCards() async {
-    if (mounted) setState(() => _cardsLoading = true);
-    final cards = await StripeService.listSavedCards();
-    if (mounted) setState(() { _savedCards = cards; _cardsLoading = false; });
-  }
-
-  Future<void> _addPaymentMethod() async {
-    // Capture messenger before any await to avoid BuildContext-across-async-gap lint.
-    final messenger = ScaffoldMessenger.of(context);
-    final error = await StripeService.addPaymentMethod();
-    if (!mounted) return;
-    if (error == null) {
-      await _loadSavedCards();
-      messenger.showSnackBar(const SnackBar(
-        content: Text('כרטיס נשמר בהצלחה ✓'),
-        backgroundColor: Color(0xFF16A34A),
-      ));
-    } else if (error != 'canceled') {
-      messenger.showSnackBar(
-        SnackBar(content: Text(error), backgroundColor: Colors.red),
-      );
-    }
-  }
-
   // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -226,14 +195,6 @@ class _FinanceScreenState extends State<FinanceScreen>
           final pending = safeDouble('pendingBalance', userData['pendingBalance']);
           final isProvider = userData['isProvider'] == true;
 
-          // Trigger one-time card load when we know the user is a client
-          if (!isProvider && !_didLoadCards &&
-              userSnap.connectionState != ConnectionState.waiting) {
-            _didLoadCards = true;
-            WidgetsBinding.instance
-                .addPostFrameCallback((_) => _loadSavedCards());
-          }
-
           // Kick off balance count-up for providers
           if (isProvider &&
               userSnap.connectionState != ConnectionState.waiting) {
@@ -279,7 +240,7 @@ class _FinanceScreenState extends State<FinanceScreen>
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-                      child: _buildClientPaymentCard(context),
+                      child: _buildPaymentMethodsPlaceholder(),
                     ),
                   ),
                   // ── Internal wallet balance summary ──────────────────
@@ -533,308 +494,77 @@ class _FinanceScreenState extends State<FinanceScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // CLIENT — saved payment methods card
-  // ═══════════════════════════════════════════════════════════════════════════
 
-  Widget _buildClientPaymentCard(BuildContext context) {
+
+
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CLIENT — Payment methods placeholder (Phase 2 — Israeli payment provider)
+  // ═══════════════════════════════════════════════════════════════════════════
+  //
+  // Stripe Connect was removed from the codebase. Saved-card management and
+  // direct card payments will return when the new Israeli payment provider
+  // is integrated. In the meantime, the internal-credits ledger continues to
+  // power booking escrow via EscrowService.payQuote().
+  Widget _buildPaymentMethodsPlaceholder() {
     return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [_kCardStart, _kCardMid, _kCardEnd],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(26),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(
           color: Colors.white.withValues(alpha: 0.18),
           width: 1.5,
         ),
         boxShadow: [
           BoxShadow(
-            color: _kCardEnd.withValues(alpha: 0.50),
-            blurRadius: 36,
-            offset: const Offset(0, 14),
+            color: _kCardEnd.withValues(alpha: 0.40),
+            blurRadius: 28,
+            offset: const Offset(0, 10),
           ),
         ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(26),
-        child: Stack(
-          children: [
-            // Glass orb
-            Positioned(
-              top: -50, right: -40,
-              child: Container(
-                width: 200, height: 200,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(colors: [
-                    Colors.white.withValues(alpha: 0.10),
-                    Colors.transparent,
-                  ]),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  // Header row
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      // Stripe secure badge
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.2)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.lock_rounded,
-                                size: 12, color: Colors.white70),
-                            const SizedBox(width: 5),
-                            Text(
-                              'תשלום מאובטח',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.white.withValues(alpha: 0.80),
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      _buildChipIcon(),
-                    ],
-                  ),
-
-                  const SizedBox(height: 18),
-
-                  // Section title
-                  Text(
-                    'אמצעי תשלום שמורים',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.65),
-                      fontSize: 13,
-                      letterSpacing: 0.4,
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  // Cards list / loading / empty state
-                  if (_cardsLoading)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Center(
-                        child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    )
-                  else if (_savedCards.isEmpty)
-                    _buildNoCardsState()
-                  else
-                    ..._savedCards.map((card) => _buildSavedCardTile(card)),
-
-                  const SizedBox(height: 16),
-
-                  // Add Payment Method button
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        side: BorderSide(
-                            color: Colors.white.withValues(alpha: 0.50),
-                            width: 1.5),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 13),
-                        backgroundColor:
-                            Colors.white.withValues(alpha: 0.10),
-                      ),
-                      icon: const Icon(Icons.add_card_rounded, size: 18),
-                      label: const Text(
-                        'הוסף אמצעי תשלום',
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 13),
-                      ),
-                      onPressed: _addPaymentMethod,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNoCardsState() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 18),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.12),
-          style: BorderStyle.solid,
-        ),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(Icons.credit_card_off_rounded,
-              size: 32, color: Colors.white.withValues(alpha: 0.40)),
-          const SizedBox(height: 8),
-          Text(
-            'לא נמצאו כרטיסים שמורים',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.55),
-              fontSize: 13,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            'הוסף כרטיס לתשלום מהיר בהזמנות הבאות',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.35),
-              fontSize: 11,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSavedCardTile(SavedCard card) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
-      ),
-      child: Row(
-        children: [
-          // Brand badge
           Container(
-            width: 46,
-            height: 30,
-            alignment: Alignment.center,
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: card.brandColor.withValues(alpha: 0.90),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              card.brandDisplayName.length > 4
-                  ? card.brandDisplayName.substring(0, 4)
-                  : card.brandDisplayName,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 9,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.3,
+              color: Colors.white.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.20),
               ),
             ),
-          ),
-          const SizedBox(width: 12),
-          // Card number & expiry
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${card.brandDisplayName} •••• ${card.last4}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'תוקף: ${card.expMonth.toString().padLeft(2, '0')}/${card.expYear}',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.55),
-                    fontSize: 11,
-                  ),
-                ),
-              ],
+            child: const Icon(
+              Icons.construction_rounded,
+              size: 28,
+              color: Colors.white,
             ),
           ),
-          // Remove card button
-          GestureDetector(
-            onTap: () => _confirmRemoveCard(card),
-            child: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.10),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(Icons.close_rounded,
-                  size: 14, color: Colors.white.withValues(alpha: 0.6)),
+          const SizedBox(height: 14),
+          const Text(
+            'אמצעי תשלום בקרוב',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  void _confirmRemoveCard(SavedCard card) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('הסר כרטיס אשראי',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        content: Text('להסיר את הכרטיס ${card.brandDisplayName} •••• ${card.last4}?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('ביטול'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFEF4444),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          const SizedBox(height: 6),
+          Text(
+            'אנו עוברים לספק תשלומים ישראלי. בינתיים, התשלום מתבצע מהארנק הפנימי שלך.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.70),
+              fontSize: 12,
+              height: 1.4,
             ),
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final error = await StripeService.removeCard(card.id);
-              if (!mounted) return;
-              if (error == null) {
-                await _loadSavedCards();
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                  content: Text('הכרטיס הוסר בהצלחה ✓'),
-                  backgroundColor: Color(0xFF16A34A),
-                ));
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  content: Text(error),
-                  backgroundColor: Colors.red,
-                ));
-              }
-            },
-            child: const Text('הסר', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -1154,6 +884,7 @@ class _FinanceScreenState extends State<FinanceScreen>
             Filter('receiverId', isEqualTo: uid),
             Filter('userId',     isEqualTo: uid),
           ))
+          .limit(200)
           .snapshots(),
       builder: (context, snap) {
         final l10n = AppLocalizations.of(context);

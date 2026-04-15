@@ -1,2 +1,24 @@
+# Dependencies
 node_modules/
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
 *.local
+service-account.json
+functions/service-account.json
+
+# Build artifacts
+lib/
+build/
+
+# Logs
+*.log
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# OS
+.DS_Store
+Thumbs.db

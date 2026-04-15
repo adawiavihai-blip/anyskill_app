@@ -94,6 +94,7 @@ class _AdminBannersTabState extends State<AdminBannersTab>
       stream: FirebaseFirestore.instance
           .collection('banners')
           .orderBy('order')
+          .limit(50)
           .snapshots(),
       builder: (context, snap) {
         if (snap.hasError) {

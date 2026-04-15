@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,6 +8,7 @@ import 'chat_screen.dart';
 import 'support_center_screen.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/skeleton_loader.dart';
+import '../services/chat_service.dart';
 
 class ChatListScreen extends StatefulWidget {
   final VoidCallback? onGoToSearch;
@@ -19,6 +21,62 @@ class ChatListScreen extends StatefulWidget {
 class _ChatListScreenState extends State<ChatListScreen> {
   final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? "";
   String _searchQuery = "";
+
+  // v9.6.4: Replaced snapshot stream with periodic polling (get()) to eliminate
+  // concurrent Firestore listeners that caused INTERNAL ASSERTION FAILED on Web.
+  List<QueryDocumentSnapshot> _chatDocs = [];
+  bool _isLoading = true;
+  bool _hasError = false;
+  Timer? _pollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchChats();
+    // Poll every 10 seconds for new messages
+    _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) => _fetchChats());
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Manual refresh — called on pull-to-refresh and when tab becomes visible.
+  Future<void> _fetchChats() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('chats')
+          .where('users', arrayContains: currentUserId)
+          .limit(50)
+          .get();
+      if (!mounted) return;
+      final docs = snap.docs.toList();
+      // Sort by lastMessageTime descending (null = bottom)
+      docs.sort((a, b) {
+        final aData = a.data();
+        final bData = b.data();
+        final aTime = aData['lastMessageTime'] as Timestamp?;
+        final bTime = bData['lastMessageTime'] as Timestamp?;
+        return (bTime ?? Timestamp(0, 0)).compareTo(aTime ?? Timestamp(0, 0));
+      });
+      setState(() {
+        _chatDocs = docs;
+        _isLoading = false;
+        _hasError = false;
+      });
+      _primeUserCache(docs);
+    } catch (e) {
+      debugPrint('[ChatList] _fetchChats error: $e');
+      if (mounted && _chatDocs.isEmpty) {
+        setState(() { _isLoading = false; _hasError = true; });
+      }
+    }
+  }
+
+  /// Public method so parent (HomeScreen) can trigger refresh on tab switch.
+  void refresh() => _fetchChats();
 
   // ── User profile cache — avoids per-item Firestore reads on every rebuild ──
   final Map<String, Map<String, dynamic>> _userCache = {};
@@ -61,6 +119,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
+  /// v9.5.10: Mark all chats as read via CF — NEVER write to parent chat docs
+  /// from the client (causes AsyncQueue deadlock with active listeners).
   Future<void> _markAllAsRead() async {
     try {
       final chats = await FirebaseFirestore.instance
@@ -71,14 +131,18 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
       if (chats.docs.isEmpty) return;
 
-      final batch = FirebaseFirestore.instance.batch();
+      // Call the CF for each chat that has unread messages.
+      // The CF resets unreadCount on the server side (no client write to parent doc).
+      final futures = <Future>[];
       for (final doc in chats.docs) {
         final data = doc.data();
         if ((data['unreadCount_$currentUserId'] ?? 0) > 0) {
-          batch.update(doc.reference, {'unreadCount_$currentUserId': 0});
+          futures.add(
+            ChatService.markMessagesAsRead(doc.id, currentUserId),
+          );
         }
       }
-      await batch.commit();
+      await Future.wait(futures);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -163,98 +227,71 @@ class _ChatListScreenState extends State<ChatListScreen> {
         children: [
           _buildSearchBar(),
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('chats')
-                  .where('users', arrayContains: currentUserId)
-                  .limit(50)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                if (snapshot.hasError) {
-                  return Center(child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.wifi_off_rounded, size: 48, color: Colors.grey[400]),
-                      const SizedBox(height: 12),
-                      Text('שגיאה בטעינת הצ\'אטים', style: TextStyle(color: Colors.grey[600])),
-                    ],
-                  ));
-                }
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return _buildEmptyState();
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _hasError
+                    ? Center(child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.wifi_off_rounded, size: 48, color: Colors.grey[400]),
+                          const SizedBox(height: 12),
+                          Text('שגיאה בטעינת הצ\'אטים', style: TextStyle(color: Colors.grey[600])),
+                          const SizedBox(height: 12),
+                          TextButton(onPressed: _fetchChats, child: const Text('נסה שוב')),
+                        ],
+                      ))
+                    : _chatDocs.isEmpty
+                        ? _buildEmptyState()
+                        : RefreshIndicator(
+                            onRefresh: _fetchChats,
+                            child: ListView.separated(
+                              itemCount: _chatDocs.length + 1,
+                              padding: const EdgeInsets.only(bottom: 20),
+                              separatorBuilder: (_, __) => Divider(
+                                height: 1, thickness: 0.5,
+                                indent: 90, endIndent: 16,
+                                color: Colors.grey.shade100,
+                              ),
+                              itemBuilder: (context, index) {
+                                // Index 0 = pinned Support entry
+                                if (index == 0) {
+                                  return ListTile(
+                                    leading: const CircleAvatar(
+                                      backgroundColor: Color(0xFF6366F1),
+                                      child: Icon(Icons.support_agent_rounded,
+                                          color: Colors.white, size: 22),
+                                    ),
+                                    title: const Text('תמיכה',
+                                        style: TextStyle(fontWeight: FontWeight.bold)),
+                                    subtitle: const Text('צריך עזרה? דבר עם הצוות שלנו',
+                                        style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8))),
+                                    trailing: const Icon(Icons.arrow_forward_ios_rounded,
+                                        size: 14, color: Color(0xFF94A3B8)),
+                                    onTap: () => Navigator.push(context,
+                                      MaterialPageRoute(builder: (_) => const SupportCenterScreen())),
+                                  );
+                                }
+                                final chatDoc  = _chatDocs[index - 1];
+                                final chatData = chatDoc.data() as Map<String, dynamic>? ?? {};
+                                final users    = chatData['users'] as List? ?? [];
+                                final otherUserId = users.firstWhere(
+                                    (id) => id != currentUserId, orElse: () => '') as String;
 
-                var chats = snapshot.data!.docs;
+                                if (otherUserId.isEmpty) return const SizedBox.shrink();
 
-                // מיון בטוח - מונע קריסה אם חסר זמן
-                chats.sort((a, b) {
-                  var aData = a.data() as Map<String, dynamic>? ?? {};
-                  var bData = b.data() as Map<String, dynamic>? ?? {};
-                  var aTime = aData['lastMessageTime'] as Timestamp?;
-                  var bTime = bData['lastMessageTime'] as Timestamp?;
-                  return (bTime ?? Timestamp.now()).compareTo(aTime ?? Timestamp.now());
-                });
+                                final userData = _userCache[otherUserId];
+                                if (userData == null) return const _ChatTileSkeleton();
 
-                // Prime the cache for all chat partners before building.
-                // Runs once per stream update; subsequent builds hit the cache.
-                _primeUserCache(chats);
+                                final otherName = (userData['name'] ?? '') as String;
+                                if (_searchQuery.isNotEmpty &&
+                                    !otherName.toLowerCase().contains(_searchQuery)) {
+                                  return const SizedBox.shrink();
+                                }
 
-                // +1 for the pinned Support entry at index 0
-                return ListView.separated(
-                  itemCount: chats.length + 1,
-                  padding: const EdgeInsets.only(bottom: 20),
-                  separatorBuilder: (_, __) => Divider(
-                    height: 1,
-                    thickness: 0.5,
-                    indent: 90,    // starts after the avatar
-                    endIndent: 16,
-                    color: Colors.grey.shade100,
-                  ),
-                  itemBuilder: (context, index) {
-                    // Index 0 = pinned Support entry
-                    if (index == 0) {
-                      return ListTile(
-                        leading: const CircleAvatar(
-                          backgroundColor: Color(0xFF6366F1),
-                          child: Icon(Icons.support_agent_rounded,
-                              color: Colors.white, size: 22),
-                        ),
-                        title: const Text('תמיכה',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: const Text('צריך עזרה? דבר עם הצוות שלנו',
-                            style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8))),
-                        trailing: const Icon(Icons.arrow_forward_ios_rounded,
-                            size: 14, color: Color(0xFF94A3B8)),
-                        onTap: () => Navigator.push(context,
-                          MaterialPageRoute(builder: (_) => const SupportCenterScreen())),
-                      );
-                    }
-                    final chatDoc  = chats[index - 1]; // offset by 1 for support entry
-                    final chatData = chatDoc.data() as Map<String, dynamic>? ?? {};
-                    final users    = chatData['users'] as List? ?? [];
-                    final otherUserId = users.firstWhere(
-                        (id) => id != currentUserId, orElse: () => '') as String;
-
-                    if (otherUserId.isEmpty) return const SizedBox.shrink();
-
-                    // ── Synchronous cache hit — no Future, no spinner ──────
-                    final userData = _userCache[otherUserId];
-                    if (userData == null) {
-                      // Cache miss: show placeholder while first fetch completes
-                      return const _ChatTileSkeleton();
-                    }
-
-                    // ── Search filter (only applied once data is in cache) ──
-                    final otherName = (userData['name'] ?? '') as String;
-                    if (_searchQuery.isNotEmpty &&
-                        !otherName.toLowerCase().contains(_searchQuery)) {
-                      return const SizedBox.shrink();
-                    }
-
-                    return _buildChatTile(userData, chatData, chatDoc.id, otherUserId);
-                  },
-                );
-              },
-            ),
+                                return _buildChatTile(userData, chatData, chatDoc.id, otherUserId);
+                              },
+                            ),
+                          ),
           ),
         ],
       ),
@@ -297,7 +334,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
       unreadCount = 0;
     }
 
-    bool isTyping = chatData['typing_$otherId'] ?? false;
+    // v9.6.0: Typing indicators moved to subcollection in v9.5.5.
+    // The parent doc no longer has typing_ fields. Typing is only shown
+    // inside ChatScreen via the subcollection listener.
     // Cached image — used as the first-frame fallback before the stream fires.
     final String cachedImg = userData['profileImage'] as String? ?? '';
     final String name      = userData['name']         as String? ?? '';
@@ -349,12 +388,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   ),
                   const SizedBox(height: 5),
                   Text(
-                    isTyping ? "מקליד..." : lastMsg,
+                    lastMsg,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: isTyping ? Colors.green : (unreadCount > 0 ? Colors.black : Colors.grey[600]),
-                      fontWeight: (unreadCount > 0 || isTyping) ? FontWeight.bold : FontWeight.normal,
+                      color: unreadCount > 0 ? Colors.black : Colors.grey[600],
+                      fontWeight: unreadCount > 0 ? FontWeight.bold : FontWeight.normal,
                     ),
                   ),
                 ],
@@ -521,16 +560,14 @@ class _PulsingUnreadBadgeState extends State<_PulsingUnreadBadge>
   }
 }
 
-// ── Live avatar for chat list tiles ──────────────────────────────────────────
-//
-// Uses ClipOval + CachedNetworkImage (widget, not provider) because
-// CircleAvatar.backgroundImage with CachedNetworkImageProvider silently fails
-// on Flutter Web due to the dart:html rendering path.  The widget path goes
-// through the browser's <img> element which handles CORS correctly.
+// ── Static avatar for chat list tiles (v9.6.4) ─────────────────────────────
+// v9.6.4: Replaced StreamBuilder per-tile with static cached data.
+// Each _LiveAvatar was an individual Firestore snapshot listener — with 20 chats
+// that's 20 extra listeners causing AsyncQueue overload. Now uses _userCache data.
 class _LiveAvatar extends StatelessWidget {
   final String userId;
-  final String fallbackImg;       // from _userCache — shown on first frame
-  final String fallbackName;      // used for initial letter
+  final String fallbackImg;
+  final String fallbackName;
   final bool   isOnlineFallback;
 
   const _LiveAvatar({
@@ -542,62 +579,36 @@ class _LiveAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .snapshots(),
-      builder: (context, snap) {
-        final d        = snap.data?.data() as Map<String, dynamic>? ?? {};
-        // Prefer live Firestore value; fall back to cache on first frame
-        final liveImg  = (d['profileImage'] as String?)?.trim() ?? '';
-        final photo    = liveImg.isNotEmpty ? liveImg : fallbackImg.trim();
-        final isOnline = d.isNotEmpty
-            ? (d['isOnline'] == true)
-            : isOnlineFallback;
-        final initial  = fallbackName.isNotEmpty
-            ? fallbackName[0].toUpperCase()
-            : '?';
+    final photo   = fallbackImg.trim();
+    final initial = fallbackName.isNotEmpty ? fallbackName[0].toUpperCase() : '?';
 
-        return Stack(
-          children: [
-            // Avatar: ClipOval + CachedNetworkImage renders correctly on web
-            SizedBox(
-              width:  60,
-              height: 60,
-              child: ClipOval(
-                child: photo.isNotEmpty
-                    ? CachedNetworkImage(
-                        imageUrl:    photo,
-                        width:       60,
-                        height:      60,
-                        fit:         BoxFit.cover,
-                        fadeInDuration: const Duration(milliseconds: 200),
-                        placeholder: (_, __) => _InitialFill(initial: initial),
-                        errorWidget: (_, __, ___) =>
-                            _InitialFill(initial: initial),
-                      )
-                    : _InitialFill(initial: initial),
+    return Stack(
+      children: [
+        SizedBox(
+          width: 60, height: 60,
+          child: ClipOval(
+            child: photo.isNotEmpty
+                ? CachedNetworkImage(
+                    imageUrl: photo, width: 60, height: 60, fit: BoxFit.cover,
+                    fadeInDuration: const Duration(milliseconds: 200),
+                    placeholder: (_, __) => _InitialFill(initial: initial),
+                    errorWidget: (_, __, ___) => _InitialFill(initial: initial),
+                  )
+                : _InitialFill(initial: initial),
+          ),
+        ),
+        if (isOnlineFallback)
+          Positioned(
+            right: 0, bottom: 0,
+            child: Container(
+              width: 14, height: 14,
+              decoration: BoxDecoration(
+                color: Colors.green, shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
               ),
             ),
-            // Online dot
-            if (isOnline)
-              Positioned(
-                right:  0,
-                bottom: 0,
-                child: Container(
-                  width:  14,
-                  height: 14,
-                  decoration: BoxDecoration(
-                    color:  Colors.green,
-                    shape:  BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 2),
-                  ),
-                ),
-              ),
-          ],
-        );
-      },
+          ),
+      ],
     );
   }
 }

@@ -21,19 +21,33 @@ import '../models/pricing_model.dart';
 import '../widgets/xp_progress_bar.dart';
 import '../utils/safe_image_provider.dart';
 import '../constants.dart' show appVersion;
+import '../widgets/price_list_widget.dart';
+import '../widgets/category_specs_widget.dart';
+import '../features/pet_stay/models/dog_profile.dart';
+import '../features/pet_stay/models/pet_stay.dart';
+import '../features/pet_stay/models/schedule_item.dart';
+import '../features/pet_stay/services/pet_stay_service.dart';
+import '../features/pet_stay/services/schedule_generator.dart';
+import '../features/pet_stay/widgets/dog_picker_section.dart';
 
 // Brand tokens
 const _kPurple     = Color(0xFF6366F1);
 const _kPurpleSoft = Color(0xFFF0F0FF);
-const _kGold       = Color(0xFFFBBF24);
 
 
 class ExpertProfileScreen extends StatefulWidget {
   final String expertId;
   final String expertName;
+  /// v10.5.0: When provided, the profile shows identity-specific rating,
+  /// reviewsCount, and reviews from this listing only.
+  final String? listingId;
 
-  const ExpertProfileScreen(
-      {super.key, required this.expertId, required this.expertName});
+  const ExpertProfileScreen({
+    super.key,
+    required this.expertId,
+    required this.expertName,
+    this.listingId,
+  });
 
   @override
   State<ExpertProfileScreen> createState() => _ExpertProfileScreenState();
@@ -62,6 +76,25 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   Set<String> _bookedSlots = {};
   bool _loadingSlots = false;
 
+  /// v2 service schema for the expert's category. Loaded once when the profile
+  /// resolves. Used by the booking sheet to render booking requirements + show
+  /// deposit / surcharge information.
+  ServiceSchema _serviceSchema = ServiceSchema.empty();
+  String _lastSchemaCategory = '';
+
+  /// Customer-supplied answers to [ServiceSchema.bookingRequirements].
+  /// Persisted to `jobs/{id}.bookingRequirementValues` on payment.
+  final Map<String, dynamic> _bookingReqValues = {};
+
+  /// Pet Stay Tracker (v13.0.0) — selected dog for pet-services bookings.
+  /// Required when `_serviceSchema.walkTracking || dailyProof`.
+  /// Snapshot is written to `jobs/{id}/petStay/data` inside the payment tx.
+  DogProfile? _selectedDog;
+
+  /// End date for multi-night boarding (pension). Defaults to start+1 at
+  /// booking time. Irrelevant for dog-walker (single session).
+  DateTime? _petStayEndDate;
+
   final List<String> _timeSlots = [
     "08:00", "09:00", "10:00", "11:00",
     "14:00", "15:00", "16:00", "17:00", "18:00", "19:00",
@@ -71,6 +104,66 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   void initState() {
     super.initState();
     initializeDateFormatting('he_IL', null);
+  }
+
+  /// v10.5.0: Loads user doc + merges listing-specific fields when listingId
+  /// is provided. This ensures rating/reviewsCount/aboutMe/gallery reflect
+  /// the specific professional identity, not the global user aggregate.
+  Future<Map<String, dynamic>> _loadProfileData() async {
+    final userData = await CacheService.getDoc(
+      'users', widget.expertId,
+      ttl: CacheService.kExpertProfile,
+      forceRefresh: true,
+    );
+
+    // If no listingId, return user data as-is (backward compat)
+    if (widget.listingId == null) return userData;
+
+    // Merge listing-specific fields over the user doc
+    try {
+      final listingSnap = await FirebaseFirestore.instance
+          .collection('provider_listings')
+          .doc(widget.listingId)
+          .get();
+      if (listingSnap.exists) {
+        final listing = listingSnap.data() ?? {};
+        // Override identity-specific fields from listing
+        if (listing['rating'] != null) userData['rating'] = listing['rating'];
+        if (listing['reviewsCount'] != null) userData['reviewsCount'] = listing['reviewsCount'];
+        if (listing['aboutMe'] != null && (listing['aboutMe'] as String).isNotEmpty) {
+          userData['aboutMe'] = listing['aboutMe'];
+        }
+        if (listing['gallery'] != null) userData['gallery'] = listing['gallery'];
+        if (listing['pricePerHour'] != null) userData['pricePerHour'] = listing['pricePerHour'];
+        if (listing['serviceType'] != null) userData['serviceType'] = listing['serviceType'];
+        if (listing['quickTags'] != null) userData['quickTags'] = listing['quickTags'];
+        if (listing['categoryDetails'] != null) userData['categoryDetails'] = listing['categoryDetails'];
+        if (listing['priceList'] != null) userData['priceList'] = listing['priceList'];
+        if (listing['cancellationPolicy'] != null) userData['cancellationPolicy'] = listing['cancellationPolicy'];
+      }
+    } catch (e) {
+      debugPrint('[ExpertProfile] Listing merge error: $e');
+    }
+
+    // Load v2 schema for the expert's most-specific category. Stored on
+    // state so the booking sheet can render booking requirements + show
+    // deposit / surcharge banners. Cached by category name to avoid refetching.
+    final categoryName = (userData['serviceType'] as String? ?? '').trim();
+    if (categoryName.isNotEmpty && categoryName != _lastSchemaCategory) {
+      try {
+        final schema = await loadServiceSchemaFor(categoryName);
+        if (mounted) {
+          setState(() {
+            _serviceSchema = schema;
+            _lastSchemaCategory = categoryName;
+          });
+        }
+      } catch (e) {
+        debugPrint('[ExpertProfile] Schema load error: $e');
+      }
+    }
+
+    return userData;
   }
 
   @override
@@ -221,6 +314,12 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       double commission = 0;
       double expertNetEarnings = 0;
 
+      // Pet Stay Tracker — captured inside the tx, written via WriteBatch
+      // AFTER the tx commits to avoid hitting Firestore's 500-op cap on
+      // long pension stays (180 days × 5 items/day = 900 items > limit).
+      String? petStayJobId;
+      List<ScheduleItem> petStayScheduleItems = const [];
+
       await firestore.runTransaction((tx) async {
         // READ: admin fee settings (inside transaction = atomic)
         final adminSnap = await tx.get(adminSettingsRef);
@@ -234,7 +333,27 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         final customerSnap = await tx.get(customerRef);
         final Map<String, dynamic> customerData = customerSnap.data() ?? {};
         final double currentBalance = (customerData['balance'] ?? 0.0).toDouble();
-        if (currentBalance < totalPrice) throw msgInsufficientBalance;
+
+        // ── DEPOSIT-ONLY ESCROW MODE (v12.1.0) ──────────────────────────
+        // When the schema defines a depositPercent > 0, the customer pays
+        // ONLY that fraction at booking. The remainder is collected at
+        // completion (BookingActions.markCompleted reads `remainingAmount`
+        // and debits the customer at that point).
+        //
+        // Schemas without a deposit (most cases) keep the legacy behaviour:
+        // paidAtBooking == totalPrice, remainingAmount == 0.
+        final double depositAmount = _serviceSchema.depositPercent > 0
+            ? double.parse(
+                (totalPrice * _serviceSchema.depositPercent / 100)
+                    .toStringAsFixed(2))
+            : 0.0;
+        final double paidAtBooking =
+            depositAmount > 0 ? depositAmount : totalPrice;
+        final double remainingAmount = double.parse(
+            (totalPrice - paidAtBooking).toStringAsFixed(2));
+
+        // The customer only needs enough balance to cover the deposit.
+        if (currentBalance < paidAtBooking) throw msgInsufficientBalance;
 
         // READ: slot collision check (inside transaction = atomic)
         if (slotRef != null) {
@@ -254,7 +373,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
           'customerName':        customerData['name'] ?? '',
           'expertId':            widget.expertId,
           'expertName':          widget.expertName,
-          'totalPaidByCustomer': totalPrice,
+          'totalPaidByCustomer': paidAtBooking,
           'totalAmount':         totalPrice,
           'commissionAmount':    commission,
           'netAmountForExpert':  expertNetEarnings,
@@ -265,10 +384,73 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
           'cancellationPolicy':  cancellationPolicy,
           if (cancelDeadline != null)
             'cancellationDeadline': Timestamp.fromDate(cancelDeadline),
+          // ── v2 schema additions ────────────────────────────────────────
+          if (_bookingReqValues.isNotEmpty)
+            'bookingRequirementValues': Map<String, dynamic>.from(_bookingReqValues),
+          if (depositAmount > 0) ...{
+            'depositAmount':    depositAmount,
+            'depositPercent':   _serviceSchema.depositPercent,
+            'paidAtBooking':    paidAtBooking,
+            'remainingAmount':  remainingAmount,
+            'depositPaidAt':    FieldValue.serverTimestamp(),
+          },
+          // Cached schema flags so the order card can branch without
+          // re-fetching the category doc on every render.
+          'expertServiceType': _lastSchemaCategory,
+          if (_serviceSchema.walkTracking) 'flagWalkTracking': true,
+          if (_serviceSchema.dailyProof) 'flagDailyProof': true,
+          if (_serviceSchema.priceLocked) 'flagPriceLocked': true,
+          if (_serviceSchema.requireVisualDiagnosis)
+            'flagRequireVisualDiagnosis': true,
         });
 
-        // WRITE: deduct customer balance
-        tx.update(customerRef, {'balance': FieldValue.increment(-totalPrice)});
+        // WRITE: PetStay snapshot + schedule (Pet Stay Tracker v13.0.0).
+        // Frozen copy of the dog profile + auto-generated daily checklist.
+        // Same transaction = job + petStay + schedule items are atomic.
+        if ((_serviceSchema.walkTracking || _serviceSchema.dailyProof) &&
+            _selectedDog != null &&
+            _selectedDay != null) {
+          final isPension = _serviceSchema.dailyProof;
+          final isDogWalker =
+              _serviceSchema.walkTracking && !_serviceSchema.dailyProof;
+          final endDate = isPension
+              ? (_petStayEndDate ??
+                  _selectedDay!.add(const Duration(days: 1)))
+              : _selectedDay!;
+          final petStay = PetStay.initial(
+            dog: _selectedDog!,
+            customerId: currentUserId,
+            expertId: widget.expertId,
+            startDate: _selectedDay!,
+            endDate: endDate,
+            isPension: isPension,
+            isDogWalker: isDogWalker,
+          );
+          PetStayService.instance.writeInitialSnapshotInTransaction(
+            tx: tx,
+            jobId: jobRef.id,
+            snapshot: petStay,
+          );
+
+          // Schedule items — only generated for pension (multi-day).
+          // Dog-walker skips this since the walk session IS the activity.
+          // CAPTURE to outer scope — written via WriteBatch AFTER the tx
+          // to avoid Firestore's 500-op transaction limit on long stays.
+          petStayJobId = jobRef.id;
+          petStayScheduleItems = ScheduleGenerator.generate(
+            dog: _selectedDog!,
+            startDate: _selectedDay!,
+            endDate: endDate,
+            customerId: currentUserId,
+            expertId: widget.expertId,
+            isPension: isPension,
+          );
+        }
+
+        // WRITE: deduct customer balance — ONLY the deposit (or full price
+        // when no deposit is configured).
+        tx.update(customerRef,
+            {'balance': FieldValue.increment(-paidAtBooking)});
 
         // WRITE: platform commission
         tx.set(firestore.collection('platform_earnings').doc(), {
@@ -282,12 +464,30 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         // WRITE: wallet transaction log
         tx.set(firestore.collection('transactions').doc(), {
           'userId':    currentUserId,
-          'amount':    -totalPrice,
-          'title':     msgTransactionTitle,
+          'amount':    -paidAtBooking,
+          'title':     depositAmount > 0
+              ? '$msgTransactionTitle (פיקדון)'
+              : msgTransactionTitle,
           'timestamp': FieldValue.serverTimestamp(),
           'status':    'escrow',
         });
       });
+
+      // Pet Stay schedule items — written via WriteBatch AFTER the main
+      // booking transaction commits. Graceful degradation: any failure
+      // here is logged but does NOT roll back the paid booking. Provider
+      // will see an empty checklist (dog card still renders) and admin
+      // can regenerate if needed.
+      if (petStayJobId != null && petStayScheduleItems.isNotEmpty) {
+        try {
+          await PetStayService.instance.writeScheduleItemsBatched(
+            jobId: petStayJobId!,
+            items: petStayScheduleItems,
+          );
+        } catch (e) {
+          debugPrint('[PetStay] schedule batch write failed: $e');
+        }
+      }
 
       // System chat message (non-critical; after transaction)
       await _sendSystemNotification(
@@ -354,33 +554,156 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     }
   }
 
-  // ── Demo booking: fake success + admin demand signal ──────────────────────
-  // No real Firestore writes (no job doc, no wallet deduction).
-  // Logs the demand event so the admin Live Feed picks it up, then returns
-  // true — the caller's StatefulBuilder switches to the shared success view.
+  // ── Demo booking: fake success + admin notification + audit trail ────────
+  //
+  // No real Firestore booking writes (no job doc, no wallet deduction, no
+  // bookingSlot reservation). Instead:
+  //   1. Read the customer's profile (name + image + phone) for the admin
+  //      notification card.
+  //   2. Create a `demo_bookings` doc — visible in the AdminDemoExpertsTab
+  //      "Bookings" sub-tab.
+  //   3. Log a demand signal to `activity_log` (admin Live Feed — existing).
+  //   4. Notify EVERY admin user via in-app notification + (best-effort) FCM.
+  //   5. Notify the CUSTOMER so they see the friendly "we'll update you"
+  //      message in their notifications screen too.
+  //
+  // Returns true on success — the caller's StatefulBuilder then renders the
+  // demo-aware success view (with the softer "we'll update you" wording).
+  // All steps are wrapped in try/catch so a failed notification or audit
+  // write never blocks the customer's UX.
   Future<bool> _handleDemoBooking(BuildContext context) async {
-    // 1. Log demand signal to activity_log (admin Live Feed)
+    final db = FirebaseFirestore.instance;
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+
+    // ── 1. Read customer profile (best-effort) ───────────────────────────
+    String customerName = 'לקוח';
+    String customerImage = '';
+    String customerPhone = '';
     try {
-      await FirebaseFirestore.instance.collection('activity_log').add({
-        'type':       'demo_booking_attempt',
-        'expertId':   widget.expertId,
-        'expertName': widget.expertName,
-        'userId':     uid,
-        // 'createdAt' is the field the LiveActivityTab stream orders by.
-        // Using 'timestamp' here would silently exclude this doc from results.
-        'createdAt':  FieldValue.serverTimestamp(),
-        'priority':   'high',
-        // 'title' and 'detail' are the fields the live feed card reads.
-        'title':      '🔥 ביקשה הזמנה ממומחה דמו',
-        'detail':     '${widget.expertName} — לחץ להמרה למומחה אמיתי',
+      final customerDoc = await db.collection('users').doc(uid).get();
+      final cd = customerDoc.data() ?? {};
+      customerName = cd['name'] as String? ?? 'לקוח';
+      customerImage = cd['profileImage'] as String? ?? '';
+      customerPhone = cd['phone'] as String? ?? '';
+    } catch (_) {}
+
+    // ── 2. Format the requested slot for the admin (if any) ──────────────
+    final dateStr = _selectedDay != null
+        ? '${_selectedDay!.day.toString().padLeft(2, '0')}/'
+            '${_selectedDay!.month.toString().padLeft(2, '0')}/'
+            '${_selectedDay!.year}'
+        : '';
+    final timeStr = _selectedTimeSlot ?? '';
+
+    // ── 3. Compute the price the customer would have paid ───────────────
+    double totalAmount = 0;
+    try {
+      final demoData = await db.collection('users').doc(widget.expertId).get();
+      final dd = demoData.data() ?? {};
+      totalAmount = (dd['pricePerHour'] as num? ?? 150).toDouble();
+    } catch (_) {}
+
+    // ── 4. Get demo expert category for the admin context ───────────────
+    String demoCategory = '';
+    try {
+      final demoDoc = await db.collection('users').doc(widget.expertId).get();
+      final dd = demoDoc.data() ?? {};
+      final parent = dd['parentCategory'] as String? ?? '';
+      final sub = dd['subCategoryName'] as String? ?? '';
+      demoCategory = parent.isNotEmpty && sub.isNotEmpty
+          ? '$parent › $sub'
+          : (parent.isNotEmpty
+              ? parent
+              : (dd['serviceType'] as String? ?? ''));
+    } catch (_) {}
+
+    // ── 5. Write the demo_bookings doc — admin-visible record ────────────
+    try {
+      await db.collection('demo_bookings').add({
+        'customerId': uid,
+        'customerName': customerName,
+        'customerImage': customerImage,
+        'customerPhone': customerPhone,
+        'demoExpertId': widget.expertId,
+        'demoExpertName': widget.expertName,
+        'demoExpertCategory': demoCategory,
+        'selectedDate': dateStr,
+        'selectedTime': timeStr,
+        'totalAmount': totalAmount,
+        'status': 'pending', // 'pending' | 'contacted'
+        'createdAt': FieldValue.serverTimestamp(),
       });
-    } catch (_) {
-      // Non-blocking — if logging fails the UX is unaffected
+    } catch (e) {
+      debugPrint('[demo_booking] Failed to write demo_bookings: $e');
     }
 
+    // ── 6. Log to activity_log (existing admin Live Feed) ────────────────
+    try {
+      await db.collection('activity_log').add({
+        'type': 'demo_booking_attempt',
+        'expertId': widget.expertId,
+        'expertName': widget.expertName,
+        'userId': uid,
+        'createdAt': FieldValue.serverTimestamp(),
+        'priority': 'high',
+        'title': '🔥 לקוח ניסה להזמין מומחה דמו',
+        'detail':
+            '$customerName רוצה להזמין את ${widget.expertName} ($demoCategory)',
+        'expireAt': Timestamp.fromDate(
+            DateTime.now().add(const Duration(days: 30))),
+      });
+    } catch (_) {}
+
+    // ── 7. Notify EVERY admin in the system ─────────────────────────────
+    // Reads all users with isAdmin == true and writes one notification doc
+    // per admin. This is the cheapest path that doesn't require a Cloud
+    // Function (1-3 admin users in practice).
+    try {
+      final adminsSnap = await db
+          .collection('users')
+          .where('isAdmin', isEqualTo: true)
+          .limit(10)
+          .get();
+      final batch = db.batch();
+      for (final adminDoc in adminsSnap.docs) {
+        final adminId = adminDoc.id;
+        final notifRef = db.collection('notifications').doc();
+        batch.set(notifRef, {
+          'userId': adminId,
+          'type': 'demo_booking_attempt',
+          'title': '🔥 ניסיון הזמנה לפרופיל דמו',
+          'body':
+              '$customerName רוצה להזמין את ${widget.expertName}${dateStr.isNotEmpty ? " ל-$dateStr $timeStr" : ""}',
+          'isRead': false,
+          'priority': 'high',
+          'data': {
+            'demoExpertId': widget.expertId,
+            'customerId': uid,
+            'customerPhone': customerPhone,
+          },
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+      if (adminsSnap.docs.isNotEmpty) await batch.commit();
+    } catch (e) {
+      debugPrint('[demo_booking] Failed to notify admins: $e');
+    }
+
+    // ── 8. Notify the CUSTOMER (matches the friendly success message) ────
+    try {
+      await db.collection('notifications').add({
+        'userId': uid,
+        'type': 'demo_booking_received',
+        'title': '⏳ הזמנתך התקבלה',
+        'body':
+            'הזמנת את ${widget.expertName}. אנחנו מעדכנים אותך כשנותן השירות פנוי.',
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {}
+
     // The caller's StatefulBuilder switches to the shared success view.
-    // No navigator.pop() here — decoupled completely from this Future chain.
+    // No navigator.pop() here — decoupled from this Future chain.
     return true;
   }
 
@@ -953,244 +1276,629 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // UI: Reviews — Advanced Social Proof System
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ── Reviews: Airbnb-style state ─────────────────────────────────────────
+  String _reviewSearchQuery = '';
+  bool _reviewsExpanded = false;
+  static const int _reviewsPageSize = 6;
+  static const _kGold = Color(0xFFD4AF37);
+
   Widget _buildReviewsSection(AppLocalizations l10n) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final isProvider = currentUid == widget.expertId;
 
-    return FutureBuilder<QuerySnapshot>(
-      key: ValueKey('reviews_$_refreshTrigger'),
-      future: FirebaseFirestore.instance
+    Query<Map<String, dynamic>> reviewsQuery;
+    if (widget.listingId != null) {
+      reviewsQuery = FirebaseFirestore.instance
+          .collection('reviews')
+          .where('listingId', isEqualTo: widget.listingId)
+          .limit(100);
+    } else {
+      reviewsQuery = FirebaseFirestore.instance
           .collection('reviews')
           .where('expertId', isEqualTo: widget.expertId)
-          .limit(40)
-          .get(),
-      builder: (context, snapshot) {
-        // Show spinner while Firestore is loading
-        if (snapshot.connectionState == ConnectionState.waiting) {
+          .limit(100);
+    }
+
+    // Volunteer reviews stream: completed community_requests for this expert
+    final volunteerStream = FirebaseFirestore.instance
+        .collection('community_requests')
+        .where('volunteerId', isEqualTo: widget.expertId)
+        .where('status', isEqualTo: 'completed')
+        .limit(50)
+        .snapshots();
+
+    return StreamBuilder<QuerySnapshot>(
+      key: ValueKey('reviews_$_refreshTrigger'),
+      stream: reviewsQuery.snapshots(),
+      builder: (context, reviewSnap) {
+        return StreamBuilder<QuerySnapshot>(
+          stream: volunteerStream,
+          builder: (context, volSnap) {
+        if (reviewSnap.hasError && volSnap.hasError) return const SizedBox.shrink();
+        if (!reviewSnap.hasData && !volSnap.hasData) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 32),
             child: Center(child: CircularProgressIndicator()),
           );
         }
 
-        final allDocs = snapshot.data?.docs ?? [];
-        // Filter: show review if isPublished == true OR field is absent (legacy)
-        final publishedDocs = allDocs.where((doc) {
-          final d = doc.data() as Map<String, dynamic>? ?? {};
-          final published = d['isPublished'];
-          return published == null || published == true;
-        }).toList();
-        // Sort client-side by timestamp desc (avoids composite index)
-        publishedDocs.sort((a, b) {
-          final aData = a.data() as Map<String, dynamic>? ?? {};
-          final bData = b.data() as Map<String, dynamic>? ?? {};
-          final aTs = (aData['timestamp'] ?? aData['createdAt']) as Timestamp?;
-          final bTs = (bData['timestamp'] ?? bData['createdAt']) as Timestamp?;
+        // ── Build unified review items list ──────────────────────────────
+        // Each item is a Map with a `_isVolunteer` flag for styling.
+        final items = <Map<String, dynamic>>[];
+
+        // Paid reviews
+        if (reviewSnap.hasData) {
+          for (final doc in reviewSnap.data!.docs) {
+            final d = doc.data() as Map<String, dynamic>? ?? {};
+            final published = d['isPublished'];
+            if (published != null && published != true) continue;
+            items.add({
+              ...d,
+              '_docId': doc.id,
+              '_isVolunteer': false,
+            });
+          }
+        }
+
+        // Volunteer reviews (from community_requests)
+        if (volSnap.hasData) {
+          for (final doc in volSnap.data!.docs) {
+            final d = doc.data() as Map<String, dynamic>? ?? {};
+            final review = d['volunteerReview'] as String? ?? '';
+            if (review.isEmpty) continue; // no review text = skip
+            final photoUrl = d['completionPhotoUrl'] as String? ?? '';
+            items.add({
+              'reviewerName': d['requesterName'] as String? ?? 'אנונימי',
+              'reviewerId': d['requesterId'] as String?,
+              'reviewerImage': d['requesterImage'] as String?,
+              'comment': review,
+              'rating': 5.0, // volunteer = 5-star by definition
+              'timestamp': d['completedAt'],
+              'createdAt': d['completedAt'],
+              'providerResponse': null,
+              'reviewPhotos': photoUrl.isNotEmpty ? [photoUrl] : null,
+              'thankYouNote': d['thankYouNote'] as String?,
+              '_docId': doc.id,
+              '_isVolunteer': true,
+            });
+          }
+        }
+
+        // Sort all items by timestamp descending
+        items.sort((a, b) {
+          final aTs = (a['timestamp'] ?? a['createdAt']) as Timestamp?;
+          final bTs = (b['timestamp'] ?? b['createdAt']) as Timestamp?;
           if (aTs == null || bTs == null) return 0;
           return bTs.compareTo(aTs);
         });
-        final docs = publishedDocs;
+
+        // ── Compute aggregate ratings from ratingParams ──────────────────
+        double avgOverall = 0, avgProfessional = 0, avgTiming = 0, avgComm = 0;
+        int paramCount = 0;
+        for (final item in items) {
+          final params = item['ratingParams'] as Map<String, dynamic>?;
+          if (params != null && params.isNotEmpty) {
+            avgProfessional += (params['professional'] as num? ?? 0).toDouble();
+            avgTiming       += (params['timing'] as num? ?? 0).toDouble();
+            avgComm         += (params['communication'] as num? ?? 0).toDouble();
+            paramCount++;
+          }
+          avgOverall += (item['rating'] as num? ?? item['overallRating'] as num? ?? 0).toDouble();
+        }
+        final total = items.length;
+        if (total > 0) avgOverall /= total;
+        if (paramCount > 0) {
+          avgProfessional /= paramCount;
+          avgTiming       /= paramCount;
+          avgComm         /= paramCount;
+        }
+
+        // ── Search filter ─────────────────────────────────────────────────
+        final filtered = _reviewSearchQuery.isEmpty
+            ? items
+            : items.where((item) {
+                final comment = (item['comment'] ?? item['publicComment'] ?? '').toString().toLowerCase();
+                final name = (item['reviewerName'] ?? '').toString().toLowerCase();
+                final response = (item['providerResponse'] ?? '').toString().toLowerCase();
+                final thankYou = (item['thankYouNote'] ?? '').toString().toLowerCase();
+                final q = _reviewSearchQuery.toLowerCase();
+                return comment.contains(q) || name.contains(q) ||
+                       response.contains(q) || thankYou.contains(q);
+              }).toList();
+
+        // ── Pagination ────────────────────────────────────────────────────
+        final visible = _reviewsExpanded
+            ? filtered
+            : filtered.take(_reviewsPageSize).toList();
+        final hasMore = filtered.length > _reviewsPageSize && !_reviewsExpanded;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            // ── Header ────────────────────────────────────────────────────────
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                if (docs.isNotEmpty)
+            // ══════════════════════════════════════════════════════════════
+            // TRUST HEADER
+            // ══════════════════════════════════════════════════════════════
+            if (total > 0) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
                   Text(
-                    '(${docs.length})',
+                    '$total ביקורות',
                     style: const TextStyle(
-                        color: Color(0xFF9CA3AF),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500),
+                      fontSize: 14, color: Color(0xFF6B7280)),
                   ),
-                const Text(
-                  'ביקורות',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Text(
+                        avgOverall.toStringAsFixed(2),
+                        style: const TextStyle(
+                          fontSize: 36,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF1A1A2E),
+                          height: 1,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.star_rounded, color: _kGold, size: 28),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
 
-            // ── Empty state ───────────────────────────────────────────────────
-            if (docs.isEmpty)
+              if (paramCount > 0) ...[
+                _ratingBar('מקצועיות', avgProfessional),
+                const SizedBox(height: 8),
+                _ratingBar('עמידה בזמנים', avgTiming),
+                const SizedBox(height: 8),
+                _ratingBar('תקשורת', avgComm),
+                const SizedBox(height: 16),
+              ],
+
+              Container(
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF4F7F9),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: TextField(
+                  textAlign: TextAlign.start,
+                  style: const TextStyle(fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: 'חפש בביקורות...',
+                    hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
+                    prefixIcon: Icon(Icons.search_rounded,
+                        size: 18, color: Colors.grey[400]),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                  onChanged: (v) => setState(() {
+                    _reviewSearchQuery = v;
+                    _reviewsExpanded = false;
+                  }),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ] else ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const SizedBox(),
+                  const Text('ביקורות',
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              const SizedBox(height: 4),
+            ],
+
+            // ══════════════════════════════════════════════════════════════
+            // EMPTY / CARDS / SHOW ALL
+            // ══════════════════════════════════════════════════════════════
+            if (filtered.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 24),
                 child: Center(
-                  child: Text(l10n.expertNoReviews,
-                      style: const TextStyle(
-                          color: Color(0xFF9CA3AF), fontSize: 14)),
+                  child: Text(
+                    _reviewSearchQuery.isNotEmpty
+                        ? 'לא נמצאו ביקורות עבור "$_reviewSearchQuery"'
+                        : l10n.expertNoReviews,
+                    style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
+                  ),
                 ),
               )
-            else
-              // ── Flat Airbnb-style review list ─────────────────────────────
-              ...List.generate(docs.length, (idx) {
-                final doc      = docs[idx];
-                final r        = doc.data() as Map<String, dynamic>;
-                final rating   = (r['rating'] as num? ?? 5).toDouble();
-                final name     = r['reviewerName'] as String?
-                    ?? l10n.expertDefaultReviewer;
-                final comment  = (r['comment'] ?? '').toString().trim();
-                final ts       = r['timestamp'] as Timestamp?;
-                final date     = ts != null
-                    ? DateFormat('dd/MM/yy').format(ts.toDate())
-                    : '';
-                final response = r['providerResponse'] as String?;
+            else ...[
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final useGrid = constraints.maxWidth >= 560;
 
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    // ── Row: avatar + name / stars + date ──────────────────
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Left: indigo stars + date
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: List.generate(5, (i) => Icon(
-                                  i < rating
-                                      ? Icons.star_rounded
-                                      : Icons.star_border_rounded,
-                                  color: _kPurple,
-                                  size: 14,
-                                )),
-                              ),
-                              if (date.isNotEmpty) ...[
-                                const SizedBox(height: 4),
-                                Text(date,
-                                    style: const TextStyle(
-                                        color: Color(0xFF9CA3AF),
-                                        fontSize: 11)),
-                              ],
-                            ],
-                          ),
-                          // Right: grey initial avatar + name + verified badge
-                          Row(
-                            children: [
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text(name,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 13,
-                                          color: Colors.black87)),
-                                  const SizedBox(height: 2),
-                                  Row(
-                                    children: [
-                                      const Icon(Icons.verified_rounded,
-                                          color: Colors.green, size: 10),
-                                      const SizedBox(width: 2),
-                                      Text(l10n.expertVerifiedBooking,
-                                          style: TextStyle(
-                                              color: Colors.green[700],
-                                              fontSize: 10)),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(width: 10),
-                              CircleAvatar(
-                                radius: 20,
-                                backgroundColor: const Color(0xFFE5E7EB),
-                                child: Text(
-                                  name.isNotEmpty
-                                      ? name[0].toUpperCase()
-                                      : '?',
-                                  style: const TextStyle(
-                                      fontSize: 14,
-                                      color: Color(0xFF374151),
-                                      fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // ── Comment ─────────────────────────────────────────────
-                    if (comment.isNotEmpty) ...[
-                      Text(comment,
-                          textAlign: TextAlign.right,
-                          style: TextStyle(
-                              fontSize: 13.5,
-                              height: 1.55,
-                              color: Colors.grey[700])),
-                      const SizedBox(height: 10),
-                    ],
-
-                    // ── Provider response ────────────────────────────────────
-                    if (response != null && response.isNotEmpty) ...[
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: _kPurpleSoft,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                              color: _kPurple.withValues(alpha: 0.15)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
+                  if (useGrid) {
+                    final rows = <Widget>[];
+                    for (int i = 0; i < visible.length; i += 2) {
+                      rows.add(IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Icon(Icons.verified_user_rounded,
-                                    color: _kPurple, size: 14),
-                                Text(l10n.expertProviderResponse,
-                                    style: const TextStyle(
-                                        color: _kPurple,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700)),
-                              ],
-                            ),
-                            const SizedBox(height: 5),
-                            Text(response,
-                                textAlign: TextAlign.right,
-                                style: TextStyle(
-                                    fontSize: 12.5,
-                                    height: 1.5,
-                                    color: Colors.grey[700])),
+                            Expanded(child: _buildReviewCardFromMap(
+                              visible[i], l10n, isProvider)),
+                            const SizedBox(width: 12),
+                            if (i + 1 < visible.length)
+                              Expanded(child: _buildReviewCardFromMap(
+                                visible[i + 1], l10n, isProvider))
+                            else
+                              const Expanded(child: SizedBox()),
                           ],
                         ),
-                      ),
-                      const SizedBox(height: 10),
-                    ] else if (isProvider) ...[
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton.icon(
-                          style: TextButton.styleFrom(
-                              foregroundColor: _kPurple,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 2)),
-                          icon: const Icon(Icons.reply_rounded, size: 15),
-                          label: Text(l10n.expertAddReply,
-                              style: const TextStyle(fontSize: 12)),
-                          onPressed: () =>
-                              _showProviderReplyDialog(context, doc.id),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                    ],
+                      ));
+                      if (i + 2 < visible.length) {
+                        rows.add(const SizedBox(height: 12));
+                      }
+                    }
+                    return Column(children: rows);
+                  }
 
-                    // ── 1px separator ────────────────────────────────────────
-                    const Divider(height: 1, thickness: 1,
-                        color: Color(0xFFF3F4F6)),
-                  ],
-                );
-              }),
+                  return Column(
+                    children: visible.map((item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _buildReviewCardFromMap(item, l10n, isProvider),
+                    )).toList(),
+                  );
+                },
+              ),
+
+              if (hasMore)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton(
+                      onPressed: () => setState(() => _reviewsExpanded = true),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF1A1A2E),
+                        side: const BorderSide(color: Color(0xFF1A1A2E)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: Text(
+                        'הצג את כל ${filtered.length} הביקורות',
+                        style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ],
+        );
+          },
         );
       },
     );
+  }
+
+  // ── Rating progress bar (Airbnb-style) ──────────────────────────────────
+  Widget _ratingBar(String label, double value) {
+    final fraction = (value / 5.0).clamp(0.0, 1.0);
+    return Row(
+      children: [
+        Text(value.toStringAsFixed(1),
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                color: Color(0xFF1A1A2E))),
+        const SizedBox(width: 8),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: fraction,
+              minHeight: 6,
+              backgroundColor: const Color(0xFFE5E7EB),
+              valueColor: const AlwaysStoppedAnimation<Color>(_kGold),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 80,
+          child: Text(label,
+              textAlign: TextAlign.end,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+        ),
+      ],
+    );
+  }
+
+  // ── Single review card (Airbnb-style, volunteer-aware) ────────────────
+  Widget _buildReviewCardFromMap(
+    Map<String, dynamic> r,
+    AppLocalizations l10n,
+    bool isProvider,
+  ) {
+    final isVolunteer = r['_isVolunteer'] as bool? ?? false;
+    final docId      = r['_docId'] as String? ?? '';
+    final rating     = (r['rating'] as num? ?? r['overallRating'] as num? ?? 5).toDouble();
+    final name       = r['reviewerName'] as String? ?? l10n.expertDefaultReviewer;
+    final comment    = (r['comment'] ?? r['publicComment'] ?? '').toString().trim();
+    final ts         = (r['timestamp'] ?? r['createdAt']) as Timestamp?;
+    final date       = ts != null ? DateFormat('MMM yyyy').format(ts.toDate()) : '';
+    final response   = r['providerResponse'] as String?;
+    final reviewerImage = r['reviewerImage'] as String?;
+    final reviewerId = r['reviewerId'] as String?;
+    final thankYou   = r['thankYouNote'] as String?;
+    final photos = (r['reviewPhotos'] as List<dynamic>?)
+        ?.map((e) => e.toString())
+        .where((url) => url.isNotEmpty)
+        .toList();
+
+    final imgProvider = safeImageProvider(reviewerImage);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        // Volunteer cards get a light gold tint background
+        color: isVolunteer
+            ? const Color(0xFFFFFBEB) // warm gold tint
+            : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isVolunteer
+              ? _kGold.withValues(alpha: 0.3)
+              : const Color(0xFFF3F4F6),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ── Volunteer badge (if applicable) ──────────────────────────
+          if (isVolunteer) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFD4AF37), Color(0xFFB8860B)],
+                ),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.favorite_rounded, color: Colors.white, size: 11),
+                  SizedBox(width: 3),
+                  Text(
+                    'התנדבות בקהילה',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+
+          // ── Reviewer header ──────────────────────────────────────────
+          Row(
+            children: [
+              // Left: stars + date
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: List.generate(5, (i) => Icon(
+                      i < rating.round()
+                          ? Icons.star_rounded
+                          : Icons.star_border_rounded,
+                      color: _kGold,
+                      size: 14,
+                    )),
+                  ),
+                  if (date.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(date,
+                        style: const TextStyle(
+                            color: Color(0xFF9CA3AF), fontSize: 11)),
+                  ],
+                ],
+              ),
+              const Spacer(),
+              // Right: name (+ gold heart for volunteers) + avatar
+              if (isVolunteer)
+                const Padding(
+                  padding: EdgeInsetsDirectional.only(end: 4),
+                  child: Icon(Icons.favorite_rounded, color: _kGold, size: 14),
+                ),
+              Text(name,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                      color: Color(0xFF1A1A2E))),
+              const SizedBox(width: 8),
+              imgProvider != null
+                  ? CircleAvatar(
+                      radius: 18,
+                      backgroundColor: const Color(0xFFE5E7EB),
+                      backgroundImage: imgProvider,
+                    )
+                  : (reviewerId != null && reviewerId.isNotEmpty)
+                      ? FutureBuilder<DocumentSnapshot>(
+                          future: FirebaseFirestore.instance
+                              .collection('users')
+                              .doc(reviewerId)
+                              .get(),
+                          builder: (_, snap) {
+                            if (snap.hasData && snap.data!.exists) {
+                              final userData = snap.data!.data()
+                                  as Map<String, dynamic>? ?? {};
+                              final fetchedImg = safeImageProvider(
+                                  userData['profileImage'] as String?);
+                              if (fetchedImg != null) {
+                                return CircleAvatar(
+                                  radius: 18,
+                                  backgroundColor: const Color(0xFFE5E7EB),
+                                  backgroundImage: fetchedImg,
+                                );
+                              }
+                            }
+                            return _initialsAvatar(name);
+                          },
+                        )
+                      : _initialsAvatar(name),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          // ── Comment body ─────────────────────────────────────────────
+          if (comment.isNotEmpty)
+            Text(comment,
+                textAlign: TextAlign.start,
+                style: TextStyle(
+                    fontSize: 13.5, height: 1.55, color: Colors.grey[700])),
+
+          // ── Thank-you note (volunteer reviews) ───────────────────────
+          if (isVolunteer && thankYou != null && thankYou.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: _kGold.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.format_quote_rounded, size: 14, color: _kGold),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(thankYou,
+                        textAlign: TextAlign.start,
+                        style: TextStyle(
+                            fontSize: 12.5, height: 1.4,
+                            fontStyle: FontStyle.italic,
+                            color: Colors.grey[700])),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // ── Review photos gallery ────────────────────────────────────
+          if (photos != null && photos.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 72,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: photos.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (ctx, i) => GestureDetector(
+                  onTap: () => _showPhotoViewer(ctx, photos, i),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.network(
+                      photos[i],
+                      width: 72,
+                      height: 72,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        width: 72, height: 72,
+                        color: const Color(0xFFE5E7EB),
+                        child: const Icon(Icons.broken_image_rounded,
+                            color: Color(0xFF9CA3AF), size: 20),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+
+          // ── Provider response (paid reviews only) ────────────────────
+          if (!isVolunteer && response != null && response.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF9FAFB),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Text(l10n.expertProviderResponse,
+                          style: const TextStyle(
+                              color: Color(0xFF374151),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700)),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.subdirectory_arrow_left_rounded,
+                          size: 14, color: Color(0xFF9CA3AF)),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(response,
+                      textAlign: TextAlign.start,
+                      style: TextStyle(
+                          fontSize: 12.5, height: 1.5, color: Colors.grey[600])),
+                ],
+              ),
+            ),
+          ] else if (!isVolunteer && isProvider && docId.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: TextButton.icon(
+                style: TextButton.styleFrom(
+                    foregroundColor: _kPurple,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 2)),
+                icon: const Icon(Icons.reply_rounded, size: 15),
+                label: Text(l10n.expertAddReply,
+                    style: const TextStyle(fontSize: 12)),
+                onPressed: () =>
+                    _showProviderReplyDialog(context, docId),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Initials-only fallback avatar for reviewers without a profile image.
+  Widget _initialsAvatar(String name) {
+    return CircleAvatar(
+      radius: 18,
+      backgroundColor: const Color(0xFFE5E7EB),
+      child: Text(
+        name.isNotEmpty ? name[0].toUpperCase() : '?',
+        style: const TextStyle(
+            fontSize: 13,
+            color: Color(0xFF374151),
+            fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  /// Full-screen photo viewer overlay for review photos.
+  void _showPhotoViewer(BuildContext context, List<String> photos, int initial) {
+    Navigator.of(context).push(PageRouteBuilder(
+      opaque: false,
+      barrierColor: Colors.black87,
+      pageBuilder: (_, __, ___) => _ReviewPhotoViewer(
+        photos: photos,
+        initialIndex: initial,
+      ),
+    ));
   }
 
   // ── Provider reply bottom sheet ───────────────────────────────────────────
@@ -1486,6 +2194,63 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     bool sheetBusy  = false;
     bool isSuccess  = false;
 
+    // Local copy of customer answers for booking requirements. Mutated by
+    // BookingRequirementsForm; mirrored to _bookingReqValues on payment.
+    final reqValues = Map<String, dynamic>.from(_bookingReqValues);
+
+    // Pet Stay Tracker (v13.0.0): require a dog profile when the active
+    // service has walk tracking or daily proof. Picker is rendered inline
+    // in the sheet; payment button stays disabled until a dog is chosen.
+    final bool isPetStayBooking =
+        _serviceSchema.walkTracking || _serviceSchema.dailyProof;
+    final bool isPensionBooking = _serviceSchema.dailyProof;
+    DogProfile? selectedDog = _selectedDog;
+
+    // End-date for pension — default to start+1. Re-read from state each
+    // build so "edit" flows don't forget.
+    DateTime? petStayEnd = _petStayEndDate ??
+        (isPensionBooking && _selectedDay != null
+            ? _selectedDay!.add(const Duration(days: 1))
+            : null);
+
+    // Number of nights (pension only). Mirrors petStayEnd - selectedDay.
+    int nights = (isPensionBooking &&
+            _selectedDay != null &&
+            petStayEnd != null)
+        ? petStayEnd.difference(_selectedDay!).inDays.clamp(1, 30)
+        : 1;
+
+    // Effective total price. For pension: per-night × nights. Else: as-is.
+    double effectivePrice() =>
+        (isPensionBooking ? price * nights : price).toDouble();
+
+    // Returns true when every `required` booking requirement has a non-empty value.
+    // Boarding (pension) skips validation — the form is hidden entirely.
+    bool requirementsSatisfied() {
+      if (isPensionBooking) return true;
+      for (final r in _serviceSchema.bookingRequirements) {
+        if (!r.required) continue;
+        final v = reqValues[r.id];
+        if (v == null) return false;
+        if (v is String && v.trim().isEmpty) return false;
+        if (v is num && v == 0) return false;
+      }
+      return true;
+    }
+
+    bool endDateOk() {
+      if (!isPensionBooking) return true;
+      if (_selectedDay == null || petStayEnd == null) return false;
+      return !petStayEnd!.isBefore(_selectedDay!);
+    }
+
+    // Combined gate: requirements satisfied + (if pet stay) dog selected
+    // + (if pension) valid end-date.
+    bool canConfirm() =>
+        requirementsSatisfied() &&
+        (!isPetStayBooking || selectedDog != null) &&
+        endDateOk();
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1496,19 +2261,26 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         builder: (sheetCtx, setSheetState) {
           // ── Success view ──────────────────────────────────────────────────
           if (isSuccess) {
-            return _buildBookingSuccessView(sheetCtx, l10n);
+            return _buildBookingSuccessView(sheetCtx, l10n, isDemo: isDemo);
           }
 
           // ── Booking summary form ──────────────────────────────────────────
+          final bottomInset = MediaQuery.of(sheetCtx).viewInsets.bottom;
+          final screenH = MediaQuery.of(sheetCtx).size.height;
           return AbsorbPointer(
           absorbing: sheetBusy,
           child: Container(
+        constraints: BoxConstraints(
+          maxHeight: screenH * 0.92,
+        ),
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
-        child: Column(
+        padding: EdgeInsets.fromLTRB(24, 16, 24, 24 + bottomInset),
+        child: SingleChildScrollView(
+          physics: const ClampingScrollPhysics(),
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
@@ -1572,13 +2344,215 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                       ),
                   _summaryRow(l10n.expertSummaryRowProtection, l10n.expertSummaryRowIncluded,
                       isGreen: true),
+                  // ── Price Locked badge (home-services schemas) ────────────
+                  if (_serviceSchema.priceLocked)
+                    _summaryRow(
+                      '🔒 מחיר נעול',
+                      'מובטח אחרי אישור התמונות',
+                      isGreen: true,
+                    ),
+                  // ── Deposit notice (high-ticket services) ─────────────────
+                  if (_serviceSchema.depositPercent > 0)
+                    _summaryRow(
+                      'פיקדון מקדים',
+                      '₪${(price * _serviceSchema.depositPercent / 100).toStringAsFixed(0)} '
+                          '(${_serviceSchema.depositPercent.toStringAsFixed(0)}%)',
+                    ),
+                  if (isPensionBooking) ...[
+                    _summaryRow('לילות', '$nights × ₪${price.toStringAsFixed(0)}'),
+                  ],
                   const Divider(height: 16),
                   _summaryRow(l10n.expertSummaryRowTotal,
-                      "₪${price.toStringAsFixed(0)}",
+                      "₪${effectivePrice().toStringAsFixed(0)}",
                       isBold: true),
                 ],
               ),
             ),
+            // ── Pet Stay Tracker — nights stepper + end-date (pension only) ─
+            if (isPensionBooking) ...[
+              const SizedBox(height: 16),
+              // Nights counter — primary control. Adjusts petStayEnd
+              // automatically. Range 1-30 nights.
+              Container(
+                padding: const EdgeInsetsDirectional.fromSTEB(14, 10, 14, 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEEF2FF),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.nights_stay_rounded,
+                          color: Color(0xFF6366F1), size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Text(
+                        'מספר לילות',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                          color: Color(0xFF1A1A2E),
+                        ),
+                      ),
+                    ),
+                    _NightStepperButton(
+                      icon: Icons.remove_rounded,
+                      onTap: nights > 1 && _selectedDay != null
+                          ? () {
+                              setSheetState(() {
+                                nights -= 1;
+                                petStayEnd = _selectedDay!
+                                    .add(Duration(days: nights));
+                                _petStayEndDate = petStayEnd;
+                              });
+                            }
+                          : null,
+                    ),
+                    Container(
+                      width: 44,
+                      alignment: Alignment.center,
+                      child: Text(
+                        '$nights',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF1A1A2E),
+                        ),
+                      ),
+                    ),
+                    _NightStepperButton(
+                      icon: Icons.add_rounded,
+                      onTap: nights < 30 && _selectedDay != null
+                          ? () {
+                              setSheetState(() {
+                                nights += 1;
+                                petStayEnd = _selectedDay!
+                                    .add(Duration(days: nights));
+                                _petStayEndDate = petStayEnd;
+                              });
+                            }
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () async {
+                  final firstAllowed =
+                      _selectedDay ?? DateTime.now();
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate:
+                        petStayEnd ?? firstAllowed.add(const Duration(days: 1)),
+                    firstDate: firstAllowed,
+                    lastDate:
+                        firstAllowed.add(const Duration(days: 180)),
+                  );
+                  if (picked != null) {
+                    setSheetState(() {
+                      petStayEnd = picked;
+                      _petStayEndDate = picked;
+                      nights = picked
+                          .difference(_selectedDay ?? picked)
+                          .inDays
+                          .clamp(1, 30);
+                    });
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsetsDirectional.fromSTEB(
+                      14, 12, 14, 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: endDateOk()
+                          ? const Color(0xFFE5E7EB)
+                          : const Color(0xFFEF4444),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEEF2FF),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.date_range_rounded,
+                            color: Color(0xFF6366F1), size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'תאריך סיום השהות',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                                color: Color(0xFF1A1A2E),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              petStayEnd == null
+                                  ? 'יש לבחור תאריך'
+                                  : '${petStayEnd!.day}/${petStayEnd!.month}/${petStayEnd!.year}'
+                                      ' · ${_selectedDay != null ? petStayEnd!.difference(_selectedDay!).inDays : 0} לילות',
+                              style: const TextStyle(
+                                color: Color(0xFF6B7280),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.chevron_left_rounded,
+                          color: Color(0xFF9CA3AF)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            // ── Pet Stay Tracker — dog picker (gated by schema flags) ─────
+            if (isPetStayBooking) ...[
+              const SizedBox(height: 16),
+              DogPickerSection(
+                selected: selectedDog,
+                onChanged: (d) => setSheetState(() => selectedDog = d),
+              ),
+            ],
+            // ── Booking requirements (contextual customer inputs) ─────────
+            // Hidden for Home Boarding (pension) — the dog profile + nights
+            // count + end date are the full picture; no extra description
+            // is needed (per Home Boarding spec §2).
+            if (!isPensionBooking &&
+                _serviceSchema.bookingRequirements.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              BookingRequirementsForm(
+                requirements: _serviceSchema.bookingRequirements,
+                initialValues: reqValues,
+                onChanged: (vals) => setSheetState(() {
+                  reqValues
+                    ..clear()
+                    ..addAll(vals);
+                }),
+              ),
+            ],
             const SizedBox(height: 16),
             // ── Cancellation policy notice ─────────────────────────────────
             Container(
@@ -1614,10 +2588,41 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
               ),
             ),
             const SizedBox(height: 16),
+            // Validation hint when required booking info is missing.
+            if (!requirementsSatisfied()) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 8),
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFFCD34D)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.error_outline_rounded,
+                        size: 16, color: Color(0xFF92400E)),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'יש למלא את כל השדות הנדרשים למעלה כדי להמשיך',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF92400E),
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
                   backgroundColor:
-                      sheetBusy ? Colors.grey : _kPurple,
+                      (sheetBusy || !canConfirm())
+                          ? Colors.grey
+                          : _kPurple,
                   minimumSize: const Size(double.infinity, 54),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14)),
@@ -1634,12 +2639,18 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                       fontSize: 16,
                       color: Colors.white,
                       fontWeight: FontWeight.bold)),
-              onPressed: sheetBusy
+              onPressed: (sheetBusy || !canConfirm())
                   ? null
                   : () async {
                       setSheetState(() => sheetBusy = true);
+                      // Mirror customer answers + selected dog to state so
+                      // the escrow transaction can persist them.
+                      _bookingReqValues
+                        ..clear()
+                        ..addAll(reqValues);
+                      _selectedDog = selectedDog;
                       final ok = await _processEscrowPayment(
-                          context, price, policy, isDemo: isDemo);
+                          context, effectivePrice(), policy, isDemo: isDemo);
                       if (ok) {
                         // Switch to success view — pop is triggered by user
                         // tapping "Done", not by this async chain.
@@ -1657,6 +2668,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             ),
           ],
         ),
+        ),   // closes SingleChildScrollView
       ),
           );   // closes AbsorbPointer
         },     // closes StatefulBuilder builder
@@ -1668,7 +2680,30 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // Replaces the booking summary inside the bottom sheet upon transaction
   // commit. The "Done" button is the sole trigger for navigator.pop(), which
   // means pop() is always a direct user gesture — never inside an async chain.
-  Widget _buildBookingSuccessView(BuildContext ctx, AppLocalizations l10n) {
+  //
+  // Demo path (isDemo = true): the Firestore booking transaction is bypassed
+  // entirely. We still render this success view so the customer believes the
+  // booking went through. The wording is intentionally softer ("we'll update
+  // you when the provider is available") to set expectations without revealing
+  // that the profile is fake.
+  Widget _buildBookingSuccessView(
+    BuildContext ctx,
+    AppLocalizations l10n, {
+    bool isDemo = false,
+  }) {
+    final accentColor = isDemo
+        ? const Color(0xFF6366F1) // indigo for demo
+        : const Color(0xFF22C55E); // green for real bookings
+
+    final title = isDemo
+        ? 'ההזמנה התקבלה!'
+        : 'ההזמנה בוצעה בהצלחה! 🎉';
+
+    final subtitle = isDemo
+        ? 'הזמנת את השירות. אנחנו כבר מעדכנים אותך אם נותן השירות פנוי.\n'
+            'תקבל הודעה ברגע שיש תשובה.'
+        : l10n.expertEscrowSuccess;
+
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -1678,7 +2713,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // ── Animated checkmark circle ────────────────────────────────────
+          // ── Animated icon circle ─────────────────────────────────────────
           TweenAnimationBuilder<double>(
             tween: Tween(begin: 0.0, end: 1.0),
             duration: const Duration(milliseconds: 600),
@@ -1688,21 +2723,21 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
               width: 96,
               height: 96,
               decoration: BoxDecoration(
-                color: const Color(0xFF22C55E).withValues(alpha: 0.12),
+                color: accentColor.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.check_circle_rounded,
-                color: Color(0xFF22C55E),
+              child: Icon(
+                isDemo ? Icons.hourglass_top_rounded : Icons.check_circle_rounded,
+                color: accentColor,
                 size: 64,
               ),
             ),
           ),
           const SizedBox(height: 28),
           // ── Title ────────────────────────────────────────────────────────
-          const Text(
-            'ההזמנה בוצעה בהצלחה! 🎉',
-            style: TextStyle(
+          Text(
+            title,
+            style: const TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.bold,
               color: Color(0xFF1E1B4B),
@@ -1711,15 +2746,45 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
           ),
           const SizedBox(height: 10),
           Text(
-            l10n.expertEscrowSuccess,
-            style: const TextStyle(fontSize: 14, color: Colors.grey),
+            subtitle,
+            style: const TextStyle(fontSize: 14, color: Colors.grey, height: 1.5),
             textAlign: TextAlign.center,
           ),
+          if (isDemo) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF6366F1).withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                    color: const Color(0xFF6366F1).withValues(alpha: 0.2)),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.notifications_active_outlined,
+                      color: Color(0xFF6366F1), size: 16),
+                  SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      'נשלח לך עדכון בקרוב',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF6366F1),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 36),
           // ── Done button — only place pop() is called ─────────────────────
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF22C55E),
+              backgroundColor: accentColor,
               minimumSize: const Size(double.infinity, 54),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14)),
@@ -1727,7 +2792,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             ),
             onPressed: () => Navigator.of(ctx).pop(),
             child: const Text(
-              'בוצע ✓',
+              'הבנתי ✓',
               style: TextStyle(
                   fontSize: 17,
                   color: Colors.white,
@@ -1817,7 +2882,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     final imgProvider  = safeImageProvider(profileImg);
     final name         = data['name'] as String? ?? widget.expertName;
     final isVerified   = data['isVerified'] == true;
-    final isVolunteer  = data['isVolunteer'] == true;
+    final isVolunteer  = data['isVolunteer'] == true || data['volunteerHeart'] == true;
     final serviceType  = data['serviceType'] as String? ?? '';
     final bio          = data['aboutMe'] as String? ?? data['bio'] as String? ?? '';
     final xp           = (data['xp'] as num? ?? 0).toInt();
@@ -1825,13 +2890,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     final reviewsCount = (data['reviewsCount'] as num? ?? 0).toInt();
     final jobsCount    =
         (data['completedJobsCount'] as num? ?? data['orderCount'] as num? ?? reviewsCount).toInt();
-    // YouTube intro URL (provider pastes in Edit Profile → videoUrl field)
-    final youtubeUrl   = data['videoUrl'] as String? ?? '';
-    final videoId      = _extractYouTubeId(youtubeUrl);
-    // Verified uploaded video (provider uploads raw file → admin approves)
-    final verifiedVideoUrl  = data['verificationVideoUrl'] as String? ?? '';
-    final videoVerifiedByAdmin = data['videoVerifiedByAdmin'] as bool? ?? false;
-    final hasVerifiedVideo  = videoVerifiedByAdmin && verifiedVideoUrl.isNotEmpty;
+    // Video variables moved to _buildActionSquares (video card lives there now).
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -1866,10 +2925,6 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                           const Icon(Icons.verified, color: Colors.blue, size: 18),
                           const SizedBox(width: 5),
                         ],
-                        if (isVolunteer) ...[
-                          const Icon(Icons.favorite, color: Colors.red, size: 16),
-                          const SizedBox(width: 5),
-                        ],
                         Flexible(
                           child: Text(
                             name,
@@ -1900,7 +2955,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                     if (bio.isNotEmpty) ...[
                       const SizedBox(height: 5),
                       Text(bio,
-                          maxLines: 2,
+                          maxLines: 4,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                               color: Colors.grey[600],
@@ -1925,6 +2980,26 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                         value: '$reviewsCount',
                         icon: Icons.chat_bubble_outline_rounded,
                         iconColor: Colors.teal),
+                    // ── Volunteer counter (real-time stream) ──────
+                    StreamBuilder<QuerySnapshot>(
+                      stream: _volunteerCountStream(widget.expertId),
+                      builder: (_, snap) {
+                        final count = snap.hasData ? snap.data!.size : 0;
+                        return Column(
+                          children: [
+                            const Divider(
+                                height: 20,
+                                color: Color(0xFFF3F4F6),
+                                thickness: 1),
+                            _expertStatRow(
+                                label: 'התנדבויות בקהילה',
+                                value: '$count',
+                                icon: Icons.favorite_rounded,
+                                iconColor: const Color(0xFFD4AF37)),
+                          ],
+                        );
+                      },
+                    ),
                   ],
                 ),
               ),
@@ -1961,125 +3036,34 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(Icons.favorite_rounded,
-                            color: Color(0xFFEF4444), size: 18),
+                            color: Color(0xFFD4AF37), size: 18),
                       ),
                     ),
                 ],
               ),
             ],
           ),
-          // ── Video section ────────────────────────────────────────────────
-          // Priority 1: admin-approved uploaded video (verificationVideoUrl)
-          // Priority 2: YouTube URL (videoUrl field)
-          if (hasVerifiedVideo) ...[
-            const SizedBox(height: 14),
-            GestureDetector(
-              onTap: () async {
-                final uri = Uri.parse(verifiedVideoUrl);
-                if (await canLaunchUrl(uri)) launchUrl(uri);
-              },
-              child: Container(
-                width: double.infinity,
-                height: 120,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF1A0E3C), Color(0xFF2D1A6B)],
-                    begin: Alignment.centerRight,
-                    end: Alignment.centerLeft,
-                  ),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.15),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.play_arrow_rounded,
-                          size: 32, color: Colors.white),
-                    ),
-                    const SizedBox(width: 16),
-                    const Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('וידאו היכרות',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold)),
-                        SizedBox(height: 4),
-                        Row(children: [
-                          Icon(Icons.verified_rounded,
-                              color: Color(0xFF22C55E), size: 13),
-                          SizedBox(width: 4),
-                          Text('מאומת על ידי AnySkill',
-                              style: TextStyle(
-                                  color: Color(0xFF22C55E),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600)),
-                        ]),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ] else if (videoId != null) ...[
-            const SizedBox(height: 14),
-            GestureDetector(
-              onTap: () async {
-                final uri = Uri.parse(youtubeUrl.startsWith('http')
-                    ? youtubeUrl
-                    : 'https://www.youtube.com/watch?v=$videoId');
-                if (await canLaunchUrl(uri)) launchUrl(uri);
-              },
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    CachedNetworkImage(
-                      imageUrl:
-                          'https://img.youtube.com/vi/$videoId/hqdefault.jpg',
-                      width: double.infinity,
-                      height: 160,
-                      fit: BoxFit.cover,
-                      errorWidget: (_, __, ___) => Container(
-                        height: 160,
-                        color: _kPurpleSoft,
-                        child: const Icon(Icons.videocam_outlined,
-                            size: 48, color: _kPurple),
-                      ),
-                    ),
-                    Container(
-                      width: double.infinity,
-                      height: 160,
-                      color: Colors.black.withValues(alpha: 0.28),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.92),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.play_arrow_rounded,
-                          size: 32, color: _kPurple),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          // Video section removed — video is now accessed via the action
+          // squares below (Video + Gallery side-by-side).
+
+          // ── XP Progress Bar (owner only) ────────────────────────────────
+          if ((FirebaseAuth.instance.currentUser?.uid ?? '') == widget.expertId) ...[
+            const SizedBox(height: 16),
+            XpProgressBar(xp: xp),
           ],
-          const SizedBox(height: 16),
-          // ── XP Progress Bar ─────────────────────────────────────────────
-          XpProgressBar(xp: xp),
         ],
       ),
     );
+  }
+
+  /// Real-time stream of completed community tasks where this expert volunteered.
+  Stream<QuerySnapshot> _volunteerCountStream(String expertId) {
+    return FirebaseFirestore.instance
+        .collection('community_requests')
+        .where('volunteerId', isEqualTo: expertId)
+        .where('status', isEqualTo: 'completed')
+        .limit(100)
+        .snapshots();
   }
 
   Widget _expertStatRow({
@@ -2106,20 +3090,69 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   }
 
   Widget _buildActionSquares(BuildContext context, Map<String, dynamic> data) {
-    final gallery    = (data['gallery'] as List? ?? []).cast<String>();
-    final isPromoted = data['isPromoted'] == true;
-    DateTime? expiryDate;
-    try {
-      final ts = data['promotionExpiryDate'];
-      if (ts != null) expiryDate = (ts as dynamic).toDate() as DateTime;
-    } catch (_) {}
-    final isVipActive = isPromoted &&
-        expiryDate != null &&
-        expiryDate.isAfter(DateTime.now());
+    final gallery = (data['gallery'] as List? ?? []).cast<String>();
+
+    // Video data
+    final verifiedVideoUrl     = data['verificationVideoUrl'] as String? ?? '';
+    final videoVerifiedByAdmin = data['videoVerifiedByAdmin'] as bool? ?? false;
+    final hasVerifiedVideo     = videoVerifiedByAdmin && verifiedVideoUrl.isNotEmpty;
+    final youtubeUrl           = data['videoUrl'] as String? ?? '';
+    final videoId              = _extractYouTubeId(youtubeUrl);
+    final hasAnyVideo          = hasVerifiedVideo || videoId != null;
 
     return Row(
       children: [
-        // Gallery square
+        // ── Video Introduction square ──────────────────────────────────
+        Expanded(
+          child: InkWell(
+            onTap: hasAnyVideo
+                ? () async {
+                    final url = hasVerifiedVideo
+                        ? verifiedVideoUrl
+                        : (youtubeUrl.startsWith('http')
+                            ? youtubeUrl
+                            : 'https://www.youtube.com/watch?v=$videoId');
+                    final uri = Uri.parse(url);
+                    if (await canLaunchUrl(uri)) launchUrl(uri);
+                  }
+                : null,
+            borderRadius: BorderRadius.circular(24),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.07),
+                    blurRadius: 20,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.play_circle_outline_rounded,
+                      size: 32,
+                      color: hasAnyVideo ? _kPurple : Colors.grey[300]),
+                  const SizedBox(height: 10),
+                  Text(
+                    'וידאו היכרות',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: hasAnyVideo ? Colors.black : Colors.grey[300]!,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 14),
+        // ── Work Gallery square ────────────────────────────────────────
         Expanded(
           child: InkWell(
             onTap: gallery.isEmpty
@@ -2134,7 +3167,6 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.07),
                     blurRadius: 20,
-                    spreadRadius: 0,
                     offset: const Offset(0, 6),
                   ),
                 ],
@@ -2158,44 +3190,6 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   ),
                 ],
               ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 14),
-        // VIP square
-        Expanded(
-          child: Container(
-            decoration: BoxDecoration(
-              color: isVipActive ? _kGold : Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.07),
-                  blurRadius: 20,
-                  spreadRadius: 0,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-              border: isVipActive ? null : Border.all(color: Colors.grey.shade200),
-            ),
-            padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.workspace_premium_rounded,
-                    size: 32,
-                    color: isVipActive ? Colors.white : Colors.amber[700]),
-                const SizedBox(height: 10),
-                Text(
-                  isVipActive ? 'מומחה VIP' : 'מומחה',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isVipActive ? Colors.white : Colors.black,
-                  ),
-                ),
-              ],
             ),
           ),
         ),
@@ -2228,11 +3222,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       ),
       body: FutureBuilder<Map<String, dynamic>>(
         key: ValueKey(_refreshTrigger),
-        future: CacheService.getDoc(
-          'users', widget.expertId,
-          ttl: CacheService.kExpertProfile,
-          forceRefresh: true,
-        ),
+        future: _loadProfileData(),
         builder: (context, snapshot) {
           if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
@@ -2286,6 +3276,25 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                 _buildServiceMenu(data, l10n),
                                 const SizedBox(height: 24),
 
+                                // ── Price List (category-specific) ────────
+                                if (hasPriceList(data) &&
+                                    (data['priceList'] as Map?)?.isNotEmpty == true)
+                                  PriceListDisplay(
+                                    priceList: Map<String, dynamic>.from(
+                                        data['priceList'] as Map),
+                                    userData: data,
+                                    onSendQuote: (msg) => Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                            builder: (_) => ChatScreen(
+                                                receiverId: widget.expertId,
+                                                receiverName: widget.expertName,
+                                                initialMessage: msg))),
+                                  ),
+                                if (hasPriceList(data) &&
+                                    (data['priceList'] as Map?)?.isNotEmpty == true)
+                                  const SizedBox(height: 24),
+
                                 // ── Booking calendar ──────────────────────
                                 const Divider(height: 1),
                                 const SizedBox(height: 24),
@@ -2319,6 +3328,158 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Booking sheet — night stepper button (used by the multi-night pension picker)
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _NightStepperButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onTap;
+
+  const _NightStepperButton({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    return Material(
+      color: enabled ? const Color(0xFFEEF2FF) : const Color(0xFFF1F5F9),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: SizedBox(
+          width: 36,
+          height: 36,
+          child: Icon(
+            icon,
+            size: 20,
+            color:
+                enabled ? const Color(0xFF6366F1) : const Color(0xFFCBD5E1),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Full-screen photo viewer for review photos (pinch-to-zoom + swipe)
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _ReviewPhotoViewer extends StatefulWidget {
+  final List<String> photos;
+  final int initialIndex;
+
+  const _ReviewPhotoViewer({
+    required this.photos,
+    required this.initialIndex,
+  });
+
+  @override
+  State<_ReviewPhotoViewer> createState() => _ReviewPhotoViewerState();
+}
+
+class _ReviewPhotoViewerState extends State<_ReviewPhotoViewer> {
+  late final PageController _pageCtrl;
+  late int _current;
+
+  @override
+  void initState() {
+    super.initState();
+    _current = widget.initialIndex;
+    _pageCtrl = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          // ── Dismiss on background tap ──────────────────────────────
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(color: Colors.transparent),
+          ),
+
+          // ── Zoomable photo pages ──────────────────────────────────
+          PageView.builder(
+            controller: _pageCtrl,
+            itemCount: widget.photos.length,
+            onPageChanged: (i) => setState(() => _current = i),
+            itemBuilder: (_, i) => Center(
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.network(
+                      widget.photos[i],
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.broken_image_rounded,
+                        color: Colors.white54,
+                        size: 64,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // ── Close button ──────────────────────────────────────────
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 12,
+            left: 16,
+            child: GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: const BoxDecoration(
+                  color: Colors.black54,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.close, color: Colors.white, size: 22),
+              ),
+            ),
+          ),
+
+          // ── Page indicator ────────────────────────────────────────
+          if (widget.photos.length > 1)
+            Positioned(
+              bottom: MediaQuery.of(context).padding.bottom + 24,
+              left: 0,
+              right: 0,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(widget.photos.length, (i) =>
+                  Container(
+                    width: i == _current ? 20 : 6,
+                    height: 6,
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    decoration: BoxDecoration(
+                      color: i == _current ? Colors.white : Colors.white38,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

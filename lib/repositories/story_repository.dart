@@ -176,6 +176,8 @@ class StoryRepository {
       'priority':    'normal',
       'title':       '📱 סטורי חדש: $name',
       'detail':      'שירות: $serviceType',
+      'expireAt':    Timestamp.fromDate(
+          DateTime.now().add(const Duration(days: 30))),
     }).ignore();
 
     return verified;

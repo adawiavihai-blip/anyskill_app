@@ -26,6 +26,36 @@ class EscrowService {
       return 'לא ניתן להזמין שירות מעצמך';
     }
 
+    // ── Pet Stay Tracker gate (v13.0.0) ───────────────────────────────
+    // Quote payment from chat bypasses the expert-profile dog picker, so
+    // we must block pet-service quotes here and route the user through
+    // the proper flow. Cheap: single read of the provider's user doc +
+    // optional category schema read.
+    try {
+      final providerSnap = await _db.collection('users').doc(providerId).get();
+      final category =
+          (providerSnap.data() ?? {})['serviceType']?.toString() ?? '';
+      if (category.isNotEmpty) {
+        final catSnap = await _db
+            .collection('categories')
+            .where('name', isEqualTo: category)
+            .limit(1)
+            .get();
+        if (catSnap.docs.isNotEmpty) {
+          final schemaRaw =
+              catSnap.docs.first.data()['serviceSchema'] as Map?;
+          final walkTracking = schemaRaw?['walkTracking'] == true;
+          final dailyProof = schemaRaw?['dailyProof'] == true;
+          if (walkTracking || dailyProof) {
+            return 'זהו שירות פנסיון/דוגווקר — יש להזמין מפרופיל הספק כדי לצרף פרופיל כלב';
+          }
+        }
+      }
+    } catch (e) {
+      // Fail open — if the pre-check errors we don't block real payments.
+      debugPrint('[Escrow] pet-gate pre-check failed: $e');
+    }
+
     try {
       final adminSettingsRef = _db
           .collection('admin')

@@ -8,6 +8,7 @@ import 'package:geolocator/geolocator.dart';
 /// [maxPricePerHour]— מחיר מקסימלי (null = ללא הגבלה)
 /// [maxDistanceKm]  — רדיוס מקסימלי בק"מ (null = ללא הגבלה)
 /// [myPosition]     — המיקום הנוכחי של הלקוח (נדרש אם maxDistanceKm != null)
+/// [onlineOnly]     — (v12.9.0) אם true, מציג רק מומחים עם `isOnline == true`
 List<Map<String, dynamic>> filterExperts(
   List<Map<String, dynamic>> experts, {
   String query = '',
@@ -16,6 +17,7 @@ List<Map<String, dynamic>> filterExperts(
   double? maxPricePerHour,
   double? maxDistanceKm,
   Position? myPosition,
+  bool onlineOnly = false,
 }) {
   return experts.where((data) {
     // סינון שם
@@ -54,6 +56,9 @@ List<Map<String, dynamic>> filterExperts(
       // If provider has no location, don't filter them out — they just won't
       // benefit from the proximity sort.
     }
+
+    // Online-only filter (v12.9.0)
+    if (onlineOnly && data['isOnline'] != true) return false;
 
     return true;
   }).toList();

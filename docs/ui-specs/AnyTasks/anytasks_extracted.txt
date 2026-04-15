@@ -1,0 +1,326 @@
+================================================================================
+FILE: AnyTasks_Implementation_Prompt.docx
+================================================================================
+AnyTasks
+Implementation Prompt for Claude Code
+Micro-Task Marketplace Module for AnySkill
+Version 2.0 — April 2026
+1. Project overview
+AnyTasks is a micro-task marketplace module within the AnySkill app. It connects Clients (who need tasks done) with Service Providers (who earn money doing them). The module is designed with behavioral psychology embedded at every touchpoint to maximize engagement, retention, and transaction velocity.
+Core principle
+Clients PUBLISH tasks. Service Providers ACCEPT or COUNTER-OFFER. Payment is held in Escrow until the Client confirms completion. Every screen uses urgency, social proof, gamification, and progress psychology to drive action.
+1.1 User roles
+2. Task acceptance flow (critical logic)
+This is the core interaction of AnyTasks. When a Service Provider sees a task, they have TWO options:
+Option A: Direct accept (primary CTA)
+Provider taps the green "Accept task" button
+This means: "I agree to do this task at the Client’s listed price"
+Client receives notification: "[Provider name] accepted your task!"
+Client can view the provider’s profile (rating, badges, completion rate) and APPROVE or DECLINE
+If Client approves → Escrow is charged → task begins
+If Client declines → Provider is notified, task remains open
+Option B: Counter-offer (secondary CTA, only if price doesn’t fit)
+Provider taps "Suggest different price" (smaller/secondary button)
+Opens a form: suggested price + short message explaining why
+Client receives notification: "[Provider] suggests ₪[X] instead of ₪[Y] — [message]"
+Client can Accept the counter-offer, Decline it, or Ignore it
+UI priority: The "Accept task" button must be the DOMINANT CTA (large, green, full-width). The counter-offer option should be a secondary link/text below it, not a competing button.
+3. Complete task lifecycle
+4. Behavioral psychology layers
+Every screen must embed at least 2-3 of these psychological triggers. They are NOT optional features — they are core product mechanics that drive growth.
+4.1 Urgency + FOMO (Fear of Missing Out)
+Task cards show: "Urgent — deadline in X hours" with countdown (coral badge)
+"6 providers viewing this task right now" (live viewer count)
+"4 offers already submitted" (competition counter for providers)
+"Average task gets accepted within 45 minutes" (subtle urgency)
+Push notification: "New task 800m from you! ₪150" (proximity + amount)
+Counter-offer expiry: "Your offer expires in 2 hours" (time pressure on client)
+4.2 Social proof
+Star ratings prominently displayed (4.9 stars)
+Completion rate percentage: "100% completion rate"
+Task count: "47 tasks completed"
+Verified badge (green checkmark) for identity-verified providers
+Avatar stack showing faces of providers who responded
+"[Name] completed a similar task and earned 5 stars"
+4.3 Gamification
+LEVELS: Beginner → Professional → Expert → Champion (based on completed tasks + rating)
+STREAKS: "5 tasks in a row! Complete one more today for ₪25 bonus" (Duolingo-style)
+BADGES: earned per specialty ("Delivery expert", "Photo pro", "Speed demon", "5-star")
+PROGRESS BAR: "2 more tasks to reach Expert level" with visual bar at 91%
+MONTHLY GOAL: "₪2,340 / ₪3,000 this month — 78%" with progress bar
+LEADERBOARD: top providers in area by rating/completed tasks (weekly)
+4.4 Goal gradient effect
+Milestone timeline for active tasks: step 2 of 3 (brain resists abandoning mid-progress)
+Profile completeness: "Your profile is 78% complete — add a photo to get 3x more offers"
+Monthly earnings tracker with encouraging messages near the goal
+4.5 Price anchoring + transparency
+Client’s budget shown FIRST as anchor. Counter-offers appear relative to it ("Save ₪20")
+Provider sees gross AND net: "₪120 → you receive ₪102 net" (full transparency)
+Escrow badge on every task: green shield icon + "Payment secured" text
+"0 publishing fee" shown at publish button to reduce friction
+4.6 Reciprocity + commitment
+First task published free (commitment trigger: once you’ve done it, you’re invested)
+₪20 wallet credit for new providers (must complete a task to "cash out" → forces first action)
+Referral: "Invite a friend → both get ₪15" with personal referral code
+4.7 Hook model (habit loop)
+TRIGGER: push notification about new matching task near provider
+ACTION: open app, review task, tap Accept (made as easy as possible)
+VARIABLE REWARD: will client choose me? (uncertainty = dopamine, like a slot machine)
+INVESTMENT: rating, badges, level, reviews → creates sunk cost → hard to leave the platform
+5. Screen-by-screen specification
+5.1 Client: Home screen
+Greeting: "Hi [name], what needs to get done today?"
+Smart search bar: "Describe what you need and AI will find the right person..."
+Category icons row: Photography, Research, Delivery, Editing, Translation, + More
+"My tasks" section showing active tasks with status badges and offer counts
+CTA button: "Publish new task" (full-width, bottom sticky)
+Psychology: offer count badge ("5 new offers!") creates pull to open
+5.2 Client: Publish task form
+Fields: Task title (required, 100 chars), Detailed description (required, 2000 chars), Category chips (AI auto-selects based on title), Budget in NIS (required, min 10), Location (optional, with GPS), Deadline (optional, date+time picker), Urgency level (Flexible / Today / Urgent now), Proof type required (Photo / Text / Both).
+AI helper banner at top: "Describe your task and AI will fill category, tags, and suggested budget automatically". Publish button: "Publish task · ₪0 publishing fee" (anchoring: free feels like a gift).
+5.3 Client: Compare offers screen
+Shows all providers who Accepted or Counter-offered, sorted by AI recommendation score. Each card shows: avatar, name, rating, badges, completion %, distance, price (and savings vs budget), response message, availability. AI-recommended card has blue border + "Recommended" badge. Each card has "Choose [name]" primary CTA and chat icon. Banner: "AI recommends [name] — best match by rating, distance, and price".
+5.4 Client: Task tracking screen
+Shows milestone timeline (vertical stepper). Each step: title, timestamp when completed, green checkmark. Current step highlighted blue. Chat button + view proof button. Task details card at bottom: pickup/delivery addresses, deadline, payment status (Escrow badge).
+5.5 Provider: Dashboard/Feed
+Top section: earnings (₪2,340 this month), tasks completed (23), completion rate (100%). Level badge + progress bar ("2 more to Expert"). Streak counter ("5 in a row! Bonus ₪25 for next one"). Task feed sorted by AI matching score. Each task card shows: title, client name + rating, budget (gross + net), distance, deadline, urgency tag, viewer/offer count, proof type. Primary CTA on each card: "Accept task" (green, full-width). Secondary: "Suggest different price" (text link below). Bookmark icon to save for later.
+5.6 Provider: Task detail + Accept/Counter-offer
+Full task description. Client profile (name, rating, tasks published). Map showing location. Milestones preview. Two CTAs: Primary: large green button "Accept task at ₪[X]" showing net amount below. Secondary: text link "Price doesn’t work? Suggest a different amount" → opens inline form with: your price field + short message textarea + "Send offer" button. Psychology elements: "6 viewing now", "4 already accepted", "average task accepted in 45 min".
+5.7 Provider: Active task execution
+Milestone stepper with "Mark step complete" button (green). Upload proof button (camera icon). Chat with client button. Task details card (addresses, deadline, payment). Bottom info bar: "After completing all steps and uploading proof, the client will confirm and you’ll receive payment to your wallet." Progress psychology: can’t abandon mid-timeline.
+5.8 Shared: Chat screen
+Standard real-time chat. Quick-reply suggestions ("I’m on my way!", "Done!", "Need more details"). Photo sharing. Read receipts. Typing indicator.
+5.9 Shared: Notifications
+Push notifications are CRITICAL for the Hook Model trigger. Types: New matching task nearby (provider), Task accepted (client), Counter-offer received (client), You were chosen (provider), Step completed (client), Proof uploaded (client), Payment received (provider), Streak alert (provider), Weekly summary (both). Each notification deep-links to the relevant screen.
+6. Data model
+6.1 Tasks table
+6.2 Task_responses table
+6.3 Task_milestones table
+Fields: id (UUID), task_id (FK), title (String), order (Integer), status (pending/completed), completed_at (DateTime), proof_url (String, optional photo URL).
+6.4 Provider_profiles table (gamification)
+Fields: user_id (FK), level (beginner/professional/expert/champion), total_completed (Integer), completion_rate (Decimal), current_streak (Integer), longest_streak (Integer), monthly_earnings (Integer), monthly_goal (Integer), badges (JSON array), referral_code (String unique), wallet_balance (Integer).
+6.5 Reviews table
+Fields: id (UUID), task_id (FK), reviewer_id (FK, always the Client), reviewee_id (FK, always the Provider), rating (1-5 Integer), comment (String 500), created_at (DateTime).
+7. API endpoints
+Tasks
+POST /api/tasks — Client creates a new task
+GET /api/tasks — Provider gets task feed (sorted by AI matching, filterable by category/distance/urgency)
+GET /api/tasks/:id — Get task details
+GET /api/tasks/my — Client: get my published tasks. Provider: get my active tasks
+PATCH /api/tasks/:id/status — Update task status
+Task responses
+POST /api/tasks/:id/accept — Provider accepts at listed price (response_type: accept)
+POST /api/tasks/:id/counter-offer — Provider suggests different price (response_type: counter_offer, body: { price, message })
+GET /api/tasks/:id/responses — Client gets all responses for a task
+POST /api/tasks/:id/choose/:response_id — Client chooses a provider (triggers Escrow)
+Milestones
+GET /api/tasks/:id/milestones — Get milestone timeline
+PATCH /api/milestones/:id/complete — Provider marks step done (can include proof photo)
+Payments
+POST /api/escrow/create — Charge client, hold in escrow
+POST /api/escrow/release/:task_id — Client confirms → release to provider
+POST /api/disputes/:task_id — Open a dispute
+Gamification
+GET /api/provider/profile — Get level, badges, streaks, earnings
+GET /api/provider/leaderboard — Weekly top providers
+POST /api/referral/apply — Apply referral code
+Notifications
+Push notifications via Firebase Cloud Messaging (FCM). Real-time updates via WebSocket for chat and task status changes.
+8. Platform fee logic
+The platform charges a percentage fee from the final transaction amount. This fee is deducted from the Provider’s payout. The Client pays the full listed/agreed price.
+Fee calculation: Provider receives = agreed_price - (agreed_price * platform_fee_percent). Example: Task at ₪120 with 15% fee → Provider gets ₪102, platform earns ₪18.
+CRITICAL: The net amount must ALWAYS be shown to the provider before they accept. Display: "₪120 → you receive ₪102 net" on every task card and accept screen. This transparency builds trust and reduces disputes about money.
+9. AI features
+9.1 Task auto-complete
+When client types a task title, AI auto-suggests: category, urgency level, budget range (based on similar tasks), relevant tags. Uses NLP to parse the description.
+9.2 Provider matching
+AI calculates a matching score for each task-provider pair based on: distance to task location, provider’s category expertise (badges), rating and completion rate, availability/streak status, historical response time. Score shown to Client as "AI recommends" badge.
+9.3 Smart notifications
+AI determines optimal notification timing per user (based on activity patterns). Personalizes notification text. Prioritizes high-match tasks. Avoids notification fatigue (max 5/day).
+10. Anti-fraud and safety
+Identity verification for providers (ID upload + selfie match)
+Escrow prevents non-payment and ensures providers get paid
+Photo proof with EXIF metadata validation (location + timestamp)
+AI-powered fake review detection
+Rate limiting on task responses (max 20 accepts per day per provider)
+48-hour dispute resolution SLA with admin intervention
+Provider suspension for completion rate below 70%
+Client ban for repeated false disputes
+11. Recommended tech stack
+Frontend: React Native (existing AnySkill app). State management: React Context or Zustand. Backend: Node.js + Express or NestJS. Database: PostgreSQL with PostGIS for location queries. Real-time: WebSocket (Socket.io) for chat + status updates. Push notifications: Firebase Cloud Messaging. File storage: Cloudinary or S3 for proof photos. Payments/Escrow: Stripe Connect or local Israeli payment provider. AI/ML: OpenAI API for task parsing + matching algorithm.
+12. Hebrew RTL support
+All screens must support RTL layout. Text alignment: right. Navigation arrows: reversed. Category chips scroll from right. Form labels aligned right. Numbers remain LTR within RTL context.
+--- TABLE ---
+Aspect | Client (customer) | Service provider
+Primary action | Publishes tasks with description, budget, deadline, category, urgency, location, proof type | Browses tasks, ACCEPTS at listed price OR sends counter-offer with different price + message
+Dashboard shows | My published tasks, incoming offers/acceptances, task progress tracking, chat with provider | Available tasks feed (AI-sorted), earnings dashboard, level/badges, streak counter, monthly goal
+Payment flow | Pays upfront into Escrow when provider is selected. Money released only after Client confirms. | Receives net amount (after platform fee) once Client confirms task completion.
+Can do | Publish, choose provider, track progress, chat, confirm completion, rate provider | Accept task, counter-offer, execute milestones, upload proof, chat with client, earn badges
+Cannot do | Cannot accept or execute tasks | Cannot publish tasks
+--- TABLE ---
+# | Stage | Client side | Provider side
+1 | Task published | Client fills form: title, description, category, budget, deadline, location, urgency, proof type. AI auto-suggests category and tags. | Task appears in feed, sorted by AI matching score. Push notification sent to relevant providers.
+2 | Providers respond | Client sees incoming acceptances and counter-offers. Badge shows count. | Provider taps "Accept" (at listed price) or "Suggest price" (counter-offer). Can also bookmark or skip.
+3 | Client chooses | Client reviews providers: sees profile, rating, badges, completion %, distance, price. AI recommends best match. Client taps "Choose [name]". | Selected provider gets notification. Escrow is charged. Unselected providers are notified too.
+4 | Task in progress | Client sees milestone timeline in real-time. Can chat with provider. Receives push on each step completion. | Provider follows milestone checklist. Marks each step complete. Can upload proof photos. Chats with client.
+5 | Proof submitted | Client receives proof (photo/text). Reviews it. | Provider uploads proof (photo/text/both per task requirement). Status: "Awaiting client confirmation".
+6 | Client confirms | Client taps "Confirm completion" → Escrow releases payment → rates provider (1-5 stars + optional text). | Provider receives payment to wallet. Gets rating. Streak counter updates. XP added toward next level.
+7 | Dispute (edge case) | If client is unsatisfied: opens dispute. Admin reviews proof + chat. 48h resolution SLA. | Provider can respond to dispute with additional evidence. Escrow remains frozen until resolved.
+--- TABLE ---
+Field | Type | Notes
+id | UUID | Primary key
+client_id | UUID | FK to users table
+title | String(100) | Required
+description | String(2000) | Required
+category | Enum | photography, delivery, translation, research, social_media, surveys, editing, voice_recording, etc.
+budget_nis | Integer | Min 10. This is the Client’s asking price
+location | Point + String | Optional GPS coords + text address
+deadline | DateTime | Optional
+urgency | Enum | flexible, today, urgent_now
+proof_type | Enum | photo, text, both
+status | Enum | open, accepted, in_progress, proof_submitted, completed, disputed, cancelled
+selected_provider_id | UUID | FK to users. NULL until client chooses
+escrow_transaction_id | UUID | FK to payments. Created when provider selected
+created_at | DateTime | Auto
+ai_tags | JSON | Auto-generated tags for matching
+--- TABLE ---
+Field | Type | Notes
+id | UUID | Primary key
+task_id | UUID | FK to tasks
+provider_id | UUID | FK to users
+response_type | Enum | "accept" (at listed price) or "counter_offer" (different price)
+offered_price | Integer | NULL for accept type. The provider’s suggested price for counter_offer type
+message | String(500) | Optional message from provider. More common with counter-offers
+status | Enum | pending, chosen, rejected
+created_at | DateTime | Auto
+expires_at | DateTime | Auto. 24h from creation for counter-offers
+================================================================================
+FILE: AnyTasks_UI_UX_Spec.docx
+================================================================================
+AnyTasks
+UI/UX Visual Specification
+Screen-by-Screen Design Guide for Developers
+Version 2.0 — April 2026
+1. Design system
+1.1 Color palette
+1.2 Typography
+Font family: System default (SF Pro on iOS, Roboto on Android). For Hebrew: system default with Heebo as web fallback. Sizes: Page title: 18px medium. Section title: 15px medium. Card title: 14px medium. Body: 13px regular. Small/metadata: 12px regular. Tiny/badges: 11px medium. Chip labels: 10-11px.
+1.3 Spacing and radius
+Card border-radius: 12px. Button radius: 8px (standard) or 24px (pill for main CTA). Chip/badge radius: 20px (pill). Avatar radius: 50% (circle). Card padding: 14-16px. Screen padding: 16-20px horizontal. Gap between cards: 10px. Icon sizes: 16px (inline), 20px (navigation), 52px (category icons).
+1.4 Component patterns
+Cards: white background, 0.5px border #E0E0E0, 12px radius, subtle shadow (0 1px 3px rgba(0,0,0,0.06)). Chips: pill-shaped, border or filled background, 20px radius. Avatars: circle with initials on colored background (each user gets consistent color). Badges: small pills with icon + text inside colored backgrounds. Progress bars: 8px height, rounded, background #F0F0F0 with colored fill. CTAs: full-width rounded buttons, 14px height minimum 48px touch target.
+2. Screen layouts — Client experience
+2.1 Client home screen
+Layout (top to bottom):
+Status bar + header row: avatar (left), greeting "Hi [name]" + subtitle "What needs to get done today?" (center), notification bell with red dot (right)
+Search bar: rounded pill (24px radius), placeholder text, search icon, full-width
+Category icons row: horizontal scroll, each item = 52px rounded-rect icon + 10px label below. Categories: Photography (coral bg), Research (blue bg), Delivery (green bg), Editing (amber bg), Translation (pink bg), More (gray bg)
+"My tasks" section: section title + active task cards. Each card shows: task title (14px medium), budget pill (amber bg), status badge ("5 new offers!" in blue), offer count with avatar stack, progress bar if in-progress, action button ("Compare offers" or "Track" or "Confirm completion")
+Bottom sticky CTA: "Publish new task" full-width dark button with + icon
+Bottom navigation bar: Home, AnyTasks, Messages, Profile
+2.2 Client publish task form
+Layout:
+Header: back arrow + "Publish new task" title
+AI banner: purple background with lock icon, text: "Describe your task and AI will auto-fill the rest"
+Form fields in order: Task title (text input, 100 char limit shown), Detailed description (textarea, 2000 char counter), Category chips (horizontal wrap, tappable, AI pre-selects one), Budget field (number input with NIS symbol, "min ₪10" hint), Deadline (date+time picker), Location (text input with GPS pin icon), Urgency selector (3 toggle buttons: Flexible / Today / Urgent now, Today pre-selected with amber highlight), Proof type (3 toggle buttons: Photo / Text / Both)
+Publish button at bottom: "Publish task · ₪0 publishing fee" in dark bg, full-width
+Footnote: "Payment happens only after you confirm task completion" (trust builder)
+2.3 Client compare offers screen
+Layout:
+Header: back arrow + "5 offers for: [task title]" + subtitle showing budget and deadline
+AI recommendation banner (purple bg): "AI recommends: [name] — best match by rating, distance and price"
+Offer cards stacked vertically. Recommended card: 2px blue border + "Recommended" badge at top. Each card contains: avatar + name + rating + badge count + verified mark (row 1), response type indicator: green checkmark "Accepted at ₪120" or amber icon "Suggests ₪100" (row 2), distance pill + availability pill + completion % pill (row 3), message from provider if any (row 4), "Choose [name]" primary button + chat icon secondary button (row 5)
+"+ N more offers" text link at bottom if truncated
+2.4 Client task tracking screen
+Layout:
+Header: back arrow + task title
+Provider info card: avatar + name + rating + "executing" status badge
+Milestone timeline (vertical stepper): each step = circle icon + title + timestamp. Completed = green checkmark + line-through text. Current = blue pulsing dot. Pending = gray empty circle. Connected by vertical lines between steps
+Action buttons row: "Chat" + "View proof" (when available)
+Task details card: from/to addresses, deadline (coral if urgent), payment amount + Escrow badge
+"Confirm completion" button appears only when all milestones done + proof uploaded. Full-width green button
+3. Screen layouts — Provider experience
+3.1 Provider dashboard / task feed
+Layout:
+Header row: avatar + "Hello [name]" + verified badge + notification bell
+Stats row: 3 metric cards in grid. Card 1: "₪2,340" + "earned this month". Card 2: "23" + "tasks completed". Card 3: "100%" + "completion rate"
+Level + progress section: level badge pill ("Professional") + progress bar ("2 more to Expert" at 91%) + encouraging micro-copy
+Streak banner (amber bg): fire icon + "5 tasks in a row! Complete one more today for ₪25 bonus"
+Filter row: "All" (selected, filled) + "Nearby" + "₪+" sort chips
+Task feed: cards sorted by AI match. Top card has green 2px border + "AI: 95% match" badge. Each card: task title + client name + rating (row 1), budget GROSS + net amount below (row 2), tag pills: distance, urgency, proof type, Escrow (row 3), PRIMARY CTA: "Accept task" full-width GREEN button (row 4), SECONDARY: "Suggest different price" text link below the button (row 5), Bookmark icon + View detail icon on the right (row 4)
+3.2 Provider task detail screen
+Layout:
+Header: back arrow + task title
+Client info card: avatar + name + rating + "published N tasks" count
+Full task description (body text)
+Details grid: category, location (with mini map if available), deadline, budget, proof type
+Milestones preview: what steps will be required
+Psychology elements: "6 viewing now" badge, "4 already accepted" counter, "Average task accepted in 45 min" footnote
+ACCEPT section (bottom sticky): green button "Accept task at ₪120" with "You receive: ₪102 net" below it. Under the button: "Price doesn’t work?" text link → expands inline counter-offer form
+Counter-offer form (initially hidden, toggles open): "Your price" number input + "Short message" textarea + "Send offer" button + note: "The client will see your price and message"
+3.3 Provider active task execution
+Layout:
+Header: back arrow + task title
+Task info bar: "Client: [name]" + "₪120" + "Escrow secured" badge
+Milestone stepper (large, central element): vertical timeline with circles connected by lines. Each step: circle (completed green check / current blue dot / pending gray), title, timestamp for completed steps, "current step" label for active one
+"Mark step as complete" button (green, large). Changes to "Upload proof" for final step
+Action row: "Take proof photo" + "Chat with [client name]"
+Task details expandable card: addresses, weight, deadline, payment breakdown
+Bottom info banner (amber bg): "After completing all steps and uploading proof, the client will confirm and you’ll receive payment to your wallet."
+4. Notification design
+5. Psychology checklist per screen
+Every screen must include AT LEAST 2-3 of these triggers. Check off which ones apply during development.
+6. Accept vs Counter-offer UI specification
+This is the most critical interaction in the app. The UI must make ACCEPT the obvious, fast, frictionless default action. Counter-offer is available but intentionally requires one extra tap.
+6.1 Provider task card (in feed)
+Full-width GREEN button: "Accept task" — 48px height, 8px radius, white text 14px medium, green (#2D6A4F) background
+Below the button (8px gap): centered text link in gray: "Suggest different price" — 13px, no underline, tappable area extends to full width for easy tap
+Bookmark icon positioned at the top-right of the card
+6.2 Provider task detail (full screen)
+Bottom sticky section (white bg, top border, padding 16px):
+GREEN button: "Accept task at ₪120" — full-width, 48px, same green styling
+Below button: "You receive: ₪102 net" in small green text (11px)
+Below that: "Price doesn’t work? Suggest a different amount" text link (gray, 12px)
+Tapping the link expands an inline form (animated slide-down): Your price (number input, centered, 16px bold), Short message (textarea, 3 lines, "Why is this price fair for you?"), "Send offer" button (outline style, not filled, to keep visual hierarchy below Accept), Cancel link
+6.3 Client comparison card
+When client views responses, they see TWO types of cards side by side:
+ACCEPT cards: green left border, checkmark icon, text "Accepted at ₪120" — these are instant, client just needs to approve the provider.
+COUNTER-OFFER cards: amber left border, price-tag icon, text "Suggests ₪100 (save ₪20)" + provider’s message below — client can accept the counter-offer or skip.
+Both card types show the same provider info (avatar, rating, badges, distance, completion %).
+7. Responsive and RTL notes
+All layouts are mobile-first (375px width baseline). RTL direction is default for Hebrew locale. Text alignment: right. Icons/arrows: mirrored. Chips scroll from right edge. Number inputs remain LTR for digits. Currency symbol (₪) appears right of amount in Hebrew context. Bottom sheet modals for forms on mobile. Swipe gestures: swipe left to bookmark (in RTL context).
+--- TABLE ---
+Role | Hex | Usage
+Client primary | #6C63FF (purple) | Client headers, tabs, badges, AI banners
+Provider primary | #2D6A4F (green) | Provider headers, Accept button, completion indicators
+Accent amber | #B5651D | Price tags, streak alerts, earnings
+Accent coral | #D85A30 | Urgency badges, deadline warnings
+Background | #F8F9FA | Main app background
+Card | #FFFFFF | Card backgrounds with 0.5px border #E0E0E0
+Text primary | #1B1B1B | Headlines, names, prices
+Text secondary | #6B7280 | Descriptions, labels, metadata
+Text hint | #9CA3AF | Placeholders, timestamps
+Success | #0F6E56 | Completed steps, verified badge, ratings
+Danger | #E24B4A | Notification dots, error states
+Escrow blue | #185FA5 | Escrow badge, payment security indicators
+--- TABLE ---
+Trigger | Push notification text | Deep link
+New matching task | New task 800m from you! ₪150 — Delivery. Tap to accept. | Task detail screen
+Task accepted by provider | [Name] accepted your task! View their profile and approve. | Compare offers
+Counter-offer received | [Name] suggests ₪100 instead of ₪120 for your task. View offer. | Compare offers
+Client chose you | You were chosen for "[task title]"! Start now. | Active task screen
+Step completed | [Provider] completed step 2 of 3 for your task. | Task tracking
+Proof uploaded | [Provider] uploaded proof for "[task title]". Confirm completion. | Task tracking
+Payment received | ₪102 deposited to your wallet! Rate [client]. | Wallet screen
+Streak alert | 5 in a row! Complete 1 more today for ₪25 bonus. | Dashboard
+Weekly summary | This week: ₪580 earned · 4 tasks · 4.9 avg rating. | Dashboard
+--- TABLE ---
+Screen | FOMO | Social | Game | Progress | Anchor | Hook
+Client home | offer count | ratings |  | — | — | —
+Publish form | — | — | — | profile % | free fee | —
+Compare offers | expiry timer | rating + % | badges |  | — savings | choose CTA
+Task tracking | — | provider card | milestone | timeline | — | —
+Provider feed | viewer count | ratings | level bar | streak | net price | push trigger
+Task detail | "N accepted" | completion % | badges | — | net vs gross | accept CTA
+Active task | — | client info | XP gain | milestones | — | investment
+Notifications | urgency text | social count | streak alert | — | — | trigger loop

@@ -232,7 +232,7 @@
   "expertConfirmPaymentButton": "Confirm & Pay",
   "expertVerifiedBooking": "Verified Booking",
   "expertInsufficientBalance": "Insufficient balance",
-  "expertEscrowSuccess": "Payment confirmed! Funds locked in escrow",
+  "expertEscrowSuccess": "Payment confirmed and secured until the transaction is complete",
   "expertTransactionTitle": "Payment to {name}",
   "@expertTransactionTitle": {
     "placeholders": {

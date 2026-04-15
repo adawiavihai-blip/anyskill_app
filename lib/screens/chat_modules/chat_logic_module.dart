@@ -1,6 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/material.dart';
-
 import '../../services/chat_service.dart';
 
 class ChatLogicModule {
@@ -31,14 +28,10 @@ class ChatLogicModule {
     await ChatService.markMessagesAsRead(chatRoomId, currentUserId);
   }
 
-  // איפוס מונה הודעות (שימוש משני / fallback)
+  // v9.5.9: Unread reset goes through the CF (markMessagesAsRead).
+  // NEVER write to the parent chat doc from the client — it causes
+  // AsyncQueue deadlocks with the active snapshot listeners.
   static Future<void> resetUnreadCount(String chatRoomId, String userId) async {
-    try {
-      await FirebaseFirestore.instance.collection('chats').doc(chatRoomId).update({
-        'unreadCount_$userId': 0,
-      });
-    } catch (e) {
-      debugPrint("QA Error - Reset Count: $e");
-    }
+    await ChatService.markMessagesAsRead(chatRoomId, userId);
   }
 }

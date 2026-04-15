@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 // ── Health enum ───────────────────────────────────────────────────────────────
 
@@ -195,6 +196,8 @@ class _SystemPerformanceTabState extends State<SystemPerformanceTab>
           _buildErrorFeed(),
           const SizedBox(height: 14),
           _buildSentryTestCard(),
+          const SizedBox(height: 14),
+          _buildCorsSetupCard(),
           const SizedBox(height: 14),
           _buildInfoFooter(),
         ],
@@ -835,6 +838,63 @@ class _SystemPerformanceTabState extends State<SystemPerformanceTab>
                       content: Text('✅ שגיאת טסט נשלחה ל-Sentry בהצלחה'),
                       backgroundColor: Color(0xFF22C55E),
                     ),
+                  );
+                }
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCorsSetupCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0F9FF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF6366F1).withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                const Text('CORS Setup (Storage)',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                const SizedBox(height: 4),
+                Text('מגדיר CORS על Storage כדי שסטוריז יעבדו ב-Web',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF6366F1),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            ),
+            icon: const Icon(Icons.storage_rounded, size: 18),
+            label: const Text('הפעל', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            onPressed: () async {
+              try {
+                await FirebaseFunctions.instance.httpsCallable('setCorsOnStorage').call({});
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ CORS הוגדר בהצלחה — סטוריז יעבדו כעת'),
+                      backgroundColor: Color(0xFF22C55E),
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
                   );
                 }
               }

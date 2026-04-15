@@ -155,6 +155,10 @@ class AppLog {
     'platform':   platform,
     'appVersion': appVersion,
     'timestamp':  Timestamp.fromDate(timestamp),
+    // 30-day TTL for error_logs / activity_log (GCP Console TTL policy
+    // deletes the doc automatically). auth_logs is excluded for now.
+    if (type == LogType.error || type == LogType.activity)
+      'expireAt': Timestamp.fromDate(timestamp.add(const Duration(days: 30))),
     if (extra.isNotEmpty) 'extra': extra,
   };
 

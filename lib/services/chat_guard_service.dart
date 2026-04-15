@@ -102,6 +102,8 @@ class ChatGuardService {
       'chatRoomId':   chatRoomId,
       'attemptCount': attemptCount,
       'createdAt':    FieldValue.serverTimestamp(),
+      'expireAt':     Timestamp.fromDate(
+          DateTime.now().add(const Duration(days: 30))),
     });
   }
 

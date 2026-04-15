@@ -388,7 +388,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     // hasImg check removed — safeImageProvider handles both HTTPS + base64
     final name = data['name'] as String? ?? '';
     final isVerified = data['isVerified'] == true;
-    final isVolunteer = data['isVolunteer'] == true;
+    final isVolunteer = data['isVolunteer'] == true || data['volunteerHeart'] == true;
     final serviceType = data['serviceType'] as String? ?? '';
     final bio = ((data['aboutMe'] ?? data['bio'] ?? '') as Object).toString();
     final xp = (data['xp'] as num? ?? 0).toInt();
@@ -504,17 +504,36 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                 ),
               ),
               const SizedBox(width: 16),
-              // ── RIGHT: profile photo ──────────────────────────────
-              CircleAvatar(
-                radius: 52,
-                backgroundColor: const Color(0xFFEEEBFF),
-                backgroundImage: safeImageProvider(profileImg),
-                child: safeImageProvider(profileImg) == null
-                    ? Icon(Icons.person,
-                        size: 44,
-                        color: const Color(0xFF6366F1)
-                            .withValues(alpha: 0.5))
-                    : null,
+              // ── RIGHT: profile photo + volunteer heart ─────────────
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  CircleAvatar(
+                    radius: 52,
+                    backgroundColor: const Color(0xFFEEEBFF),
+                    backgroundImage: safeImageProvider(profileImg),
+                    child: safeImageProvider(profileImg) == null
+                        ? Icon(Icons.person,
+                            size: 44,
+                            color: const Color(0xFF6366F1)
+                                .withValues(alpha: 0.5))
+                        : null,
+                  ),
+                  if (isVolunteer)
+                    Positioned(
+                      bottom: -2,
+                      right: -2,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.favorite_rounded,
+                            color: Color(0xFFEF4444), size: 18),
+                      ),
+                    ),
+                ],
               ),
             ],
           ),
@@ -522,69 +541,84 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           // ── XP Progress Bar ─────────────────────────────────────
           XpProgressBar(xp: xp),
 
-          // ── Category-specific specs (dynamic schema) ────────────
+          // ── v2 Service Schema (fields + bundles + surcharge + deposit) ──
           Builder(
             builder: (context) {
               final details =
                   data['categoryDetails'] as Map<String, dynamic>? ?? {};
-              if (details.isNotEmpty) {
-                return FutureBuilder<List<SchemaField>>(
-                  future: loadSchemaForCategory(
-                      data['serviceType'] as String? ?? ''),
-                  builder: (context, snap) {
-                    if (!snap.hasData || snap.data!.isEmpty) {
-                      return const SizedBox.shrink();
-                    }
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: CategorySpecsDisplay(
-                        schema: snap.data!,
-                        values: details,
-                      ),
-                    );
-                  },
-                );
-              }
-              return const SizedBox.shrink();
+              if (details.isEmpty) return const SizedBox.shrink();
+              return FutureBuilder<ServiceSchema>(
+                future: loadServiceSchemaFor(
+                    data['serviceType'] as String? ?? ''),
+                builder: (context, snap) {
+                  if (!snap.hasData || snap.data!.isEmpty) {
+                    return const SizedBox.shrink();
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: ServiceSchemaDisplay(
+                      schema: snap.data!,
+                      values: details,
+                    ),
+                  );
+                },
+              );
             },
           ),
 
-          // ── Dynamic Volunteer Badge (active if task in last 30d) ──
-          if (hasVolunteerBadge) ...[
+          // ── Community / Volunteer Badge ──────────────────────────
+          if (hasVolunteerBadge || isVolunteer) ...[
             const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF10B981), Color(0xFF6366F1)],
-                  begin: AlignmentDirectional.centerEnd,
-                  end: AlignmentDirectional.centerStart,
-                ),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF10B981).withValues(alpha: 0.3),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
+            Builder(builder: (_) {
+              final badges = data['communityBadges'] as List<dynamic>?;
+              final isAngel = badges != null && badges.contains('angel');
+              final isPillar = badges != null && badges.contains('pillar');
+              final badgeLabel = isAngel
+                  ? 'מלאך הקהילה'
+                  : isPillar
+                      ? 'עמוד תווך'
+                      : 'מתנדב פעיל';
+              final badgeIcon = isAngel
+                  ? Icons.auto_awesome_rounded
+                  : isPillar
+                      ? Icons.shield_rounded
+                      : Icons.favorite_rounded;
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: isAngel
+                        ? [const Color(0xFFF59E0B), const Color(0xFFEF4444)]
+                        : [const Color(0xFFEF4444), const Color(0xFFEC4899)],
+                    begin: AlignmentDirectional.centerEnd,
+                    end: AlignmentDirectional.centerStart,
                   ),
-                ],
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.volunteer_activism, color: Colors.white, size: 16),
-                  SizedBox(width: 6),
-                  Text(
-                    'מתנדב פעיל',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFEF4444).withValues(alpha: 0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
                     ),
-                  ),
-                ],
-              ),
-            ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(badgeIcon, color: Colors.white, size: 16),
+                    const SizedBox(width: 6),
+                    Text(
+                      badgeLabel,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
           ],
         ],
       ),

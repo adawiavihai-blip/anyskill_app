@@ -9,6 +9,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:image_picker/image_picker.dart';
 import '../constants.dart';
+import '../constants/world_countries.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/anyskill_logo.dart';
 import '../services/category_ai_service.dart';
@@ -26,7 +27,16 @@ enum UserRole { customer, expert }
 
 // ─────────────────────────────────────────────────────────────────────────────
 class SignUpScreen extends StatefulWidget {
-  const SignUpScreen({super.key});
+  /// When true, the screen acts as a "customer → provider upgrade" form:
+  /// hides email/password/phone/social/login-link, locks role to expert,
+  /// pre-fills from the current user, and on submit updates the existing
+  /// user doc instead of creating a new Firebase Auth account.
+  final bool upgradeExistingUser;
+
+  const SignUpScreen({
+    super.key,
+    this.upgradeExistingUser = false,
+  });
 
   @override
   State<SignUpScreen> createState() => _SignUpScreenState();
@@ -58,6 +68,15 @@ class _SignUpScreenState extends State<SignUpScreen>
   // ID / Passport image
   Uint8List?  _idImageBytes;  // raw bytes (web + mobile)
   String?     _idImageName;   // original filename for display
+
+  // v12.11.2: address + business doc + sub-category state
+  final _cityCtrl    = TextEditingController();
+  final _streetCtrl  = TextEditingController();
+  final _zipCtrl     = TextEditingController();
+  String  _countryCode = 'IL';            // v12.11.3: ISO-3166 code
+  String? _city;                           // selected city (when country has list)
+  String? _businessDocUrl;
+  bool    _isUploadingBusinessDoc = false;
 
   // Submit loading overlay
   String  _loadingStepMsg = '';
@@ -110,6 +129,8 @@ class _SignUpScreenState extends State<SignUpScreen>
         'title':     _kStepLabels[step] ?? step,
         'detail':    '',
         'priority':  'normal',
+        'expireAt':  Timestamp.fromDate(
+            DateTime.now().add(const Duration(days: 30))),
       });
     } catch (_) {}
   }
@@ -125,6 +146,43 @@ class _SignUpScreenState extends State<SignUpScreen>
     _nameCtrl.addListener(_onPartialChange);
     _emailCtrl.addListener(_onPartialChange);
     _phoneCtrl.addListener(_onPartialChange);
+
+    // v12.11.1: "upgrade existing customer → provider" mode.
+    if (widget.upgradeExistingUser) {
+      _currentRole = UserRole.expert;
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        _nameCtrl.text  = user.displayName ?? '';
+        _emailCtrl.text = user.email ?? '';
+        _phoneCtrl.text = user.phoneNumber ?? '';
+        // Best-effort prefill from existing user doc (doesn't block UI).
+        FirebaseFirestore.instance
+            .collection('users').doc(user.uid).get()
+            .then((snap) {
+          if (!mounted) return;
+          final d = snap.data();
+          if (d == null) return;
+          setState(() {
+            if ((_nameCtrl.text).isEmpty && d['name'] is String) {
+              _nameCtrl.text = d['name'] as String;
+            }
+            if ((_emailCtrl.text).isEmpty && d['email'] is String) {
+              _emailCtrl.text = d['email'] as String;
+            }
+            if ((_phoneCtrl.text).isEmpty && d['phone'] is String) {
+              _phoneCtrl.text = d['phone'] as String;
+            }
+            if (d['aboutMe'] is String) {
+              _descCtrl.text = d['aboutMe'] as String;
+            }
+            if (d['businessType'] is String) {
+              _businessType = d['businessType'] as String;
+            }
+          });
+        }).catchError((_) {});
+      }
+    }
+
     // Step 1: user opened the sign-up screen
     _logRegStep('reg_step_1');
   }
@@ -140,6 +198,9 @@ class _SignUpScreenState extends State<SignUpScreen>
     _passCtrl.dispose();
     _phoneCtrl.dispose();
     _descCtrl.dispose();
+    _cityCtrl.dispose();
+    _streetCtrl.dispose();
+    _zipCtrl.dispose();
     _toggleCtrl.dispose();
     super.dispose();
   }
@@ -365,13 +426,24 @@ class _SignUpScreenState extends State<SignUpScreen>
     final strNewCustomerBio   = l10n.signupNewCustomerBio;
 
     try {
-      final cred = await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(
-            email: _emailCtrl.text.trim(),
-            password: _passCtrl.text.trim(),
-          );
-
-      final uid        = cred.user!.uid;
+      final String uid;
+      if (widget.upgradeExistingUser) {
+        // v12.11.1: existing signed-in user upgrading to provider — reuse
+        // their Auth account, don't create a new one.
+        final cur = FirebaseAuth.instance.currentUser;
+        if (cur == null) {
+          _snack(strGenericError, _kRed);
+          return;
+        }
+        uid = cur.uid;
+      } else {
+        final cred = await FirebaseAuth.instance
+            .createUserWithEmailAndPassword(
+              email: _emailCtrl.text.trim(),
+              password: _passCtrl.text.trim(),
+            );
+        uid = cred.user!.uid;
+      }
       final isProvider = _currentRole == UserRole.expert;
 
       // Upload ID image (if provided) — show step label in overlay
@@ -382,14 +454,11 @@ class _SignUpScreenState extends State<SignUpScreen>
 
       // Step 1: Create the user doc (without category IDs — those come from finalizecategorysetup)
       if (mounted) setState(() => _loadingStepMsg = 'שומר פרופיל...');
-      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+      final payload = <String, dynamic>{
         'uid':              uid,
         'name':             _nameCtrl.text.trim(),
         'email':            _emailCtrl.text.trim(),
         'phone':            _phoneCtrl.text.trim(),
-        'balance':          0.0,
-        'rating':           5.0,
-        'reviewsCount':     0,
         'pricePerHour':     isProvider ? 100.0 : 0.0,
         'serviceType':      isProvider ? _category : '',
         if (isProvider && _subCategory != null) 'subCategoryName': _subCategory,
@@ -397,26 +466,57 @@ class _SignUpScreenState extends State<SignUpScreen>
             ? _descCtrl.text.trim()
             : (isProvider ? strNewProviderBio : strNewCustomerBio),
         if (isProvider && _businessType != null) 'businessType': _businessType,
+        if (isProvider && _businessDocUrl != null)
+          'businessDocUrl': _businessDocUrl,
+        if (isProvider && _subCategory != null && _subCategory!.isNotEmpty)
+          'subCategory': _subCategory,
+        if (isProvider) ...{
+          'countryCode': _countryCode,
+          'country': (kWorldCountries.firstWhere(
+            (c) => c.code == _countryCode,
+            orElse: () => kWorldCountries.first,
+          )).nameHe,
+        },
+        if (isProvider && (_city ?? _cityCtrl.text.trim()).isNotEmpty)
+          'city': _city ?? _cityCtrl.text.trim(),
+        if (isProvider && _streetCtrl.text.trim().isNotEmpty)
+          'street': _streetCtrl.text.trim(),
+        if (isProvider && _zipCtrl.text.trim().isNotEmpty)
+          'zipCode': _zipCtrl.text.trim(),
         if (isProvider && idImageUrl != null) ...{
           'idVerificationUrl':    idImageUrl,
           'idVerificationStatus': 'pending',
         },
-        'profileImage':     '',
-        'gallery':          [],
-        'quickTags':        [],
-        'isOnline':         true,
-        'isAdmin':          false,
-        'isVerified':       false,
-        'isCustomer':       !isProvider,
-        'isProvider':       isProvider,
         // ── ToS consent trail ──────────────────────────────────────────────
         'tos_agreed':       true,
         'tos_version':      '2.0',
         'tos_agreed_at':    FieldValue.serverTimestamp(),
-        'onboardingComplete': false,
-        'tourComplete':     false,
-        'createdAt':        FieldValue.serverTimestamp(),
-      });
+        'isCustomer':       !isProvider,
+        'isProvider':       widget.upgradeExistingUser ? false : isProvider,
+        if (widget.upgradeExistingUser && isProvider) 'isPendingExpert': true,
+        'updatedAt':        FieldValue.serverTimestamp(),
+      };
+      if (!widget.upgradeExistingUser) {
+        // New accounts get the default fields.
+        payload.addAll({
+          'balance':          0.0,
+          'rating':           5.0,
+          'reviewsCount':     0,
+          'profileImage':     '',
+          'gallery':          [],
+          'quickTags':        [],
+          'isOnline':         true,
+          'isAdmin':          false,
+          'isVerified':       false,
+          'onboardingComplete': false,
+          'tourComplete':     false,
+          'createdAt':        FieldValue.serverTimestamp(),
+        });
+      }
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .set(payload, SetOptions(merge: widget.upgradeExistingUser));
 
       // Step 2: Create/find category + subcategory, update user doc, admin log + email.
       // Called AFTER auth + user doc exist (Cloud Function needs both to exist).
@@ -617,7 +717,6 @@ class _SignUpScreenState extends State<SignUpScreen>
     } on CategoryAiException catch (e) {
       if (!mounted) return;
       setState(() => _isClassifying = false);
-      // Show the detailed diagnostic message from the service layer.
       _snack(e.message, _kRed);
     } catch (e) {
       if (!mounted) return;
@@ -691,7 +790,7 @@ class _SignUpScreenState extends State<SignUpScreen>
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       // Type toggle — two side-by-side cards
-                      _buildTypeToggle(),
+                      if (!widget.upgradeExistingUser) _buildTypeToggle(),
                       const SizedBox(height: 28),
 
                       // ── Full Name (mandatory — first + last) ─────────────
@@ -717,13 +816,15 @@ class _SignUpScreenState extends State<SignUpScreen>
                       ),
                       const SizedBox(height: 16),
 
-                      // ── Phone (mandatory — Israeli format) ───────────────
+                      // ── Phone (always shown; readonly when prefilled) ─────
                       _buildField(
                         ctrl: _phoneCtrl,
                         label: 'טלפון',
                         icon: Icons.phone_outlined,
                         keyboardType: TextInputType.phone,
                         isValid: _phoneOk,
+                        readOnly: widget.upgradeExistingUser &&
+                            _phoneCtrl.text.trim().isNotEmpty,
                         onChanged: (v) => setState(() =>
                             _phoneOk = _phoneValid(v)),
                         validator: (v) {
@@ -741,7 +842,34 @@ class _SignUpScreenState extends State<SignUpScreen>
                       ),
                       const SizedBox(height: 16),
 
-                      // ── Email (mandatory) ─────────────────────────────────
+                      // ── Email (always shown; readonly when prefilled) ────
+                      _buildField(
+                        ctrl: _emailCtrl,
+                        label: 'כתובת אימייל',
+                        icon: Icons.email_outlined,
+                        keyboardType: TextInputType.emailAddress,
+                        isValid: _emailOk,
+                        readOnly: widget.upgradeExistingUser &&
+                            _emailCtrl.text.trim().isNotEmpty,
+                        onChanged: (v) => setState(() =>
+                            _emailOk = _emailValid(v)),
+                        validator: (v) {
+                          final val = (v ?? '').trim();
+                          if (val.isEmpty) {
+                            _lastFailedField ??= 'email';
+                            return 'שדה זה הוא חובה';
+                          }
+                          if (!_emailValid(val)) {
+                            _lastFailedField ??= 'email';
+                            return 'כתובת אימייל אינה תקינה';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // ── Email + Password (hidden in upgrade mode) ────────
+                      if (!widget.upgradeExistingUser) ...[
                       _buildField(
                         ctrl: _emailCtrl,
                         label: 'כתובת אימייל',
@@ -802,6 +930,7 @@ class _SignUpScreenState extends State<SignUpScreen>
                       if (_passCtrl.text.isNotEmpty)
                         _buildStrengthBar(),
                       const SizedBox(height: 16),
+                      ],
 
                       // Expert-only fields — direct inline if block
                       if (_currentRole == UserRole.expert) ...[
@@ -842,98 +971,17 @@ class _SignUpScreenState extends State<SignUpScreen>
                                 borderRadius: BorderRadius.circular(14)),
                           ),
                         ),
-                        const SizedBox(height: 10),
-
-                        // AI classify button
-                        SizedBox(
-                          width: double.infinity,
-                          height: 46,
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _kPurple,
-                              disabledBackgroundColor:
-                                  _kPurple.withValues(alpha: 0.5),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12)),
-                            ),
-                            onPressed:
-                                _isClassifying ? null : _classifyWithAI,
-                            icon: _isClassifying
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white))
-                                : const Icon(Icons.auto_awesome_rounded,
-                                    color: Colors.white, size: 18),
-                            label: Text(
-                              _isClassifying
-                                  ? 'מסווג...'
-                                  : 'סווג קטגוריה עם AI',
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14),
-                            ),
-                          ),
-                        ),
-
-                        // AI classification result — solid indigo card
-                        if (_aiResult != null) ...[
-                          const SizedBox(height: 10),
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 14),
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFF4F46E5), Color(0xFF6366F1)],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Row(children: [
-                                  Icon(Icons.auto_awesome_rounded,
-                                      size: 16, color: Colors.white),
-                                  SizedBox(width: 6),
-                                  Text('סיווג AI',
-                                      style: TextStyle(
-                                          fontSize: 11,
-                                          color: Colors.white70,
-                                          fontWeight: FontWeight.w600,
-                                          letterSpacing: 0.5)),
-                                ]),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'סווגת לקטגוריה: ${_aiResult!.categoryName ?? ""}',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 15,
-                                      color: Colors.white),
-                                ),
-                                if (_subCategory != null && _subCategory!.isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 4),
-                                    child: Text(
-                                      'ולתת-קטגוריה: $_subCategory',
-                                      style: const TextStyle(
-                                          fontSize: 14,
-                                          color: Colors.white70),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ],
                         const SizedBox(height: 16),
 
-                        // 1. Category picker (manual override)
-                        _buildCategoryPicker(),
+                        // v12.11.2: Category + sub-category dropdowns synced
+                        // with APP_CATEGORIES / APP_SUB_CATEGORIES.
+                        _buildCategoryDropdownV2(),
+                        const SizedBox(height: 14),
+                        _buildSubCategoryDropdownV2(),
+                        const SizedBox(height: 16),
+
+                        // Address block — country · city · street · zip
+                        _buildAddressBlock(),
                         const SizedBox(height: 16),
 
                         // 2. Business type dropdown
@@ -981,6 +1029,10 @@ class _SignUpScreenState extends State<SignUpScreen>
                           onChanged: (v) =>
                               setState(() => _businessType = v),
                         ),
+                        const SizedBox(height: 14),
+
+                        // v12.11.2: Business document upload (פטור/מורשה/חשבונית)
+                        _buildBusinessDocUpload(),
                         const SizedBox(height: 16),
 
                         // 3. ID / Passport upload
@@ -988,31 +1040,31 @@ class _SignUpScreenState extends State<SignUpScreen>
                         const SizedBox(height: 16),
                       ],
 
-                      // ── Social divider ──────────────────────────────────────
-                      _buildSocialDivider(),
-                      const SizedBox(height: 14),
-
-                      // Google + Apple
-                      Row(
-                        children: [
-                          Expanded(
-                              child: _SocialButton(
-                            label: 'Google',
-                            icon: _googleIcon(),
-                            onTap: _signInGoogle,
-                            borderColor: Colors.grey.shade300,
-                          )),
-                          const SizedBox(width: 12),
-                          Expanded(
-                              child: _SocialButton(
-                            label: 'Apple',
-                            icon: const Icon(Icons.apple, size: 22),
-                            onTap: _signInApple,
-                            dark: true,
-                          )),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
+                      // ── Social divider (hidden in upgrade mode) ────────────
+                      if (!widget.upgradeExistingUser) ...[
+                        _buildSocialDivider(),
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            Expanded(
+                                child: _SocialButton(
+                              label: 'Google',
+                              icon: _googleIcon(),
+                              onTap: _signInGoogle,
+                              borderColor: Colors.grey.shade300,
+                            )),
+                            const SizedBox(width: 12),
+                            Expanded(
+                                child: _SocialButton(
+                              label: 'Apple',
+                              icon: const Icon(Icons.apple, size: 22),
+                              onTap: _signInApple,
+                              dark: true,
+                            )),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+                      ],
 
                       // Quick Summary card
                       _buildQuickSummary(),
@@ -1026,30 +1078,31 @@ class _SignUpScreenState extends State<SignUpScreen>
                       _buildSubmitButton(),
                       const SizedBox(height: 16),
 
-                      // Login link
-                      Center(
-                        child: GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: RichText(
-                            text: TextSpan(
-                              text: 'כבר יש לך חשבון? ',
-                              style: TextStyle(
-                                  color: Colors.grey[600], fontSize: 14),
-                              children: const [
-                                TextSpan(
-                                  text: 'כניסה כאן',
-                                  style: TextStyle(
-                                    color: _kPurple,
-                                    fontWeight: FontWeight.bold,
-                                    decoration: TextDecoration.underline,
-                                    decorationColor: _kPurple,
+                      // Login link (hidden in upgrade mode)
+                      if (!widget.upgradeExistingUser)
+                        Center(
+                          child: GestureDetector(
+                            onTap: () => Navigator.pop(context),
+                            child: RichText(
+                              text: TextSpan(
+                                text: 'כבר יש לך חשבון? ',
+                                style: TextStyle(
+                                    color: Colors.grey[600], fontSize: 14),
+                                children: const [
+                                  TextSpan(
+                                    text: 'כניסה כאן',
+                                    style: TextStyle(
+                                      color: _kPurple,
+                                      fontWeight: FontWeight.bold,
+                                      decoration: TextDecoration.underline,
+                                      decorationColor: _kPurple,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                         ),
-                      ),
                     ],
                   ),
                 ),
@@ -1304,6 +1357,7 @@ class _SignUpScreenState extends State<SignUpScreen>
     TextInputType keyboardType = TextInputType.text,
     bool? isValid,
     bool obscure = false,
+    bool readOnly = false,
     Widget? suffix,
     void Function(String)? onChanged,
     String? Function(String?)? validator,
@@ -1313,12 +1367,14 @@ class _SignUpScreenState extends State<SignUpScreen>
 
     if (isValid == true)  { borderColor = _kGreen; fillColor = const Color(0xFFF0FDF4); }
     if (isValid == false) { borderColor = _kRed;   fillColor = const Color(0xFFFFF5F5); }
+    if (readOnly)         { fillColor   = const Color(0xFFF3F4F6); }
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       child: TextFormField(
         controller: ctrl,
         obscureText: obscure,
+        readOnly: readOnly,
         keyboardType: keyboardType,
         textAlign: TextAlign.right,
         textDirection: TextDirection.rtl,
@@ -1756,6 +1812,331 @@ class _SignUpScreenState extends State<SignUpScreen>
       )).toList(),
       onChanged: (v) => setState(() => _category = v ?? _category),
     );
+  }
+
+  // v12.11.2: Category dropdown synced to APP_CATEGORIES (from constants.dart).
+  Widget _buildCategoryDropdownV2() {
+    final cats = APP_CATEGORIES.map((c) => c['name'] as String).toList();
+    final current = cats.contains(_category) ? _category : null;
+    return DropdownButtonFormField<String>(
+      value: current,
+      isExpanded: true,
+      decoration: _v2InputDeco('תחום עיסוק', Icons.work_outline_rounded),
+      items: cats
+          .map((c) => DropdownMenuItem(
+                value: c,
+                child: Text(c, textAlign: TextAlign.right,
+                    style: const TextStyle(fontSize: 14)),
+              ))
+          .toList(),
+      onChanged: (v) {
+        if (v == null) return;
+        setState(() {
+          _category = v;
+          final subs = APP_SUB_CATEGORIES[v] ?? const <String>[];
+          _subCategory = subs.isNotEmpty ? subs.first : null;
+        });
+      },
+      validator: (v) => (v == null || v.isEmpty) ? 'בחר/י תחום עיסוק' : null,
+    );
+  }
+
+  // v12.11.2: Sub-category dropdown filtered by the selected category.
+  Widget _buildSubCategoryDropdownV2() {
+    final subs = APP_SUB_CATEGORIES[_category] ?? const <String>[];
+    if (subs.isEmpty) return const SizedBox.shrink();
+    final current = subs.contains(_subCategory) ? _subCategory : null;
+    return DropdownButtonFormField<String>(
+      value: current,
+      isExpanded: true,
+      decoration: _v2InputDeco('תת-קטגוריה', Icons.tune_rounded),
+      items: subs
+          .map((s) => DropdownMenuItem(
+                value: s,
+                child: Text(s, textAlign: TextAlign.right,
+                    style: const TextStyle(fontSize: 14)),
+              ))
+          .toList(),
+      onChanged: (v) => setState(() => _subCategory = v),
+      validator: (v) => (v == null || v.isEmpty) ? 'בחר/י תת-קטגוריה' : null,
+    );
+  }
+
+  // v12.11.3: Searchable country picker (flags + Hebrew + English names).
+  Widget _buildCountryPicker() {
+    final entry = kWorldCountries.firstWhere(
+      (c) => c.code == _countryCode,
+      orElse: () => kWorldCountries.first,
+    );
+    return InkWell(
+      onTap: _openCountrySheet,
+      borderRadius: BorderRadius.circular(14),
+      child: InputDecorator(
+        decoration: _v2InputDeco('מדינה', Icons.public_rounded),
+        child: Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            Text(entry.flag, style: const TextStyle(fontSize: 20)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                entry.nameHe,
+                textAlign: TextAlign.right,
+                style: const TextStyle(fontSize: 14, color: Color(0xFF1A1A2E)),
+              ),
+            ),
+            const Icon(Icons.keyboard_arrow_down_rounded,
+                size: 20, color: Color(0xFF6B7280)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openCountrySheet() async {
+    final picked = await showModalBottomSheet<CountryEntry>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => const _CountrySearchSheet(),
+    );
+    if (picked != null) {
+      setState(() {
+        _countryCode = picked.code;
+        // Reset city when country changes.
+        _city = null;
+        _cityCtrl.clear();
+      });
+    }
+  }
+
+  // v12.11.3: City picker — searchable when we have a list for this country,
+  // otherwise free-text.
+  Widget _buildCityPicker() {
+    final cities = kCitiesByCountryCode[_countryCode];
+    if (cities == null) {
+      // Free-text fallback for countries without a curated city list.
+      return TextFormField(
+        controller: _cityCtrl,
+        textAlign: TextAlign.right,
+        textDirection: TextDirection.rtl,
+        decoration: _v2InputDeco('עיר', Icons.location_city_rounded),
+        validator: (v) =>
+            (v?.trim().isEmpty ?? true) ? 'שדה חובה' : null,
+      );
+    }
+    final label = _city ?? 'בחר/י עיר';
+    final isPlaceholder = _city == null;
+    return FormField<String>(
+      initialValue: _city,
+      validator: (_) =>
+          (_city == null || _city!.isEmpty) ? 'שדה חובה' : null,
+      builder: (state) {
+        return InputDecorator(
+          decoration: _v2InputDeco('עיר', Icons.location_city_rounded)
+              .copyWith(errorText: state.errorText),
+          child: InkWell(
+            onTap: () async {
+              final picked = await _openCitySheet(cities);
+              if (picked != null) {
+                setState(() => _city = picked);
+                state.didChange(picked);
+              }
+            },
+            child: Row(
+              textDirection: TextDirection.rtl,
+              children: [
+                Expanded(
+                  child: Text(
+                    label,
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: isPlaceholder
+                          ? Colors.grey[500]
+                          : const Color(0xFF1A1A2E),
+                    ),
+                  ),
+                ),
+                const Icon(Icons.keyboard_arrow_down_rounded,
+                    size: 20, color: Color(0xFF6B7280)),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<String?> _openCitySheet(List<String> cities) {
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => _CitySearchSheet(cities: cities),
+    );
+  }
+
+  // v12.11.3: Address block built from the pickers above.
+  Widget _buildAddressBlock() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildCountryPicker(),
+        const SizedBox(height: 12),
+        _buildCityPicker(),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _streetCtrl,
+          textAlign: TextAlign.right,
+          textDirection: TextDirection.rtl,
+          decoration: _v2InputDeco('רחוב ומספר', Icons.home_outlined),
+          validator: (v) =>
+              (v?.trim().isEmpty ?? true) ? 'שדה חובה' : null,
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _zipCtrl,
+          textAlign: TextAlign.right,
+          keyboardType: TextInputType.number,
+          decoration: _v2InputDeco('מיקוד', Icons.markunread_mailbox_outlined),
+        ),
+      ],
+    );
+  }
+
+  InputDecoration _v2InputDeco(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle: TextStyle(color: Colors.grey[500], fontSize: 14),
+      prefixIcon: Icon(icon, size: 20, color: _kPurple),
+      filled: true,
+      fillColor: const Color(0xFFF0F0FF),
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: _kPurple, width: 1.2),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: _kPurple, width: 1.6),
+      ),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+    );
+  }
+
+  // v12.11.2: Business-document upload (visible after business type is picked).
+  Widget _buildBusinessDocUpload() {
+    if (_businessType == null) return const SizedBox.shrink();
+    final label = 'העלה מסמך ל"$_businessType"';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAFAFF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _kPurple.withValues(alpha: 0.25), width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              const Icon(Icons.upload_file_rounded, size: 18, color: _kPurple),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(label,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w700,
+                      color: Color(0xFF1A1A2E),
+                    )),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_businessDocUrl != null) ...[
+            Row(
+              children: [
+                const Icon(Icons.check_circle, color: _kGreen, size: 18),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('מסמך הועלה בהצלחה',
+                      style: TextStyle(
+                        fontSize: 12.5, fontWeight: FontWeight.w600,
+                        color: Color(0xFF065F46),
+                      )),
+                ),
+                GestureDetector(
+                  onTap: () => setState(() => _businessDocUrl = null),
+                  child: const Icon(Icons.close, size: 16,
+                      color: Color(0xFF9CA3AF)),
+                ),
+              ],
+            ),
+          ] else
+            SizedBox(
+              width: double.infinity, height: 44,
+              child: OutlinedButton.icon(
+                icon: _isUploadingBusinessDoc
+                    ? const SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: _kPurple))
+                    : const Icon(Icons.cloud_upload_outlined, size: 18),
+                label: Text(
+                  _isUploadingBusinessDoc ? 'מעלה...' : 'בחר תמונת מסמך',
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _kPurple,
+                  side: const BorderSide(color: _kPurple, width: 1.2),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed:
+                    _isUploadingBusinessDoc ? null : _pickBusinessDoc,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickBusinessDoc() async {
+    final file = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 2000,
+      imageQuality: 85,
+    );
+    if (file == null) return;
+    setState(() => _isUploadingBusinessDoc = true);
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      final bytes = await file.readAsBytes();
+      final ext = file.name.split('.').last;
+      final ref = FirebaseStorage.instance.ref(
+          'business_docs/$uid/license_${DateTime.now().millisecondsSinceEpoch}.$ext');
+      await ref.putData(
+        Uint8List.fromList(bytes),
+        SettableMetadata(contentType: 'image/$ext'),
+      );
+      final url = await ref.getDownloadURL();
+      if (mounted) setState(() => _businessDocUrl = url);
+    } catch (e) {
+      if (mounted) _snack('שגיאה בהעלאת המסמך: $e', _kRed);
+    } finally {
+      if (mounted) setState(() => _isUploadingBusinessDoc = false);
+    }
   }
 
   // ── Social divider ────────────────────────────────────────────────────────────
@@ -2284,3 +2665,198 @@ class _GoogleIconPainter extends CustomPainter {
   @override
   bool shouldRepaint(_GoogleIconPainter _) => false;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v12.11.3: Searchable country bottom sheet.
+// ═══════════════════════════════════════════════════════════════════════════
+class _CountrySearchSheet extends StatefulWidget {
+  const _CountrySearchSheet();
+  @override
+  State<_CountrySearchSheet> createState() => _CountrySearchSheetState();
+}
+
+class _CountrySearchSheetState extends State<_CountrySearchSheet> {
+  String _q = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final q = _q.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? kWorldCountries
+        : kWorldCountries.where((c) =>
+            c.nameHe.toLowerCase().contains(q) ||
+            c.nameEn.toLowerCase().contains(q) ||
+            c.code.toLowerCase().contains(q)).toList();
+
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.85,
+      maxChildSize: 0.95,
+      minChildSize: 0.5,
+      builder: (_, scrollCtrl) {
+        return Column(
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: const Color(0xFFD1D5DB),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text('בחר/י מדינה',
+                style: TextStyle(
+                  fontSize: 16, fontWeight: FontWeight.w800,
+                  color: Color(0xFF1A1A2E),
+                )),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextField(
+                textAlign: TextAlign.right,
+                autofocus: true,
+                onChanged: (v) => setState(() => _q = v),
+                decoration: InputDecoration(
+                  hintText: 'חפש/י מדינה...',
+                  prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                  filled: true,
+                  fillColor: const Color(0xFFF4F5F7),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                        color: Color(0xFF6366F1), width: 1.5),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView.builder(
+                controller: scrollCtrl,
+                itemCount: filtered.length,
+                itemBuilder: (_, i) {
+                  final c = filtered[i];
+                  return ListTile(
+                    leading: Text(c.flag, style: const TextStyle(fontSize: 24)),
+                    title: Text(c.nameHe, textDirection: TextDirection.rtl),
+                    subtitle: Text(c.nameEn,
+                        textDirection: TextDirection.ltr,
+                        style: TextStyle(
+                            fontSize: 11, color: Colors.grey[500])),
+                    trailing: Text(c.code,
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey[500],
+                            fontWeight: FontWeight.w600)),
+                    onTap: () => Navigator.of(context).pop(c),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v12.11.3: Searchable city bottom sheet.
+// ═══════════════════════════════════════════════════════════════════════════
+class _CitySearchSheet extends StatefulWidget {
+  final List<String> cities;
+  const _CitySearchSheet({required this.cities});
+  @override
+  State<_CitySearchSheet> createState() => _CitySearchSheetState();
+}
+
+class _CitySearchSheetState extends State<_CitySearchSheet> {
+  String _q = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final q = _q.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? widget.cities
+        : widget.cities
+            .where((c) => c.toLowerCase().contains(q))
+            .toList();
+
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.85,
+      maxChildSize: 0.95,
+      minChildSize: 0.5,
+      builder: (_, scrollCtrl) {
+        return Column(
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: const Color(0xFFD1D5DB),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text('בחר/י עיר',
+                style: TextStyle(
+                  fontSize: 16, fontWeight: FontWeight.w800,
+                  color: Color(0xFF1A1A2E),
+                )),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextField(
+                textAlign: TextAlign.right,
+                autofocus: true,
+                onChanged: (v) => setState(() => _q = v),
+                decoration: InputDecoration(
+                  hintText: 'חפש/י עיר...',
+                  prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                  filled: true,
+                  fillColor: const Color(0xFFF4F5F7),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                        color: Color(0xFF6366F1), width: 1.5),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView.builder(
+                controller: scrollCtrl,
+                itemCount: filtered.length,
+                itemBuilder: (_, i) {
+                  final c = filtered[i];
+                  return ListTile(
+                    leading: const Icon(Icons.location_city_rounded,
+                        size: 20, color: Color(0xFF6366F1)),
+                    title: Text(c, textDirection: TextDirection.rtl),
+                    onTap: () => Navigator.of(context).pop(c),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+

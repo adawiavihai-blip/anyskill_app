@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
@@ -17,11 +19,35 @@ import '../l10n/app_localizations.dart';
 import 'search_screen/widgets/stories_row.dart';
 import '../utils/safe_image_provider.dart';
 import 'support_center_screen.dart';
+import 'chat_screen.dart';
+import 'alex_profile_screen.dart';
+import '../services/provider_listing_service.dart';
+import '../widgets/providers_map_view.dart';
+import 'package:latlong2/latlong.dart';
+import '../theme/app_theme.dart';
 
 // Brand colours (shared with the rest of the app)
 const _kPurple     = Color(0xFF6366F1);
 const _kPurpleSoft = Color(0xFFF0F0FF);
 const _kGold       = Color(0xFFFBBF24);
+
+/// Synthetic AI teacher injected into the English (אנגלית) category.
+const _kAlexAiTeacher = <String, dynamic>{
+  'uid':          'ai_teacher_alex',
+  'name':         'Alex',
+  'aboutMe':      'מורה AI מקצועי לאנגלית מבית D-ID',
+  'profileImage': null,
+  'rating':       5.0,
+  'reviewsCount': 128,
+  'pricePerHour': 30,
+  'isVerified':   true,
+  'isOnline':     true,
+  'isAiTeacher':  true,
+  'isPromoted':   false,
+  'isDemo':       false,
+  'serviceType':  'אנגלית',
+  'xp':           0,
+};
 
 class CategoryResultsScreen extends StatefulWidget {
   final String categoryName;
@@ -49,8 +75,27 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   bool   _filterUnder100 = false;
   double _minRating      = 0;        // 0 = no filter, 3/4/4.5 = minimum stars
   double? _maxDistanceKm;            // null = no radius limit
+  // v12.9.0: Map filter chips
+  bool   _onlineOnly     = false;    // "🟢 זמינים עכשיו"
+
+  // v12.9.0 (PR-5): Map bottom-sheet carousel state
+  final PageController _mapPageCtrl =
+      PageController(viewportFraction: 0.88);
+  String? _mapSelectedUid;
+  LatLng? _mapFocusedLatLng;
   bool   _showAdvancedFilters = false;
   Position? _currentPosition;
+
+  // v9.9.0: Map/List toggle
+  bool _showMap = false;
+
+  /// Returns the display label for community badges on search cards.
+  static String _communityBadgeLabel(Map<String, dynamic> data) {
+    final badges = data['communityBadges'] as List<dynamic>?;
+    if (badges != null && badges.contains('angel')) return 'מלאך';
+    if (badges != null && badges.contains('pillar')) return 'עמוד תווך';
+    return 'מתנדב';
+  }
 
   // ── Pagination state ───────────────────────────────────────────────────────
   static const int _kPageSize = 15;
@@ -90,6 +135,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   @override
   void dispose() {
     _scrollCtrl.dispose();
+    _mapPageCtrl.dispose();
     super.dispose();
   }
 
@@ -140,42 +186,136 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
   /// Fetches the next page of experts using Firestore cursor pagination.
   /// Applies isVerified / isHidden client-side filters to each page.
+  ///
+  /// Two-query strategy (v9.4.1):
+  ///   1. Primary: `serviceType == categoryName` (exact match)
+  ///   2. Fallback: `parentCategory == categoryName` (sub-cat providers
+  ///      whose serviceType is the sub-cat name, not the parent name)
+  ///
+  /// This ensures tapping a PARENT category shows providers registered
+  /// under any of its sub-categories, as well as directly under the parent.
   Future<List<Map<String, dynamic>>> _fetchPage() async {
-    Query<Map<String, dynamic>> q = FirebaseFirestore.instance
-        .collection('users')
-        .where('isProvider', isEqualTo: true);
+    try {
+      // ── v10.5.1: Query provider_listings instead of users ─────────────
+      // Each listing is a separate professional identity. A provider with
+      // 2 identities appears as 2 separate cards, each with its own
+      // rating/reviewsCount/serviceType. Uses listingId as unique key.
+      final db = FirebaseFirestore.instance;
+      final seenListings = <String>{};
+      final results = <Map<String, dynamic>>[];
 
-    if (widget.volunteerOnly) {
-      q = q.where('isVolunteer', isEqualTo: true);
-    } else {
-      q = q.where('serviceType', isEqualTo: widget.categoryName);
+      // ── Primary: listings query ──────────────────────────────────────
+      if (!widget.volunteerOnly) {
+        Query<Map<String, dynamic>> q = db
+            .collection('provider_listings')
+            .where('serviceType', isEqualTo: widget.categoryName);
+
+        if (_lastDoc != null) q = q.startAfterDocument(_lastDoc!);
+        q = q.limit(_kPageSize);
+
+        final snap = await q.get().timeout(
+          const Duration(seconds: 8),
+          onTimeout: () => q.get(const GetOptions(source: Source.cache)),
+        );
+        debugPrint('[CategoryResults] Listings: ${snap.docs.length} for "${widget.categoryName}"');
+
+        if (snap.docs.length < _kPageSize) {
+          if (mounted) setState(() => _hasMore = false);
+        }
+        if (snap.docs.isNotEmpty) _lastDoc = snap.docs.last;
+
+        for (final d in snap.docs) {
+          final map = d.data();
+          if (map['isVerified'] == false) continue;
+          if (map['isHidden'] == true) continue;
+          // v11.9.x: Demo profiles ARE shown in search (Soft Launch).
+          // Booking interception in expert_profile_screen handles the
+          // fake-success flow + admin notification. To filter them out,
+          // toggle isHidden in the admin demo experts tab instead.
+          map['listingId'] = d.id;
+          // uid comes from the listing doc (denormalized owner UID)
+          map['uid'] = map['uid'] ?? '';
+          if (seenListings.add(d.id)) results.add(map);
+        }
+
+        // ── Fallback: parentCategory match ────────────────────────────
+        if (results.isEmpty && _lastDoc == null) {
+          try {
+            final parentSnap = await db
+                .collection('provider_listings')
+                .where('parentCategory', isEqualTo: widget.categoryName)
+                .limit(_kPageSize)
+                .get()
+                .timeout(const Duration(seconds: 6),
+                    onTimeout: () => throw TimeoutException('parentCategory'));
+            for (final d in parentSnap.docs) {
+              if (seenListings.contains(d.id)) continue;
+              final map = d.data();
+              if (map['isVerified'] == false) continue;
+              if (map['isHidden'] == true) continue;
+              map['listingId'] = d.id;
+              map['uid'] = map['uid'] ?? '';
+              if (seenListings.add(d.id)) results.add(map);
+            }
+            debugPrint('[CategoryResults] parentCategory fallback: ${parentSnap.docs.length}');
+          } catch (e) {
+            debugPrint('[CategoryResults] parentCategory fallback error: $e');
+          }
+        }
+      }
+
+      // ── Volunteer-only path (still queries users — volunteers don't have listings) ─
+      if (widget.volunteerOnly) {
+        Query<Map<String, dynamic>> q = db
+            .collection('users')
+            .where('isProvider', isEqualTo: true)
+            .where('isVolunteer', isEqualTo: true);
+        if (_lastDoc != null) q = q.startAfterDocument(_lastDoc!);
+        q = q.limit(_kPageSize);
+        final snap = await q.get().timeout(const Duration(seconds: 8));
+        if (snap.docs.length < _kPageSize) {
+          if (mounted) setState(() => _hasMore = false);
+        }
+        if (snap.docs.isNotEmpty) _lastDoc = snap.docs.last;
+        for (final d in snap.docs) {
+          final map = d.data();
+          map['uid'] = d.id;
+          if (map['isVerified'] == false) continue;
+          if (map['isHidden'] == true) continue;
+          if (seenListings.add(d.id)) results.add(map);
+        }
+      }
+
+      // ── Auto-repair: if 0 listings found, fall back to users collection
+      // and auto-create missing listings (the "ghost" fix) ─────────────
+      if (results.isEmpty && !widget.volunteerOnly && _lastDoc == null) {
+        debugPrint('[CategoryResults] No listings found — trying users fallback + auto-repair');
+        final userSnap = await db
+            .collection('users')
+            .where('isProvider', isEqualTo: true)
+            .where('serviceType', isEqualTo: widget.categoryName)
+            .limit(_kPageSize)
+            .get();
+        for (final d in userSnap.docs) {
+          final map = d.data();
+          if (map['isVerified'] == false) continue;
+          if (map['isHidden'] == true) continue;
+          map['uid'] = d.id;
+          results.add(map);
+          // Fire-and-forget: auto-create listing for this provider
+          ProviderListingService.migrateIfNeeded(d.id).catchError((_) => null);
+        }
+        if (userSnap.docs.length < _kPageSize) {
+          if (mounted) setState(() => _hasMore = false);
+        }
+      }
+
+      debugPrint('[CategoryResults] After filters: ${results.length} experts visible');
+      return results;
+    } catch (e) {
+      debugPrint('[CategoryResults] _fetchPage ERROR: $e');
+      rethrow;
     }
-
-    if (_lastDoc != null) q = q.startAfterDocument(_lastDoc!);
-    q = q.limit(_kPageSize);
-
-    final snap = await q.get().timeout(
-      const Duration(seconds: 6),
-      onTimeout: () => q.get(const GetOptions(source: Source.cache)),
-    );
-    debugPrint('[CategoryResults] Fetched ${snap.docs.length} docs '
-        'for category="${widget.categoryName}" (cursor=${_lastDoc != null})');
-    if (snap.docs.length < _kPageSize) {
-      if (mounted) setState(() => _hasMore = false);
-    }
-    if (snap.docs.isNotEmpty) _lastDoc = snap.docs.last;
-
-    final results = snap.docs.map((d) {
-      final map = d.data();
-      map['uid'] = d.id;
-      return map;
-    })
-    .where((m) => m['isVerified'] != false)
-    .where((m) => m['isHidden']   != true)
-    .toList();
-
-    debugPrint('[CategoryResults] After filters: ${results.length} experts visible');
-    return results;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -328,6 +468,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                                     builder: (_) => ExpertProfileScreen(
                                       expertId: expertId,
                                       expertName: data['name'] ?? expertDefaultName,
+                                      listingId: data['listingId'] as String?,
                                     ),
                                   ),
                                 );
@@ -376,6 +517,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                       builder: (_) => ExpertProfileScreen(
                         expertId: expertId,
                         expertName: data['name'] ?? expertDefaultName,
+                        listingId: data['listingId'] as String?,
                       ),
                     ),
                   );
@@ -447,30 +589,50 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
               child: Center(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 20),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: hasStory
-                          ? null
-                          : Border.all(color: _kPurple.withValues(alpha: 0.18), width: 2),
-                      gradient: hasStory
-                          ? const LinearGradient(
-                              colors: [Color(0xFF6366F1), Color(0xFFEC4899), Color(0xFFF59E0B)],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            )
-                          : null,
-                    ),
-                    padding: hasStory ? const EdgeInsets.all(3) : EdgeInsets.zero,
-                    child: CircleAvatar(
-                      radius: 46,
-                      backgroundColor: const Color(0xFFEEEBFF),
-                      backgroundImage: hasImg ? safeImageProvider(profileImg) : null,
-                      child: safeImageProvider(profileImg) == null
-                          ? Icon(Icons.person, size: 40,
-                              color: _kPurple.withValues(alpha: 0.5))
-                          : null,
-                    ),
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: hasStory
+                              ? null
+                              : Border.all(color: _kPurple.withValues(alpha: 0.18), width: 2),
+                          gradient: hasStory
+                              ? const LinearGradient(
+                                  colors: [Color(0xFF6366F1), Color(0xFFEC4899), Color(0xFFF59E0B)],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                )
+                              : null,
+                        ),
+                        padding: hasStory ? const EdgeInsets.all(3) : EdgeInsets.zero,
+                        child: CircleAvatar(
+                          radius: 46,
+                          backgroundColor: const Color(0xFFEEEBFF),
+                          backgroundImage: hasImg ? safeImageProvider(profileImg) : null,
+                          child: safeImageProvider(profileImg) == null
+                              ? Icon(Icons.person, size: 40,
+                                  color: _kPurple.withValues(alpha: 0.5))
+                              : null,
+                        ),
+                      ),
+                      // ── Volunteer Heart overlay (Metallic Gold) ─────────
+                      if (data['volunteerHeart'] == true || data['isVolunteer'] == true)
+                        Positioned(
+                          bottom: 0,
+                          right: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.favorite_rounded,
+                                color: Color(0xFFD4AF37), size: 16),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ),
@@ -721,7 +883,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                     const Icon(Icons.verified,
                         color: Color(0xFF1877F2), size: 15),
                   ],
-                  if (data['isVolunteer'] == true) ...[
+                  if (data['volunteerHeart'] == true || data['isVolunteer'] == true) ...[
                     const SizedBox(width: 4),
                     VolunteerService.hasActiveVolunteerBadge(data)
                         ? Container(
@@ -730,29 +892,31 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                             decoration: BoxDecoration(
                               gradient: const LinearGradient(
                                 colors: [
-                                  Color(0xFF10B981),
-                                  Color(0xFF6366F1),
+                                  Color(0xFFD4AF37),
+                                  Color(0xFFB8860B),
                                 ],
                               ),
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: const Row(
+                            child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.volunteer_activism,
+                                const Icon(Icons.favorite_rounded,
                                     color: Colors.white, size: 11),
-                                SizedBox(width: 2),
-                                Text('מתנדב',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.bold,
-                                    )),
+                                const SizedBox(width: 2),
+                                Text(
+                                  _communityBadgeLabel(data),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                               ],
                             ),
                           )
                         : const Icon(Icons.favorite,
-                            color: Colors.red, size: 15),
+                            color: Color(0xFFD4AF37), size: 15),
                   ],
                   const SizedBox(width: 4),
                   Flexible(
@@ -871,6 +1035,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                       builder: (_) => ExpertProfileScreen(
                         expertId: expertId,
                         expertName: name,
+                        listingId: data['listingId'] as String?,
                       ),
                     ),
                   ),
@@ -887,17 +1052,309 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // AI Teacher card — special rendering for Alex
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildAiTeacherCard(Map<String, dynamic> data) {
+    final name  = data['name'] as String? ?? 'Alex';
+    final bio   = data['aboutMe'] as String? ?? '';
+    final price = (data['pricePerHour'] as num?)?.toInt() ?? 30;
+
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const AlexProfileScreen()),
+      ),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: _kPurple.withValues(alpha: 0.4),
+            width: 1.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: _kPurple.withValues(alpha: 0.12),
+              blurRadius: 20,
+              spreadRadius: 1,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // ── Left: AI avatar ──────────────────────────────────────────
+              ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 185, maxWidth: 130),
+                child: SizedBox(
+                  width: 130,
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.only(
+                      topRight: Radius.circular(16),
+                      bottomRight: Radius.circular(16),
+                    ),
+                    child: Container(
+                      color: _kPurpleSoft,
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Purple circle with "A"
+                            Container(
+                              width: 80,
+                              height: 80,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: const LinearGradient(
+                                  colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: _kPurple.withValues(alpha: 0.35),
+                                    blurRadius: 16,
+                                  ),
+                                ],
+                              ),
+                              child: const Center(
+                                child: Text('A',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 36,
+                                        fontWeight: FontWeight.bold)),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            // Online badge
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.65),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.circle,
+                                      color: Color(0xFF22C55E), size: 7),
+                                  SizedBox(width: 4),
+                                  Text('Online 24/7',
+                                      style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w600)),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              // ── Right: details ───────────────────────────────────────────
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // Top content
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          // Price row
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              // AI Teacher badge
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                    colors: [
+                                      Color(0xFF6366F1),
+                                      Color(0xFF8B5CF6),
+                                    ],
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.auto_awesome,
+                                        color: Colors.white, size: 11),
+                                    SizedBox(width: 4),
+                                    Text('AI Teacher',
+                                        style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                              ),
+                              // Price
+                              RichText(
+                                text: TextSpan(
+                                  style: const TextStyle(fontFamily: 'Heebo'),
+                                  children: [
+                                    TextSpan(
+                                      text: '₪$price',
+                                      style: const TextStyle(
+                                          color: _kPurple,
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 18),
+                                    ),
+                                    const TextSpan(
+                                      text: '/לשעה',
+                                      style: TextStyle(
+                                          color: Colors.grey,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.normal),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+
+                          // Name + verified
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              const Icon(Icons.verified,
+                                  color: Color(0xFF1877F2), size: 15),
+                              const SizedBox(width: 4),
+                              Text(name,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15)),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+
+                          // Title
+                          const Text('AI English Teacher',
+                              style: TextStyle(
+                                  color: _kPurple,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 4),
+
+                          // Bio
+                          if (bio.isNotEmpty)
+                            Text(bio,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.right,
+                                style: TextStyle(
+                                    color: Colors.grey[600], fontSize: 12)),
+                          const SizedBox(height: 4),
+
+                          // Level chip
+                          Align(
+                            alignment: AlignmentDirectional.centerEnd,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: _kPurpleSoft,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                    color: _kPurple.withValues(alpha: 0.2)),
+                              ),
+                              child: const Text('Intermediate (B1-B2)',
+                                  style: TextStyle(
+                                      fontSize: 10,
+                                      color: _kPurple,
+                                      fontWeight: FontWeight.w600)),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+
+                          // Rating
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              const Icon(Icons.star_rounded,
+                                  color: _kGold, size: 14),
+                              const SizedBox(width: 2),
+                              const Text('5.0',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12)),
+                              const SizedBox(width: 3),
+                              Text('(128)',
+                                  style: TextStyle(
+                                      color: Colors.grey[500], fontSize: 11)),
+                            ],
+                          ),
+                        ],
+                      ),
+
+                      // ── Bottom CTA ─────────────────────────────────────────
+                      SizedBox(
+                        height: 38,
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _kPurple,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            padding: EdgeInsets.zero,
+                          ),
+                          icon: const Icon(Icons.play_circle_filled_rounded,
+                              size: 18),
+                          label: const Text('התחל שיעור',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 13)),
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const AlexProfileScreen()),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Full expert card
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildExpertCard(Map<String, dynamic> data) {
-    final l10n       = AppLocalizations.of(context);
-    final isVerified = data['isVerified'] as bool? ?? false;
-    final isOnline   = data['isOnline']   as bool? ?? false;
-    final isPromoted = data['isPromoted'] as bool? ?? false;
-    final expertId   = data['uid'] as String? ?? '';
-    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final isSelf     = expertId == currentUid;
+    final l10n         = AppLocalizations.of(context);
+    final isVerified   = data['isVerified'] as bool? ?? false;
+    final isOnline     = data['isOnline']   as bool? ?? false;
+    final isPromoted   = data['isPromoted'] as bool? ?? false;
+    final isAiTeacher  = data['isAiTeacher'] == true;
+    final expertId     = data['uid'] as String? ?? '';
+    final currentUid   = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final isSelf       = expertId == currentUid;
+
+    // AI teacher card — opens the lesson modal instead of profile
+    if (isAiTeacher) return _buildAiTeacherCard(data);
 
     return GestureDetector(
       // Tap anywhere on card = open profile
@@ -907,6 +1364,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           builder: (_) => ExpertProfileScreen(
             expertId: expertId,
             expertName: data['name'] ?? l10n.catResultsExpertDefault,
+            listingId: data['listingId'] as String?,
           ),
         ),
       ),
@@ -1007,6 +1465,21 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0.5,
+        actions: [
+          // v9.9.0: Map/List toggle
+          // v12.9.0: AppBar map toggle hidden while on the map itself —
+          // the new overlay top bar (_MapTopBar) holds the list toggle.
+          if (!widget.volunteerOnly && !_showMap)
+            Padding(
+              padding: const EdgeInsetsDirectional.only(end: 8),
+              child: IconButton(
+                icon: Icon(Icons.map_rounded,
+                    color: Colors.grey[600], size: 24),
+                tooltip: 'תצוגת מפה',
+                onPressed: () => setState(() => _showMap = true),
+              ),
+            ),
+        ],
       ),
       floatingActionButton: widget.volunteerOnly
           ? _WhatsAppSosButton()
@@ -1014,19 +1487,87 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       body: Column(
         children: [
           if (widget.volunteerOnly) _buildVolunteerHeader(),
-          _buildSearchAndFilter(),
+          if (!_showMap) _buildSearchAndFilter(),
           Expanded(
-            child: RefreshIndicator(
-              onRefresh: _loadInitial,
-              color: _kPurple,
-              strokeWidth: 2.5,
-              child: _buildList(),
-            ),
+            child: _showMap
+                ? Stack(
+                    children: [
+                      // The map itself.
+                      Positioned.fill(child: _buildMapView()),
+                      // v12.9.0 (PR-5): carousel of provider cards at bottom.
+                      _buildMapCarouselSheet(),
+                      // Fading gradient so the overlay pills stay readable.
+                      const Positioned(
+                        top: 0, left: 0, right: 0,
+                        child: IgnorePointer(child: _MapTopGradient()),
+                      ),
+                      // Floating top bar (back · search · list-toggle) +
+                      // filter chips + provider count badge.
+                      Positioned(
+                        top: 0, left: 0, right: 0,
+                        child: SafeArea(
+                          bottom: false,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _MapTopBar(
+                                initialQuery: _searchQuery,
+                                onBack: () =>
+                                    Navigator.of(context).maybePop(),
+                                onQueryChanged: (v) =>
+                                    setState(() => _searchQuery = v),
+                                onListPressed: () =>
+                                    setState(() => _showMap = false),
+                              ),
+                              const SizedBox(height: 10),
+                              _MapFilterChips(
+                                maxDistanceKm: _maxDistanceKm,
+                                minRating:     _minRating,
+                                under100:      _filterUnder100,
+                                onlineOnly:    _onlineOnly,
+                                onPickDistance: _pickMapDistance,
+                                onPickRating:   _pickMapRating,
+                                onToggleUnder100: () => setState(
+                                    () => _filterUnder100 = !_filterUnder100),
+                                onToggleOnline:   () => setState(
+                                    () => _onlineOnly = !_onlineOnly),
+                                onInstantBook: () {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('הזמנה מיידית — בקרוב 🎉'),
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
+                                },
+                              ),
+                              const SizedBox(height: 10),
+                              Align(
+                                alignment: Alignment.topCenter,
+                                child: _ProviderCountBadge(
+                                  count: _mapFilteredCount(),
+                                  categoryName: widget.categoryName,
+                                  anyFilterActive: _mapAnyFilterActive(),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : RefreshIndicator(
+                    onRefresh: _loadInitial,
+                    color: _kPurple,
+                    strokeWidth: 2.5,
+                    child: _buildList(),
+                  ),
           ),
         ],
       ),
     );
   }
+
+  // ── v12.9.0: Map overlay — top bar + fade ────────────────────────────────
 
   // ── Volunteer Hub Header ──────────────────────────────────────────────────
 
@@ -1339,6 +1880,331 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     );
   }
 
+  // ── v9.9.0: Map View ────────────────────────────────────────────────────────
+
+  // ── v12.9.0: Map filter helpers ──────────────────────────────────────────
+
+  /// Single source of truth for the map: markers, carousel cards and count
+  /// badge all read from this — guarantees perfect sync.
+  List<Map<String, dynamic>> _mapFilteredExperts() {
+    final all = List<Map<String, dynamic>>.from(_allExperts);
+    SearchRankingService.sortExperts(
+      all,
+      myLat: _currentPosition?.latitude,
+      myLng: _currentPosition?.longitude,
+      distanceFn: (myLat, myLng, lat, lng) =>
+          LocationService.distanceMeters(myLat, myLng, lat, lng),
+    );
+    return filterExperts(
+      all,
+      query: _searchQuery,
+      underHundred: _filterUnder100,
+      minRating: _minRating,
+      maxDistanceKm: _maxDistanceKm,
+      myPosition: _currentPosition,
+      onlineOnly: _onlineOnly,
+    );
+  }
+
+  int _mapFilteredCount() => _mapFilteredExperts().length;
+
+  // ── v12.9.0 (PR-5): Carousel of provider cards ───────────────────────────
+  Widget _buildMapCarouselSheet() {
+    final experts = _mapFilteredExperts();
+    // Only keep experts that have coordinates — must match marker list.
+    final withCoords = experts.where((e) {
+      final lat = (e['latitude'] as num?)?.toDouble();
+      final lng = (e['longitude'] as num?)?.toDouble();
+      return lat != null && lng != null;
+    }).toList();
+
+    if (withCoords.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.38,
+      minChildSize:     0.16,
+      maxChildSize:     0.85,
+      snap:             true,
+      snapSizes:        const [0.16, 0.38, 0.85],
+      builder: (context, scrollCtrl) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            boxShadow: MapShadows.card,
+          ),
+          child: Column(
+            children: [
+              // Drag handle
+              Padding(
+                padding: const EdgeInsets.only(top: 10, bottom: 6),
+                child: Container(
+                  width: 34, height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD1D5DB),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              // Horizontal PageView of cards
+              Expanded(
+                child: ListView(
+                  controller: scrollCtrl,
+                  physics: const ClampingScrollPhysics(),
+                  children: [
+                    SizedBox(
+                      height: 320,
+                      child: PageView.builder(
+                        controller: _mapPageCtrl,
+                        itemCount: withCoords.length,
+                        onPageChanged: (i) {
+                          final e = withCoords[i];
+                          final lat = (e['latitude'] as num?)?.toDouble();
+                          final lng = (e['longitude'] as num?)?.toDouble();
+                          if (lat == null || lng == null) return;
+                          setState(() {
+                            _mapSelectedUid   = e['uid'] as String?;
+                            _mapFocusedLatLng = LatLng(lat, lng);
+                          });
+                        },
+                        itemBuilder: (context, i) {
+                          final e = withCoords[i];
+                          return Padding(
+                            padding: const EdgeInsetsDirectional.only(
+                                start: 6, end: 6, top: 4, bottom: 10),
+                            child: _MapProviderCard(
+                              expert: e,
+                              active: (e['uid'] as String?) == _mapSelectedUid,
+                              myPosition: _currentPosition,
+                              onTapCard: () {
+                                Navigator.push(context, MaterialPageRoute(
+                                  builder: (_) => ExpertProfileScreen(
+                                    expertId:   (e['uid'] as String?) ?? '',
+                                    expertName: (e['name'] as String?) ?? '',
+                                    listingId:  e['listingId'] as String?,
+                                  ),
+                                ));
+                              },
+                              onMessage: () {
+                                Navigator.push(context, MaterialPageRoute(
+                                  builder: (_) => ChatScreen(
+                                    receiverId:   (e['uid'] as String?) ?? '',
+                                    receiverName: (e['name'] as String?) ?? '',
+                                  ),
+                                ));
+                              },
+                              onBookNow: () {
+                                Navigator.push(context, MaterialPageRoute(
+                                  builder: (_) => ExpertProfileScreen(
+                                    expertId:   (e['uid'] as String?) ?? '',
+                                    expertName: (e['name'] as String?) ?? '',
+                                    listingId:  e['listingId'] as String?,
+                                  ),
+                                ));
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  bool _mapAnyFilterActive() =>
+      _searchQuery.isNotEmpty ||
+      _filterUnder100 ||
+      _minRating > 0 ||
+      _maxDistanceKm != null ||
+      _onlineOnly;
+
+  Future<void> _pickMapDistance() async {
+    final options = <double?>[null, 2, 5, 10, 20, 50];
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      useSafeArea: true,
+      clipBehavior: Clip.antiAlias,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: Text('מרחק מקסימלי',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w700,
+                        color: MapPalette.textPrimary)),
+              ),
+              for (final opt in options)
+                ListTile(
+                  title: Text(
+                    opt == null ? 'ללא הגבלה' : 'עד ${opt.toInt()} ק״מ',
+                    textDirection: TextDirection.rtl,
+                  ),
+                  trailing: _maxDistanceKm == opt
+                      ? const Icon(Icons.check_rounded, color: MapPalette.primary)
+                      : null,
+                  onTap: () {
+                    setState(() => _maxDistanceKm = opt);
+                    Navigator.of(ctx).pop();
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickMapRating() async {
+    final options = <double>[0, 4.0, 4.5, 5.0];
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      useSafeArea: true,
+      clipBehavior: Clip.antiAlias,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: Text('דירוג מינימלי',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w700,
+                        color: MapPalette.textPrimary)),
+              ),
+              for (final opt in options)
+                ListTile(
+                  title: Text(
+                    opt == 0 ? 'ללא הגבלה' : '${opt.toStringAsFixed(opt == 5 ? 0 : 1)}+ ⭐',
+                    textDirection: TextDirection.rtl,
+                  ),
+                  trailing: _minRating == opt
+                      ? const Icon(Icons.check_rounded, color: MapPalette.primary)
+                      : null,
+                  onTap: () {
+                    setState(() => _minRating = opt);
+                    Navigator.of(ctx).pop();
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMapView() {
+    final experts = _mapFilteredExperts();
+    final markers = <MapProvider>[];
+    for (final e in experts) {
+      final lat = (e['latitude'] as num?)?.toDouble();
+      final lng = (e['longitude'] as num?)?.toDouble();
+      if (lat == null || lng == null) continue;
+      markers.add(MapProvider(
+        uid: e['uid'] as String? ?? '',
+        name: e['name'] as String? ?? '',
+        profileImage: e['profileImage'] as String?,
+        serviceType: e['serviceType'] as String?,
+        rating: (e['rating'] as num?)?.toDouble(),
+        reviewsCount: (e['reviewsCount'] as num?)?.toInt(),
+        lat: lat,
+        lng: lng,
+        isOnline: e['isOnline'] == true,
+        pricePerHour: (e['pricePerHour'] as num?)?.toDouble(),
+      ));
+    }
+
+    return ProvidersMapView(
+      providers: markers,
+      userLocation: _currentPosition != null
+          ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
+          : null,
+      radiusKm: _maxDistanceKm ?? 20,
+      // PR-5: carousel drives selection + camera focus.
+      externalSelectedUid: _mapSelectedUid,
+      focusedLatLng:       _mapFocusedLatLng,
+      bottomSafeArea:      320,  // lift side controls above the sheet
+      // v12.11.0 (PR-4): enable "search this area" pill. The pill hides itself
+      // after tap; we just nudge a rebuild so the card list refreshes.
+      onSearchThisArea: () {
+        setState(() {});
+      },
+      onMarkerTap: (uid) {
+        // Find the matching card index and sync the PageView.
+        final idx = markers.indexWhere((m) => m.uid == uid);
+        if (idx < 0) return;
+        setState(() {
+          _mapSelectedUid  = uid;
+          _mapFocusedLatLng = markers[idx].latLng;
+        });
+        if (_mapPageCtrl.hasClients) {
+          _mapPageCtrl.animateToPage(
+            idx,
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+          );
+        }
+      },
+      onProviderTap: (uid) {
+        final expert = experts.firstWhere(
+          (e) => e['uid'] == uid,
+          orElse: () => <String, dynamic>{},
+        );
+        if (expert.isNotEmpty) {
+          Navigator.push(context, MaterialPageRoute(
+            builder: (_) => ExpertProfileScreen(
+              expertId: uid,
+              expertName: expert['name'] as String? ?? '',
+              listingId: expert['listingId'] as String?,
+            ),
+          ));
+        }
+      },
+      onQuickChat: (uid) {
+        final expert = experts.firstWhere(
+          (e) => e['uid'] == uid,
+          orElse: () => <String, dynamic>{},
+        );
+        if (expert.isNotEmpty) {
+          Navigator.push(context, MaterialPageRoute(
+            builder: (_) => ChatScreen(
+              receiverId: uid,
+              receiverName: expert['name'] as String? ?? '',
+            ),
+          ));
+        }
+      },
+    );
+  }
+
   Widget _buildList() {
     // Test injection path — kept for unit tests
     if (widget.testStream != null) {
@@ -1382,6 +2248,11 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       maxDistanceKm: _maxDistanceKm,
       myPosition: _currentPosition,
     );
+
+    // ── Inject Alex AI teacher into English category ───────────────────────
+    if (widget.categoryName == 'אנגלית') {
+      experts.insert(0, Map<String, dynamic>.from(_kAlexAiTeacher));
+    }
 
     return _renderExperts(context, experts);
   }
@@ -1941,6 +2812,1005 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
                       ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v12.9.0: Map overlay widgets (top bar + fading gradient)
+// ═══════════════════════════════════════════════════════════════════════════
+// Purely presentational — state lives on _CategoryResultsScreenState and is
+// passed in via callbacks. Kept as private widgets in this file so they can
+// share the _showMap context without a cross-file import.
+
+class _MapTopGradient extends StatelessWidget {
+  const _MapTopGradient();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 140,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end:   Alignment.bottomCenter,
+            colors: [
+              Colors.white.withValues(alpha: 0.95),
+              Colors.white.withValues(alpha: 0.55),
+              Colors.white.withValues(alpha: 0.0),
+            ],
+            stops: const [0.0, 0.55, 1.0],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapTopBar extends StatefulWidget {
+  final String initialQuery;
+  final VoidCallback onBack;
+  final ValueChanged<String> onQueryChanged;
+  final VoidCallback onListPressed;
+
+  const _MapTopBar({
+    required this.initialQuery,
+    required this.onBack,
+    required this.onQueryChanged,
+    required this.onListPressed,
+  });
+
+  @override
+  State<_MapTopBar> createState() => _MapTopBarState();
+}
+
+class _MapTopBarState extends State<_MapTopBar> {
+  late final TextEditingController _ctrl =
+      TextEditingController(text: widget.initialQuery);
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsetsDirectional.fromSTEB(12, 12, 12, 0),
+      child: Row(
+        textDirection: TextDirection.rtl,
+        children: [
+          _RoundIconButton(
+            icon: Icons.arrow_forward_rounded,
+            onTap: widget.onBack,
+            tooltip: 'חזור',
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: _buildSearchPill()),
+          const SizedBox(width: 10),
+          _RoundIconButton(
+            icon: Icons.view_list_rounded,
+            onTap: widget.onListPressed,
+            tooltip: 'תצוגת רשימה',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchPill() {
+    return Container(
+      height: 44,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: MapShadows.chip,
+      ),
+      padding: const EdgeInsetsDirectional.only(start: 14, end: 10),
+      child: Row(
+        children: [
+          const Icon(Icons.search_rounded,
+              size: 20, color: MapPalette.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _ctrl,
+              textDirection: TextDirection.rtl,
+              onChanged: widget.onQueryChanged,
+              style: const TextStyle(fontSize: 13.5, color: MapPalette.textPrimary),
+              decoration: const InputDecoration(
+                hintText: 'חפש בתוך הקטגוריה...',
+                hintStyle: TextStyle(
+                    fontSize: 13.5, color: MapPalette.textTertiary),
+                isDense: true,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                contentPadding: EdgeInsets.symmetric(vertical: 10),
+              ),
+            ),
+          ),
+          if (_ctrl.text.isNotEmpty)
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                _ctrl.clear();
+                widget.onQueryChanged('');
+                setState(() {});
+              },
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 4),
+                child: Icon(Icons.close_rounded,
+                    size: 18, color: MapPalette.textTertiary),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RoundIconButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  final String? tooltip;
+
+  const _RoundIconButton({
+    required this.icon,
+    required this.onTap,
+    this.tooltip,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final btn = Material(
+      color: Colors.white,
+      shape: const CircleBorder(),
+      elevation: 0,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox(
+          width: 42, height: 42,
+          child: Icon(icon, size: 20, color: MapPalette.textPrimary),
+        ),
+      ),
+    );
+    final boxed = DecoratedBox(
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: MapShadows.floatingControl,
+      ),
+      child: btn,
+    );
+    return tooltip != null ? Tooltip(message: tooltip!, child: boxed) : boxed;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v12.9.0: Filter chips + provider count badge
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _MapFilterChips extends StatelessWidget {
+  final double? maxDistanceKm;
+  final double  minRating;
+  final bool    under100;
+  final bool    onlineOnly;
+  final VoidCallback onPickDistance;
+  final VoidCallback onPickRating;
+  final VoidCallback onToggleUnder100;
+  final VoidCallback onToggleOnline;
+  final VoidCallback onInstantBook;
+
+  const _MapFilterChips({
+    required this.maxDistanceKm,
+    required this.minRating,
+    required this.under100,
+    required this.onlineOnly,
+    required this.onPickDistance,
+    required this.onPickRating,
+    required this.onToggleUnder100,
+    required this.onToggleOnline,
+    required this.onInstantBook,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final distanceLabel = maxDistanceKm == null
+        ? 'מרחק'
+        : 'עד ${maxDistanceKm!.toInt()} ק״מ';
+    final ratingLabel = minRating == 0
+        ? 'דירוג'
+        : '${minRating.toStringAsFixed(minRating == 5 ? 0 : 1)}+ ⭐';
+
+    return SizedBox(
+      height: 38,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        reverse: true,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          children: [
+            _FilterChip(
+              icon: Icons.place_rounded,
+              label: distanceLabel,
+              active: maxDistanceKm != null,
+              onTap: onPickDistance,
+            ),
+            const SizedBox(width: 8),
+            _FilterChip(
+              icon: Icons.star_rounded,
+              label: ratingLabel,
+              active: minRating > 0,
+              onTap: onPickRating,
+            ),
+            const SizedBox(width: 8),
+            _FilterChip(
+              icon: Icons.attach_money_rounded,
+              label: 'עד ₪100',
+              active: under100,
+              onTap: onToggleUnder100,
+            ),
+            const SizedBox(width: 8),
+            _FilterChip(
+              icon: Icons.circle,
+              iconColor: onlineOnly ? Colors.white : MapPalette.online,
+              iconSize: 10,
+              label: 'זמינים עכשיו',
+              active: onlineOnly,
+              onTap: onToggleOnline,
+            ),
+            const SizedBox(width: 8),
+            _FilterChip(
+              icon: Icons.bolt_rounded,
+              label: 'הזמנה מיידית',
+              active: false,
+              disabledLookSoft: true,
+              onTap: onInstantBook,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  final IconData icon;
+  final Color?   iconColor;
+  final double?  iconSize;
+  final String   label;
+  final bool     active;
+  final bool     disabledLookSoft;
+  final VoidCallback onTap;
+
+  const _FilterChip({
+    required this.icon,
+    this.iconColor,
+    this.iconSize,
+    required this.label,
+    required this.active,
+    this.disabledLookSoft = false,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = active
+        ? const Color(0xFF1A1D26)
+        : disabledLookSoft
+            ? const Color(0xFFF3F4F6)
+            : Colors.white;
+    final fg = active
+        ? Colors.white
+        : disabledLookSoft
+            ? MapPalette.textTertiary
+            : MapPalette.textPrimary;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          height: 34,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(24),
+            border: active || disabledLookSoft
+                ? null
+                : Border.all(color: MapPalette.border, width: 1),
+            boxShadow: active ? null : MapShadows.chip,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon,
+                  size: iconSize ?? 16,
+                  color: iconColor ?? fg),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: fg,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v12.9.0 (PR-5): Provider card shown inside the map carousel.
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _MapProviderCard extends StatefulWidget {
+  final Map<String, dynamic> expert;
+  final bool                 active;
+  final Position?            myPosition;
+  final VoidCallback         onTapCard;
+  final VoidCallback         onMessage;
+  final VoidCallback         onBookNow;
+
+  const _MapProviderCard({
+    required this.expert,
+    required this.active,
+    required this.myPosition,
+    required this.onTapCard,
+    required this.onMessage,
+    required this.onBookNow,
+  });
+
+  @override
+  State<_MapProviderCard> createState() => _MapProviderCardState();
+}
+
+class _MapProviderCardState extends State<_MapProviderCard>
+    with SingleTickerProviderStateMixin {
+  bool _isFavorite = false;
+  late final AnimationController _heartCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _heartCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+    );
+  }
+
+  @override
+  void dispose() {
+    _heartCtrl.dispose();
+    super.dispose();
+  }
+
+  void _toggleFavorite() {
+    setState(() => _isFavorite = !_isFavorite);
+    _heartCtrl.forward(from: 0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final expert       = widget.expert;
+    final active       = widget.active;
+    final myPosition   = widget.myPosition;
+    final name         = (expert['name'] as String?) ?? '';
+    final aboutMe      = (expert['aboutMe'] as String?) ?? '';
+    final rating       = (expert['rating'] as num?)?.toDouble() ?? 0.0;
+    final reviewsCount = (expert['reviewsCount'] as num?)?.toInt() ?? 0;
+    final city         = (expert['city'] as String?) ??
+        (expert['address'] as String?) ?? '';
+    final profileImage = expert['profileImage'] as String?;
+    final gallery      = (expert['gallery'] as List?)
+        ?.whereType<String>()
+        .where((s) => s.isNotEmpty)
+        .toList() ?? const <String>[];
+    final isOnline     = expert['isOnline'] == true;
+    final isVerified   = expert['isVerified'] == true;
+    final isPromoted   = expert['isPromoted'] == true;
+    final pricePerHour = (expert['pricePerHour'] as num?)?.toDouble();
+    final quickTags    = (expert['quickTags'] as List?)
+        ?.whereType<String>()
+        .toList() ?? const <String>[];
+
+    // Distance + ETA in km / minutes (if we have user location + expert coords)
+    String? distanceLabel;
+    int? etaMinutes;
+    final lat = (expert['latitude'] as num?)?.toDouble();
+    final lng = (expert['longitude'] as num?)?.toDouble();
+    if (myPosition != null && lat != null && lng != null) {
+      final km = Geolocator.distanceBetween(
+              myPosition.latitude, myPosition.longitude, lat, lng) /
+          1000.0;
+      distanceLabel = km < 1
+          ? 'בשכונה שלך'
+          : '${km.toStringAsFixed(km < 10 ? 1 : 0)} ק״מ';
+      // Assume 40 km/h average urban speed.
+      etaMinutes = (km / 40.0 * 60.0).round().clamp(1, 999);
+    }
+
+    final borderColor = active ? MapPalette.goldActive : MapPalette.gold;
+    final borderWidth = active ? 2.5 : 2.0;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: widget.onTapCard,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: borderColor, width: borderWidth),
+            boxShadow: active ? MapShadows.card : MapShadows.chip,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ── Gallery strip + overlays ─────────────────────────────
+              _buildGallery(profileImage, gallery, isOnline, pricePerHour),
+              // ── Body ────────────────────────────────────────────────
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildHeaderRow(name, isVerified, isPromoted,
+                        profileImage, aboutMe),
+                    const SizedBox(height: 8),
+                    _buildMetaRow(rating, reviewsCount),
+                    if (etaMinutes != null || city.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      _buildEtaRow(etaMinutes, distanceLabel, city),
+                    ],
+                    if (quickTags.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      _buildTags(quickTags),
+                    ],
+                    const SizedBox(height: 10),
+                    const Divider(height: 1, color: MapPalette.border),
+                    const SizedBox(height: 8),
+                    _buildActionRow(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  Widget _buildGallery(
+    String? profileImage,
+    List<String> gallery,
+    bool isOnline,
+    double? pricePerHour,
+  ) {
+    // If there's a real gallery, show up to 3 images side-by-side. Otherwise
+    // fall back to the profile image as a single wide hero.
+    final imgs = gallery.isNotEmpty ? gallery.take(3).toList()
+                                    : (profileImage != null && profileImage.isNotEmpty
+                                       ? [profileImage] : const <String>[]);
+
+    return Stack(
+      clipBehavior: Clip.antiAlias,
+      children: [
+        // Images row
+        ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+          child: SizedBox(
+            height: 120,
+            child: imgs.isEmpty
+                ? Container(
+                    color: MapPalette.primaryLight,
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.person_rounded,
+                        size: 40, color: MapPalette.primary),
+                  )
+                : Row(
+                    children: [
+                      for (int i = 0; i < imgs.length; i++) ...[
+                        Expanded(child: _buildImage(imgs[i])),
+                        if (i < imgs.length - 1) const SizedBox(width: 2),
+                      ],
+                    ],
+                  ),
+          ),
+        ),
+        // Online status pill (top-end in RTL = top-left visually)
+        PositionedDirectional(
+          top: 10, end: 10,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: isOnline
+                  ? const Color(0xFFDCFCE7)
+                  : Colors.black.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 6, height: 6,
+                  decoration: BoxDecoration(
+                    color: isOnline
+                        ? MapPalette.online
+                        : Colors.white.withValues(alpha: 0.7),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  isOnline ? 'זמין/ה עכשיו' : 'לא זמין כעת',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    color: isOnline
+                        ? const Color(0xFF166534)
+                        : Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // Price pill (bottom-start in RTL = bottom-right visually)
+        if (pricePerHour != null && pricePerHour > 0)
+          PositionedDirectional(
+            bottom: 10, start: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A1D26),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: MapShadows.chip,
+              ),
+              child: Text(
+                '₪${pricePerHour.toStringAsFixed(0)}/שעה',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+        // v12.11.0: Heart (favorite) button — top-start = visually top-right in RTL
+        PositionedDirectional(
+          top: 10, start: 10,
+          child: _buildHeartButton(),
+        ),
+        // v12.11.0: Photo count badge — bottom-end = visually bottom-left in RTL
+        if (gallery.isNotEmpty)
+          PositionedDirectional(
+            bottom: 10, end: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '📸 ${gallery.length}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildHeartButton() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: _toggleFavorite,
+        child: AnimatedBuilder(
+          animation: _heartCtrl,
+          builder: (_, __) {
+            // Bounce 1 → 1.3 → 1 over the controller cycle.
+            final t = _heartCtrl.value;
+            final scale = 1.0 + (t < 0.5 ? t * 0.6 : (1 - t) * 0.6);
+            return Transform.scale(
+              scale: scale,
+              child: Container(
+                width: 28, height: 28,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.85),
+                  shape: BoxShape.circle,
+                  boxShadow: MapShadows.chip,
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  _isFavorite
+                      ? Icons.favorite_rounded
+                      : Icons.favorite_outline_rounded,
+                  size: 15,
+                  color: _isFavorite
+                      ? MapPalette.red
+                      : MapPalette.textSecondary,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImage(String url) {
+    final img = safeImageProvider(url);
+    if (img == null) {
+      return Container(color: MapPalette.primaryLight);
+    }
+    return Image(image: img, fit: BoxFit.cover);
+  }
+
+  Widget _buildHeaderRow(
+    String name,
+    bool isVerified,
+    bool isPromoted,
+    String? profileImage,
+    String aboutMe,
+  ) {
+    return Row(
+      textDirection: TextDirection.rtl,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Avatar
+        Container(
+          width: 44, height: 44,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: MapPalette.primaryLight, width: 2),
+          ),
+          child: ClipOval(
+            child: safeImageProvider(profileImage) != null
+                ? Image(image: safeImageProvider(profileImage)!,
+                        fit: BoxFit.cover)
+                : Container(
+                    color: MapPalette.primaryLight,
+                    child: Center(
+                      child: Text(
+                        name.isNotEmpty ? name[0] : '?',
+                        style: const TextStyle(
+                          color: MapPalette.primary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ),
+                  ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        // Name + description
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      name,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
+                        color: MapPalette.textPrimary,
+                      ),
+                    ),
+                  ),
+                  if (isVerified) ...[
+                    const SizedBox(width: 4),
+                    const Icon(Icons.verified_rounded,
+                        size: 15, color: MapPalette.primary),
+                  ],
+                  if (isPromoted) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF3C7),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Text(
+                        'מומלץ',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFB45309),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              if (aboutMe.isNotEmpty) ...[
+                const SizedBox(height: 3),
+                Text(
+                  aboutMe,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: MapPalette.textSecondary,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMetaRow(double rating, int reviewsCount) {
+    return Row(
+      textDirection: TextDirection.rtl,
+      children: [
+        const Icon(Icons.star_rounded, size: 16, color: Color(0xFFFBBF24)),
+        const SizedBox(width: 2),
+        Text(
+          rating > 0 ? rating.toStringAsFixed(1) : '—',
+          style: const TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w700,
+            color: MapPalette.textPrimary,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          '($reviewsCount)',
+          style: const TextStyle(
+            fontSize: 12,
+            color: MapPalette.textTertiary,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // v12.11.0: travel row — "🕐 12 דק׳ • קרית מלאכי"
+  Widget _buildEtaRow(int? etaMinutes, String? distanceLabel, String city) {
+    final parts = <String>[];
+    if (etaMinutes != null) parts.add('$etaMinutes דק׳');
+    if (distanceLabel != null) parts.add(distanceLabel);
+    if (city.isNotEmpty) parts.add(city);
+    final line = parts.join(' • ');
+    return Row(
+      textDirection: TextDirection.rtl,
+      children: [
+        const Icon(Icons.schedule_rounded, size: 13, color: MapPalette.primary),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            line,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 12,
+              color: MapPalette.textSecondary,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTags(List<String> tags) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final t in tags.take(3)) _buildTagChip(t),
+      ],
+    );
+  }
+
+  // v12.11.0: Firestore stores tag KEYS (english snake_case). Map them to
+  // Hebrew labels + semantic colors. Unknown keys fall back to a grey chip
+  // but still render (so we don't silently drop data).
+  static const Map<String, ({String label, Color bg, Color fg})> _kTagMap = {
+    'certified':      (label: '🎓 מוסמך/ת',        bg: MapPalette.tagGreenBg, fg: MapPalette.tagGreenFg),
+    'home_service':   (label: '🏠 מגיע/ה עד הבית', bg: MapPalette.tagBlueBg,  fg: MapPalette.tagBlueFg),
+    'first_discount': (label: '🎁 שיעור ראשון ב-50%', bg: MapPalette.tagRoseBg, fg: MapPalette.tagRoseFg),
+    'insured':        (label: '🛡️ מבוטח/ת',         bg: MapPalette.tagGreenBg, fg: MapPalette.tagGreenFg),
+    'instant_book':   (label: '⚡ הזמנה מיידית',     bg: Color(0xFFFEF3C7),     fg: Color(0xFFB45309)),
+    'fast_response':  (label: '⚡ תגובה מהירה',      bg: Color(0xFFFEF3C7),     fg: Color(0xFFB45309)),
+    'reliable':       (label: '✅ אמין/ה',           bg: MapPalette.tagGreenBg, fg: MapPalette.tagGreenFg),
+    'experienced':    (label: '⭐ מנוסה',            bg: MapPalette.tagBlueBg,  fg: MapPalette.tagBlueFg),
+  };
+
+  Widget _buildTagChip(String tag) {
+    final entry = _kTagMap[tag];
+    final Color bg;
+    final Color fg;
+    final String label;
+
+    if (entry != null) {
+      bg = entry.bg;
+      fg = entry.fg;
+      label = entry.label;
+    } else {
+      // Legacy Hebrew-text fallback.
+      final lowered = tag.toLowerCase();
+      if (lowered.contains('home') || tag.contains('הביתה') ||
+          tag.contains('הבית')) {
+        bg = MapPalette.tagBlueBg; fg = MapPalette.tagBlueFg;
+      } else if (lowered.contains('cert') || tag.contains('מוסמך')) {
+        bg = MapPalette.tagGreenBg; fg = MapPalette.tagGreenFg;
+      } else if (lowered.contains('50') || tag.contains('הנחה')) {
+        bg = MapPalette.tagRoseBg; fg = MapPalette.tagRoseFg;
+      } else {
+        bg = MapPalette.tagGrayBg; fg = MapPalette.tagGrayFg;
+      }
+      label = tag;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11.5,
+          fontWeight: FontWeight.w600,
+          color: fg,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionRow() {
+    return Row(
+      textDirection: TextDirection.rtl,
+      children: [
+        // When free? (left in RTL = end of row visually)
+        TextButton.icon(
+          onPressed: widget.onTapCard,
+          style: TextButton.styleFrom(
+            foregroundColor: MapPalette.textSecondary,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            minimumSize: const Size(0, 36),
+          ),
+          icon: const Icon(Icons.event_available_rounded, size: 16),
+          label: const Text(
+            'מתי פנוי?',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+        const Spacer(),
+        // Message button
+        Material(
+          color: Colors.white,
+          shape: const CircleBorder(side: BorderSide(color: MapPalette.border)),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: widget.onMessage,
+            child: const SizedBox(
+              width: 36, height: 36,
+              child: Icon(Icons.chat_bubble_outline_rounded,
+                  size: 18, color: MapPalette.textPrimary),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // Book now CTA
+        Material(
+          color: MapPalette.primary,
+          shape: const StadiumBorder(),
+          child: InkWell(
+            customBorder: const StadiumBorder(),
+            onTap: widget.onBookNow,
+            child: const Padding(
+              padding:
+                  EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+              child: Text(
+                'הזמן עכשיו',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProviderCountBadge extends StatelessWidget {
+  final int count;
+  final String categoryName;
+  final bool anyFilterActive;
+
+  const _ProviderCountBadge({
+    required this.count,
+    required this.categoryName,
+    required this.anyFilterActive,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // v12.11.0: show whenever there are results — hides only when empty.
+    final visible = count > 0;
+    return AnimatedSlide(
+      offset: visible ? Offset.zero : const Offset(0, -0.6),
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutBack,
+      child: AnimatedOpacity(
+        opacity: visible ? 1.0 : 0.0,
+        duration: const Duration(milliseconds: 200),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: IntrinsicWidth(
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A1D26),
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: MapShadows.chip,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 8, height: 8,
+                    decoration: const BoxDecoration(
+                      color: MapPalette.online,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      '$count $categoryName באזור שלך',
+                      textDirection: TextDirection.rtl,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),

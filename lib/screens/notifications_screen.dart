@@ -7,6 +7,7 @@ import '../services/volunteer_service.dart';
 import '../services/job_broadcast_service.dart';
 import 'chat_screen.dart';
 import 'provider_ai_insights_screen.dart';
+import 'support/csat_survey_modal.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
@@ -165,6 +166,20 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ),
         ),
       );
+      return;
+    }
+
+    // ── CSAT survey → show rating modal (v11.9.x) ─────────────────────────
+    if (type == 'csat_survey') {
+      // Notification's `data` field can contain the ticketId, OR (legacy)
+      // it might be at the top level. Check both.
+      final nestedData = data['data'] as Map<String, dynamic>? ?? {};
+      final ticketId = (nestedData['ticketId'] as String?) ??
+          (data['ticketId'] as String?) ??
+          '';
+      if (ticketId.isNotEmpty) {
+        showCsatSurveyModal(context: context, ticketId: ticketId);
+      }
       return;
     }
   }
@@ -668,6 +683,7 @@ class NotificationBadge extends StatelessWidget {
           .collection('notifications')
           .where('userId', isEqualTo: uid)
           .where('isRead', isEqualTo: false)
+          .limit(100)
           .snapshots(),
       builder: (context, snapshot) {
         final count = snapshot.data?.docs.length ?? 0;

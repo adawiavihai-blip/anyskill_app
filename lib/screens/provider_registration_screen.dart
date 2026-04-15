@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -6,6 +7,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import '../constants.dart';
 import '../services/service_architect.dart';
+import '../services/private_data_service.dart';
+import '../utils/safe_image_provider.dart';
 import 'pending_verification_screen.dart';
 
 // ── Brand tokens ──────────────────────────────────────────────────────────────
@@ -47,12 +50,23 @@ class _ProviderRegistrationScreenState
   final _formKey      = GlobalKey<FormState>();
   final _nameCtrl     = TextEditingController();
   final _phoneCtrl    = TextEditingController();
+  final _emailCtrl    = TextEditingController();
+  final _idCtrl       = TextEditingController();
+  final _countryCtrl  = TextEditingController(text: 'ישראל');
+  final _cityCtrl     = TextEditingController();
   final _aboutCtrl    = TextEditingController();
   final _priceCtrl    = TextEditingController();
   final _taxCtrl      = TextEditingController();
   final _otherDescCtrl = TextEditingController();
 
   static const String _kOther = 'אחר...';
+
+  // Business type options (exact strings stored in Firestore).
+  static const List<String> _kBusinessTypes = [
+    'עוסק פטור',
+    'עוסק מורשה',
+    'חשבונית למשכיר',
+  ];
 
   String  _category    = APP_CATEGORIES.first['name'] as String;
   String  _subCategory = '';
@@ -64,12 +78,47 @@ class _ProviderRegistrationScreenState
   String? _businessDocUrl;
   bool    _isUploading = false;
 
+  // ── Profile image (base64 data URI) ───────────────────────────────────
+  String? _profileImageBase64;
+  bool    _isUploadingProfile = false;
+
+  // ── Gallery (Firebase Storage URLs, up to 6) ──────────────────────────
+  final List<String> _galleryUrls = [];
+  bool    _isUploadingGallery = false;
+
+  // ── Intro video (Firebase Storage URL) ─────────────────────────────────
+  String? _introVideoUrl;
+  bool    _isUploadingVideo = false;
+
+  // ── Business type (עוסק פטור / עוסק מורשה / חשבונית למשכיר) ────────────
+  String? _businessType;
+
   @override
   void initState() {
     super.initState();
     final d = widget.prefillData;
     _nameCtrl.text  = (d['name']  as String? ?? '').trim();
     _phoneCtrl.text = (d['phone'] as String? ?? '').trim();
+    _emailCtrl.text = (d['email'] as String? ?? '').trim();
+    _idCtrl.text    = (d['idNumber'] as String? ?? '').trim();
+    final prefCountry = (d['country'] as String? ?? '').trim();
+    if (prefCountry.isNotEmpty) _countryCtrl.text = prefCountry;
+    _cityCtrl.text  = (d['city'] as String? ?? '').trim();
+    final prefBusinessType = d['businessType'] as String?;
+    if (prefBusinessType != null && _kBusinessTypes.contains(prefBusinessType)) {
+      _businessType = prefBusinessType;
+    }
+    final prefImage = d['profileImage'] as String?;
+    if (prefImage != null && prefImage.startsWith('data:image')) {
+      // Strip the data URI prefix — we re-add it on save.
+      _profileImageBase64 = prefImage.split(',').last;
+    }
+    final prefGallery = d['gallery'];
+    if (prefGallery is List) {
+      _galleryUrls.addAll(prefGallery.whereType<String>().where((s) => s.startsWith('http')));
+    }
+    final prefVideo = d['introVideoUrl'] as String?;
+    if (prefVideo != null && prefVideo.isNotEmpty) _introVideoUrl = prefVideo;
     // Pre-fill aboutMe if upgrading existing client
     _aboutCtrl.text = (d['aboutMe'] as String? ?? '').trim();
     // Pre-select category if already set
@@ -97,6 +146,10 @@ class _ProviderRegistrationScreenState
   void dispose() {
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
+    _emailCtrl.dispose();
+    _idCtrl.dispose();
+    _countryCtrl.dispose();
+    _cityCtrl.dispose();
     _aboutCtrl.dispose();
     _priceCtrl.dispose();
     _taxCtrl.dispose();
@@ -107,15 +160,35 @@ class _ProviderRegistrationScreenState
   // ── Submit ────────────────────────────────────────────────────────────────
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    // Mandatory checks beyond basic field validators.
+    if (_profileImageBase64 == null &&
+        !(widget.prefillData['profileImage'] as String? ?? '').startsWith('http')) {
+      _snack('יש להעלות תמונת פרופיל', _kRed);
+      return;
+    }
+    if (_galleryUrls.length < 3) {
+      _snack('יש להעלות לפחות 3 תמונות לגלריה', _kRed);
+      return;
+    }
+    if (_businessType == null) {
+      _snack('יש לבחור סוג עסק (עוסק פטור / מורשה / חשבונית)', _kRed);
+      return;
+    }
+
     setState(() => _isLoading = true);
 
-    final uid   = widget.prefillData['uid'] as String?
+    final uid     = widget.prefillData['uid'] as String?
         ?? FirebaseAuth.instance.currentUser?.uid ?? '';
-    final name  = _nameCtrl.text.trim();
-    final phone = _phoneCtrl.text.trim();
-    final about = _aboutCtrl.text.trim();
-    final price = double.tryParse(_priceCtrl.text.trim()) ?? 0.0;
-    final taxId = _taxCtrl.text.trim();
+    final name    = _nameCtrl.text.trim();
+    final phone   = _phoneCtrl.text.trim();
+    final email   = _emailCtrl.text.trim();
+    final idNum   = _idCtrl.text.trim();
+    final country = _countryCtrl.text.trim();
+    final city    = _cityCtrl.text.trim();
+    final about   = _aboutCtrl.text.trim();
+    final price   = double.tryParse(_priceCtrl.text.trim()) ?? 0.0;
+    final taxId   = _taxCtrl.text.trim();
 
     final isOther = _isOtherCategory || _isOtherSubCategory;
     final effectiveCategory = isOther ? _otherDescCtrl.text.trim() : _category;
@@ -129,6 +202,11 @@ class _ProviderRegistrationScreenState
       final applicationData = {
         'submittedAt':  FieldValue.serverTimestamp(),
         'phoneNumber':  phone,
+        'email':        email,
+        'idNumber':     idNum,
+        'country':      country,
+        'city':         city,
+        'businessType': _businessType,
         'category':     effectiveCategory,
         'subCategory':  effectiveSubCategory,
         'taxId':        taxId,
@@ -136,21 +214,32 @@ class _ProviderRegistrationScreenState
         'pricePerHour': price,
         'isCustomCategory': isOther,
         if (_businessDocUrl != null) 'businessDocUrl': _businessDocUrl,
+        if (_introVideoUrl != null) 'introVideoUrl': _introVideoUrl,
+        if (_galleryUrls.isNotEmpty) 'gallery': _galleryUrls,
       };
 
       final userPayload = <String, dynamic>{
         'name':                    name,
         'phone':                   phone,
+        if (email.isNotEmpty) 'email': email,
+        if (idNum.isNotEmpty) 'idNumber': idNum,
+        if (country.isNotEmpty) 'country': country,
+        if (city.isNotEmpty) 'city': city,
+        'businessType':            _businessType,
         'serviceType':             effectiveCategory,
         'subCategory':             effectiveSubCategory,
         'aboutMe':                 about,
         'pricePerHour':            price,
+        'gallery':                 _galleryUrls,
         'isPendingExpert':         true,
         'isProvider':              false,   // admin approval flips this
         'isVerified':              false,
         'categoryReviewedByAdmin': false,
         'expertApplicationData':   applicationData,
         'updatedAt':               FieldValue.serverTimestamp(),
+        if (_profileImageBase64 != null)
+          'profileImage': 'data:image/png;base64,$_profileImageBase64',
+        if (_introVideoUrl != null) 'introVideoUrl': _introVideoUrl,
         if (_businessDocUrl != null) 'businessDocUrl': _businessDocUrl,
         if (isOther) 'pendingCategoryApproval': true,
       };
@@ -192,6 +281,8 @@ class _ProviderRegistrationScreenState
         'message':     isOther
             ? 'בקשת קטגוריה חדשה מ$name: "$effectiveCategory"'
             : 'בקשת הצטרפות כנותן שירות ב$effectiveCategory: $name',
+        'expireAt':    Timestamp.fromDate(
+            DateTime.now().add(const Duration(days: 30))),
       });
 
       // ── "Other" category: create request + send admin email ────────────
@@ -220,6 +311,22 @@ class _ProviderRegistrationScreenState
       }
 
       await batch.commit();
+
+      // PR 1 (v11.9.x): Mirror KYC fields into private/kyc subcollection.
+      // Dual-write during migration — admin verification tab now reads from
+      // the subcollection (with legacy fallback).
+      await PrivateDataService.writeKycData(
+        uid,
+        idNumber: idNum.isNotEmpty ? idNum : null,
+        businessDocUrl: _businessDocUrl,
+      );
+
+      // PR 2a: Mirror contact fields into private/identity.
+      await PrivateDataService.writeContactData(
+        uid,
+        phone: phone,
+        email: email.isNotEmpty ? email : null,
+      );
 
       if (mounted) {
         if (widget.isExistingUser) {
@@ -292,6 +399,10 @@ class _ProviderRegistrationScreenState
                       _sectionTitle('פרטים אישיים'),
                       const SizedBox(height: 16),
 
+                      // Profile image
+                      _buildProfileImagePicker(),
+                      const SizedBox(height: 16),
+
                       // Name
                       _field(
                         ctrl: _nameCtrl,
@@ -311,6 +422,59 @@ class _ProviderRegistrationScreenState
                         readOnly: _phoneCtrl.text.isNotEmpty,
                         validator: (v) =>
                             (v?.trim().isEmpty ?? true) ? 'שדה חובה' : null,
+                      ),
+                      const SizedBox(height: 14),
+
+                      // Email
+                      _field(
+                        ctrl: _emailCtrl,
+                        label: 'אימייל',
+                        icon: Icons.email_outlined,
+                        keyboardType: TextInputType.emailAddress,
+                        validator: (v) {
+                          final s = v?.trim() ?? '';
+                          if (s.isEmpty) return 'שדה חובה';
+                          if (!s.contains('@') || !s.contains('.')) return 'אימייל לא תקין';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 14),
+
+                      // ID number (ת.ז / דרכון)
+                      _field(
+                        ctrl: _idCtrl,
+                        label: 'ת.ז / דרכון',
+                        icon: Icons.badge_outlined,
+                        keyboardType: TextInputType.number,
+                        validator: (v) =>
+                            (v?.trim().length ?? 0) < 5 ? 'הזן מספר תקין' : null,
+                      ),
+                      const SizedBox(height: 14),
+
+                      // Country + City in one row
+                      Row(
+                        textDirection: TextDirection.rtl,
+                        children: [
+                          Expanded(
+                            child: _field(
+                              ctrl: _countryCtrl,
+                              label: 'מדינה',
+                              icon: Icons.public_rounded,
+                              validator: (v) =>
+                                  (v?.trim().isEmpty ?? true) ? 'שדה חובה' : null,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: _field(
+                              ctrl: _cityCtrl,
+                              label: 'עיר',
+                              icon: Icons.location_city_rounded,
+                              validator: (v) =>
+                                  (v?.trim().isEmpty ?? true) ? 'שדה חובה' : null,
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 24),
 
@@ -361,14 +525,27 @@ class _ProviderRegistrationScreenState
                       ),
                       const SizedBox(height: 24),
 
-                      _sectionTitle('פרטים נוספים (אופציונלי)'),
+                      _sectionTitle('גלריה ווידאו'),
                       const SizedBox(height: 16),
+
+                      _buildGalleryPicker(),
+                      const SizedBox(height: 18),
+
+                      _buildIntroVideoPicker(),
+                      const SizedBox(height: 24),
+
+                      _sectionTitle('עוסק ומסמכים'),
+                      const SizedBox(height: 16),
+
+                      // Business type (עוסק פטור / מורשה / חשבונית למשכיר)
+                      _buildBusinessTypeDropdown(),
+                      const SizedBox(height: 14),
 
                       // Tax / business ID
                       _field(
                         ctrl: _taxCtrl,
-                        label: 'מספר עוסק / עוסק מורשה',
-                        icon: Icons.badge_outlined,
+                        label: 'מספר עוסק (אופציונלי)',
+                        icon: Icons.numbers_rounded,
                         keyboardType: TextInputType.number,
                       ),
                       const SizedBox(height: 16),
@@ -1065,6 +1242,316 @@ class _ProviderRegistrationScreenState
       validator: validator,
       decoration: _inputDeco(label, icon),
     );
+  }
+
+  // ── Business type dropdown ─────────────────────────────────────────────
+  Widget _buildBusinessTypeDropdown() {
+    return DropdownButtonFormField<String>(
+      value: _businessType,
+      decoration: _inputDeco('סוג עסק', Icons.business_center_outlined),
+      isExpanded: true,
+      items: _kBusinessTypes
+          .map((t) => DropdownMenuItem(
+                value: t,
+                child: Text(t, textAlign: TextAlign.right),
+              ))
+          .toList(),
+      onChanged: (v) => setState(() => _businessType = v),
+      validator: (v) => v == null || v.isEmpty ? 'בחר סוג עסק' : null,
+    );
+  }
+
+  // ── Profile image picker (base64 data URI) ─────────────────────────────
+  Widget _buildProfileImagePicker() {
+    final hasImage = _profileImageBase64 != null;
+    final prefillImage = widget.prefillData['profileImage'] as String? ?? '';
+    final provider = hasImage
+        ? safeImageProvider('data:image/png;base64,$_profileImageBase64')
+        : (prefillImage.isNotEmpty ? safeImageProvider(prefillImage) : null);
+    return GestureDetector(
+      onTap: _isUploadingProfile ? null : _pickProfileImage,
+      child: Row(
+        textDirection: TextDirection.rtl,
+        children: [
+          Container(
+            width: 76, height: 76,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFFFAFAFF),
+              border: Border.all(color: _kPurple.withValues(alpha: 0.2), width: 1.5),
+            ),
+            child: _isUploadingProfile
+                ? const Center(
+                    child: SizedBox(
+                      width: 22, height: 22,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: _kPurple),
+                    ),
+                  )
+                : ClipOval(
+                    child: provider != null
+                        ? Image(image: provider, fit: BoxFit.cover, width: 76, height: 76)
+                        : const Icon(Icons.person_rounded,
+                            size: 36, color: _kPurple),
+                  ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  provider != null ? 'החלף תמונה' : 'הוסף תמונת פרופיל',
+                  style: const TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.bold, color: _kPurple),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'תמונה ברורה ומקצועית תעזור לך לקבל יותר לקוחות',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickProfileImage() async {
+    final file = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 600,
+      imageQuality: 70,
+    );
+    if (file == null) return;
+    setState(() => _isUploadingProfile = true);
+    try {
+      final bytes = await file.readAsBytes();
+      setState(() => _profileImageBase64 = base64Encode(bytes));
+    } catch (e) {
+      if (mounted) _snack('שגיאה בטעינת התמונה', _kRed);
+    } finally {
+      if (mounted) setState(() => _isUploadingProfile = false);
+    }
+  }
+
+  // ── Gallery picker (up to 6 images) ────────────────────────────────────
+  Widget _buildGalleryPicker() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            const Icon(Icons.photo_library_rounded, size: 18, color: _kPurple),
+            const SizedBox(width: 8),
+            const Text('גלריית תמונות',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold,
+                    color: Color(0xFF1E1B4B))),
+            const SizedBox(width: 6),
+            Text('(${_galleryUrls.length}/6 — מינימום 3)',
+                style: TextStyle(fontSize: 11.5, color: Colors.grey[600])),
+          ],
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 92,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            reverse: true,
+            itemCount: _galleryUrls.length + (_galleryUrls.length < 6 ? 1 : 0),
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (_, i) {
+              if (i == _galleryUrls.length) {
+                return _addGallerySlot();
+              }
+              final url = _galleryUrls[i];
+              return _gallerySlot(url);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _addGallerySlot() {
+    return GestureDetector(
+      onTap: _isUploadingGallery ? null : _pickAndUploadGalleryImage,
+      child: Container(
+        width: 92, height: 92,
+        decoration: BoxDecoration(
+          color: const Color(0xFFFAFAFF),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _kPurple.withValues(alpha: 0.3), width: 1.5),
+        ),
+        child: _isUploadingGallery
+            ? const Center(
+                child: SizedBox(
+                  width: 22, height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: _kPurple),
+                ),
+              )
+            : const Icon(Icons.add_photo_alternate_rounded,
+                size: 32, color: _kPurple),
+      ),
+    );
+  }
+
+  Widget _gallerySlot(String url) {
+    final provider = safeImageProvider(url);
+    return Stack(
+      children: [
+        Container(
+          width: 92, height: 92,
+          decoration: BoxDecoration(
+            color: const Color(0xFFFAFAFF),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: provider != null
+                ? Image(image: provider, fit: BoxFit.cover, width: 92, height: 92)
+                : const Icon(Icons.broken_image_rounded, color: Colors.grey),
+          ),
+        ),
+        Positioned(
+          top: 4, right: 4,
+          child: GestureDetector(
+            onTap: () => setState(() => _galleryUrls.remove(url)),
+            child: Container(
+              width: 22, height: 22,
+              decoration: const BoxDecoration(
+                color: _kRed, shape: BoxShape.circle),
+              child: const Icon(Icons.close, color: Colors.white, size: 14),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _pickAndUploadGalleryImage() async {
+    final file = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1200,
+      imageQuality: 75,
+    );
+    if (file == null) return;
+    setState(() => _isUploadingGallery = true);
+    try {
+      final uid = widget.prefillData['uid'] as String?
+          ?? FirebaseAuth.instance.currentUser?.uid ?? '';
+      final bytes = await file.readAsBytes();
+      final ext = file.name.split('.').last;
+      final ref = FirebaseStorage.instance.ref(
+          'gallery/$uid/g_${DateTime.now().millisecondsSinceEpoch}.$ext');
+      await ref.putData(
+        Uint8List.fromList(bytes),
+        SettableMetadata(contentType: 'image/$ext'),
+      );
+      final url = await ref.getDownloadURL();
+      if (mounted) setState(() => _galleryUrls.add(url));
+    } catch (e) {
+      if (mounted) _snack('שגיאה בהעלאת תמונה: $e', _kRed);
+    } finally {
+      if (mounted) setState(() => _isUploadingGallery = false);
+    }
+  }
+
+  // ── Intro video picker (optional) ──────────────────────────────────────
+  Widget _buildIntroVideoPicker() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAFAFF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200, width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              const Icon(Icons.videocam_rounded, size: 18, color: _kPurple),
+              const SizedBox(width: 8),
+              const Text('וידאו היכרות',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold,
+                      color: Color(0xFF1E1B4B))),
+              const SizedBox(width: 6),
+              Text('(אופציונלי — עד 60 שניות)',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_introVideoUrl != null) ...[
+            Row(
+              children: [
+                const Icon(Icons.check_circle, color: _kGreen, size: 18),
+                const SizedBox(width: 8),
+                const Expanded(
+                    child: Text('וידאו הועלה',
+                        style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF065F46)))),
+                GestureDetector(
+                  onTap: () => setState(() => _introVideoUrl = null),
+                  child: const Icon(Icons.close, size: 16, color: Color(0xFF9CA3AF)),
+                ),
+              ],
+            ),
+          ] else
+            SizedBox(
+              width: double.infinity, height: 44,
+              child: OutlinedButton.icon(
+                icon: _isUploadingVideo
+                    ? const SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: _kPurple))
+                    : const Icon(Icons.video_call_rounded, size: 18),
+                label: Text(_isUploadingVideo ? 'מעלה...' : 'הקלט / בחר וידאו',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _kPurple,
+                  side: const BorderSide(color: _kPurple, width: 1.2),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: _isUploadingVideo ? null : _pickAndUploadVideo,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickAndUploadVideo() async {
+    final file = await ImagePicker().pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(seconds: 60),
+    );
+    if (file == null) return;
+    setState(() => _isUploadingVideo = true);
+    try {
+      final uid = widget.prefillData['uid'] as String?
+          ?? FirebaseAuth.instance.currentUser?.uid ?? '';
+      final bytes = await file.readAsBytes();
+      final ext = file.name.split('.').last;
+      final ref = FirebaseStorage.instance.ref(
+          'intro_videos/$uid/v_${DateTime.now().millisecondsSinceEpoch}.$ext');
+      await ref.putData(
+        Uint8List.fromList(bytes),
+        SettableMetadata(contentType: 'video/$ext'),
+      );
+      final url = await ref.getDownloadURL();
+      if (mounted) setState(() => _introVideoUrl = url);
+    } catch (e) {
+      if (mounted) _snack('שגיאה בהעלאת הוידאו: $e', _kRed);
+    } finally {
+      if (mounted) setState(() => _isUploadingVideo = false);
+    }
   }
 }
 

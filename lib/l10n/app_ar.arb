@@ -232,7 +232,7 @@
   "expertConfirmPaymentButton": "تأكيد والدفع",
   "expertVerifiedBooking": "حجز مؤكد",
   "expertInsufficientBalance": "رصيد غير كافٍ",
-  "expertEscrowSuccess": "تم تأكيد الدفع! الأموال محفوظة في الضمان",
+  "expertEscrowSuccess": "تم تأكيد الدفع وتأمينه حتى انتهاء المعاملة",
   "expertTransactionTitle": "دفع لـ {name}",
   "@expertTransactionTitle": {
     "placeholders": {

@@ -232,7 +232,7 @@
   "expertConfirmPaymentButton": "Confirmar y Pagar",
   "expertVerifiedBooking": "Reserva Verificada",
   "expertInsufficientBalance": "Saldo insuficiente",
-  "expertEscrowSuccess": "¡Pago confirmado! Fondos asegurados en depósito",
+  "expertEscrowSuccess": "Pago confirmado y protegido hasta finalizar la transacción",
   "expertTransactionTitle": "Pago a {name}",
   "@expertTransactionTitle": {
     "placeholders": {

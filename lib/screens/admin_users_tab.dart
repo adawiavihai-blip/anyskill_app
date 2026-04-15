@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -6,6 +5,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../providers/admin_users_provider.dart';
+import '../utils/safe_image_provider.dart';
 import '../utils/web_utils.dart';
 import 'admin_user_detail_screen.dart';
 
@@ -586,15 +586,12 @@ class _UserCard extends StatelessWidget {
 
     // Extract profile image — supports both HTTP URLs and base64 data URIs.
     // Onboarding stores base64 (`data:image/png;base64,...`), Google Sign-In
-    // stores HTTP URLs. Must handle both like edit_profile_screen.dart does.
+    // stores HTTP URLs. `safeImageProvider` wraps base64Decode in a
+    // try-catch so malformed Firestore data never crashes the list.
     final rawImg = data['profileImage'];
     final String? imgStr =
         (rawImg is String && rawImg.isNotEmpty) ? rawImg : null;
-    final ImageProvider? avatarImage = imgStr != null
-        ? (imgStr.startsWith('http')
-            ? NetworkImage(imgStr)
-            : MemoryImage(base64Decode(imgStr.split(',').last)))
-        : null;
+    final ImageProvider? avatarImage = safeImageProvider(imgStr);
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 6),

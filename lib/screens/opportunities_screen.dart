@@ -129,7 +129,9 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
     if (_uid.isEmpty) return;
     final snap = await FirebaseFirestore.instance.collection('users').doc(_uid).get();
     if (!snap.exists || !mounted) return;
-    final d      = snap.data()!;
+    // v9.7.0: Safe null-check instead of force-unwrap (snap.data()!)
+    // Prevents crash when snapshot exists but data() returns null (rare edge case)
+    final d = snap.data() ?? {};
     final boostTs = d['boostedUntil'] as Timestamp?;
     setState(() {
       _xp             = (d['xp']                 as num? ?? 0).toInt();
@@ -188,7 +190,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
       await db.runTransaction((tx) async {
         final snap = await tx.get(reqRef);
         if (!snap.exists) throw msgRequestUnavailable;
-        final d         = snap.data()!;
+        final d         = snap.data() ?? {};
         final count     = (d['interestedCount']    ?? 0) as int;
         final providers = List<String>.from(d['interestedProviders'] ?? []);
         if (d['status'] == 'closed') throw msgRequestClosed3;
@@ -282,6 +284,80 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
       );
     } finally {
       if (mounted) setState(() => _processingIds.remove(requestId));
+    }
+  }
+
+  /// Provider explicitly declines a job request.
+  /// Adds the provider's UID to `declinedProviders` array so the card
+  /// is hidden on next stream event, and notifies the customer.
+  Future<void> _declineRequest(
+      BuildContext context, String requestId, String clientId, String clientName) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.do_not_disturb_alt_rounded, color: Color(0xFFEF4444), size: 22),
+            SizedBox(width: 8),
+            Text('דחיית בקשה', style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: const Text(
+          'האם אתה בטוח שברצונך לדחות את הבקשה?\nהלקוח יקבל התראה.',
+          textAlign: TextAlign.center,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('לא, חזור'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('כן, דחה', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+
+    try {
+      final db = FirebaseFirestore.instance;
+      // Mark this provider as declined — hides the card
+      await db.collection('job_requests').doc(requestId).update({
+        'declinedProviders': FieldValue.arrayUnion([_uid]),
+      });
+
+      // Notify the customer
+      await db.collection('notifications').add({
+        'userId':    clientId,
+        'title':     'הספק לא זמין',
+        'body':      '${widget.providerName} לא זמין/ה כרגע לבקשה שלך. נותני שירות אחרים עדיין יכולים לענות.',
+        'type':      'request_declined',
+        'data':      {'requestId': requestId},
+        'isRead':    false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          backgroundColor: Color(0xFF94A3B8),
+          content: Text('הבקשה נדחתה — הלקוח קיבל הודעה'),
+        ));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: Colors.red,
+          content: Text('שגיאה: $e'),
+        ));
+      }
     }
   }
 
@@ -604,6 +680,9 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                 if (d['isActive'] == false) return false;
                 // ── Self-filter: never show user their own requests ──
                 if ((d['clientId'] ?? '') == _uid) return false;
+                // ── Decline filter: hide requests this provider declined ──
+                final declined = (d['declinedProviders'] as List?) ?? [];
+                if (declined.contains(_uid)) return false;
                 final ts  = d['createdAt'] as Timestamp?;
                 if (ts != null && ts.toDate().isBefore(cutoff)) return false;
                 // "דחוף" filter: only HOT cards (< 10 min)
@@ -676,6 +755,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                       isUrgent: _isUrgentData(d),
                       customMessage: l10n.oppQuickBidMessage(clientName, widget.providerName),
                     ),
+                    onDecline: () => _declineRequest(context, doc.id, clientId, clientName),
                   );
                 },
               );
@@ -865,6 +945,7 @@ class _RequestCard extends StatefulWidget {
   final String               providerName;
   final VoidCallback         onInterest;
   final VoidCallback         onQuickBid;
+  final VoidCallback         onDecline;
 
   const _RequestCard({
     super.key,
@@ -877,6 +958,7 @@ class _RequestCard extends StatefulWidget {
     required this.providerName,
     required this.onInterest,
     required this.onQuickBid,
+    required this.onDecline,
   });
 
   @override
@@ -1693,6 +1775,25 @@ class _RequestCardState extends State<_RequestCard>
                                         fontSize: 13)),
                               ],
                             ),
+                          ),
+                        ),
+                      ],
+
+                      // ── Decline button (not interested) ─────────────────────
+                      if (!alreadyInterested && !isClosed) ...[
+                        const SizedBox(height: 6),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 38,
+                          child: TextButton(
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.grey[500],
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                            onPressed: widget.onDecline,
+                            child: const Text('לא מעוניין',
+                                style: TextStyle(fontSize: 13)),
                           ),
                         ),
                       ],

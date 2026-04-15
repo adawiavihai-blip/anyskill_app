@@ -6,6 +6,18 @@
     <!-- ── Location ────────────────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <!-- Background location for DogWalkService GPS tracking when the screen
+         is locked or the app is backgrounded. Requires runtime opt-in on
+         Android 10+ via geolocator's permission flow. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+
+    <!-- ── Camera + storage (booking_requirements + boarding_proofs) ─── -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false"/>
 
     <!-- ── Notifications ───────────────────────────────────────────────── -->
     <!-- POST_NOTIFICATIONS required for Android 13+ (API 33+) -->

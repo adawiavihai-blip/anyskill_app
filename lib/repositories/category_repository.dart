@@ -25,7 +25,7 @@ class CategoryRepository {
   /// Real-time stream of ALL categories.
   /// Client-side sorted: clickCount DESC → order ASC → name ASC.
   Stream<List<Category>> watchAll() {
-    return _db.collection('categories').snapshots().map((snap) {
+    return _db.collection('categories').limit(100).snapshots().map((snap) {
       final cats = snap.docs.map(Category.fromFirestore).toList()
         ..sort((a, b) {
           if (a.clickCount != b.clickCount) {

@@ -108,6 +108,7 @@ class BusinessAiService {
   static Stream<int> pendingQueueStream() => _db
       .collection('categories_pending')
       .where('status', isEqualTo: 'pending')
+      .limit(200)
       .snapshots()
       .map((s) => s.docs.length);
 

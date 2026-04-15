@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 /// Single source of truth for the app version.
 /// Change this ONE constant and the new number appears everywhere
 /// (login screen, admin panel, wherever it's referenced).
-const String appVersion = '9.2.0';
+const String appVersion = '11.9.0';
 
 // זו הרשימה המרכזית. כל האפליקציה תמשוך מכאן את השמות.
 // אם תשנה כאן ל"כושר", זה ישתנה אוטומטית גם ב"גלה" וגם ב"עריכה".
@@ -116,3 +116,27 @@ const Map<String, List<String>> APP_SUB_CATEGORIES = {
     'הדפסה ודיגיטל',
   ],
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AnyTasks 3.0 — Micro-task categories (separate from APP_CATEGORIES)
+//
+// These are discrete, one-off task types for the gig marketplace module.
+// Firestore collection `anytask_categories` is the live source (admin-editable);
+// this list is the offline fallback + initial seed.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ignore: constant_identifier_names
+const List<Map<String, dynamic>> ANYTASK_CATEGORIES = [
+  {'id': 'photography',     'nameHe': 'צילום',              'nameEn': 'Photography',           'icon': Icons.camera_alt_rounded},
+  {'id': 'delivery_verify', 'nameHe': 'אימות משלוח',        'nameEn': 'Delivery Verification', 'icon': Icons.local_shipping_rounded},
+  {'id': 'research',        'nameHe': 'מחקר',               'nameEn': 'Research',              'icon': Icons.search_rounded},
+  {'id': 'mystery_shop',    'nameHe': 'לקוח סמוי',          'nameEn': 'Mystery Shopping',      'icon': Icons.storefront_rounded},
+  {'id': 'data_collection', 'nameHe': 'איסוף נתונים',       'nameEn': 'Data Collection',       'icon': Icons.analytics_rounded},
+  {'id': 'translation',     'nameHe': 'תרגום',              'nameEn': 'Translation',           'icon': Icons.translate_rounded},
+  {'id': 'social_media',    'nameHe': 'סושיאל מדיה',        'nameEn': 'Social Media Content',  'icon': Icons.campaign_rounded},
+  {'id': 'proofreading',    'nameHe': 'הגהה ועריכה',        'nameEn': 'Proofreading',          'icon': Icons.spellcheck_rounded},
+  {'id': 'survey',          'nameHe': 'סקרים',              'nameEn': 'Surveys',               'icon': Icons.poll_rounded},
+  {'id': 'local_scouting',  'nameHe': 'סיור מקומי',         'nameEn': 'Local Scouting',        'icon': Icons.explore_rounded},
+  {'id': 'video',           'nameHe': 'וידאו קצר',          'nameEn': 'Short-form Video',      'icon': Icons.videocam_rounded},
+  {'id': 'voice',           'nameHe': 'הקלטת קול',          'nameEn': 'Voice Recording',       'icon': Icons.mic_rounded},
+];

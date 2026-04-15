@@ -232,7 +232,7 @@
   "expertConfirmPaymentButton": "אשר ושלם",
   "expertVerifiedBooking": "הזמנה מאומתת",
   "expertInsufficientBalance": "אין מספיק יתרה",
-  "expertEscrowSuccess": "התשלום אושר! הכסף נעול באסקרו",
+  "expertEscrowSuccess": "התשלום אושר ומאובטח עד לסיום העסקה",
   "expertTransactionTitle": "תשלום ל-{name}",
   "@expertTransactionTitle": {
     "placeholders": {

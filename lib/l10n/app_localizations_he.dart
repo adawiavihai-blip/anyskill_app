@@ -515,7 +515,7 @@ class AppLocalizationsHe extends AppLocalizations {
   String get expertInsufficientBalance => 'אין מספיק יתרה';
 
   @override
-  String get expertEscrowSuccess => 'התשלום אושר! הכסף נעול באסקרו';
+  String get expertEscrowSuccess => 'התשלום אושר ומאובטח עד לסיום העסקה';
 
   @override
   String expertTransactionTitle(String name) {
