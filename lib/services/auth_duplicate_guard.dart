@@ -23,14 +23,24 @@ class AuthDuplicateGuard {
     final normalized = email.trim().toLowerCase();
     if (normalized.isEmpty) return null;
 
-    final snap = await FirebaseFirestore.instance
-        .collection('users')
-        .where('email', isEqualTo: normalized)
-        .limit(2)
-        .get();
+    // 4s cap — must NEVER hang the sign-in flow. If the query stalls
+    // (network, missing index, Firestore slow), fail-open: allow the
+    // signup to proceed. Worst case is a rare duplicate doc that the
+    // server-side Auth "one account per email" flag + manual admin
+    // review will catch. Hanging the Google sign-in is much worse UX.
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: normalized)
+          .limit(2)
+          .get()
+          .timeout(const Duration(seconds: 4));
 
-    for (final doc in snap.docs) {
-      if (doc.id != currentUid) return doc.id;
+      for (final doc in snap.docs) {
+        if (doc.id != currentUid) return doc.id;
+      }
+    } catch (e) {
+      debugPrint('[AuthDuplicateGuard] findConflict failed/timed out: $e');
     }
     return null;
   }

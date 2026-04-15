@@ -1099,8 +1099,18 @@ class _OnboardingGateState extends State<OnboardingGate> {
       return await docRef.get().timeout(const Duration(seconds: 2));
     } catch (e) {
       debugPrint('[OnboardingGate] All tiers failed: $e');
-      // Return a non-existent snapshot so the FutureBuilder doesn't hang.
-      return docRef.get(const GetOptions(source: Source.cache)).catchError((_) => docRef.get());
+      // Last-resort fallback — MUST resolve within 3s so the splash never hangs.
+      // Both fallback calls are timeout-wrapped; if everything fails we rethrow
+      // a SocketException-like error the FutureBuilder can surface.
+      try {
+        return await docRef
+            .get(const GetOptions(source: Source.cache))
+            .timeout(const Duration(seconds: 2));
+      } catch (_) {
+        return await docRef
+            .get()
+            .timeout(const Duration(seconds: 3));
+      }
     }
   }
 
