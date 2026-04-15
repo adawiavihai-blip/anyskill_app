@@ -1137,7 +1137,8 @@ service cloud.firestore {
                         && request.resource.data.diff(resource.data).affectedKeys()
                            .hasOnly(['proofUrl', 'proofText', 'status',
                                     'proofSubmittedAt',
-                                    'providerReviewDone']));
+                                    'providerReviewDone',
+                                    'expertOnWayAt', 'workStartedAt']));
 
       // Delete: never from client. Admins only (e.g. fraud cleanup).
       allow delete: if isAdmin();

@@ -55,6 +55,8 @@ class ProviderActiveTaskScreen extends StatelessWidget {
               const SizedBox(height: 14),
               _ClientCard(task: task),
               const SizedBox(height: 14),
+              if (task.status == 'in_progress') _StageActions(task: task),
+              if (task.status == 'in_progress') const SizedBox(height: 14),
               _StepperSection(task: task),
               const SizedBox(height: 14),
               if (task.status == 'in_progress') _ProofSection(task: task),
@@ -524,4 +526,129 @@ class _CompletedBanner extends StatelessWidget {
 // ignore: unused_element
 void _keepCloudFirestoreAlive() {
   FirebaseFirestore.instance;
+}
+
+/// Two-button row: "🚗 אני בדרך" / "⚡ התחלתי עבודה". Writes
+/// `expertOnWayAt` / `workStartedAt` so the client's LifecycleStepper
+/// advances. Each button becomes a green confirmation pill once tapped.
+class _StageActions extends StatelessWidget {
+  final AnyTask task;
+  const _StageActions({required this.task});
+
+  Future<void> _mark(BuildContext context, String field) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('any_tasks')
+          .doc(task.id)
+          .update({field: FieldValue.serverTimestamp()});
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('שגיאה: $e'),
+          backgroundColor: TasksPalette.dangerRed));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final onWay = task.expertOnWayAt != null;
+    final started = task.workStartedAt != null;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: TasksPalette.cardWhite,
+        borderRadius: BorderRadius.circular(TasksPalette.rCard),
+        boxShadow: TasksPalette.cardShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('עדכן סטטוס ללקוח',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: TasksPalette.darkNavy)),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _StageChip(
+                  emoji: '🚗',
+                  label: 'אני בדרך',
+                  done: onWay,
+                  onTap:
+                      onWay ? null : () => _mark(context, 'expertOnWayAt'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _StageChip(
+                  emoji: '⚡',
+                  label: 'התחלתי עבודה',
+                  done: started,
+                  onTap: started || !onWay
+                      ? null
+                      : () => _mark(context, 'workStartedAt'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StageChip extends StatelessWidget {
+  final String emoji;
+  final String label;
+  final bool done;
+  final VoidCallback? onTap;
+  const _StageChip({
+    required this.emoji,
+    required this.label,
+    required this.done,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(TasksPalette.rButton),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: done
+              ? TasksPalette.primaryGreen.withValues(alpha: 0.1)
+              : enabled
+                  ? TasksPalette.cardWhite
+                  : TasksPalette.bgPrimary,
+          borderRadius: BorderRadius.circular(TasksPalette.rButton),
+          border: Border.all(
+              color: done
+                  ? TasksPalette.primaryGreen
+                  : TasksPalette.borderLight,
+              width: done ? 1.5 : 1),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(done ? '✓' : emoji, style: const TextStyle(fontSize: 16)),
+            const SizedBox(width: 6),
+            Text(done ? 'בוצע' : label,
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: done
+                        ? TasksPalette.primaryGreenDark
+                        : enabled
+                            ? TasksPalette.darkNavy
+                            : TasksPalette.textMuted)),
+          ],
+        ),
+      ),
+    );
+  }
 }

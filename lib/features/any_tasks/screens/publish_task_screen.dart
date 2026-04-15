@@ -23,6 +23,7 @@ import 'package:image_picker/image_picker.dart';
 import '../models/any_task.dart';
 import '../services/any_task_service.dart';
 import '../theme/any_tasks_palette.dart';
+import 'live_offers_screen.dart';
 
 /// Smart Pricing v1 — hardcoded ranges per category. Phase 2 will swap
 /// to dynamic calc from platform history.
@@ -213,11 +214,9 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
       }
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('✨ המשימה פורסמה! נודיע לך כשמגיעות הצעות'),
-        backgroundColor: TasksPalette.primaryGreen,
-      ));
-      Navigator.pop(context, id);
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => LiveOffersScreen(taskId: id)),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(

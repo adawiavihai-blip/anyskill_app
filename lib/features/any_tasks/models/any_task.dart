@@ -111,9 +111,15 @@ class AnyTask {
 
   // ── Timestamps ─────────────────────────────────────────────────
   final DateTime? createdAt;
-  final DateTime? acceptedAt;    // provider chosen
+  final DateTime? acceptedAt;         // provider chosen
+  final DateTime? expertOnWayAt;      // provider tapped "בדרך" (v14.3.0)
+  final DateTime? workStartedAt;      // provider tapped "התחלתי" (v14.3.0)
   final DateTime? proofSubmittedAt;
   final DateTime? completedAt;
+
+  // ── Review bookkeeping (shared with ReviewService) ─────────────
+  final bool clientReviewDone;
+  final bool providerReviewDone;
 
   const AnyTask({
     this.id,
@@ -143,8 +149,12 @@ class AnyTask {
     this.responseCount = 0,
     this.createdAt,
     this.acceptedAt,
+    this.expertOnWayAt,
+    this.workStartedAt,
     this.proofSubmittedAt,
     this.completedAt,
+    this.clientReviewDone = false,
+    this.providerReviewDone = false,
   });
 
   factory AnyTask.fromMap(String id, Map<String, dynamic> d) => AnyTask(
@@ -175,8 +185,12 @@ class AnyTask {
         responseCount: (d['responseCount'] as num?)?.toInt() ?? 0,
         createdAt: (d['createdAt'] as Timestamp?)?.toDate(),
         acceptedAt: (d['acceptedAt'] as Timestamp?)?.toDate(),
+        expertOnWayAt: (d['expertOnWayAt'] as Timestamp?)?.toDate(),
+        workStartedAt: (d['workStartedAt'] as Timestamp?)?.toDate(),
         proofSubmittedAt: (d['proofSubmittedAt'] as Timestamp?)?.toDate(),
         completedAt: (d['completedAt'] as Timestamp?)?.toDate(),
+        clientReviewDone: (d['clientReviewDone'] ?? false) as bool,
+        providerReviewDone: (d['providerReviewDone'] ?? false) as bool,
       );
 
   Map<String, dynamic> toMap() => {

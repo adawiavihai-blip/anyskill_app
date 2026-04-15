@@ -10,10 +10,9 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 import '../models/any_task.dart';
-import '../models/task_milestone.dart';
 import '../services/any_task_service.dart';
 import '../theme/any_tasks_palette.dart';
-import '../widgets/milestone_stepper.dart';
+import '../widgets/lifecycle_stepper.dart';
 import 'task_review_screen.dart';
 
 class TaskTrackingScreen extends StatelessWidget {
@@ -50,7 +49,7 @@ class TaskTrackingScreen extends StatelessWidget {
               const SizedBox(height: 14),
               _ProviderCard(task: task),
               const SizedBox(height: 14),
-              _MilestoneStepper(taskId: task.id!),
+              _LifecycleCard(task: task),
               const SizedBox(height: 14),
               if (task.status == 'proof_submitted') _ProofPreview(task: task),
               const SizedBox(height: 14),
@@ -181,63 +180,31 @@ class _ProviderCard extends StatelessWidget {
   }
 }
 
-class _MilestoneStepper extends StatelessWidget {
-  final String taskId;
-  const _MilestoneStepper({required this.taskId});
+class _LifecycleCard extends StatelessWidget {
+  final AnyTask task;
+  const _LifecycleCard({required this.task});
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<List<TaskMilestone>>(
-      stream: AnyTaskService.instance.streamMilestones(taskId),
-      builder: (context, snap) {
-        final items = snap.data ?? const <TaskMilestone>[];
-        final done = items.where((m) => m.isDone).length;
-        final total = items.isEmpty ? 1 : items.length;
-        final pct = done / total;
-        return Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: TasksPalette.cardWhite,
-            borderRadius: BorderRadius.circular(TasksPalette.rCard),
-            border:
-                Border.all(color: TasksPalette.borderLight, width: 0.5),
-            boxShadow: TasksPalette.cardShadow,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Text('שלבי הביצוע',
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: TasksPalette.textSecondary)),
-                  const Spacer(),
-                  Text('$done / $total',
-                      style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: TasksPalette.clientPrimary)),
-                ],
-              ),
-              const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: pct,
-                  minHeight: 8,
-                  backgroundColor: TasksPalette.clientLight,
-                  valueColor: const AlwaysStoppedAnimation(
-                      TasksPalette.clientPrimary),
-                ),
-              ),
-              const SizedBox(height: 16),
-              MilestoneStepper(items: items),
-            ],
-          ),
-        );
-      },
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: TasksPalette.cardWhite,
+        borderRadius: BorderRadius.circular(TasksPalette.rCard),
+        boxShadow: TasksPalette.cardShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('מעקב משימה',
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: TasksPalette.darkNavy)),
+          const SizedBox(height: 16),
+          TaskLifecycleStepper(task: task),
+        ],
+      ),
     );
   }
 }
