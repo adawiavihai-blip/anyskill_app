@@ -9,6 +9,61 @@
       ]
     },
     {
+      "_comment": "AnyTasks v14.0.0 — provider feed of open tasks (no category filter)",
+      "collectionGroup": "any_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",    "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "AnyTasks v14.0.0 — provider feed filtered by category whitelist",
+      "collectionGroup": "any_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",    "order": "ASCENDING" },
+        { "fieldPath": "category",  "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "AnyTasks v14.0.0 — client's own task list",
+      "collectionGroup": "any_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId",  "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "AnyTasks v14.0.0 — provider active tasks (chosen by a client)",
+      "collectionGroup": "any_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "selectedProviderId", "order": "ASCENDING" },
+        { "fieldPath": "status",             "order": "ASCENDING" },
+        { "fieldPath": "acceptedAt",         "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "Pet Stay Tracker v13.0.0 — LiveWalkMap query (owner-side latest walk per job)",
+      "collectionGroup": "dog_walks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "jobId",     "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isProvider",      "order": "ASCENDING" },
+        { "fieldPath": "parentCategory",  "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [
@@ -352,6 +407,230 @@
       "fields": [
         { "fieldPath": "revieweeId", "order": "ASCENDING"  },
         { "fieldPath": "createdAt",  "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "provider_listings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "serviceType", "order": "ASCENDING" },
+        { "fieldPath": "createdAt",   "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "provider_listings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "parentCategory", "order": "ASCENDING" },
+        { "fieldPath": "createdAt",      "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "provider_listings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "uid",            "order": "ASCENDING" },
+        { "fieldPath": "identityIndex",  "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "reviews",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "listingId",  "order": "ASCENDING" },
+        { "fieldPath": "createdAt",  "order": "DESCENDING" }
+      ]
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // COMMUNITY HUB INDEXES (v11.0.0)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // ── community_requests: open feed sorted by time ─────────────────────
+    {
+      "collectionGroup": "community_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",    "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    // ── community_requests: open feed filtered by requester type ─────────
+    {
+      "collectionGroup": "community_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",        "order": "ASCENDING"  },
+        { "fieldPath": "requesterType", "order": "ASCENDING"  },
+        { "fieldPath": "createdAt",     "order": "DESCENDING" }
+      ]
+    },
+    // ── community_requests: user's own requests ─────────────────────────
+    {
+      "collectionGroup": "community_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "requesterId", "order": "ASCENDING"  },
+        { "fieldPath": "createdAt",   "order": "DESCENDING" }
+      ]
+    },
+    // ── community_requests: requester's active requests (status whereIn) ──
+    {
+      "collectionGroup": "community_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "requesterId", "order": "ASCENDING" },
+        { "fieldPath": "status",      "order": "ASCENDING" }
+      ]
+    },
+    // ── community_requests: volunteer's claimed tasks ────────────────────
+    {
+      "collectionGroup": "community_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "volunteerId", "order": "ASCENDING" },
+        { "fieldPath": "status",      "order": "ASCENDING" }
+      ]
+    },
+    // ── community_requests: anti-fraud cooldown ─────────────────────────
+    {
+      "collectionGroup": "community_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "volunteerId",  "order": "ASCENDING"  },
+        { "fieldPath": "requesterId",  "order": "ASCENDING"  },
+        { "fieldPath": "status",       "order": "ASCENDING"  },
+        { "fieldPath": "completedAt",  "order": "DESCENDING" }
+      ]
+    },
+    // ── community_requests: daily XP cap check ──────────────────────────
+    {
+      "collectionGroup": "community_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "volunteerId",  "order": "ASCENDING"  },
+        { "fieldPath": "status",       "order": "ASCENDING"  },
+        { "fieldPath": "completedAt",  "order": "DESCENDING" }
+      ]
+    }
+    ,
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ANYTASKS 3.0 INDEXES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // ── anytasks: open feed sorted by time ──────────────────────────────
+    {
+      "collectionGroup": "anytasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",    "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    // ── anytasks: open feed filtered by category ────────────────────────
+    {
+      "collectionGroup": "anytasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",    "order": "ASCENDING"  },
+        { "fieldPath": "category",  "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    // ── anytasks: creator's own tasks ───────────────────────────────────
+    {
+      "collectionGroup": "anytasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "creatorId", "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    // ── anytasks: provider's assigned tasks ─────────────────────────────
+    {
+      "collectionGroup": "anytasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "providerId", "order": "ASCENDING"  },
+        { "fieldPath": "status",     "order": "ASCENDING"  },
+        { "fieldPath": "createdAt",  "order": "DESCENDING" }
+      ]
+    },
+    // ── anytasks: auto-release scan (Cloud Function cron) ──────────────
+    {
+      "collectionGroup": "anytasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",          "order": "ASCENDING" },
+        { "fieldPath": "autoReleased",    "order": "ASCENDING" },
+        { "fieldPath": "autoReleaseDate", "order": "ASCENDING" }
+      ]
+    },
+    // ── anytasks: open expiry scan (Cloud Function cron) ────────────────
+    {
+      "collectionGroup": "anytasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",    "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    // ── anytasks: creator's active tasks (status whereIn) ───────────────
+    {
+      "collectionGroup": "anytasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "creatorId", "order": "ASCENDING" },
+        { "fieldPath": "status",    "order": "ASCENDING" }
+      ]
+    },
+    // ── anytask_penalties: user's penalty history ────────────────────────
+    {
+      "collectionGroup": "anytask_penalties",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId",    "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SECURITY/PERFORMANCE FIXES (added 2026-04-10 — pre-launch audit)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // ── users: online provider lookup (search_repository.watchOnline) ─────
+    // Without this index, the query .where('isProvider', ==, true)
+    //   .where('isOnline', ==, true) silently returns empty on web.
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isProvider", "order": "ASCENDING" },
+        { "fieldPath": "isOnline",   "order": "ASCENDING" }
+      ]
+    },
+
+    // ── job_requests: open requests with no responders (admin insights) ───
+    // admin_insights_tab.dart: status==open + interestedCount==0
+    {
+      "collectionGroup": "job_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",          "order": "ASCENDING" },
+        { "fieldPath": "interestedCount", "order": "ASCENDING" }
+      ]
+    },
+
+    // ── jobs: urgent completed analytics (admin insights) ─────────────────
+    // admin_insights_tab.dart: status==completed + isUrgent==true
+    // Cuts read amplification from 500 docs to ~50.
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",   "order": "ASCENDING" },
+        { "fieldPath": "isUrgent", "order": "ASCENDING" }
       ]
     }
   ],

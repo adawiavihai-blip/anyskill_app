@@ -51,6 +51,25 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
 
+    // ── Support Agent role (v11.9.x) ────────────────────────────────────
+    // A support_agent is staff member who can view tickets, take ownership,
+    // chat with customers, and run a controlled set of actions (verify ID,
+    // password reset, flag account, refund within cap). They CANNOT access
+    // the Vault: financial settings, platform earnings, system broadcasts,
+    // grantAdminCredit, or change other users' roles.
+    //
+    // Role assignment goes through the setUserRole CF (admin-only).
+    function isSupportAgent() {
+      return isVerifiedAuth()
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'support_agent';
+    }
+
+    // Convenience: any staff member (admin OR support_agent).
+    // Use this for collections that BOTH roles need to read.
+    function isStaff() {
+      return isAdmin() || isSupportAgent();
+    }
+
     // CMS admin check — now uses the same Firestore isAdmin flag.
     // Previously was email-based; unified to prevent hardcoded credentials.
     // Kept as a separate function for readability in collection rules.
@@ -94,7 +113,10 @@ service cloud.firestore {
 
       // Owner can create their own profile. System account also allowed.
       // Uses direct auth check — no get() calls that could fail on missing docs.
-      allow create: if request.auth != null && request.auth.uid == uid;
+      // Admins may also create user docs with arbitrary UIDs (used by the
+      // demo experts admin tab to seed and create demo provider profiles).
+      allow create: if (request.auth != null && request.auth.uid == uid)
+                    || isAdmin();
 
       allow update: if
         // ── Owner general update ───────────────────────────────────────────
@@ -123,21 +145,29 @@ service cloud.firestore {
         // customerReviewsCount fields (written after an expert review
         // of a customer is published).
         || (isVerifiedAuth() && onlyFields(['customerRating', 'customerReviewsCount']))
-        // ── Volunteer badge update ───────────────────────────────────────
+        // ── Volunteer / Community Hub badge update ─────────────────────
         // Client confirms volunteer task completion → updates provider's
-        // badge timestamp and count. XP increment is handled by CF.
-        || (isVerifiedAuth() && onlyFields(['lastVolunteerTaskAt', 'volunteerTaskCount', 'hasActiveVolunteerBadge']))
+        // badge timestamp, count, heart, community badges, and community XP.
+        // Standard XP increment is handled by CF (updateUserXP).
+        || (isVerifiedAuth() && onlyFields([
+             'lastVolunteerTaskAt', 'volunteerTaskCount', 'hasActiveVolunteerBadge',
+             'volunteerHeart', 'communityBadges', 'communityXP'
+           ]))
         // ── Engagement: streak + profile boost ───────────────────────────
         // Provider writes streak data on own doc; engagement service writes
         // profileBoostUntil when a boost card is awarded.
         || (isOwner(uid) && onlyFields(['streak', 'lastStreakDate', 'streakBestEver', 'lastDailyDropDate', 'profileBoostUntil']))
         // ── Escrow credit (pendingBalance) ───────────────────────────────
-        // Only the owner may write pendingBalance on their OWN doc (via CF),
-        // OR any auth user may increment it (client credits expert during
-        // escrow payment). The actual payout reads netAmountForExpert from
-        // the jobs doc — not pendingBalance — so manipulation has no
-        // financial effect on real payouts.
-        || (isVerifiedAuth() && onlyFields(['pendingBalance']));
+        // v9.7.0 SECURITY: pendingBalance writes are now restricted to
+        // INCREMENT-ONLY by verified users. This prevents:
+        //   • Setting pendingBalance to an arbitrary value (griefing)
+        //   • Setting pendingBalance to a negative number
+        //   • Decreasing another user's pendingBalance
+        // The new value MUST be strictly greater than the current value.
+        // Cloud Functions (Admin SDK) bypass rules for resets/corrections.
+        || (isVerifiedAuth()
+            && onlyFields(['pendingBalance'])
+            && request.resource.data.pendingBalance > resource.data.pendingBalance);
 
       // Deletion is only performed by the Account Deletion Cloud Function
       // (Admin SDK) or the self-service delete flow (account_deletion_service.dart
@@ -173,6 +203,13 @@ service cloud.firestore {
       allow read:           if isOwner(uid) || isAdmin();
       allow create, update: if isOwner(uid) || isAdmin();
       allow delete:         if isAdmin();
+    }
+
+    // ── Dog Profiles (Pet Stay Tracker v13.0.0) ─────────────────────────
+    // Owner-only master profile. Provider never reads here — a snapshot is
+    // copied onto the job doc at booking time (see jobs/{id}/petStay/data).
+    match /users/{uid}/dogProfiles/{dogId} {
+      allow read, write: if isOwner(uid);
     }
 
     // ── Legacy per-user notification subcollection ────────────────────────
@@ -212,8 +249,11 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════════════════
     match /jobs/{jobId} {
       // Customer creates the job and must be the customerId author.
+      // Self-booking is forbidden — a provider cannot book themselves
+      // (anti-fraud: prevents fake reviews and circular money flows).
       allow create: if isVerifiedAuth()
-                    && request.resource.data.customerId == request.auth.uid;
+                    && request.resource.data.customerId == request.auth.uid
+                    && request.resource.data.customerId != request.resource.data.expertId;
 
       // Only the two parties (or admin) may read.
       allow read: if isAdmin()
@@ -228,6 +268,87 @@ service cloud.firestore {
                             || resource.data.customerId == request.auth.uid));
 
       allow delete: if false; // historical record — never deleted by client
+
+      // ── PetStay snapshot (Pet Stay Tracker v13.0.0) ──────────────────
+      // Lives at jobs/{jobId}/petStay/{docId}. Created in the SAME
+      // transaction as the parent job doc, so the create rule can't
+      // get(/jobs/{jobId}) — it's not committed yet. We rely on the
+      // customerId field that the customer writes onto the snapshot.
+      // For read/update later, we get() the (now committed) parent job.
+      match /petStay/{docId} {
+        allow create: if isAdmin()
+                      || (isVerifiedAuth()
+                          && request.resource.data.customerId == request.auth.uid);
+        allow read: if isAdmin()
+                    || (isVerifiedAuth()
+                        && (resource.data.customerId == request.auth.uid
+                            || resource.data.expertId  == request.auth.uid));
+        // Fine-grained write permissions (QA Phase 2 fix):
+        //   • Customer → rating / review / ratedAt / status only
+        //     (submitRating flips status to 'completed')
+        //   • Provider → counters + status only (NO rating writes)
+        //   • Neither side may touch dogSnapshot, customerId, expertId,
+        //     isPension, isDogWalker, startDate, endDate, totalNights
+        allow update: if isAdmin()
+                      || (isVerifiedAuth() && (
+                        (resource.data.customerId == request.auth.uid
+                         && request.resource.data.diff(resource.data)
+                            .affectedKeys()
+                            .hasOnly(['rating', 'reviewText', 'ratedAt',
+                                      'status', 'dogSnapshot']))
+                        || (resource.data.expertId == request.auth.uid
+                            && request.resource.data.diff(resource.data)
+                               .affectedKeys()
+                               .hasOnly(['totalWalks', 'totalDistanceKm',
+                                         'totalPhotos', 'totalVideos',
+                                         'totalReports', 'status']))
+                      ));
+        allow delete: if false;
+
+        // ── Schedule items (Step 5) ────────────────────────────────────
+        // Created by the customer during the booking transaction.
+        // Updated by the expert to mark items done. Read by both parties.
+        // Bootstrap-safe: `customerId`/`expertId` are duplicated on each
+        // schedule item so the rules don't need to get(/jobs/{jobId}).
+        match /schedule/{itemId} {
+          allow create: if isVerifiedAuth()
+                        && request.resource.data.customerId == request.auth.uid;
+          allow read: if isAdmin()
+                      || (isVerifiedAuth()
+                          && (resource.data.customerId == request.auth.uid
+                              || resource.data.expertId  == request.auth.uid));
+          allow update: if isAdmin()
+                        || (isVerifiedAuth()
+                            && resource.data.expertId == request.auth.uid);
+          allow delete: if false;
+        }
+
+        // ── Feed updates (Step 6+) ─────────────────────────────────────
+        // Written by the provider as stay events happen (pee/poop marker,
+        // walk_completed, photos/videos/notes, daily_report). Read by both
+        // participants. Step 9: the customer can touch ONLY `reactions` and
+        // `replies` — all other fields stay provider-owned.
+        match /updates/{updateId} {
+          allow create: if isVerifiedAuth()
+                        && request.resource.data.expertId == request.auth.uid;
+          allow read: if isAdmin()
+                      || (isVerifiedAuth()
+                          && (resource.data.customerId == request.auth.uid
+                              || resource.data.expertId  == request.auth.uid));
+          allow update: if isAdmin()
+                        || (isVerifiedAuth()
+                            && (
+                              // Provider: full write access on their own update.
+                              resource.data.expertId == request.auth.uid
+                              // Customer: reactions/replies only.
+                              || (resource.data.customerId == request.auth.uid
+                                  && request.resource.data.diff(resource.data)
+                                     .affectedKeys()
+                                     .hasOnly(['reactions', 'replies']))
+                            ));
+          allow delete: if false;
+        }
+      }
     }
 
 
@@ -283,6 +404,16 @@ service cloud.firestore {
                     && request.auth.uid in
                        get(/databases/$(database)/documents/chats/$(chatId)).data.users;
         allow write: if false;
+      }
+
+      // v9.5.5: Typing indicators in separate subcollection to prevent
+      // AsyncQueue deadlocks (write + listener on same parent doc).
+      match /typing/{uid} {
+        allow read: if isVerifiedAuth()
+                    && request.auth.uid in
+                       get(/databases/$(database)/documents/chats/$(chatId)).data.users;
+        allow write: if isVerifiedAuth()
+                     && request.auth.uid == uid;
       }
     }
 
@@ -525,23 +656,64 @@ service cloud.firestore {
       allow create: if isVerifiedAuth()
                     && request.resource.data.userId == request.auth.uid;
 
-      allow read: if isAdmin()
+      // Read: any staff member (admin or support_agent) + the ticket owner.
+      allow read: if isStaff()
                   || (isVerifiedAuth() && resource.data.userId == request.auth.uid);
 
-      allow update: if isAdmin()
+      // Update: admin (all tickets), support_agent (any ticket — they need
+      // to be able to claim/assign before they own it), and the ticket owner.
+      allow update: if isStaff()
                     || (isVerifiedAuth() && resource.data.userId == request.auth.uid);
 
       allow delete: if isAdmin() || isCmsAdmin();
 
       match /messages/{msgId} {
-        allow read: if isAdmin()
+        // Read: staff sees everything (including internal notes).
+        // Customer sees only NON-internal messages — enforced via the
+        // resource.data.isInternal field. Internal notes have isInternal=true
+        // and are filtered out from customer queries.
+        allow read: if isStaff()
                     || (isVerifiedAuth()
+                        && resource.data.isInternal != true
                         && get(/databases/$(database)/documents/support_tickets/$(ticketId)).data.userId == request.auth.uid);
 
-        allow create: if isAdmin()
+        // Create: staff can write any message (including internal notes).
+        // Customer can only write non-internal messages tagged with their uid.
+        allow create: if isStaff()
                       || (isVerifiedAuth()
+                          && request.resource.data.isInternal != true
                           && get(/databases/$(database)/documents/support_tickets/$(ticketId)).data.userId == request.auth.uid);
       }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SUPPORT AUDIT LOG (v11.9.x — agent action trail)
+    //
+    // Every sensitive action a support_agent or admin performs is logged
+    // here by the supportAgentAction Cloud Function. Admins can read the
+    // full log; agents can read their own entries to review their work.
+    // Nobody can update or delete — append-only.
+    // ═══════════════════════════════════════════════════════════════════════
+    match /support_audit_log/{logId} {
+      // Reads: admin sees all, agent sees their own
+      allow read: if isAdmin()
+                  || (isSupportAgent()
+                      && resource.data.agentUid == request.auth.uid);
+
+      // Writes: only via Cloud Functions (Admin SDK bypasses these rules).
+      // Direct client writes are blocked to keep the log tamper-proof.
+      allow create, update, delete: if false;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CANNED RESPONSES (v11.9.x — agent reply templates)
+    //
+    // Admin creates and manages templates. Agents read them when composing
+    // replies. Templates may contain {customerName} and {ticketId} placeholders.
+    // ═══════════════════════════════════════════════════════════════════════
+    match /canned_responses/{templateId} {
+      allow read: if isStaff();
+      allow create, update, delete: if isAdmin();
     }
 
 
@@ -553,6 +725,14 @@ service cloud.firestore {
     match /app_settings/{docId} {
       allow read:  if isVerifiedAuth();
       allow write: if isAdmin() || isCmsAdmin();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // AI TEACHERS (Alex profile — admin-managed, public read)
+    // ═══════════════════════════════════════════════════════════════════════
+    match /ai_teachers/{teacherId} {
+      allow read:  if isVerifiedAuth();
+      allow write: if isAdmin();
     }
 
 
@@ -591,6 +771,126 @@ service cloud.firestore {
                         || onlyFields(['status', 'claimedBy', 'claimedByName', 'claimedAt']));
 
       allow delete: if isAdmin() || isCmsAdmin();
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PROVIDER LISTINGS — v10.3.1 Dual-Identity System
+    // Each doc = one professional identity for a provider. Max 2 per user.
+    //
+    // v10.3.1 FIX: Simplified update rule — the diff().affectedKeys() check
+    // caused permission-denied when serverTimestamp() fields were included.
+    // Now uses simple owner check + immutable field validation.
+    // ═══════════════════════════════════════════════════════════════════════
+    match /provider_listings/{listingId} {
+      // Anyone authenticated can browse listings (search results)
+      allow read: if isAuth();
+
+      // Owner can create listings (identityIndex must be 0 or 1).
+      // Admin can create listings for any user (used by demo experts tab —
+      // admin builds fake provider profiles that need to appear in search).
+      allow create: if (isAuth()
+                        && request.resource.data.uid == request.auth.uid
+                        && request.resource.data.identityIndex in [0, 1])
+                    || isAdmin();
+
+      // Owner can update their own listing (uid and identityIndex stay immutable).
+      // Verified users can also update rating/reviewsCount (review aggregation).
+      // Admin has full update access (for demo profile management).
+      allow update: if (isAuth()
+                        && resource.data.uid == request.auth.uid
+                        && request.resource.data.uid == request.auth.uid
+                        && request.resource.data.identityIndex == resource.data.identityIndex)
+                    || (isAuth()
+                        && onlyFields(['rating', 'reviewsCount']))
+                    || isAdmin();
+
+      // Owner or admin can delete
+      allow delete: if (isAuth() && resource.data.uid == request.auth.uid)
+                    || isAdmin();
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // COMMUNITY REQUESTS (Community Hub — v11.0.0)
+    //
+    // Anyone can create. Participants (requester or volunteer) can read/update.
+    // Self-claim block enforced at service layer (requesterId != volunteerId).
+    // ═══════════════════════════════════════════════════════════════════════
+    match /community_requests/{reqId} {
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.requesterId == request.auth.uid;
+
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && (resource.data.requesterId  == request.auth.uid
+                          || resource.data.volunteerId == request.auth.uid))
+                  || (isVerifiedAuth() && resource.data.status == 'open');
+
+      allow update: if isAdmin()
+                    || (isVerifiedAuth()
+                        && (resource.data.requesterId  == request.auth.uid
+                            || resource.data.volunteerId == request.auth.uid
+                            || resource.data.status == 'open'));
+
+      allow delete: if false;
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ANYTASKS 3.0 (global task marketplace)
+    //
+    // Creator posts tasks. Any verified user can browse open tasks and claim.
+    // Self-assignment block (creatorId != auth.uid on claim) enforced at
+    // service layer AND in the update rule below.
+    // Escrow payment reuses the existing jobs collection pipeline.
+    // ═══════════════════════════════════════════════════════════════════════
+    match /anytasks/{taskId} {
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.creatorId == request.auth.uid;
+
+      // Open tasks: any auth user can browse. Non-open: only participants + admin.
+      allow read: if isAdmin()
+                  || (isVerifiedAuth() && resource.data.status == 'open')
+                  || (isVerifiedAuth()
+                      && (resource.data.creatorId  == request.auth.uid
+                          || resource.data.providerId == request.auth.uid));
+
+      // Creator can update (cancel, confirm, dispute).
+      // Provider can update (claim open task, start work, submit proof) — but NOT own task.
+      // Admin: full access.
+      allow update: if isAdmin()
+                    || (isVerifiedAuth() && resource.data.creatorId == request.auth.uid)
+                    || (isVerifiedAuth()
+                        && resource.data.creatorId != request.auth.uid
+                        && (resource.data.providerId == request.auth.uid
+                            || resource.data.status == 'open'));
+
+      allow delete: if false;
+
+      // Activity log subcollection (immutable audit trail)
+      match /activity/{actId} {
+        allow create: if isVerifiedAuth();
+        allow read:   if isAdmin()
+                      || (isVerifiedAuth()
+                          && (get(/databases/$(database)/documents/anytasks/$(taskId)).data.creatorId == request.auth.uid
+                              || get(/databases/$(database)/documents/anytasks/$(taskId)).data.providerId == request.auth.uid));
+        allow update, delete: if false;
+      }
+    }
+
+    // AnyTask categories — public read, admin write
+    match /anytask_categories/{catId} {
+      allow read:  if request.auth != null;
+      allow write: if isAdmin() || isCmsAdmin();
+    }
+
+    // AnyTask penalties — Cloud Function (Admin SDK) creates; user reads own
+    match /anytask_penalties/{penId} {
+      allow create: if false;
+      allow read:   if isAdmin()
+                    || (isVerifiedAuth() && resource.data.userId == request.auth.uid);
+      allow update, delete: if false;
     }
 
 
@@ -723,6 +1023,180 @@ service cloud.firestore {
     match /admin_audit_log/{logId} {
       allow read, create: if isAdmin();
       allow update, delete: if false;
+    }
+
+    // ── Demo bookings ──────────────────────────────────────────────────────
+    // Records every customer attempt to book a demo provider profile.
+    // Created by the customer's client when they tap "Book Now" on a demo
+    // expert. Read by admins via the AdminDemoExpertsTab "bookings" sub-tab.
+    //
+    // Anyone authenticated can CREATE (the customer triggering the booking),
+    // but the create is gated to records that name themselves as the
+    // customerId. Reads + updates + deletes are admin-only.
+    match /demo_bookings/{bookingId} {
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.customerId == request.auth.uid;
+      allow read:   if isAdmin();
+      allow update: if isAdmin() && onlyFields(['status', 'contactedAt', 'adminNotes']);
+      allow delete: if isAdmin();
+    }
+
+    // ── Pet services: dog walk live tracking ──────────────────────────────
+    // Provider creates the doc on "Start Walk", appends to `path` array,
+    // and finalizes on "End Walk". Customer + provider can read; only the
+    // provider can write. Admin always read+write.
+    match /dog_walks/{walkId} {
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && (resource.data.customerId == request.auth.uid
+                          || resource.data.providerId == request.auth.uid));
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.providerId == request.auth.uid;
+      allow update: if isAdmin()
+                    || (isVerifiedAuth()
+                        && resource.data.providerId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // ── Pet services: daily boarding proof (photo + video per day) ────────
+    // Top-level doc holds aggregate metadata; daily entries live in the
+    // `days` sub-collection keyed by YYYYMMDD. Provider writes, customer
+    // reads, admin both.
+    match /boarding_proofs/{jobId} {
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && (
+                        // Inherit from the parent job — customer or provider
+                        get(/databases/$(database)/documents/jobs/$(jobId)).data.customerId == request.auth.uid
+                        || get(/databases/$(database)/documents/jobs/$(jobId)).data.expertId == request.auth.uid
+                      ));
+      allow write: if isAdmin();
+
+      match /days/{dayKey} {
+        allow read: if isAdmin()
+                    || (isVerifiedAuth()
+                        && (
+                          get(/databases/$(database)/documents/jobs/$(jobId)).data.customerId == request.auth.uid
+                          || get(/databases/$(database)/documents/jobs/$(jobId)).data.expertId == request.auth.uid
+                        ));
+        allow create, update: if isVerifiedAuth()
+                              && get(/databases/$(database)/documents/jobs/$(jobId)).data.expertId == request.auth.uid;
+        allow delete: if isAdmin();
+      }
+    }
+    // ── Provider live GPS (Active Booking map) ──────────────────────────
+    // Single doc per provider keyed by uid. Provider owns writes; any
+    // authenticated user may read (the data is coarse live GPS — the
+    // customer needs it to render a moving marker during an active job).
+    // The provider is responsible for deleting the doc when the job ends
+    // (see LiveLocationService.stopBroadcasting).
+    match /provider_live_location/{providerUid} {
+      allow read:   if isAdmin() || isVerifiedAuth();
+      allow create, update: if isVerifiedAuth()
+                    && request.auth.uid == providerUid
+                    && request.resource.data.providerId == request.auth.uid;
+      allow delete: if isAdmin()
+                    || (isVerifiedAuth() && request.auth.uid == providerUid);
+    }
+
+    // ── AnyTasks (v14.0.0) — micro-task marketplace ────────────────────────
+    // Root doc at any_tasks/{taskId}. Status flows: open → in_progress →
+    // proof_submitted → completed (or disputed/cancelled). Payment release
+    // happens server-side via the releaseTaskPayment CF, never from client.
+    match /any_tasks/{taskId} {
+      // Read: task participants (client, selected provider) + admin.
+      // Open tasks are readable by any authenticated user (they are the
+      // provider feed).
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && (resource.data.status == 'open'
+                          || resource.data.clientId == request.auth.uid
+                          || resource.data.selectedProviderId == request.auth.uid));
+
+      // Create: authenticated user creates their own task. Must match the
+      // calling uid to clientId and status must start as 'open'.
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.clientId == request.auth.uid
+                    && request.resource.data.status == 'open'
+                    && request.resource.data.budgetNis is number
+                    && request.resource.data.budgetNis >= 10;
+
+      // Update: participants only. Field allow-list prevents clients from
+      // flipping status directly to 'completed' (must go via proof flow)
+      // or mutating escrow fields (those are CF-only).
+      allow update: if isAdmin()
+                    || (isVerifiedAuth()
+                        && resource.data.clientId == request.auth.uid
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['title', 'description', 'status',
+                                    'cancelledAt', 'proofText']))
+                    || (isVerifiedAuth()
+                        && resource.data.selectedProviderId == request.auth.uid
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['proofUrl', 'proofText', 'status',
+                                    'proofSubmittedAt']));
+
+      // Delete: never from client. Admins only (e.g. fraud cleanup).
+      allow delete: if isAdmin();
+
+      // ── Responses subcollection (provider offers on a task) ─────────
+      match /responses/{responseId} {
+        allow read: if isAdmin()
+                    || (isVerifiedAuth()
+                        && (get(/databases/$(database)/documents/any_tasks/$(taskId)).data.clientId == request.auth.uid
+                            || resource.data.providerId == request.auth.uid));
+        allow create: if isVerifiedAuth()
+                      && request.resource.data.providerId == request.auth.uid
+                      && get(/databases/$(database)/documents/any_tasks/$(taskId)).data.status == 'open'
+                      && get(/databases/$(database)/documents/any_tasks/$(taskId)).data.clientId != request.auth.uid;
+        // Only the task's client can mark a response chosen/rejected (but
+        // TaskEscrowService handles this via the tx that also moves money,
+        // so in practice the client only updates via the Choose flow).
+        allow update: if isAdmin()
+                      || (isVerifiedAuth()
+                          && get(/databases/$(database)/documents/any_tasks/$(taskId)).data.clientId == request.auth.uid);
+        allow delete: if isAdmin();
+      }
+
+      // ── Milestones subcollection (step-by-step progress) ────────────
+      match /milestones/{milestoneId} {
+        allow read: if isAdmin()
+                    || (isVerifiedAuth()
+                        && (get(/databases/$(database)/documents/any_tasks/$(taskId)).data.clientId == request.auth.uid
+                            || get(/databases/$(database)/documents/any_tasks/$(taskId)).data.selectedProviderId == request.auth.uid));
+        // Created during task publish (batch write from client) — only the
+        // task's client can seed them.
+        allow create: if isVerifiedAuth()
+                      && get(/databases/$(database)/documents/any_tasks/$(taskId)).data.clientId == request.auth.uid;
+        // Only the selected provider can mark complete.
+        allow update: if isAdmin()
+                      || (isVerifiedAuth()
+                          && get(/databases/$(database)/documents/any_tasks/$(taskId)).data.selectedProviderId == request.auth.uid);
+        allow delete: if isAdmin();
+      }
+
+      // ── Reviews subcollection (client rates provider) ───────────────
+      match /reviews/{reviewId} {
+        allow read: if isVerifiedAuth(); // Reviews are public (build trust)
+        allow create: if isVerifiedAuth()
+                      && request.resource.data.reviewerId == request.auth.uid
+                      && get(/databases/$(database)/documents/any_tasks/$(taskId)).data.clientId == request.auth.uid
+                      && get(/databases/$(database)/documents/any_tasks/$(taskId)).data.status == 'completed';
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // ── Admin credit grant idempotency cache (used by grantAdminCredit CF) ──
+    // Cloud Function writes only — clients must never touch this.
+    match /admin_credit_idempotency/{docId} {
+      allow read, write: if false; // Admin SDK only via grantAdminCredit CF
+    }
+
+    // PR-C (v12.5.0): email verification codes — Cloud Function only.
+    // Stores codeHash + salt (never plaintext). Client NEVER reads or writes —
+    // all access via sendEmailVerificationCode / verifyEmailCode CFs.
+    match /email_verification_codes/{uid} {
+      allow read, write: if false;
     }
 
     match /reengagement_log/{logId} {

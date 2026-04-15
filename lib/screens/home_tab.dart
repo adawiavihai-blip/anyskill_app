@@ -10,15 +10,17 @@ import 'help_center_screen.dart';
 import 'sub_category_screen.dart';
 import 'search_screen/search_page.dart';
 import 'search_screen/widgets/stories_row.dart';
-import 'community_screen.dart';
+import 'community_hub_screen.dart';
+import '../features/any_tasks/screens/my_tasks_screen.dart';
 import '../widgets/skeleton_loader.dart';
+import '../widgets/global_search_bar.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import '../widgets/anyskill_logo.dart';
 import '../widgets/category_edit_sheet.dart';
 import '../services/opportunity_hunter_service.dart';
 import '../services/engagement_service.dart';
 import '../services/auth_service.dart';
 import '../widgets/daily_drop_modal.dart';
+import '../utils/safe_image_provider.dart';
 import '../main.dart' show currentAppVersion;
 
 // ─── Public entry point ───────────────────────────────────────────────────────
@@ -63,9 +65,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   // ── Avatar press feedback ─────────────────────────────────────────────────
   bool _avatarTapped = false;
 
-  // ── Inline category search ────────────────────────────────────────────────
-  final TextEditingController _searchCtrl = TextEditingController();
-  String _searchQuery = '';
+  // ── Community banner (volunteer count + facepile — real-time stream) ─────
+  int _volunteerCount = 0;
+  List<String?> _recentVolunteerAvatars = [];
+  StreamSubscription<QuerySnapshot>? _volunteerSub;
+
 
   // ── Live online status ─────────────────────────────────────────────────────
   // HomeTab lives inside a Navigator route created by _nestedTab(). When
@@ -166,6 +170,9 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
     } // end uid.isNotEmpty else block
 
+    // Real-time volunteer stream for community banner (count + facepile)
+    _startVolunteerStream();
+
     // Back-fill missing category images once per app session
     VisualFetcherService.backfillAll();
 
@@ -174,6 +181,53 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
         widget.currentUserId.isNotEmpty) {
       _runEngagementChecks();
     }
+  }
+
+  /// Real-time stream of volunteers — updates count + facepile whenever
+  /// a user toggles isVolunteer on/off or completes a community task.
+  /// Uses a single query (no composite index beyond isVolunteer) to avoid
+  /// silent empty results on web from missing indexes.
+  void _startVolunteerStream() {
+    _volunteerSub = FirebaseFirestore.instance
+        .collection('users')
+        .where('isVolunteer', isEqualTo: true)
+        .limit(100)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+
+      final docs = snap.docs;
+
+      // Pick top 4 avatars — prefer those with profileImage set.
+      // Sort client-side by lastVolunteerTaskAt (may be null) so the
+      // most recently active volunteers appear first.
+      final sorted = List<QueryDocumentSnapshot>.from(docs);
+      sorted.sort((a, b) {
+        final aData = a.data() as Map<String, dynamic>? ?? {};
+        final bData = b.data() as Map<String, dynamic>? ?? {};
+        final aTs = aData['lastVolunteerTaskAt'] as Timestamp?;
+        final bTs = bData['lastVolunteerTaskAt'] as Timestamp?;
+        if (aTs == null && bTs == null) return 0;
+        if (aTs == null) return 1;
+        if (bTs == null) return -1;
+        return bTs.compareTo(aTs);
+      });
+
+      final avatars = sorted
+          .take(4)
+          .map((d) {
+            final data = d.data() as Map<String, dynamic>? ?? {};
+            return data['profileImage'] as String?;
+          })
+          .toList();
+
+      setState(() {
+        _volunteerCount = docs.length;
+        _recentVolunteerAvatars = avatars;
+      });
+    }, onError: (e) {
+      debugPrint('[HomeTab] volunteerStream error: $e');
+    });
   }
 
   Future<void> _runEngagementChecks() async {
@@ -194,8 +248,8 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   @override
   void dispose() {
     _onlineSub.cancel();
+    _volunteerSub?.cancel();
     _pulseCtrl.dispose();
-    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -281,16 +335,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     .compareTo(((b.data() as Map)['name'] as String?) ?? '');
               });
 
-            // Inline search filter — empty query shows everything
-            final q = _searchQuery.toLowerCase();
-            final filteredDocs = q.isEmpty
-                ? mainDocs
-                : mainDocs.where((d) {
-                    final name =
-                        ((d.data() as Map)['name'] as String? ?? '')
-                            .toLowerCase();
-                    return name.contains(q);
-                  }).toList();
+            final filteredDocs = mainDocs;
 
 
             return RefreshIndicator(
@@ -304,9 +349,20 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   child: _buildHeader(isProvider),
                 ),
 
-                // ── Search bar (tappable → SearchPage) ────────────────────
+                // ── Global search bar (Airbnb-style) ─────────────────────
                 SliverToBoxAdapter(
-                  child: _buildSearchBar(),
+                  child: GlobalSearchBar(
+                    onResultTap: (type, value) {
+                      if (type == 'category' || type == 'subcategory') {
+                        Navigator.push(context, MaterialPageRoute(
+                          builder: (_) => CategoryResultsScreen(categoryName: value),
+                        ));
+                      }
+                      // Provider taps are handled directly in the search bar
+                      // via Navigator.push → ExpertProfileScreen.
+                    },
+                    onOpenFullSearch: () => _openSearch(),
+                  ),
                 ),
 
                 // ── Urgent / Pulse banner (error-safe) ────────────────────
@@ -358,32 +414,8 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     ),
                   )
 
-                // ── No search results ──────────────────────────────────────
-                else if (filteredDocs.isEmpty)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 48),
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.search_off_rounded,
-                                size: 48, color: Color(0xFFCBD5E1)),
-                            const SizedBox(height: 12),
-                            Text(
-                              'לא נמצאה קטגוריה עבור "$_searchQuery"',
-                              style: TextStyle(
-                                  color: Colors.grey[500], fontSize: 14),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  )
-
                 // ── Full visual category grid ──────────────────────────────
-                else ...[
+                else if (filteredDocs.isNotEmpty) ...[
                   // ── AI Re-Engagement offer card (error-safe) ──────────
                   SliverToBoxAdapter(
                     child: StreamBuilder<QuerySnapshot>(
@@ -398,21 +430,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                       },
                     ),
                   ),
-
-                  // ── Search results count (only when filtering) ─────────
-                  if (_searchQuery.isNotEmpty)
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-                        child: Text(
-                          '${filteredDocs.length} קטגוריות',
-                          style: TextStyle(
-                              color: Colors.grey[500],
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500),
-                        ),
-                      ),
-                    ),
 
                   // ── Airbnb-style horizontal category rows ──────────────
                   // AI Deal banner is injected INSIDE the rows (after 1st row)
@@ -918,37 +935,177 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       ));
     }
 
-    // ── Community tile ────────────────────────────────────────────────
+    // ── AnyTasks banner — "משימות מיקרו" gig marketplace entry ──────
     slivers.add(SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
         child: GestureDetector(
           onTap: () => Navigator.of(context, rootNavigator: true).push(
-              MaterialPageRoute(builder: (_) => const CommunityScreen())),
+              MaterialPageRoute(builder: (_) => const MyTasksScreen())),
           child: Container(
-            height: 64,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFF10B981), Color(0xFF6366F1)],
+                colors: [Color(0xFF6366F1), Color(0xFF8B5CF6), Color(0xFFA855F7)],
                 begin: Alignment.centerRight,
                 end: Alignment.centerLeft,
               ),
               borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF6366F1).withValues(alpha: 0.25),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            child: Row(
               children: [
-                Icon(Icons.volunteer_activism,
-                    color: Colors.white, size: 22),
-                SizedBox(width: 10),
-                Text(
-                  'למען הקהילה',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.rocket_launch_rounded,
+                      color: Colors.white, size: 22),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'AnyTasks',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'משימות מיקרו — הרווח מהיר',
+                        style: TextStyle(color: Colors.white70, fontSize: 11),
+                      ),
+                    ],
                   ),
                 ),
+                const Icon(Icons.arrow_forward_ios_rounded,
+                    size: 14, color: Colors.white54),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ));
+
+    // ── Community tile — "נתינה מהלב" with facepile + pulse ─────────
+    slivers.add(SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+        child: GestureDetector(
+          onTap: () => Navigator.of(context, rootNavigator: true).push(
+              MaterialPageRoute(builder: (_) => const CommunityHubScreen())),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFFEF4444), Color(0xFFEC4899), Color(0xFF8B5CF6)],
+                begin: Alignment.centerRight,
+                end: Alignment.centerLeft,
+              ),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFEF4444).withValues(alpha: 0.25),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                // Pulsing heart icon
+                const _HeartPulse(),
+                const SizedBox(width: 12),
+
+                // Title + dynamic subtitle
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'נתינה מהלב',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _volunteerCount > 0
+                            ? '$_volunteerCount מתנדבים עוזרים עכשיו בקהילה'
+                            : 'כישרון אחד, לב אחד',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Facepile — overlapping avatars
+                if (_recentVolunteerAvatars.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 20.0 + (_recentVolunteerAvatars.length - 1) * 18.0,
+                    height: 28,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        for (int i = _recentVolunteerAvatars.length - 1;
+                            i >= 0;
+                            i--)
+                          PositionedDirectional(
+                            start: i * 18.0,
+                            child: Container(
+                              width: 28,
+                              height: 28,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                    color: Colors.white, width: 2),
+                              ),
+                              child: CircleAvatar(
+                                radius: 12,
+                                backgroundColor:
+                                    Colors.white.withValues(alpha: 0.3),
+                                backgroundImage: safeImageProvider(
+                                    _recentVolunteerAvatars[i]),
+                                child: safeImageProvider(
+                                            _recentVolunteerAvatars[i]) ==
+                                        null
+                                    ? const Icon(Icons.person_rounded,
+                                        size: 14, color: Colors.white70)
+                                    : null,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+
+                // Arrow hint
+                const SizedBox(width: 6),
+                const Icon(Icons.arrow_forward_ios_rounded,
+                    size: 14, color: Colors.white54),
               ],
             ),
           ),
@@ -1099,6 +1256,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     return StreamBuilder<QuerySnapshot>(
       stream: _notificationsStream,
       builder: (context, snap) {
+        if (snap.hasError) return const SizedBox.shrink();
         final unread = snap.data?.docs.length ?? 0;
         return GestureDetector(
           onTap: () => Navigator.push(
@@ -1148,77 +1306,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     );
   }
 
-  // ── Search bar ─────────────────────────────────────────────────────────────
-  // Real TextField: filters the home category grid in real-time.
-  // The 🔍 icon on the right opens the full expert SearchPage.
-
-  Widget _buildSearchBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 2, 16, 0),
-      child: Row(
-        children: [
-          // ── Inline category filter ─────────────────────────────────────
-          Expanded(
-            child: Container(
-              height: 48,
-              decoration: BoxDecoration(
-                color: const Color(0xFFF5F5F7),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
-              child: TextField(
-                controller: _searchCtrl,
-                textAlign: TextAlign.right,
-                textAlignVertical: TextAlignVertical.center,
-                style: const TextStyle(fontSize: 14),
-                onChanged: (v) => setState(() => _searchQuery = v.trim()),
-                decoration: InputDecoration(
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 0),
-                  hintText: AppLocalizations.of(context).searchPlaceholder,
-                  hintStyle:
-                      TextStyle(color: Colors.grey[400], fontSize: 14),
-                  prefixIcon: _searchQuery.isEmpty
-                      ? const Padding(
-                          padding: EdgeInsets.all(14),
-                          child: AnySkillBrandIcon(size: 20),
-                        )
-                      : IconButton(
-                          icon: const Icon(Icons.close_rounded,
-                              size: 18, color: Color(0xFF94A3B8)),
-                          onPressed: () {
-                            _searchCtrl.clear();
-                            setState(() => _searchQuery = '');
-                          },
-                        ),
-                  prefixIconConstraints:
-                      const BoxConstraints(minWidth: 48, minHeight: 48),
-                ),
-              ),
-            ),
-          ),
-
-          const SizedBox(width: 8),
-
-          // ── Expert search button ───────────────────────────────────────
-          GestureDetector(
-            onTap: _openSearch,
-            child: Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: const Color(0xFF6366F1),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(Icons.search_rounded,
-                  color: Colors.white, size: 22),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   // ── AI Re-Engagement Card ─────────────────────────────────────────────────
 
@@ -1484,6 +1571,52 @@ class _PromoBanner {
 
 // ── Carousel ──────────────────────────────────────────────────────────────────
 //
+// ── Pulsing heart icon for the community banner ────────────────────────────
+
+class _HeartPulse extends StatefulWidget {
+  const _HeartPulse();
+
+  @override
+  State<_HeartPulse> createState() => _HeartPulseState();
+}
+
+class _HeartPulseState extends State<_HeartPulse>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    )..repeat(reverse: true);
+
+    _scale = Tween<double>(begin: 1.0, end: 1.15).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: _scale,
+      child: const Icon(
+        Icons.favorite_rounded,
+        color: Color(0xFFD4AF37), // metallic gold heart
+        size: 26,
+      ),
+    );
+  }
+}
+
 // Listens to Firestore 'banners' where placement == 'home_carousel'.
 // Falls back to 3 hardcoded gradient banners when Firestore returns 0 items.
 
