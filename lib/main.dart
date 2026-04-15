@@ -119,7 +119,8 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 Future<void> _ensureProfileExists(User user) async {
   try {
     final docRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
-    final snap = await docRef.get();
+    // 5s cap so a stalled WebChannel can't freeze the splash (Law 15).
+    final snap = await docRef.get().timeout(const Duration(seconds: 5));
     if (snap.exists) {
       // Backfill profileImage from Auth if Firestore field is empty.
       // Early accounts were created before profileImage was added to the schema.
@@ -127,7 +128,7 @@ Future<void> _ensureProfileExists(User user) async {
       final firestoreImg = data['profileImage'] as String? ?? '';
       final authImg = user.photoURL ?? '';
       if (firestoreImg.isEmpty && authImg.isNotEmpty) {
-        await docRef.update({'profileImage': authImg});
+        unawaited(docRef.update({'profileImage': authImg}));
         // ignore: avoid_print
         print('🔧 [Profile] Backfilled profileImage from Auth photoURL for ${user.uid}');
       }

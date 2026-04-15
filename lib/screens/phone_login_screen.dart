@@ -808,17 +808,20 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
       try {
         // ignore: avoid_print
         print('📝 [Profile] Attempt $attempt — checking existing doc');
-        final existing = await docRef.get();
+        // 5s cap — WebChannel can hang forever on web otherwise (Law 15).
+        final existing =
+            await docRef.get().timeout(const Duration(seconds: 5));
         if (existing.exists) {
           // ignore: avoid_print
           print('✅ [Profile] Existing doc preserved as-is (no overwrite).');
           // Still mirror contact fields into private/identity (idempotent)
           // so the dual-write invariant from the v12.2 migration holds.
-          await PrivateDataService.writeContactData(
+          // Fire-and-forget with internal try/catch — MUST NOT block login.
+          unawaited(PrivateDataService.writeContactData(
             user.uid,
             phone: user.phoneNumber ?? '',
             email: user.email ?? '',
-          );
+          ));
           return true;
         }
         // First-time signup — write the full initial profile.
@@ -846,13 +849,13 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           'onboardingComplete': false,
           'tourComplete':   false,
           'createdAt':      FieldValue.serverTimestamp(),
-        });
-        // Mirror contact fields into private/identity
-        await PrivateDataService.writeContactData(
+        }).timeout(const Duration(seconds: 5));
+        // Mirror contact fields — fire-and-forget (must not block login).
+        unawaited(PrivateDataService.writeContactData(
           user.uid,
           phone: user.phoneNumber ?? '',
           email: user.email ?? '',
-        );
+        ));
         // ignore: avoid_print
         print('✅ [Profile] First-time doc created on attempt $attempt');
         return true;
