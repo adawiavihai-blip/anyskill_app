@@ -82,7 +82,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('שגיאה: $e'),
+          content: Text(AppLocalizations.of(context).notifGenericError(e.toString())),
           backgroundColor: Colors.red,
           behavior: SnackBarBehavior.floating,
         ));
@@ -202,7 +202,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           final status = d['status'] as String? ?? '';
           final category = d['category'] as String? ?? '';
           final description = d['description'] as String? ?? '';
-          final clientName = d['clientName'] as String? ?? 'לקוח';
+          final l10n = AppLocalizations.of(context);
+          final clientName = d['clientName'] as String? ?? l10n.notifDefaultClient;
           final isOpen = status == 'open';
           final isClaimed = status == 'claimed';
           final claimedByName = d['claimedByName'] as String? ?? '';
@@ -233,7 +234,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  isOpen ? 'משרה דחופה זמינה!' : isClaimed ? 'המשרה נתפסה' : 'המשרה פגה תוקף',
+                  isOpen ? l10n.notifUrgentJobAvailable : isClaimed ? l10n.notifJobTaken : l10n.notifJobExpired,
                   style: const TextStyle(
                       fontSize: 20, fontWeight: FontWeight.bold),
                 ),
@@ -264,8 +265,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     height: 48,
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.bolt, size: 18),
-                      label: const Text('תפוס עכשיו!',
-                          style: TextStyle(
+                      label: Text(l10n.notifGrabNow,
+                          style: const TextStyle(
                               fontWeight: FontWeight.bold, fontSize: 16)),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFF97316),
@@ -316,7 +317,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      'המשרה נתפסה ע"י $claimedByName',
+                      l10n.notifTakenBy(claimedByName),
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                           fontSize: 14, color: Color(0xFF6B7280)),
@@ -337,7 +338,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final clientDoc = await FirebaseFirestore.instance
         .collection('users').doc(clientId).get();
     final clientData = clientDoc.data() ?? {};
-    final clientName = clientData['name'] as String? ?? 'לקוח';
+    final clientName = clientData['name'] as String? ?? AppLocalizations.of(context).notifDefaultClient;
 
     // Find the open help_request from this client in this category
     final helpSnap = await FirebaseFirestore.instance
@@ -388,8 +389,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   color: Color(0xFF10B981), size: 28),
             ),
             const SizedBox(height: 16),
-            const Text('בקשת עזרה מהקהילה',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            Text(AppLocalizations.of(context).notifCommunityHelpTitle,
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Text('$clientName צריך/ה עזרה בקטגוריית "$category"',
                 textAlign: TextAlign.center,
@@ -419,7 +420,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: const Text('לא עכשיו'),
+                    child: Text(AppLocalizations.of(context).notifNotNow),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -427,8 +428,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   flex: 2,
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.check_circle, size: 18),
-                    label: const Text('אני רוצה לעזור!',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    label: Text(AppLocalizations.of(context).notifWantToHelp,
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF10B981),
                       foregroundColor: Colors.white,
@@ -451,16 +452,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       if (!mounted) return;
                       if (taskId == null) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('לא ניתן לקבל בקשה זו'),
+                          SnackBar(
+                            content: Text(AppLocalizations.of(context).notifCantAccept),
                             backgroundColor: Colors.red,
                           ),
                         );
                         return;
                       }
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('✓ קיבלת את הבקשה! נפתח צ\'אט עם הלקוח'),
+                        SnackBar(
+                          content: Text(AppLocalizations.of(context).notifAccepted),
                           backgroundColor: Colors.green,
                         ),
                       );
@@ -521,7 +522,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               children: [
                 Icon(Icons.wifi_off_rounded, size: 48, color: Colors.grey[400]),
                 const SizedBox(height: 12),
-                Text('שגיאה בטעינת ההתראות', style: TextStyle(color: Colors.grey[600])),
+                Text(AppLocalizations.of(context).notifLoadError, style: TextStyle(color: Colors.grey[600])),
               ],
             ));
           }
@@ -622,17 +623,26 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(color: Colors.grey[100], shape: BoxShape.circle),
-            child: Icon(Icons.notifications_none_outlined, size: 56, color: Colors.grey[400]),
+          Image.asset(
+            'assets/images/NEW_LOGO1.png.png',
+            width: 140,
+            height: 140,
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(color: Colors.grey[100], shape: BoxShape.circle),
+              child: Icon(Icons.notifications_none_outlined, size: 56, color: Colors.grey[400]),
+            ),
           ),
-          const SizedBox(height: 20),
-          Text(AppLocalizations.of(context).notifEmptyTitle,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
-          const SizedBox(height: 8),
-          Text(AppLocalizations.of(context).notifEmptySubtitle,
-              style: TextStyle(fontSize: 14, color: Colors.grey[500])),
+          const SizedBox(height: 24),
+          Text(
+            AppLocalizations.of(context).notifEmptyNow,
+            style: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
         ],
       ),
     );

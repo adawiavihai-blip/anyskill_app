@@ -694,16 +694,16 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('מייל בדיקה נשלח! בדוק את תיבת הדואר.'),
-            backgroundColor: Color(0xFF10B981),
+          SnackBar(
+            content: Text(AppLocalizations.of(context).homeTestEmailSent),
+            backgroundColor: const Color(0xFF10B981),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(AppLocalizations.of(context).homeGenericError(e.toString())), backgroundColor: Colors.red),
         );
       }
     }
@@ -787,9 +787,9 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     ));
                   }
                 },
-                child: const Text(
-                  'הצג הכל',
-                  style: TextStyle(
+                child: Text(
+                  AppLocalizations.of(context).homeShowAll,
+                  style: const TextStyle(
                     fontSize: 12,
                     color: Color(0xFF6366F1),
                     fontWeight: FontWeight.w600,
@@ -972,12 +972,12 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                       color: Colors.white, size: 22),
                 ),
                 const SizedBox(width: 12),
-                const Expanded(
+                Expanded(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
+                      const Text(
                         'AnyTasks',
                         style: TextStyle(
                           color: Colors.white,
@@ -985,10 +985,10 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                           fontSize: 16,
                         ),
                       ),
-                      SizedBox(height: 2),
+                      const SizedBox(height: 2),
                       Text(
-                        'משימות מיקרו — הרווח מהיר',
-                        style: TextStyle(color: Colors.white70, fontSize: 11),
+                        AppLocalizations.of(context).homeMicroTasks,
+                        style: const TextStyle(color: Colors.white70, fontSize: 11),
                       ),
                     ],
                   ),
@@ -1038,9 +1038,9 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'נתינה מהלב',
-                        style: TextStyle(
+                      Text(
+                        AppLocalizations.of(context).homeCommunityTitle,
+                        style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
                           fontSize: 16,
@@ -1050,7 +1050,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                       Text(
                         _volunteerCount > 0
                             ? '$_volunteerCount מתנדבים עוזרים עכשיו בקהילה'
-                            : 'כישרון אחד, לב אחד',
+                            : AppLocalizations.of(context).homeCommunitySlogan,
                         style: const TextStyle(
                           color: Colors.white70,
                           fontSize: 11,
@@ -1310,9 +1310,10 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   // ── AI Re-Engagement Card ─────────────────────────────────────────────────
 
   Widget _buildReengagementCard(Map<String, dynamic> data, String remId) {
-    final expertName = data['expertName'] as String? ?? 'המומחה';
+    final l10n = AppLocalizations.of(context);
+    final expertName = data['expertName'] as String? ?? l10n.homeDefaultExpert;
     final category   = data['category']  as String? ?? '';
-    final message    = data['message']   as String? ?? 'מוכן להזמין שוב?';
+    final message    = data['message']   as String? ?? l10n.homeDefaultReengageMsg;
 
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 2, 12, 8),
@@ -1363,13 +1364,13 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     color: const Color(0xFFF59E0B),
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: const Row(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('✨', style: TextStyle(fontSize: 11)),
-                      SizedBox(width: 4),
-                      Text('הצעה חכמה',
-                          style: TextStyle(
+                      const Text('✨', style: TextStyle(fontSize: 11)),
+                      const SizedBox(width: 4),
+                      Text(l10n.homeSmartOffer,
+                          style: const TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
                               color: Colors.white)),
@@ -1426,8 +1427,8 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                       borderRadius: BorderRadius.circular(10)),
                   elevation: 0,
                 ),
-                child: const Text('הזמן עכשיו',
-                    style: TextStyle(
+                child: Text(l10n.homeBookNow,
+                    style: const TextStyle(
                         fontWeight: FontWeight.bold, fontSize: 14)),
               ),
             ),
@@ -1652,30 +1653,33 @@ class _PromoCarouselState extends State<_PromoCarousel> {
     'monetization_on':   Icons.monetization_on_outlined,
   };
 
-  // Hardcoded fallback — shown while Firestore loads or when collection is empty
-  static const _fallback = [
-    _PromoBanner(
-      gradient: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-      title: 'ברוכים הבאים ל-AnySkill',
-      subtitle: 'מצא מומחים מהשכונה שלך',
-      icon: Icons.handshake_outlined,
-    ),
-    _PromoBanner(
-      gradient: [Color(0xFF0EA5E9), Color(0xFF6366F1)],
-      title: 'שירות מקצועי בלחיצה אחת',
-      subtitle: 'שיפוצים • ניקיון • צילום ועוד',
-      icon: Icons.bolt_outlined,
-    ),
-    _PromoBanner(
-      gradient: [Color(0xFFF97316), Color(0xFFEC4899)],
-      title: 'הפוך למומחה היום',
-      subtitle: 'פרסם את השירות שלך והתחל להרוויח',
-      icon: Icons.trending_up_rounded,
-    ),
-  ];
+  // Localized fallback — resolved at build time so language switches apply
+  List<_PromoBanner> _fallbackBanners(BuildContext ctx) {
+    final l = AppLocalizations.of(ctx);
+    return [
+      _PromoBanner(
+        gradient: const [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+        title: l.homeWelcomeTitle,
+        subtitle: l.homeWelcomeSubtitle,
+        icon: Icons.handshake_outlined,
+      ),
+      _PromoBanner(
+        gradient: const [Color(0xFF0EA5E9), Color(0xFF6366F1)],
+        title: l.homeServiceTitle,
+        subtitle: l.homeServiceSubtitle,
+        icon: Icons.bolt_outlined,
+      ),
+      _PromoBanner(
+        gradient: const [Color(0xFFF97316), Color(0xFFEC4899)],
+        title: l.homeBecomeExpertTitle,
+        subtitle: l.homeBecomeExpertSubtitle,
+        icon: Icons.trending_up_rounded,
+      ),
+    ];
+  }
 
-  List<_PromoBanner> get _banners =>
-      (_firestoreLoaded && _liveBanners.isNotEmpty) ? _liveBanners : _fallback;
+  List<_PromoBanner> _getBanners(BuildContext ctx) =>
+      (_firestoreLoaded && _liveBanners.isNotEmpty) ? _liveBanners : _fallbackBanners(ctx);
 
   @override
   void initState() {
@@ -1721,7 +1725,10 @@ class _PromoCarouselState extends State<_PromoCarousel> {
     setState(() {
       _firestoreLoaded = true;
       _liveBanners = parsed;
-      if (_currentPage >= _banners.length) {
+      // When switching from fallback (3 items) to live data, reset page
+      // if necessary. We use a safe fallback count of 3 (matches fallback list).
+      final effectiveCount = _liveBanners.isNotEmpty ? _liveBanners.length : 3;
+      if (_currentPage >= effectiveCount) {
         _currentPage = 0;
         if (_ctrl.hasClients) _ctrl.jumpToPage(0);
       }
@@ -1736,8 +1743,10 @@ class _PromoCarouselState extends State<_PromoCarousel> {
   void _startTimer() {
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 5), (_) {
-      if (!mounted || _banners.isEmpty) return;
-      final next = (_currentPage + 1) % _banners.length;
+      if (!mounted) return;
+      final count = _liveBanners.isNotEmpty ? _liveBanners.length : 3;
+      if (count == 0) return;
+      final next = (_currentPage + 1) % count;
       _ctrl.animateToPage(
         next,
         duration: const Duration(milliseconds: 400),
@@ -1756,7 +1765,7 @@ class _PromoCarouselState extends State<_PromoCarousel> {
 
   @override
   Widget build(BuildContext context) {
-    final banners = _banners;
+    final banners = _getBanners(context);
     return SizedBox(
       height: 190,
       child: Stack(

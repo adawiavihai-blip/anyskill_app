@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'profile_screen.dart';
 import 'admin_screen.dart';
 import 'chat_list_screen.dart';
-import 'system_wallet_screen.dart';
+import 'admin_vault_tab.dart';
 import 'finance_screen.dart';
 import 'my_bookings_screen.dart';
 import 'opportunities_screen.dart';
@@ -437,7 +437,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           }
           if (effectiveAdmin) {
             newTabs.add(_nestedTab(6, const AdminScreen()));
-            newTabs.add(_nestedTab(7, const SystemWalletScreen()));
+            newTabs.add(_nestedTab(7, const AdminVaultTab()));
           }
           _cachedTabs = newTabs;
         }
@@ -839,7 +839,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     _navItem(
                       icon: Icons.analytics_outlined,
                       activeIcon: Icons.analytics,
-                      label: 'מערכת',
+                      label: 'מרכז הכנסות',
                       index: sysTabPos,
                       currentIndex: safeIndex,
                       onTap: () => onNavTap(sysTabPos),

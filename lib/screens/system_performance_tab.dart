@@ -199,6 +199,8 @@ class _SystemPerformanceTabState extends State<SystemPerformanceTab>
           const SizedBox(height: 14),
           _buildCorsSetupCard(),
           const SizedBox(height: 14),
+          _buildBackfillPhonesCard(),
+          const SizedBox(height: 14),
           _buildInfoFooter(),
         ],
       ),
@@ -903,6 +905,112 @@ class _SystemPerformanceTabState extends State<SystemPerformanceTab>
         ],
       ),
     );
+  }
+
+  Widget _buildBackfillPhonesCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                const Text('חיבור טלפונים ל-Auth (Legacy Fix)',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                const SizedBox(height: 4),
+                Text(
+                    'מחבר מספר טלפון מכל users/{uid}.phone ל-Firebase Auth. פותר נעילה של משתמשים ותיקים ב-OTP.',
+                    textAlign: TextAlign.end,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFF59E0B),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            ),
+            icon: const Icon(Icons.link_rounded, size: 18),
+            label: const Text('הרץ',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            onPressed: _runBackfillPhones,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runBackfillPhones() async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('לחבר טלפונים ל-Firebase Auth?'),
+        content: const Text(
+          'הפעולה סורקת את כל המשתמשים עם שדה phone ומחברת אותו לחשבון ה-Auth שלהם. '
+          'Idempotent — מדלגת על מי שכבר מחובר. משך משוער: עד 540 שניות.',
+          textAlign: TextAlign.end,
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('ביטול')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFF59E0B)),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('הרץ', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    messenger.showSnackBar(const SnackBar(
+      content: Text('מריץ backfill... (עד 540 שניות)'),
+      duration: Duration(seconds: 5),
+    ));
+
+    try {
+      final result = await FirebaseFunctions.instance
+          .httpsCallable(
+            'backfillPhonesToAuth',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 550)),
+          )
+          .call({});
+      if (!mounted) return;
+      final data = Map<String, dynamic>.from(result.data as Map);
+      final scanned = data['scanned'] ?? 0;
+      final updated = data['updated'] ?? 0;
+      final skipped = data['skipped'] ?? 0;
+      final errors = data['errors'] ?? 0;
+      messenger.showSnackBar(SnackBar(
+        backgroundColor: errors == 0
+            ? const Color(0xFF22C55E)
+            : const Color(0xFFF59E0B),
+        duration: const Duration(seconds: 10),
+        content: Text(
+          '✅ הסתיים: נסרקו $scanned · עודכנו $updated · דולגו $skipped · שגיאות $errors',
+        ),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text('שגיאה: $e'),
+        backgroundColor: Colors.red,
+      ));
+    }
   }
 
   Widget _buildInfoFooter() {

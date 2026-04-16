@@ -1933,4 +1933,1439 @@ class AppLocalizationsEs extends AppLocalizations {
   String xpEventsCount(int count) {
     return '$count eventos';
   }
+
+  @override
+  String get phoneLoginHeader => 'Iniciar sesión / Registrarse';
+
+  @override
+  String get phoneLoginSubtitleSimple => 'Ingresa tu número de teléfono y te enviaremos un código';
+
+  @override
+  String get phoneLoginSubtitleSocial => 'Inicia sesión con Google, Apple o número de teléfono';
+
+  @override
+  String get phoneLoginOrDivider => 'o';
+
+  @override
+  String get phoneLoginPhoneHint => 'Número de teléfono';
+
+  @override
+  String get phoneLoginSendCode => 'Enviar código';
+
+  @override
+  String get phoneLoginHeroSubtitle => 'Acceso rápido con tu teléfono';
+
+  @override
+  String get phoneLoginChipSecure => 'Seguro';
+
+  @override
+  String get phoneLoginChipFast => 'Rápido';
+
+  @override
+  String get phoneLoginChipReliable => 'Confiable';
+
+  @override
+  String get phoneLoginSelectCountry => 'Selecciona país';
+
+  @override
+  String get otpEnter6Digits => 'Ingresa los 6 dígitos';
+
+  @override
+  String get otpVerifyError => 'Error de verificación. Inténtalo de nuevo.';
+
+  @override
+  String get otpErrorInvalidCode => 'Código incorrecto. Inténtalo de nuevo.';
+
+  @override
+  String get otpErrorSessionExpired => 'El código expiró. Solicita uno nuevo.';
+
+  @override
+  String get otpErrorTooManyRequests => 'Demasiados intentos. Inténtalo más tarde.';
+
+  @override
+  String otpErrorPrefix(String code) {
+    return 'Error: $code';
+  }
+
+  @override
+  String get otpTitle => 'Ingresa el código de verificación';
+
+  @override
+  String otpSubtitle(String phone) {
+    return 'Enviamos un código SMS a $phone';
+  }
+
+  @override
+  String get otpAutoFilled => 'Autocompletado';
+
+  @override
+  String get otpResendIn => 'Reenviar en ';
+
+  @override
+  String get otpResendNow => 'Reenviar código';
+
+  @override
+  String get otpVerifyButton => 'Verificar y continuar';
+
+  @override
+  String get otpExistingAccountTitle => 'Cuenta existente encontrada';
+
+  @override
+  String get otpExistingAccountBody => 'Este número de teléfono ya tiene una cuenta creada con correo/contraseña.\n\nVincularla al inicio con teléfono requiere una acción única del administrador.\n\nPor favor, contacta con soporte y te ayudaremos.';
+
+  @override
+  String get otpUnderstood => 'Entendido';
+
+  @override
+  String otpCreateProfileError(String error) {
+    return 'Error al crear el perfil: $error';
+  }
+
+  @override
+  String get otpWelcomeTitle => '¡Bienvenido a AnySkill! 👋';
+
+  @override
+  String get otpWelcomeSubtitle => 'Elige cómo quieres usar la aplicación';
+
+  @override
+  String get otpTermsPrefix => 'Confirmo que he leído y acepto los ';
+
+  @override
+  String get otpTermsOfService => 'Términos de servicio';
+
+  @override
+  String get otpPrivacyPolicy => 'Política de privacidad';
+
+  @override
+  String get otpRoleCustomer => 'Cliente';
+
+  @override
+  String get otpRoleCustomerDesc => 'Busco servicios profesionales\ny contrato proveedores';
+
+  @override
+  String get otpRoleProvider => 'Proveedor de servicios';
+
+  @override
+  String get otpRoleProviderDesc => 'Ofrezco servicios profesionales\ny gano con AnySkill';
+
+  @override
+  String get otpRoleProviderBadge => 'Pendiente de aprobación';
+
+  @override
+  String get onbValEnterName => 'Por favor ingresa tu nombre completo';
+
+  @override
+  String get onbValEnterPhone => 'Por favor ingresa tu número de teléfono';
+
+  @override
+  String get onbValEnterEmail => 'Por favor ingresa tu correo';
+
+  @override
+  String get onbValUploadProfile => 'Por favor sube una foto de perfil';
+
+  @override
+  String get onbValChooseBusiness => 'Por favor selecciona el tipo de negocio';
+
+  @override
+  String get onbValEnterId => 'Por favor ingresa número de ID / NIF';
+
+  @override
+  String get onbValUploadId => 'Por favor sube una foto de identificación';
+
+  @override
+  String get onbValChooseCategory => 'Por favor elige una categoría profesional';
+
+  @override
+  String get onbValExpertise => 'Por favor describe tu área de experiencia';
+
+  @override
+  String get onbValAcceptTerms => 'Por favor lee y acepta los términos';
+
+  @override
+  String onbSaveError(String error) {
+    return 'Error al guardar: $error';
+  }
+
+  @override
+  String onbUploadError(String error) {
+    return 'Error al subir: $error';
+  }
+
+  @override
+  String onbCameraError(String error) {
+    return 'Error de cámara: $error';
+  }
+
+  @override
+  String get onbToastProvider => '¡Bienvenido al equipo de profesionales de AnySkill! 🚀 Tus documentos están en revisión. Te notificaremos cuando sean aprobados.';
+
+  @override
+  String get onbToastCustomer => '¡Bienvenido a AnySkill! 🌟 ¿Necesitas ayuda con algo? Estás en el lugar correcto. Miles de profesionales están listos para ti.';
+
+  @override
+  String get onbStepRole => 'Elige rol';
+
+  @override
+  String get onbStepBusiness => 'Datos del negocio';
+
+  @override
+  String get onbStepService => 'Área de servicio';
+
+  @override
+  String get onbStepContact => 'Datos de contacto';
+
+  @override
+  String get onbStepProfile => 'Tu perfil';
+
+  @override
+  String get onbProgressComplete => '¡Todo listo!';
+
+  @override
+  String get onbProgressIncomplete => 'Completa tus datos';
+
+  @override
+  String onbGreeting(String name) {
+    return 'Hola $name,';
+  }
+
+  @override
+  String get onbGreetingFallback => 'Hola,';
+
+  @override
+  String get onbIntroLine => 'Un momento. Cuéntanos un poco sobre ti.';
+
+  @override
+  String get onbSocialProof => 'Más de 250 profesionales se unieron este mes';
+
+  @override
+  String get onbRoleCustomerTitle => 'Estoy buscando un servicio';
+
+  @override
+  String get onbRoleCustomerSubtitle => 'Quiero encontrar un profesional';
+
+  @override
+  String get onbRoleProviderTitle => 'Quiero ofrecer un servicio';
+
+  @override
+  String get onbRoleProviderSubtitle => 'Me gustaría trabajar mediante AnySkill';
+
+  @override
+  String get onbBusinessTypeHint => 'Tipo de negocio';
+
+  @override
+  String get onbUploadBusinessDocLabel => 'Sube licencia comercial';
+
+  @override
+  String get onbIdLabel => 'Número de ID / NIF';
+
+  @override
+  String get onbIdHint => 'Ingresa ID o NIF';
+
+  @override
+  String get onbUploadIdLabel => 'Sube foto de ID o pasaporte';
+
+  @override
+  String get onbSelfieTitle => 'Selfie para verificación de identidad';
+
+  @override
+  String get onbSelfieSuccess => 'Foto capturada ✓';
+
+  @override
+  String get onbSelfiePrompt => 'Toma una foto en vivo de tu rostro';
+
+  @override
+  String get onbSelfieRetake => 'Volver a tomar';
+
+  @override
+  String get onbSelfieTake => 'Tomar selfie';
+
+  @override
+  String get onbCategoryOther => 'Otro / no encontrado';
+
+  @override
+  String get onbCategoryHint => 'Elige categoría principal';
+
+  @override
+  String get onbSubCategoryHint => 'Elige subcategoría';
+
+  @override
+  String get onbExpertiseLabel => 'Describe tu experiencia';
+
+  @override
+  String get onbExpertiseHint => 'Hasta 30 caracteres';
+
+  @override
+  String get onbOtherCategoryNote => 'El equipo de AnySkill revisará y te asignará a la categoría adecuada';
+
+  @override
+  String get onbFullNameLabel => 'Nombre completo *';
+
+  @override
+  String get onbFullNameHint => 'El nombre que aparecerá en tu perfil';
+
+  @override
+  String get onbPhoneLabel => 'Número de teléfono *';
+
+  @override
+  String get onbEmailLabel => 'Correo *';
+
+  @override
+  String get onbReplacePhoto => 'Toca para reemplazar';
+
+  @override
+  String get onbAddPhoto => 'Agregar foto de perfil';
+
+  @override
+  String get onbAboutLabel => 'Cuéntanos sobre ti';
+
+  @override
+  String get onbAboutHintProvider => 'Experiencia, habilidades, especialidades...';
+
+  @override
+  String get onbAboutHintCustomer => '¿Qué te gustaría que supiéramos?';
+
+  @override
+  String get onbTermsTitle => 'Lee los términos de servicio y política de privacidad';
+
+  @override
+  String get onbTermsRead => 'Leído';
+
+  @override
+  String get onbTermsAccept => 'Confirmo que he leído y acepto los Términos de Servicio y la Política de Privacidad de AnySkill';
+
+  @override
+  String get onbFinish => 'Completar registro';
+
+  @override
+  String get onbRequiredField => 'Obligatorio *';
+
+  @override
+  String get onbNotSpecified => 'No especificado';
+
+  @override
+  String get onbUserTypeProvider => 'Proveedor de servicios';
+
+  @override
+  String get onbUserTypeCustomer => 'Cliente';
+
+  @override
+  String get onbBizExempt => 'Autónomo exento';
+
+  @override
+  String get onbBizAuthorized => 'Autónomo autorizado';
+
+  @override
+  String get onbBizCompany => 'Sociedad limitada';
+
+  @override
+  String get onbBizExternal => 'Empleado, facturación mediante empresa externa';
+
+  @override
+  String get profNoGooglePhoto => 'No se encontró foto de perfil en Google';
+
+  @override
+  String get profPhotoUpdatedFromGoogle => 'Foto de perfil actualizada desde Google';
+
+  @override
+  String get profInvoiceEmailOn => 'Las facturas se enviarán a tu correo';
+
+  @override
+  String get profInvoiceEmailOff => 'Ya no recibirás facturas por correo';
+
+  @override
+  String profSaveError(String error) {
+    return 'Error al guardar: $error';
+  }
+
+  @override
+  String get profInvoiceEmailTitle => 'Recibir facturas por correo';
+
+  @override
+  String get profInvoiceEmailSubOn => 'Recibirás una factura por correo tras cada transacción';
+
+  @override
+  String get profInvoiceEmailSubOff => 'No recibirás facturas por correo';
+
+  @override
+  String get profSyncGooglePhoto => 'Sincronizar foto desde Google';
+
+  @override
+  String get profProviderRole => 'Proveedor';
+
+  @override
+  String get profJobsStat => 'Trabajos';
+
+  @override
+  String get profRatingStat => 'Calificación';
+
+  @override
+  String get profReviewsStat => 'Reseñas';
+
+  @override
+  String get profAngelBadge => 'Ángel de la comunidad';
+
+  @override
+  String get profPillarBadge => 'Pilar';
+
+  @override
+  String get profStarterBadge => 'Voluntario activo';
+
+  @override
+  String get profWorkGallery => 'Galería de trabajos';
+
+  @override
+  String get profVipActive => 'VIP Activo';
+
+  @override
+  String get profJoinVip => 'Unirse a VIP';
+
+  @override
+  String get profVideoIntro => 'Video de presentación';
+
+  @override
+  String get profMyDogs => 'Mis perros';
+
+  @override
+  String get profMyDogsSubtitle => 'Un perfil → todas las reservas';
+
+  @override
+  String get profJoinAsProvider => 'Unirse a AnySkill como proveedor';
+
+  @override
+  String get profRequestInReview => 'Tu solicitud está en revisión — te avisaremos pronto';
+
+  @override
+  String get profTermsOfService => 'Términos de Servicio';
+
+  @override
+  String get profPrivacyPolicy => 'Política de Privacidad';
+
+  @override
+  String get profSwitchRole => 'Cambiar rol';
+
+  @override
+  String get profLogout => 'Cerrar sesión';
+
+  @override
+  String get profDeleteAccount => 'Eliminar cuenta';
+
+  @override
+  String get profTitle => 'Perfil';
+
+  @override
+  String get profCustomerRole => 'Cliente';
+
+  @override
+  String get profStatServicesTaken => 'Servicios contratados';
+
+  @override
+  String get profStatReviews => 'Reseñas';
+
+  @override
+  String get profStatYears => 'Años en AnySkill';
+
+  @override
+  String get profReceivedService => 'Servicio recibido';
+
+  @override
+  String get profFavorites => 'Favoritos';
+
+  @override
+  String get profDeleteConfirmBody => '¿Seguro que quieres eliminar tu cuenta?\n\nTodos los datos — historial, cartera, chats — se eliminarán permanentemente.\n\nEsta acción no se puede deshacer.';
+
+  @override
+  String get profCancel => 'Cancelar';
+
+  @override
+  String get profContinue => 'Continuar';
+
+  @override
+  String get profFinalConfirm => 'Confirmación final';
+
+  @override
+  String get profDeleteFinalBody => 'Tras la confirmación, tu cuenta se eliminará permanentemente y no podrá recuperarse.';
+
+  @override
+  String get profDeletePermanent => 'Eliminar permanentemente';
+
+  @override
+  String get profReauthNeeded => 'Se requiere reautenticar';
+
+  @override
+  String get profReauthBody => 'Para eliminar una cuenta, Firebase requiere un inicio de sesión reciente.\n\nPor favor cierra sesión, vuelve a iniciar e inténtalo de nuevo.';
+
+  @override
+  String get profLogoutAndReauth => 'Cerrar sesión y volver a entrar';
+
+  @override
+  String profDeleteError(String error) {
+    return 'Error al eliminar la cuenta: $error';
+  }
+
+  @override
+  String get profNoWorksYet => 'Aún no has subido trabajos.\n¡Toca el lápiz para actualizar!';
+
+  @override
+  String get homeTestEmailSent => '¡Correo de prueba enviado! Revisa tu bandeja.';
+
+  @override
+  String homeGenericError(String error) {
+    return 'Error: $error';
+  }
+
+  @override
+  String get homeShowAll => 'Ver todo';
+
+  @override
+  String get homeMicroTasks => 'Micro-tareas — gana rápido';
+
+  @override
+  String get homeCommunityTitle => 'Dar desde el corazón';
+
+  @override
+  String get homeCommunitySlogan => 'Una habilidad, un corazón';
+
+  @override
+  String get homeDefaultExpert => 'el profesional';
+
+  @override
+  String get homeDefaultReengageMsg => '¿Listo para reservar de nuevo?';
+
+  @override
+  String get homeSmartOffer => 'Oferta inteligente';
+
+  @override
+  String get homeBookNow => 'Reservar ahora';
+
+  @override
+  String get homeWelcomeTitle => 'Bienvenido a AnySkill';
+
+  @override
+  String get homeWelcomeSubtitle => 'Encuentra profesionales de tu barrio';
+
+  @override
+  String get homeServiceTitle => 'Servicio profesional con un toque';
+
+  @override
+  String get homeServiceSubtitle => 'Reformas • Limpieza • Fotografía y más';
+
+  @override
+  String get homeBecomeExpertTitle => 'Conviértete en profesional hoy';
+
+  @override
+  String get homeBecomeExpertSubtitle => 'Publica tu servicio y empieza a ganar';
+
+  @override
+  String notifGenericError(String error) {
+    return 'Error: $error';
+  }
+
+  @override
+  String get notifDefaultClient => 'Cliente';
+
+  @override
+  String get notifUrgentJobAvailable => '¡Trabajo urgente disponible!';
+
+  @override
+  String get notifJobTaken => 'Trabajo tomado';
+
+  @override
+  String get notifJobExpired => 'Trabajo expirado';
+
+  @override
+  String get notifGrabNow => '¡Tómalo ahora!';
+
+  @override
+  String notifTakenBy(String name) {
+    return 'Tomado por $name';
+  }
+
+  @override
+  String get notifCommunityHelpTitle => 'Solicitud de ayuda comunitaria';
+
+  @override
+  String get notifNotNow => 'Ahora no';
+
+  @override
+  String get notifWantToHelp => '¡Quiero ayudar!';
+
+  @override
+  String get notifCantAccept => 'No se puede aceptar esta solicitud';
+
+  @override
+  String get notifAccepted => '✓ ¡Aceptada! Abriendo chat con el cliente';
+
+  @override
+  String get notifLoadError => 'Error al cargar notificaciones';
+
+  @override
+  String get notifEmptyNow => 'No hay notificaciones ahora';
+
+  @override
+  String get chatUnknown => 'Desconocido';
+
+  @override
+  String get chatSafetyWarning => 'Atención: por tu seguridad, no intercambies números de teléfono ni cierres tratos fuera de la aplicación.';
+
+  @override
+  String get chatNoInternet => 'Sin conexión a Internet.';
+
+  @override
+  String get chatDefaultCustomer => 'Cliente';
+
+  @override
+  String get chatPaymentRequest => 'Solicitud de pago';
+
+  @override
+  String get chatAmountLabel => 'Monto';
+
+  @override
+  String get chatServiceDescLabel => 'Descripción del servicio';
+
+  @override
+  String get chatSend => 'Enviar';
+
+  @override
+  String get chatQuoteSent => 'Presupuesto enviado con éxito ✅';
+
+  @override
+  String get chatQuoteError => 'Error al enviar el presupuesto. Inténtalo de nuevo.';
+
+  @override
+  String get chatOfficialQuote => 'Presupuesto oficial';
+
+  @override
+  String get chatQuoteDescHint => 'Describe el servicio incluido en el precio...';
+
+  @override
+  String get chatEscrowNote => 'El monto se retendrá en el depósito de AnySkill tras la aprobación del cliente';
+
+  @override
+  String get chatSendQuote => 'Enviar presupuesto';
+
+  @override
+  String get chatQuoteLabel => 'Presupuesto';
+
+  @override
+  String get chatOnMyWay => '¡Voy en camino! 🚗 Llegaré pronto.';
+
+  @override
+  String get chatWorkDone => '¡Trabajo terminado! ✅';
+
+  @override
+  String get expCantBookSelf => 'No puedes reservar un servicio a ti mismo';
+
+  @override
+  String get expSlotTakenTitle => 'Horario ocupado';
+
+  @override
+  String get expSlotTakenBody => 'Alguien ya reservó al profesional para ese horario.\nPor favor elige otra fecha u hora.';
+
+  @override
+  String get expUnderstood => 'Entendido';
+
+  @override
+  String get expBookingError => 'Hubo un problema con la reserva, inténtalo de nuevo.';
+
+  @override
+  String get expDefaultCustomer => 'Cliente';
+
+  @override
+  String expDemoBookingMsg(String name) {
+    return 'Reservaste a $name. Te avisaremos cuando el profesional esté disponible.';
+  }
+
+  @override
+  String get expOptionalAddons => 'Extras opcionales';
+
+  @override
+  String get expProviderDayOff => 'El profesional no trabaja este día';
+
+  @override
+  String get expAnonymous => 'Anónimo';
+
+  @override
+  String get expRatingProfessional => 'Profesionalidad';
+
+  @override
+  String get expRatingTiming => 'Puntualidad';
+
+  @override
+  String get expRatingCommunication => 'Comunicación';
+
+  @override
+  String get expSearchReviewsHint => 'Buscar reseñas...';
+
+  @override
+  String get expReviewsTitle => 'Reseñas';
+
+  @override
+  String expNoReviewsMatch(String query) {
+    return 'Sin reseñas para \"$query\"';
+  }
+
+  @override
+  String expShowAllReviews(int count) {
+    return 'Ver las $count reseñas';
+  }
+
+  @override
+  String get expCommunityVolunteerBadge => 'Voluntario comunitario';
+
+  @override
+  String get expPriceAfterPhotos => 'Garantizado tras aprobar fotos';
+
+  @override
+  String get expDeposit => 'Depósito previo';
+
+  @override
+  String get expNights => 'Noches';
+
+  @override
+  String get expNightsCount => 'Número de noches';
+
+  @override
+  String get expEndDate => 'Fecha de fin de estancia';
+
+  @override
+  String get expSelectDate => 'Selecciona una fecha';
+
+  @override
+  String get expMustFillAll => 'Por favor completa todos los campos requeridos para continuar';
+
+  @override
+  String get expBookingReceivedDemo => '¡Reserva recibida!';
+
+  @override
+  String get expBookingSuccess => '¡Reserva completada con éxito! 🎉';
+
+  @override
+  String get expBookingDemoBody => 'Reservaste el servicio. Estamos verificando si el profesional está disponible.\nTe avisaremos en cuanto haya respuesta.';
+
+  @override
+  String get expWillNotify => 'Te enviaremos una actualización pronto';
+
+  @override
+  String get expGotIt => 'Entendido ✓';
+
+  @override
+  String get expProviderRole => 'Proveedor';
+
+  @override
+  String get expJobsLabel => 'Trabajos';
+
+  @override
+  String get expRatingLabel => 'Calificación';
+
+  @override
+  String get expReviewsLabel => 'Reseñas';
+
+  @override
+  String get expVolunteersLabel => 'Voluntariado';
+
+  @override
+  String get expVideoIntro => 'Video de presentación';
+
+  @override
+  String get expGallery => 'Galería de trabajos';
+
+  @override
+  String get expVerifiedCertificate => 'Certificado verificado';
+
+  @override
+  String get expView => 'Ver';
+
+  @override
+  String get expCertificateTitle => 'Certificado';
+
+  @override
+  String get expImageLoadError => 'Error al cargar la imagen';
+
+  @override
+  String get catBadgeAngel => 'Ángel';
+
+  @override
+  String get catBadgePillar => 'Pilar';
+
+  @override
+  String get catBadgeVolunteer => 'Voluntario';
+
+  @override
+  String get catDayOffline => 'No disponible ahora';
+
+  @override
+  String get catStartLesson => 'Empezar lección';
+
+  @override
+  String get catYourProfile => 'Tu perfil';
+
+  @override
+  String get catMapView => 'Vista mapa';
+
+  @override
+  String get catListView => 'Vista lista';
+
+  @override
+  String get catInstantBookingSoon => 'Reserva instantánea — muy pronto 🎉';
+
+  @override
+  String get catFreeCommunityBadge => 'Servicio comunitario gratuito — 100% gratis ❤️';
+
+  @override
+  String get catNeedHelp => 'Necesito ayuda';
+
+  @override
+  String get catHelpForOther => 'Ayuda para otra persona';
+
+  @override
+  String get catRespectTime => 'Por favor respeta su tiempo y usa este servicio solo para necesidades reales.';
+
+  @override
+  String get catFilterRating => 'Calificación';
+
+  @override
+  String get catFilterDistance => 'Distancia';
+
+  @override
+  String get catFilterKm => 'km';
+
+  @override
+  String get catFilterMore => 'Más';
+
+  @override
+  String get catFilterRatingTitle => 'Filtrar por calificación';
+
+  @override
+  String get catFilterAll => 'Todos';
+
+  @override
+  String get catFilterApply => 'Aplicar';
+
+  @override
+  String get catFilterDistanceTitle => 'Filtrar por distancia';
+
+  @override
+  String get catFilterNeedLocation => 'Activa la ubicación para filtrar por distancia';
+
+  @override
+  String get catFilterClear => 'Limpiar';
+
+  @override
+  String get catMaxDistance => 'Distancia máxima';
+
+  @override
+  String get catNoLimit => 'Sin límite';
+
+  @override
+  String catUpToKm(int km) {
+    return 'Hasta $km km';
+  }
+
+  @override
+  String get catMinRating => 'Calificación mínima';
+
+  @override
+  String get catSupport => 'Soporte';
+
+  @override
+  String get catFillFields => 'Completa categoría, descripción y teléfono';
+
+  @override
+  String get catRequestSent => '¡Solicitud enviada! Los voluntarios adecuados serán notificados.';
+
+  @override
+  String catRequestError(String error) {
+    return 'Error: $error';
+  }
+
+  @override
+  String get catCategory => 'Categoría';
+
+  @override
+  String get catChooseCategory => 'Elige área de ayuda';
+
+  @override
+  String get catRequestDescription => 'Descripción';
+
+  @override
+  String get catDescHint => 'Describe qué hay que hacer...';
+
+  @override
+  String get catLocation => 'Ubicación';
+
+  @override
+  String get catLocationHint => 'Ciudad / barrio';
+
+  @override
+  String get catContactPhone => 'Teléfono de contacto';
+
+  @override
+  String get catBeneficiaryName => 'Nombre del beneficiario';
+
+  @override
+  String get catBeneficiaryHint => 'Nombre de quien necesita ayuda';
+
+  @override
+  String get catIAmContact => 'Yo soy la persona de contacto';
+
+  @override
+  String get catIAmCoordinator => 'Yo coordinaré con el voluntario';
+
+  @override
+  String get catSendRequest => 'Enviar solicitud de ayuda';
+
+  @override
+  String get catBack => 'Atrás';
+
+  @override
+  String get catSearchInCategory => 'Buscar en la categoría...';
+
+  @override
+  String get catUnder100 => 'Hasta ₪100';
+
+  @override
+  String get catAvailableNow => 'Disponibles ahora';
+
+  @override
+  String get catInstantBook => 'Reserva instantánea';
+
+  @override
+  String get catInNeighborhood => 'En tu barrio';
+
+  @override
+  String get catAvailableNowUser => 'Disponible ahora';
+
+  @override
+  String get catRecommended => 'Recomendado';
+
+  @override
+  String get catWhenAvailable => '¿Cuándo está disponible?';
+
+  @override
+  String get catBookNow => 'Reservar';
+
+  @override
+  String editVideoUploadError(String error) {
+    return 'Error al subir el video: $error';
+  }
+
+  @override
+  String get editAddSecondIdentity => 'Añadir una segunda identidad profesional';
+
+  @override
+  String get editSecondIdentitySubtitle => 'Gana más — ofrece otro servicio bajo la misma cuenta';
+
+  @override
+  String get editPrimaryIdentity => 'Identidad principal';
+
+  @override
+  String get editSecondaryIdentity => 'Identidad secundaria';
+
+  @override
+  String get editEditingNow => 'Editando';
+
+  @override
+  String get editPhoneLabel => 'Número de teléfono';
+
+  @override
+  String get editPhoneVerified => 'Número verificado — no se puede cambiar';
+
+  @override
+  String get editAppPending => 'Tu solicitud está en revisión 🕐';
+
+  @override
+  String get editAppPendingDesc => 'Nuestro equipo está revisando los datos y te responderá pronto.';
+
+  @override
+  String get editBecomeProvider => '¿Quieres trabajar y ganar? Toca aquí';
+
+  @override
+  String editApplicationMessage(String name) {
+    return 'Solicitud para unirse como proveedor: $name';
+  }
+
+  @override
+  String editGenericError(String error) {
+    return 'Error: $error';
+  }
+
+  @override
+  String get editUploadClearPhoto => 'Sube una foto clara de tu rostro';
+
+  @override
+  String get editClearPhotoDesc => 'Los perfiles con foto clara reciben 3 veces más consultas';
+
+  @override
+  String get editAccountTypeChange => 'Los cambios de tipo de cuenta se gestionan solo con atención al cliente';
+
+  @override
+  String get editVolunteerToggleTitle => 'Quiero ser voluntario';
+
+  @override
+  String get editVolunteerToggleDesc => 'Ofrece tus habilidades gratis a personas que lo necesiten';
+
+  @override
+  String get editIdentitiesTitle => 'Tus identidades profesionales';
+
+  @override
+  String get editPaymentSettings => 'Pagos próximamente';
+
+  @override
+  String get editPaymentSettingsDesc => 'Estamos migrando a un proveedor de pagos israelí. Mientras, las solicitudes de retiro se procesan manualmente.';
+
+  @override
+  String get editAdvancedSettings => 'Configuración avanzada';
+
+  @override
+  String get editPricingSettings => 'Configuración de precios';
+
+  @override
+  String get editWorkingHours => 'Horario laboral';
+
+  @override
+  String get editWorkingHoursHint => 'Marca los días y horas en que trabajas';
+
+  @override
+  String get editDayOff => 'No trabaja';
+
+  @override
+  String get editCertificate => 'Certificado';
+
+  @override
+  String get editCertificateDesc => 'Sube un certificado profesional (opcional)';
+
+  @override
+  String get editReplaceCertificate => 'Reemplazar certificado';
+
+  @override
+  String get editUploadCertificate => 'Subir certificado';
+
+  @override
+  String get editIntroVideo => 'Video de presentación';
+
+  @override
+  String get editIntroVideoDesc => 'Agrega un video corto (hasta 60 segundos) mostrándote a ti mismo y tus habilidades. Aparecerá en tu perfil tras la aprobación del administrador.';
+
+  @override
+  String editUploading(int percent) {
+    return 'Subiendo... $percent%';
+  }
+
+  @override
+  String get editVideoUploaded => 'Video subido — toca para reemplazar';
+
+  @override
+  String get editUploadVideo => 'Subir video de presentación (hasta 60 segundos)';
+
+  @override
+  String get editPendingAdmin => 'Pendiente de aprobación — aparecerá en el perfil tras aprobación';
+
+  @override
+  String get editManagement => 'Admin';
+
+  @override
+  String get editServiceProvider => 'Proveedor';
+
+  @override
+  String get editCustomer => 'Cliente';
+
+  @override
+  String get editAdminModeActive => 'Modo admin activo';
+
+  @override
+  String get editProviderModeActive => 'Modo proveedor activo';
+
+  @override
+  String get editCustomerModeActive => 'Modo cliente activo';
+
+  @override
+  String get editViewMode => 'Modo de vista';
+
+  @override
+  String get editMyDogs => 'Mis perros';
+
+  @override
+  String get editShowAll => 'Ver todo';
+
+  @override
+  String get editAddDogProfile => 'Agregar perfil de perro';
+
+  @override
+  String get editNewDog => 'Nuevo perro';
+
+  @override
+  String get editUnnamedDog => 'Sin nombre';
+
+  @override
+  String get editApplyAsProvider => 'Postularse como proveedor';
+
+  @override
+  String get editApplyDesc => 'Completa los datos y revisaremos tu solicitud';
+
+  @override
+  String get editServiceFieldLabel => 'Área de servicio *';
+
+  @override
+  String get editChooseField => 'Elige área';
+
+  @override
+  String get editIdNumberLabel => 'ID / NIF *';
+
+  @override
+  String get editIdNumberHint => 'Ingresa el ID o NIF';
+
+  @override
+  String get editAboutYouLabel => 'Sobre ti *';
+
+  @override
+  String get editAboutYouHint => 'Describe tu experiencia, los servicios que ofreces...';
+
+  @override
+  String get editSubmitApplication => 'Enviar solicitud';
+
+  @override
+  String get editChooseFieldError => 'Elige un área de servicio';
+
+  @override
+  String get editEnterIdError => 'Ingresa el número de ID';
+
+  @override
+  String get editDaySunday => 'Domingo';
+
+  @override
+  String get editDayMonday => 'Lunes';
+
+  @override
+  String get editDayTuesday => 'Martes';
+
+  @override
+  String get editDayWednesday => 'Miércoles';
+
+  @override
+  String get editDayThursday => 'Jueves';
+
+  @override
+  String get editDayFriday => 'Viernes';
+
+  @override
+  String get editDaySaturday => 'Sábado';
+
+  @override
+  String get phoneInvalidNumber => 'Número de teléfono inválido';
+
+  @override
+  String phoneTooManyCodes(int mins) {
+    return 'Demasiados códigos enviados. Espera $mins minutos.';
+  }
+
+  @override
+  String get phoneSendCodeError => 'Error al enviar el código. Inténtalo de nuevo.';
+
+  @override
+  String get phoneErrorTooManyRequests => 'Demasiados intentos. Inténtalo más tarde.';
+
+  @override
+  String get phoneErrorQuotaExceeded => 'Cuota de SMS superada. Inténtalo mañana.';
+
+  @override
+  String get phoneErrorNoNetwork => 'Sin conexión a Internet';
+
+  @override
+  String phoneErrorGeneric(String code) {
+    return 'Error: $code';
+  }
+
+  @override
+  String phoneRateLimitInfo(int max, int mins) {
+    return 'Hasta $max códigos cada $mins minutos';
+  }
+
+  @override
+  String phoneLoginError(String code) {
+    return 'Error de inicio: $code';
+  }
+
+  @override
+  String get countryIsrael => 'Israel';
+
+  @override
+  String get otpLegacyUserDialogTitle => 'Cuenta existente';
+
+  @override
+  String get otpLegacyUserDialogBody => 'Este número ya tiene una cuenta. Por favor, contacta con soporte.';
+
+  @override
+  String get notifMuted => 'Silenciado';
+
+  @override
+  String get notifMuteAll => 'Silenciar todo';
+
+  @override
+  String get chatTyping => 'Escribiendo...';
+
+  @override
+  String get chatOnline => 'En línea';
+
+  @override
+  String get expertPhotoGalleryEmpty => 'Aún no hay fotos';
+
+  @override
+  String catMapResultsCount(int count) {
+    return '$count resultados en tu zona';
+  }
+
+  @override
+  String catSearchResultsTitle(String category) {
+    return 'Proveedores en $category';
+  }
+
+  @override
+  String get catAnyExpert => 'Todos los proveedores';
+
+  @override
+  String get catSortBy => 'Ordenar por';
+
+  @override
+  String get catSortRelevance => 'Relevancia';
+
+  @override
+  String get catSortDistance => 'Distancia';
+
+  @override
+  String get catSortRating => 'Calificación';
+
+  @override
+  String get catSortPrice => 'Precio';
+
+  @override
+  String get catNoResults => 'Sin resultados';
+
+  @override
+  String get catNoResultsDesc => 'Prueba cambiando los filtros o buscando en otra zona';
+
+  @override
+  String get catUrgent => 'Urgente';
+
+  @override
+  String get catExpressDelivery => 'Exprés';
+
+  @override
+  String get editVerifiedBadge => 'Verificado';
+
+  @override
+  String get editAdminOnlyChange => 'Este cambio es solo para administradores';
+
+  @override
+  String get editProfileSaved => 'Perfil guardado correctamente';
+
+  @override
+  String get editPriceLabel => 'Precio por hora (₪)';
+
+  @override
+  String get editPriceHint => 'Ingresa el precio en shekels';
+
+  @override
+  String get editAboutMeLabel => 'Cuéntanos sobre ti';
+
+  @override
+  String get editAboutMeHint => 'Describe tu experiencia, los servicios que ofreces...';
+
+  @override
+  String get editCategoryLabel => 'Categoría profesional';
+
+  @override
+  String get editSubCategoryLabel => 'Subcategoría';
+
+  @override
+  String get editDogNameLabel => 'Nombre del perro';
+
+  @override
+  String get editDogBreedLabel => 'Raza';
+
+  @override
+  String get editDogAgeLabel => 'Edad';
+
+  @override
+  String get editDogWeightLabel => 'Peso (kg)';
+
+  @override
+  String get editDogSizeLabel => 'Tamaño';
+
+  @override
+  String get editDogDescLabel => 'Descripción';
+
+  @override
+  String get editDogSaveBtn => 'Guardar perfil del perro';
+
+  @override
+  String get editDogPickPhoto => 'Elegir foto';
+
+  @override
+  String get editDogNameHint => '¿Cómo se llama el perro?';
+
+  @override
+  String get editDogBreedHint => 'p. ej. Golden Retriever';
+
+  @override
+  String get editDogSizeSmall => 'Pequeño';
+
+  @override
+  String get editDogSizeMedium => 'Mediano';
+
+  @override
+  String get editDogSizeLarge => 'Grande';
+
+  @override
+  String get editDogYears => 'años';
+
+  @override
+  String get editDogDescHint => 'Personalidad, aficiones, cosas importantes...';
+
+  @override
+  String get editCancellationPolicyTitle => 'Política de cancelación';
+
+  @override
+  String get editCancellationFlexible => 'Flexible';
+
+  @override
+  String get editCancellationModerate => 'Moderada';
+
+  @override
+  String get editCancellationStrict => 'Estricta';
+
+  @override
+  String get editCancellationFlexibleDesc => 'Reembolso completo hasta 4 horas antes';
+
+  @override
+  String get editCancellationModerateDesc => 'Reembolso completo hasta 24 horas antes';
+
+  @override
+  String get editCancellationStrictDesc => 'Reembolso completo hasta 48 horas antes';
+
+  @override
+  String get editResponseTimeLabel => 'Tiempo de respuesta promedio';
+
+  @override
+  String get editResponseImmediate => 'Inmediato';
+
+  @override
+  String get editResponse30min => 'En 30 minutos';
+
+  @override
+  String get editResponse1h => 'En una hora';
+
+  @override
+  String get editResponseDay => 'En un día';
+
+  @override
+  String get editQuickTagsTitle => 'Etiquetas rápidas';
+
+  @override
+  String get editQuickTagsDesc => 'Elige hasta 5 etiquetas que describan tu servicio';
+
+  @override
+  String get editSave => 'Guardar';
+
+  @override
+  String get editSaving => 'Guardando...';
+
+  @override
+  String get editDiscardChanges => '¿Descartar cambios?';
+
+  @override
+  String get editDiscardConfirm => 'Tienes cambios sin guardar. ¿Descartarlos?';
+
+  @override
+  String get editDiscard => 'Descartar';
+
+  @override
+  String get editContinueEditing => 'Seguir editando';
+
+  @override
+  String get editFieldRequired => 'Obligatorio';
+
+  @override
+  String get editInvalidPrice => 'Precio inválido';
+
+  @override
+  String editMinPrice(int min) {
+    return 'Precio mínimo es ₪$min';
+  }
+
+  @override
+  String get editCustomerServiceType => 'Cliente';
+
+  @override
+  String get editAboutMinChars => 'Escribe al menos 20 caracteres sobre ti';
+
+  @override
+  String get editSecondIdentityCreated => '¡Segunda identidad profesional creada! 🎉';
+
+  @override
+  String get editAddSecondIdentityTitle => 'Añadir una segunda identidad profesional';
+
+  @override
+  String get editAddSecondIdentityDesc => 'Elige nueva categoría, precio y descripción — el segundo perfil aparecerá por separado en la búsqueda';
+
+  @override
+  String get editSecondServiceDesc => 'Cuéntales a los clientes sobre tu segundo servicio...';
+
+  @override
+  String get editCreateIdentity => 'Crear identidad profesional';
+
+  @override
+  String get editIdentityUpdated => 'Identidad profesional actualizada';
+
+  @override
+  String get editDeleteIdentityTitle => 'Eliminar identidad profesional';
+
+  @override
+  String get editDeleteIdentityConfirm => '¿Eliminar la segunda identidad profesional? Esta acción no se puede deshacer.';
+
+  @override
+  String get editDelete => 'Eliminar';
+
+  @override
+  String get editIdentityDeleted => 'Identidad profesional eliminada';
+
+  @override
+  String get editSaveChanges => 'Guardar cambios';
+
+  @override
+  String get editDeleteIdentity => 'Eliminar identidad profesional';
+
+  @override
+  String editEditingIdentity(String type) {
+    return 'Editar $type';
+  }
+
+  @override
+  String get phoneLoginContinueGoogle => 'Continuar con Google';
+
+  @override
+  String get phoneLoginContinueApple => 'Continuar con Apple';
+
+  @override
+  String get phoneLoginOrPhone => 'O CON NÚMERO DE TELÉFONO';
+
+  @override
+  String get phoneLoginCtaLogin => 'Iniciar sesión';
+
+  @override
+  String get phoneLoginTermsPrefix => 'Al continuar, acepto los';
+
+  @override
+  String get phoneLoginTermsOfUse => 'Términos de Uso';
+
+  @override
+  String get phoneLoginAnd => 'y';
+
+  @override
+  String get phoneLoginPrivacyPolicy => 'Política de Privacidad';
+
+  @override
+  String get phoneLoginOfferingService => '¿Ofreces un servicio?';
+
+  @override
+  String get phoneLoginBecomeProvider => 'Gana con AnySkill →';
 }

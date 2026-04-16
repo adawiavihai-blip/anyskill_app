@@ -147,7 +147,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           .get();
       if (existing.exists) return;
 
-      final category = d['serviceType'] as String? ?? d['name'] as String? ?? 'לא ידוע';
+      final category = d['serviceType'] as String? ?? d['name'] as String? ?? 'unknown';
       await FirebaseFirestore.instance
           .collection('activity_log')
           .doc(dedupId)
@@ -296,17 +296,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ..clearSnackBars()
             ..showSnackBar(
               SnackBar(
-                content: const Row(
+                content: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.security_rounded,
+                    const Icon(Icons.security_rounded,
                         color: Colors.white, size: 16),
-                    SizedBox(width: 8),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'שימו לב: למען ביטחונכם, אין להחליף מספרי טלפון '
-                        'או לסגור עסקאות מחוץ לאפליקציה.',
-                        style: TextStyle(fontSize: 12, height: 1.4),
+                        AppLocalizations.of(context).chatSafetyWarning,
+                        style: const TextStyle(fontSize: 12, height: 1.4),
                       ),
                     ),
                   ],
@@ -347,7 +346,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _sendPaymentRequest(
       double amount, String description) async {
     if (!await SafetyModule.hasInternet()) {
-      if (mounted) SafetyModule.showError(context, 'אין חיבור לאינטרנט.');
+      if (mounted) SafetyModule.showError(context, AppLocalizations.of(context).chatNoInternet);
       return;
     }
     final db  = FirebaseFirestore.instance;
@@ -382,7 +381,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final name = (doc.data() ?? {})['name'] as String? ?? '';
       if (name.isNotEmpty) return name;
     } catch (_) {}
-    return widget.currentUserName ?? 'לקוח';
+    if (!mounted) return widget.currentUserName ?? 'Customer';
+    return widget.currentUserName ?? AppLocalizations.of(context).chatDefaultCustomer;
   }
 
   // ── Request payment dialog ─────────────────────────────────────────────────
@@ -396,11 +396,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20)),
-        title: const Row(children: [
-          Icon(Icons.payments_rounded, color: Color(0xFFF59E0B)),
-          SizedBox(width: 8),
-          Text('בקשת תשלום',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        title: Row(children: [
+          const Icon(Icons.payments_rounded, color: Color(0xFFF59E0B)),
+          const SizedBox(width: 8),
+          Text(AppLocalizations.of(context).chatPaymentRequest,
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
         ]),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -411,7 +411,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   const TextInputType.numberWithOptions(decimal: true),
               textAlign: TextAlign.right,
               decoration: InputDecoration(
-                labelText: 'סכום',
+                labelText: AppLocalizations.of(context).chatAmountLabel,
                 prefixText: '₪ ',
                 filled: true,
                 fillColor: const Color(0xFFF5F6FA),
@@ -425,7 +425,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               controller: descCtrl,
               textAlign: TextAlign.right,
               decoration: InputDecoration(
-                labelText: 'תיאור השירות',
+                labelText: AppLocalizations.of(context).chatServiceDescLabel,
                 filled: true,
                 fillColor: const Color(0xFFF5F6FA),
                 border: OutlineInputBorder(
@@ -453,11 +453,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               Navigator.pop(ctx);
               _sendPaymentRequest(
                 amount,
-                descCtrl.text.isEmpty ? 'בקשת תשלום' : descCtrl.text,
+                descCtrl.text.isEmpty ? AppLocalizations.of(context).chatPaymentRequest : descCtrl.text,
               );
             },
-            child: const Text('שלח',
-                style: TextStyle(color: Colors.white)),
+            child: Text(AppLocalizations.of(context).chatSend,
+                style: const TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -468,7 +468,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _sendOfficialQuote(double amount, String description) async {
     if (!await SafetyModule.hasInternet()) {
-      if (mounted) SafetyModule.showError(context, 'אין חיבור לאינטרנט.');
+      if (mounted) SafetyModule.showError(context, AppLocalizations.of(context).chatNoInternet);
       return;
     }
     final db    = FirebaseFirestore.instance;
@@ -511,16 +511,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     try {
       await batch.commit();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('הצעת המחיר נשלחה בהצלחה ✅'),
-          backgroundColor: Color(0xFF22C55E),
-          duration: Duration(seconds: 2),
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(AppLocalizations.of(context).chatQuoteSent),
+          backgroundColor: const Color(0xFF22C55E),
+          duration: const Duration(seconds: 2),
         ));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('שגיאה בשליחת ההצעה. נסה שוב.'),
+          content: Text(AppLocalizations.of(context).chatQuoteError),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 3),
         ));
@@ -562,12 +562,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
-                  const Row(children: [
-                    Icon(Icons.receipt_long_rounded,
+                  Row(children: [
+                    const Icon(Icons.receipt_long_rounded,
                         color: Color(0xFFA5B4FC), size: 20),
-                    SizedBox(width: 8),
-                    Text('הצעת מחיר רשמית',
-                        style: TextStyle(
+                    const SizedBox(width: 8),
+                    Text(AppLocalizations.of(context).chatOfficialQuote,
+                        style: const TextStyle(
                             color: Colors.white,
                             fontSize: 17,
                             fontWeight: FontWeight.bold)),
@@ -584,7 +584,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 textAlign: TextAlign.right,
                 style: const TextStyle(color: Colors.white, fontSize: 16),
                 decoration: InputDecoration(
-                  labelText: 'סכום',
+                  labelText: AppLocalizations.of(context).chatAmountLabel,
                   labelStyle: const TextStyle(color: Colors.white54),
                   prefixText: '₪ ',
                   prefixStyle: const TextStyle(color: Colors.white70),
@@ -616,9 +616,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 maxLines: 3,
                 style: const TextStyle(color: Colors.white, fontSize: 14),
                 decoration: InputDecoration(
-                  labelText: 'תיאור השירות',
+                  labelText: AppLocalizations.of(context).chatServiceDescLabel,
                   labelStyle: const TextStyle(color: Colors.white54),
-                  hintText: 'פרט את השירות הכלול במחיר...',
+                  hintText: AppLocalizations.of(context).chatQuoteDescHint,
                   hintStyle: TextStyle(
                       color: Colors.white.withValues(alpha: 0.3),
                       fontSize: 13),
@@ -651,7 +651,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       size: 11,
                       color: Colors.white.withValues(alpha: 0.4)),
                   const SizedBox(width: 4),
-                  Text('הסכום ינעל בנאמנות AnySkill עם אישור הלקוח',
+                  Text(AppLocalizations.of(context).chatEscrowNote,
                       style: TextStyle(
                           fontSize: 10,
                           color: Colors.white.withValues(alpha: 0.4))),
@@ -672,8 +672,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                   icon: const Icon(Icons.send_rounded, size: 16),
-                  label: const Text('שלח הצעה',
-                      style: TextStyle(
+                  label: Text(AppLocalizations.of(context).chatSendQuote,
+                      style: const TextStyle(
                           fontWeight: FontWeight.bold, fontSize: 14)),
                   onPressed: () {
                     final amount =
@@ -684,7 +684,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     _sendOfficialQuote(
                       amount,
                       descCtrl.text.trim().isEmpty
-                          ? 'הצעת מחיר'
+                          ? AppLocalizations.of(context).chatQuoteLabel
                           : descCtrl.text.trim(),
                     );
                   },
@@ -761,8 +761,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               if (url != null) _send(url, 'image');
               if (mounted) setState(() => _isUploading = false);
             },
-            onIAmOnTheWay: () => _send('אני בדרך! 🚗 אגיע בקרוב.', 'text'),
-            onIFinished: () => _send('סיימתי את העבודה! ✅', 'text'),
+            onIAmOnTheWay: () => _send(AppLocalizations.of(context).chatOnMyWay, 'text'),
+            onIFinished: () => _send(AppLocalizations.of(context).chatWorkDone, 'text'),
             onShowQuoteDialog: _showQuoteDialog,
             onShowRequestPaymentDialog: _showRequestPaymentDialog,
           ),

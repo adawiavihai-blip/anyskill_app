@@ -206,7 +206,21 @@
       "Bash(unzip -p \"c:/Users/aviha/Desktop/anyskill_app/docs/ui-specs/active-booking/anyskill_prompt_booking.docx\" word/document.xml)",
       "Bash(pip install:*)",
       "Bash(git diff *)",
-      "Bash(git reset *)"
+      "Bash(git reset *)",
+      "Bash(cp \"c:/Users/aviha/Desktop/anyskill_app/docs/ui-specs/AnySkill_Support_System_Implementation_Prompt/AnySkill_Support_System_Implementation_Prompt.docx\" spec.docx)",
+      "Bash(unzip -o -q spec.docx -d spec_extracted)",
+      "Bash(head -953 lib/screens/admin_agent_management_tab.dart)",
+      "Bash(tail -n +1430 lib/screens/admin_agent_management_tab.dart)",
+      "Bash(awk '{print $5}')",
+      "Bash(chmod +x /tmp/count_hebrew.sh)",
+      "Bash(ls c:/Users/aviha/Desktop/anyskill_app/lib/l10n/*.arb)",
+      "Bash(firebase functions:list)",
+      "Bash(firebase login:list)",
+      "Bash(npm outdated *)",
+      "Bash(read fn *)",
+      "Bash(bc)",
+      "Bash(wc -l /c/Users/aviha/Desktop/anyskill_app/lib/l10n/app_*.arb)",
+      "Bash(xargs -I {} grep -n \"Text\\('\" {})"
     ]
   }
 }

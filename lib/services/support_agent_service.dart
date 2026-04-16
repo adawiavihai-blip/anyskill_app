@@ -104,6 +104,39 @@ class SupportAgentService {
     return Map<String, dynamic>.from(result.data as Map);
   }
 
+  /// Phase 1 multi-role — admin adds/removes specific roles without
+  /// replacing the existing set. Prefer this over [setUserRole] for new
+  /// code — the legacy single-role call is kept only for back-compat.
+  /// `activeRole` is optional; when omitted the CF picks a sensible
+  /// default via its priority rules.
+  static Future<Map<String, dynamic>> modifyUserRoles({
+    required String targetUserId,
+    List<String> rolesToAdd = const [],
+    List<String> rolesToRemove = const [],
+    String? activeRole,
+  }) async {
+    final payload = <String, dynamic>{
+      'targetUserId': targetUserId,
+      if (rolesToAdd.isNotEmpty) 'rolesToAdd': rolesToAdd,
+      if (rolesToRemove.isNotEmpty) 'rolesToRemove': rolesToRemove,
+      if (activeRole != null && activeRole.isNotEmpty) 'activeRole': activeRole,
+    };
+    final result = await _fn.httpsCallable('setUserRole').call(payload);
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
+  /// One-shot migration: scans every user doc and writes the new
+  /// `roles[]` + `activeRole` fields derived from legacy flags. Safe to
+  /// call multiple times — already-migrated users are skipped.
+  static Future<Map<String, dynamic>> migrateUserRoles({
+    bool dryRun = false,
+  }) async {
+    final result = await _fn
+        .httpsCallable('migrateUserRoles')
+        .call({'dryRun': dryRun});
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
   // ───────────────────────────────────────────────────────────────────────
   // TICKET QUEUE — streams + assignment
   // ───────────────────────────────────────────────────────────────────────
@@ -259,17 +292,35 @@ class SupportAgentService {
   // MESSAGES — public + internal notes
   // ───────────────────────────────────────────────────────────────────────
 
-  /// Send a message in a ticket. If [isInternal] is true, the message is
-  /// hidden from the customer (visible only to staff via firestore rules).
+  // Phase 2 — message channels for 3-party chat.
+  static const String channelCustomer = 'customer';
+  static const String channelProvider = 'provider';
+  static const String channelInternal = 'internal';
+
+  /// Send a message in a ticket on a specific channel.
+  ///
+  /// Phase 2 multi-channel: each message belongs to one of three channels.
+  /// Customer-facing rules filter by channel; internal notes stay
+  /// staff-only; provider channel is visible only to the assigned
+  /// provider (`ticket.providerId`).
+  ///
+  /// [isInternal] is preserved as a shadow field so legacy readers that
+  /// still filter by it keep working until they migrate to channel.
   static Future<void> sendMessage({
     required String ticketId,
     required String message,
     required String agentName,
     bool isInternal = false,
+    String? channel,
   }) async {
     final agentUid = FirebaseAuth.instance.currentUser?.uid;
     if (agentUid == null) throw Exception('Not signed in');
     if (message.trim().isEmpty) return;
+
+    // Resolve channel: explicit > derived from isInternal > default customer.
+    final ch = channel ??
+        (isInternal ? channelInternal : channelCustomer);
+    final internal = ch == channelInternal;
 
     final batch = _db.batch();
 
@@ -280,30 +331,40 @@ class SupportAgentService {
         .doc();
     batch.set(msgRef, {
       'senderId': agentUid,
-      'senderName': isInternal ? '[פנימי] $agentName' : agentName,
+      'senderName': internal ? '[פנימי] $agentName' : agentName,
       'isAdmin': true, // staff messages always render as admin-side bubble
-      'isInternal': isInternal,
+      'isInternal': internal,
+      'channel': ch,
       'message': message.trim(),
       'createdAt': FieldValue.serverTimestamp(),
     });
 
-    // Update ticket metadata
+    // Update ticket metadata. lastAgentMessageAt only counts customer-facing
+    // replies for SLA purposes — internal notes and provider-only messages
+    // don't reset the SLA clock against the customer.
     final ticketRef = _db.collection('support_tickets').doc(ticketId);
     final updates = <String, dynamic>{
       'updatedAt': FieldValue.serverTimestamp(),
-      if (!isInternal) 'lastAgentMessageAt': FieldValue.serverTimestamp(),
+      if (ch == channelCustomer)
+        'lastAgentMessageAt': FieldValue.serverTimestamp(),
     };
     batch.update(ticketRef, updates);
 
     await batch.commit();
   }
 
-  /// Stream messages for a ticket. Internal notes are included if [includeInternal]
-  /// is true (the support workspace passes true; the customer chat passes false).
+  /// Stream messages for a ticket. Internal notes are included if
+  /// [includeInternal] is true (the support workspace passes true; the
+  /// customer chat passes false).
+  ///
+  /// When [channelFilter] is provided, only messages on that channel are
+  /// returned. Legacy messages without a `channel` field are treated as
+  /// `customer` so existing chats keep rendering.
   static Stream<List<Map<String, dynamic>>> streamMessages(
     String ticketId, {
     bool includeInternal = true,
     int limit = 200,
+    String? channelFilter,
   }) {
     return _db
         .collection('support_tickets')
@@ -316,9 +377,21 @@ class SupportAgentService {
             .map((d) {
               final m = d.data();
               m['messageId'] = d.id;
+              // Backfill channel for legacy docs so callers can rely on it.
+              m['channel'] ??= (m['isInternal'] == true)
+                  ? channelInternal
+                  : channelCustomer;
               return m;
             })
-            .where((m) => includeInternal || m['isInternal'] != true)
+            .where((m) {
+              if (!includeInternal && m['channel'] == channelInternal) {
+                return false;
+              }
+              if (channelFilter != null && m['channel'] != channelFilter) {
+                return false;
+              }
+              return true;
+            })
             .toList());
   }
 
@@ -341,6 +414,63 @@ class SupportAgentService {
     if (ageMin >= slaBreachedMinutes) return 'breached';
     if (ageMin >= slaWarningMinutes) return 'warning';
     return 'on_track';
+  }
+
+  /// Phase 2 — quick KPI snapshot for the agent's own day.
+  /// Reads tickets where assignedTo == me OR closedBy == me with closedAt
+  /// in the last 24h. Cheap (≤200 docs) — fine to call on every status bar
+  /// rebuild. Returns nullable fields when there's no signal yet.
+  static Future<({int closedToday, int openMine, int slaBreached, double? csat})>
+      myDailyKpi() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      return (closedToday: 0, openMine: 0, slaBreached: 0, csat: null);
+    }
+    final since = DateTime.now().subtract(const Duration(hours: 24));
+    int closedToday = 0;
+    int openMine = 0;
+    int slaBreached = 0;
+    final csatScores = <int>[];
+
+    try {
+      final mineSnap = await _db
+          .collection('support_tickets')
+          .where('assignedTo', isEqualTo: uid)
+          .limit(200)
+          .get();
+      for (final d in mineSnap.docs) {
+        final t = d.data();
+        final status = t['status'] as String? ?? 'open';
+        if (status == 'open' || status == 'in_progress') {
+          openMine++;
+          if (slaStateFor(t) == 'breached') slaBreached++;
+        }
+      }
+
+      final closedSnap = await _db
+          .collection('support_tickets')
+          .where('closedBy', isEqualTo: uid)
+          .where('closedAt', isGreaterThan: Timestamp.fromDate(since))
+          .limit(200)
+          .get();
+      closedToday = closedSnap.docs.length;
+      for (final d in closedSnap.docs) {
+        final r = d.data()['csatRating'];
+        if (r is int && r > 0) csatScores.add(r);
+      }
+    } catch (_) {
+      // Swallow — KPI bar is informational, not load-bearing.
+    }
+
+    final csat = csatScores.isEmpty
+        ? null
+        : csatScores.reduce((a, b) => a + b) / csatScores.length;
+    return (
+      closedToday: closedToday,
+      openMine: openMine,
+      slaBreached: slaBreached,
+      csat: csat,
+    );
   }
 
   /// Returns the age of a ticket as a human-readable Hebrew string.

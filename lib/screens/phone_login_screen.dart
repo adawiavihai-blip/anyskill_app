@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -12,14 +13,19 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../main.dart' show currentAppVersion;
 import '../widgets/anyskill_logo.dart';
 import 'otp_screen.dart';
+import 'terms_of_service_screen.dart';
+import 'provider_registration_wizard_screen.dart';
 import '../services/private_data_service.dart';
 import '../services/auth_duplicate_guard.dart';
+import '../services/locale_provider.dart';
+import '../l10n/app_localizations.dart';
+import '../theme/app_theme.dart';
 
-// ── Brand tokens ──────────────────────────────────────────────────────────────
-const _kPurple      = Color(0xFF6366F1);
-const _kPurpleDark  = Color(0xFF4F46E5);
-const _kPurpleLight = Color(0xFF8B5CF6);
-const _kRed         = Color(0xFFEF4444);
+// ── Brand tokens — reuse existing Brand.* palette ─────────────────────────────
+final _kPrimary     = Brand.indigo;       // #6366F1
+final _kPrimaryDark = Brand.indigoDark;   // #4F46E5
+final _kPrimaryLight = Brand.purple;      // #8B5CF6
+const _kRed         = Brand.error;
 
 // ── Country model ─────────────────────────────────────────────────────────────
 class _Country {
@@ -66,49 +72,94 @@ class PhoneLoginScreen extends StatefulWidget {
   State<PhoneLoginScreen> createState() => _PhoneLoginScreenState();
 }
 
-class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
+class _PhoneLoginScreenState extends State<PhoneLoginScreen>
+    with TickerProviderStateMixin {
   /// True when running as iOS PWA (standalone mode from Home Screen).
   /// Google/Apple OAuth require popups which iOS PWA blocks entirely.
-  /// Detection: on web, check if the URL contains the PWA manifest's
-  /// start_url query param (?v=) which is only present in standalone launches.
   bool get _isIOSPwa {
     if (!kIsWeb) return false;
-    // The manifest.json has start_url: "/?v=9.3.8" — only PWA launches have this
     final hasManifestParam = Uri.base.queryParameters.containsKey('v');
-    if (hasManifestParam) return true;
-    // Fallback: check navigator.standalone (Safari iOS specific)
-    return false;
+    return hasManifestParam;
   }
 
   final _phoneCtrl = TextEditingController();
+  final _langBtnKey = GlobalKey();
+  final _phoneFocus = FocusNode();
 
   _Country  _country   = _kCountries[0]; // IL +972
   bool      _isLoading = false;
   bool?     _phoneOk;
+  bool      _phoneFocused = false;
 
-  // Redirect result is now handled in main() BEFORE runApp(),
-  // guaranteeing the user is signed in before AuthWrapper renders.
+  OverlayEntry? _langOverlay;
+
+  // ── Animations ───────────────────────────────────────────────────────────
+  late final AnimationController _staggerCtrl;
+  late final AnimationController _orbCtrl;
+  late final AnimationController _pulseCtrl;
+  late final AnimationController _ctaPulseCtrl;
+  late final AnimationController _shimmerCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _staggerCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1300),
+    )..forward();
+
+    _orbCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 12),
+    )..repeat();
+
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2500),
+    )..repeat();
+
+    _ctaPulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2800),
+    )..repeat();
+
+    _shimmerCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    )..repeat();
+
+    _phoneFocus.addListener(() {
+      if (mounted) setState(() => _phoneFocused = _phoneFocus.hasFocus);
+    });
+  }
 
   @override
   void dispose() {
     _phoneCtrl.dispose();
+    _phoneFocus.dispose();
+    _staggerCtrl.dispose();
+    _orbCtrl.dispose();
+    _pulseCtrl.dispose();
+    _ctaPulseCtrl.dispose();
+    _shimmerCtrl.dispose();
+    _removeLangOverlay();
     super.dispose();
   }
 
-  // ── Validation ───────────────────────────────────────────────────────────────
+  // ── Validation ───────────────────────────────────────────────────────────
   bool _validate(String v) => RegExp(r'^\d{7,12}$').hasMatch(v.trim());
 
   String get _fullPhone => '${_country.dialCode}${_phoneCtrl.text.trim()}';
 
-  // ── Send OTP ─────────────────────────────────────────────────────────────────
+  // ── Send OTP ─────────────────────────────────────────────────────────────
   Future<void> _sendOtp() async {
     final number = _phoneCtrl.text.trim();
     if (!_validate(number)) {
-      _snack('מספר טלפון לא תקין', _kRed);
+      _snack(AppLocalizations.of(context).phoneInvalidNumber, _kRed);
       return;
     }
     if (_isRateLimited()) {
-      _snack('שלחת יותר מדי קודים. המתן $_kWindowMins דקות ונסה שוב.', _kRed);
+      _snack(AppLocalizations.of(context).phoneTooManyCodes(_kWindowMins), _kRed);
       return;
     }
 
@@ -117,7 +168,6 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
 
     try {
       if (kIsWeb) {
-        // Web: invisible reCAPTCHA handled by Firebase SDK automatically
         final confirmationResult = await FirebaseAuth.instance
             .signInWithPhoneNumber(_fullPhone);
         if (!mounted) return;
@@ -128,13 +178,11 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           ),
         ));
       } else {
-        // Mobile: native SMS Retriever / User Consent handled by Firebase
         final completer = Completer<String>();
         await FirebaseAuth.instance.verifyPhoneNumber(
           phoneNumber: _fullPhone,
           timeout: const Duration(seconds: 60),
           verificationCompleted: (PhoneAuthCredential cred) async {
-            // Android instant auto-verification — sign in immediately
             try {
               await FirebaseAuth.instance.signInWithCredential(cred);
             } catch (_) {}
@@ -159,19 +207,20 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     } on FirebaseAuthException catch (e) {
       if (mounted) _snack(_mapFirebaseError(e.code), _kRed);
     } catch (e) {
-      if (mounted) _snack('שגיאה בשליחת הקוד. נסה שוב.', _kRed);
+      if (mounted) _snack(AppLocalizations.of(context).phoneSendCodeError, _kRed);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
   String _mapFirebaseError(String code) {
+    final l10n = AppLocalizations.of(context);
     switch (code) {
-      case 'invalid-phone-number':   return 'מספר טלפון לא תקין';
-      case 'too-many-requests':      return 'יותר מדי ניסיונות. נסה מאוחר יותר.';
-      case 'quota-exceeded':         return 'מכסת SMS חרגה. נסה מחר.';
-      case 'network-request-failed': return 'אין חיבור לאינטרנט';
-      default:                       return 'שגיאה: $code';
+      case 'invalid-phone-number':   return l10n.phoneInvalidNumber;
+      case 'too-many-requests':      return l10n.phoneErrorTooManyRequests;
+      case 'quota-exceeded':         return l10n.phoneErrorQuotaExceeded;
+      case 'network-request-failed': return l10n.phoneErrorNoNetwork;
+      default:                       return l10n.phoneErrorGeneric(code);
     }
   }
 
@@ -184,7 +233,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     ));
   }
 
-  // ── Country picker ───────────────────────────────────────────────────────────
+  // ── Country picker ───────────────────────────────────────────────────────
   void _pickCountry() {
     showModalBottomSheet(
       context: context,
@@ -197,374 +246,474 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     );
   }
 
-  // ── Build ────────────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LANGUAGE SWITCHER — Dropdown
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  String _currentFlag() {
+    switch (LocaleProvider.instance.locale.languageCode) {
+      case 'en': return '🇺🇸';
+      case 'es': return '🇪🇸';
+      case 'ar': return '🇸🇦';
+      default:   return '🇮🇱';
+    }
+  }
+
+  String _currentLangLabel(AppLocalizations l10n) {
+    switch (LocaleProvider.instance.locale.languageCode) {
+      case 'en': return l10n.languageEn;
+      case 'es': return l10n.languageEs;
+      case 'ar': return l10n.languageAr;
+      default:   return l10n.languageHe;
+    }
+  }
+
+  void _toggleLangOverlay() {
+    if (_langOverlay != null) {
+      _removeLangOverlay();
+    } else {
+      _showLangOverlay();
+    }
+  }
+
+  void _showLangOverlay() {
+    final renderBox =
+        _langBtnKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+    final offset = renderBox.localToGlobal(Offset.zero);
+    final size = renderBox.size;
+    final screenSize = MediaQuery.of(context).size;
+
+    // Position dropdown below the button
+    final top = offset.dy + size.height + 6;
+    // In RTL, button is on the "start" (right) — dropdown aligns to right edge of button
+    final right = screenSize.width - offset.dx - size.width;
+
+    _langOverlay = OverlayEntry(
+      builder: (_) => Stack(
+        children: [
+          // Click-outside catcher
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _removeLangOverlay,
+            ),
+          ),
+          // Dropdown menu
+          Positioned(
+            top: top,
+            right: right,
+            child: _LanguageDropdown(
+              onPick: (locale) {
+                LocaleProvider.instance.setLocale(locale);
+                _removeLangOverlay();
+                if (mounted) setState(() {});
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+    Overlay.of(context).insert(_langOverlay!);
+  }
+
+  void _removeLangOverlay() {
+    _langOverlay?.remove();
+    _langOverlay = null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // BUILD
+  // ═══════════════════════════════════════════════════════════════════════════
+
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5FF),
       resizeToAvoidBottomInset: true,
-      body: SingleChildScrollView(
-        // SingleChildScrollView instead of CustomScrollView — simpler touch
-        // handling that works reliably on iOS PWA standalone mode.
-        // The previous CustomScrollView + SliverToBoxAdapter + Transform.translate
-        // caused hit-test misalignment on iOS web.
-        child: Column(
-          children: [
-            _buildHero(),
-            // Pulls the card up to overlap the hero by 28px. Uses
-            // Transform.translate inside a SingleChildScrollView — hit-
-            // testing is transform-aware here (the previous bug was a
-            // CustomScrollView+Sliver combo, not this one). Container
-            // negative-margin would crash margin.isNonNegative assertion.
-            Transform.translate(
-              offset: const Offset(0, -28),
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(28),
-                  boxShadow: [
-                    BoxShadow(
-                      color: _kPurple.withValues(alpha: 0.10),
-                      blurRadius: 32,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
+      body: GestureDetector(
+        onTap: () {
+          _removeLangOverlay();
+          FocusScope.of(context).unfocus();
+        },
+        behavior: HitTestBehavior.translucent,
+        child: SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: MediaQuery.of(context).size.height,
+            ),
+            child: Column(
+              children: [
+                _buildCard(l10n),
+                // Version footer
+                const SizedBox(height: 16),
+                Text(
+                  'AnySkill v$currentAppVersion',
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: Color(0xFFB4B4BC),
+                    fontWeight: FontWeight.w400,
+                  ),
                 ),
-                padding: const EdgeInsets.fromLTRB(24, 32, 24, 36),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                    const Text(
-                      'כניסה / הרשמה',
-                      textAlign: TextAlign.start,
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF1E1B4B),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _isIOSPwa
-                          ? 'הזן את מספר הטלפון שלך ונשלח קוד אימות'
-                          : 'התחבר/י עם Google, Apple או מספר טלפון',
-                      textAlign: TextAlign.start,
-                      style: TextStyle(fontSize: 13, color: Colors.grey[500]),
-                    ),
-                    const SizedBox(height: 24),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
-                    // ── Social sign-in FIRST (hidden in iOS PWA) ──────────────
-                    // iOS PWA blocks popups → Google/Apple OAuth can't open,
-                    // so phone+OTP is the only option there.
-                    if (!_isIOSPwa) ...[
-                      Row(
-                        children: [
-                          Expanded(child: _buildSocialBtn(
-                            label: 'Google',
-                            icon: _buildGoogleIcon(),
-                            onTap: _loginGoogle,
-                            dark: false,
-                          )),
-                          const SizedBox(width: 12),
-                          Expanded(child: _buildSocialBtn(
-                            label: 'Apple',
-                            icon: const Icon(Icons.apple, size: 22, color: Colors.white),
-                            onTap: _loginApple,
-                            dark: true,
-                          )),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      Row(children: [
-                        Expanded(child: Divider(color: Colors.grey[300])),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 14),
-                          child: Text('או',
-                              style: TextStyle(color: Colors.grey[400], fontSize: 13)),
+  // ─────────────────────────────────────────────────────────────────────────
+  // Main card (hero + form + bottom strip)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildCard(AppLocalizations l10n) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+          16, MediaQuery.of(context).padding.top + 20, 16, 12),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 30,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildHero(l10n),
+              _buildForm(l10n),
+              _buildBottomStrip(l10n),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 1. HERO SECTION — Gradient + animated orbs + logo + subtitle
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildHero(AppLocalizations l10n) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [_kPrimaryDark, _kPrimary, _kPrimaryLight],
+          stops: const [0.0, 0.45, 1.0],
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 36),
+      child: RepaintBoundary(
+        child: Stack(
+          children: [
+            // Animated floating orbs
+            _buildFloatingOrb(
+              size: 180,
+              top: -40,
+              end: -40,
+              color: Brand.warning.withValues(alpha: 0.22),
+              animOffset: 0,
+            ),
+            _buildFloatingOrb(
+              size: 140,
+              bottom: -30,
+              start: -30,
+              color: Colors.white.withValues(alpha: 0.15),
+              animOffset: 0.5,
+            ),
+            // Pulsing dots
+            _buildPulseDot(top: 40, end: 50, size: 5, color: Colors.white),
+            _buildPulseDot(top: 90, end: 120, size: 4, color: Brand.warning, delay: 0.3),
+            _buildPulseDot(bottom: 70, start: 60, size: 3, color: Colors.white, delay: 0.6),
+
+            // Content
+            Column(
+              children: [
+                // Language switcher — top-start (right in RTL)
+                Align(
+                  alignment: AlignmentDirectional.topStart,
+                  child: _buildStagger(
+                    delay: 0,
+                    child: _buildLanguageButton(l10n),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                // Logo in white rounded square
+                _buildStagger(
+                  delay: 0,
+                  child: Container(
+                    width: 84,
+                    height: 84,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.2),
+                          blurRadius: 30,
+                          offset: const Offset(0, 10),
                         ),
-                        Expanded(child: Divider(color: Colors.grey[300])),
-                      ]),
-                      const SizedBox(height: 20),
-                    ],
-
-                    // ── Phone field + rate-limit hint ─────────────────────────
-                    _buildPhoneField(),
-                    const SizedBox(height: 10),
-                    Text(
-                      'ניתן לשלוח עד $_kMaxSends קודים בכל $_kWindowMins דקות',
-                      textAlign: TextAlign.start,
-                      style: TextStyle(fontSize: 11, color: Colors.grey[400]),
+                        BoxShadow(
+                          color: Colors.white.withValues(alpha: 0.1),
+                          blurRadius: 0,
+                          spreadRadius: 4,
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 20),
+                    child: const Center(
+                      child: AnySkillBrandIcon(size: 56),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                // Subtitle
+                _buildStagger(
+                  delay: 0.14,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 280),
+                    child: Text(
+                      l10n.phoneLoginHeroSubtitle,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.88),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w400,
+                        height: 1.6,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-                    // ── Send OTP button ───────────────────────────────────────
-                    _buildSendButton(),
-                  ],
-                ), // closes inner Column (card content)
-              ), // closes Container (card with margin + padding)
-            ), // closes Transform.translate (pulls card up by 28px)
-            // Version footer
-            Padding(
-              padding: const EdgeInsets.only(bottom: 36, top: 4),
-              child: Center(
-                child: Text(
-                  'v$currentAppVersion',
-                  style: const TextStyle(fontSize: 11, color: Color(0xFFBDBDBD)),
+  Widget _buildFloatingOrb({
+    required double size,
+    required Color color,
+    double? top,
+    double? bottom,
+    double? start,
+    double? end,
+    double animOffset = 0,
+  }) {
+    return AnimatedBuilder(
+      animation: _orbCtrl,
+      builder: (_, __) {
+        // Offset the sine wave by animOffset so the two orbs move in opposite phases
+        final t = (_orbCtrl.value + animOffset) % 1.0;
+        final dx = math.sin(t * 2 * math.pi) * 18;
+        final dy = math.cos(t * 2 * math.pi) * 14;
+        final scale = 1 + math.sin(t * 2 * math.pi) * 0.06;
+        return PositionedDirectional(
+          top: top,
+          bottom: bottom,
+          start: start,
+          end: end,
+          child: Transform.translate(
+            offset: Offset(dx, dy),
+            child: Transform.scale(
+              scale: scale,
+              child: Container(
+                width: size,
+                height: size,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [color, color.withValues(alpha: 0)],
+                  ),
                 ),
               ),
             ),
-          ],
-        ), // closes outer Column
-      ), // closes SingleChildScrollView
-    ); // closes Scaffold
+          ),
+        );
+      },
+    );
   }
 
-  // ── Phone field ───────────────────────────────────────────────────────────────
-  Widget _buildPhoneField() {
-    final borderColor = _phoneOk == true
-        ? const Color(0xFF10B981)
-        : _phoneOk == false
-            ? _kRed
-            : Colors.grey.shade200;
-    final fillColor = _phoneOk == true
-        ? const Color(0xFFF0FDF4)
-        : _phoneOk == false
-            ? const Color(0xFFFFF5F5)
-            : const Color(0xFFFAFAFF);
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      decoration: BoxDecoration(
-        color: fillColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: borderColor, width: 1.2),
-      ),
-      child: Row(
-        children: [
-          // Country code button
-          GestureDetector(
-            onTap: _pickCountry,
+  Widget _buildPulseDot({
+    required double size,
+    required Color color,
+    double? top,
+    double? bottom,
+    double? start,
+    double? end,
+    double delay = 0,
+  }) {
+    return AnimatedBuilder(
+      animation: _pulseCtrl,
+      builder: (_, __) {
+        final t = (_pulseCtrl.value + delay) % 1.0;
+        final scale = 1 + t * 0.4;
+        final opacity = (1 - t).clamp(0.3, 0.8);
+        return PositionedDirectional(
+          top: top,
+          bottom: bottom,
+          start: start,
+          end: end,
+          child: Transform.scale(
+            scale: scale,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+              width: size,
+              height: size,
               decoration: BoxDecoration(
-                border: Border(
-                  right: BorderSide(color: Colors.grey.shade200),
-                ),
+                shape: BoxShape.circle,
+                color: color.withValues(alpha: opacity),
               ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildLanguageButton(AppLocalizations l10n) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Material(
+          key: _langBtnKey,
+          color: Colors.white.withValues(alpha: 0.14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(
+              color: Colors.white.withValues(alpha: 0.22),
+              width: 0.5,
+            ),
+          ),
+          child: InkWell(
+            onTap: _toggleLangOverlay,
+            borderRadius: BorderRadius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(_country.flag, style: const TextStyle(fontSize: 20)),
+                  const Icon(Icons.language_rounded,
+                      color: Colors.white, size: 13),
                   const SizedBox(width: 6),
                   Text(
-                    _country.dialCode,
+                    _currentLangLabel(l10n),
                     style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF1E1B4B),
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                   const SizedBox(width: 4),
-                  Icon(Icons.arrow_drop_down, size: 18, color: Colors.grey[500]),
+                  Text(
+                    _currentFlag(),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: Colors.white.withValues(alpha: 0.85),
+                    size: 14,
+                  ),
                 ],
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
 
-          // Phone number input
-          Expanded(
-            child: TextField(
-              controller: _phoneCtrl,
-              keyboardType: TextInputType.phone,
-              textInputAction: TextInputAction.done,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              textAlign: TextAlign.start,
-              onChanged: (v) => setState(() => _phoneOk = _validate(v)),
-              onSubmitted: (_) => _sendOtp(),
-              decoration: InputDecoration(
-                hintText: 'מספר טלפון',
-                hintStyle: TextStyle(color: Colors.grey[400], fontSize: 15),
-                border: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-                suffixIcon: _phoneOk == true
-                    ? const Icon(Icons.check_circle_rounded,
-                        color: Color(0xFF10B981), size: 20)
-                    : null,
+  // ─────────────────────────────────────────────────────────────────────────
+  // 2. FORM SECTION — Social buttons + phone + CTA + terms
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildForm(AppLocalizations l10n) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (!_isIOSPwa) ...[
+            _buildStagger(
+              delay: 0.22,
+              child: _buildSocialButton(
+                label: l10n.phoneLoginContinueGoogle,
+                icon: _buildGoogleIcon(),
+                onTap: _loginGoogle,
+                dark: false,
               ),
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w500),
             ),
+            const SizedBox(height: 9),
+            _buildStagger(
+              delay: 0.26,
+              child: _buildSocialButton(
+                label: l10n.phoneLoginContinueApple,
+                icon: const Icon(Icons.apple, size: 20, color: Color(0xFF1C1C28)),
+                onTap: _loginApple,
+                dark: false,
+              ),
+            ),
+            const SizedBox(height: 16),
+            _buildStagger(
+              delay: 0.30,
+              child: _buildDivider(l10n),
+            ),
+            const SizedBox(height: 16),
+          ],
+          _buildStagger(
+            delay: 0.34,
+            child: _buildPhoneField(l10n),
+          ),
+          const SizedBox(height: 14),
+          _buildStagger(
+            delay: 0.38,
+            child: _buildCTAButton(l10n),
+          ),
+          const SizedBox(height: 14),
+          _buildStagger(
+            delay: 0.44,
+            child: _buildTermsText(l10n),
           ),
         ],
       ),
     );
   }
 
-  // ── Send button ───────────────────────────────────────────────────────────────
-  Widget _buildSendButton() {
-    if (_isLoading) {
-      return const Center(
-        child: SizedBox(
-          width: 40, height: 40,
-          child: CircularProgressIndicator(strokeWidth: 3, color: _kPurple),
-        ),
-      );
-    }
-    return Container(
-      height: 56,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [_kPurpleDark, _kPurple, _kPurpleLight],
-          begin: Alignment.centerRight,
-          end: Alignment.centerLeft,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: _kPurple.withValues(alpha: 0.35),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: ElevatedButton.icon(
-        onPressed: _sendOtp,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.transparent,
-          shadowColor: Colors.transparent,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        ),
-        icon: const Icon(Icons.send_rounded, color: Colors.white, size: 20),
-        label: const Text(
-          'שלח קוד אימות',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 17,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ── Hero (identical purple gradient from login_screen) ────────────────────────
-  Widget _buildHero() {
-    return Container(
-      height: 280,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-          colors: [_kPurpleDark, _kPurple, _kPurpleLight],
-        ),
-      ),
-      child: Stack(
-        children: [
-          Positioned(top: -50, left: -50,
-            child: Container(width: 180, height: 180,
-              decoration: BoxDecoration(shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.06)))),
-          Positioned(bottom: 20, right: -20,
-            child: Container(width: 130, height: 130,
-              decoration: BoxDecoration(shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.07)))),
-          Padding(
-            padding: EdgeInsets.only(
-              top: MediaQuery.of(context).padding.top + 32,
-              right: 28, left: 28,
-            ),
-            child: Column(
-              children: [
-                StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                  stream: FirebaseFirestore.instance
-                      .collection('system_settings').doc('global').snapshots(),
-                  builder: (context, snap) {
-                    final size = ((snap.data?.data() ?? {})['authLogoSize'] as num? ?? 100).toDouble();
-                    return AnySkillBrandIcon(size: size);
-                  },
-                ),
-                const SizedBox(height: 8),
-                const Text('AnySkill',
-                  style: TextStyle(color: Colors.white, fontSize: 28,
-                      fontWeight: FontWeight.w900, letterSpacing: 0.5)),
-                const SizedBox(height: 4),
-                Text('כניסה מהירה עם מספר טלפון',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.85),
-                      fontSize: 13, fontWeight: FontWeight.w500)),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _chip(Icons.lock_outline_rounded, 'מאובטח'),
-                    const SizedBox(width: 12),
-                    _chip(Icons.bolt_rounded, 'מהיר'),
-                    const SizedBox(width: 12),
-                    _chip(Icons.verified_rounded, 'אמין'),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          Positioned(
-            bottom: 0, left: 0, right: 0,
-            child: CustomPaint(
-              size: const Size(double.infinity, 32),
-              painter: _WavePainter(color: const Color(0xFFF5F5FF)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _chip(IconData icon, String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.25), width: 0.8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: Colors.white, size: 14),
-          const SizedBox(width: 4),
-          Text(label, style: const TextStyle(color: Colors.white, fontSize: 12,
-              fontWeight: FontWeight.w500)),
-        ],
-      ),
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Social sign-in — Google + Apple (on the landing page for 1-tap access)
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  Widget _buildSocialBtn({
+  // ── Social button ────────────────────────────────────────────────────────
+  Widget _buildSocialButton({
     required String label,
     required Widget icon,
     required VoidCallback onTap,
     bool dark = false,
   }) {
-    // Uses Listener (onPointerUp) instead of GestureDetector for iOS PWA.
-    // iOS standalone mode has a 300ms delay and sometimes swallows onTap.
-    // Listener fires at the pointer level before gesture disambiguation.
+    // Listener (onPointerUp) matches the iOS PWA-safe pattern from the
+    // original implementation — avoids the 300ms delay + swallowed taps.
     return Listener(
       behavior: HitTestBehavior.opaque,
-      onPointerUp: _isLoading ? null : (_) {
-        debugPrint('[Login] Social button "$label" tapped (isLoading=$_isLoading)');
-        onTap();
-      },
+      onPointerUp: _isLoading ? null : (_) => onTap(),
       child: Container(
         height: 48,
         decoration: BoxDecoration(
-          color: dark ? Colors.black87 : Colors.white,
+          color: Colors.white,
           borderRadius: BorderRadius.circular(12),
-          border: dark ? null : Border.all(color: Colors.grey.shade300),
+          border: Border.all(color: const Color(0xFFE5E5EC), width: 0.5),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: dark ? 0.18 : 0.05),
+              color: Colors.black.withValues(alpha: 0.04),
               blurRadius: 8,
               offset: const Offset(0, 2),
             ),
@@ -574,11 +723,12 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             icon,
-            const SizedBox(width: 8),
-            Text(label,
-              style: TextStyle(
-                color: dark ? Colors.white : Colors.black87,
-                fontWeight: FontWeight.w600,
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF1C1C28),
+                fontWeight: FontWeight.w500,
                 fontSize: 14,
               ),
             ),
@@ -590,29 +740,399 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
 
   Widget _buildGoogleIcon() {
     return SizedBox(
-      width: 20, height: 20,
+      width: 18,
+      height: 18,
       child: CustomPaint(painter: _GoogleLogoPainter()),
     );
   }
 
-  // ── Google Sign-In ──────────────────────────────────────────────────────
+  // ── Divider "or with phone" ──────────────────────────────────────────────
+  Widget _buildDivider(AppLocalizations l10n) {
+    return Row(
+      children: [
+        const Expanded(
+          child: Divider(color: Color(0xFFE5E5EC), height: 1),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text(
+            l10n.phoneLoginOrPhone,
+            style: const TextStyle(
+              color: Color(0xFF9A9AA8),
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        const Expanded(
+          child: Divider(color: Color(0xFFE5E5EC), height: 1),
+        ),
+      ],
+    );
+  }
+
+  // ── Phone field ──────────────────────────────────────────────────────────
+  Widget _buildPhoneField(AppLocalizations l10n) {
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: _phoneFocused ? _kPrimary : const Color(0xFFE5E5EC),
+            width: _phoneFocused ? 1.5 : 0.5,
+          ),
+          boxShadow: _phoneFocused
+              ? [
+                  BoxShadow(
+                    color: _kPrimary.withValues(alpha: 0.12),
+                    blurRadius: 0,
+                    spreadRadius: 4,
+                  ),
+                ]
+              : null,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Row(
+            children: [
+              // Country prefix (left in LTR)
+              InkWell(
+                onTap: _pickCountry,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 14),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF7F7FB),
+                    border: Border(
+                      right: BorderSide(color: Color(0xFFE5E5EC), width: 0.5),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_country.flag,
+                          style: const TextStyle(fontSize: 16)),
+                      const SizedBox(width: 6),
+                      Text(
+                        _country.dialCode,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xFF1C1C28),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // Phone input
+              Expanded(
+                child: TextField(
+                  controller: _phoneCtrl,
+                  focusNode: _phoneFocus,
+                  keyboardType: TextInputType.phone,
+                  textInputAction: TextInputAction.done,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  textAlign: TextAlign.start,
+                  onChanged: (v) => setState(() => _phoneOk = _validate(v)),
+                  onSubmitted: (_) => _sendOtp(),
+                  style: const TextStyle(
+                    fontSize: 15,
+                    color: Color(0xFF1C1C28),
+                  ),
+                  decoration: InputDecoration(
+                    hintText: l10n.phoneLoginPhoneHint,
+                    hintStyle: const TextStyle(
+                        color: Color(0xFF9A9AA8), fontSize: 14),
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 14),
+                    suffixIcon: _phoneOk == true
+                        ? const Padding(
+                            padding: EdgeInsets.only(left: 10),
+                            child: Icon(Icons.check_circle_rounded,
+                                color: Brand.success, size: 18),
+                          )
+                        : null,
+                    suffixIconConstraints: const BoxConstraints(minWidth: 0),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Primary CTA — gradient + pulse + shimmer ─────────────────────────────
+  Widget _buildCTAButton(AppLocalizations l10n) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([_ctaPulseCtrl, _shimmerCtrl]),
+      builder: (_, __) {
+        final pulseT = _ctaPulseCtrl.value;
+        // Pulse interpolates between "resting" shadow and "expanded" shadow
+        final blur = 20 + pulseT * 12;
+        final spread = pulseT * 6;
+        final pulseAlpha = (0.42 * (1 - pulseT)).clamp(0.0, 0.42);
+
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: _kPrimary.withValues(alpha: 0.35),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
+              ),
+              BoxShadow(
+                color: _kPrimary.withValues(alpha: pulseAlpha),
+                blurRadius: blur,
+                spreadRadius: spread,
+              ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: _isLoading ? null : _sendOtp,
+              child: Container(
+                height: 50,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [_kPrimary, _kPrimaryDark],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // Shimmer overlay
+                      if (!_isLoading)
+                        Positioned.fill(
+                          child: Transform.translate(
+                            offset: Offset(
+                              (_shimmerCtrl.value * 400) - 200,
+                              0,
+                            ),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.centerLeft,
+                                  end: Alignment.centerRight,
+                                  colors: [
+                                    Colors.white.withValues(alpha: 0),
+                                    Colors.white.withValues(alpha: 0.16),
+                                    Colors.white.withValues(alpha: 0),
+                                  ],
+                                  stops: const [0.0, 0.5, 1.0],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      // Content
+                      if (_isLoading)
+                        const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2.2,
+                          ),
+                        )
+                      else
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              l10n.phoneLoginCtaLogin,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            const Icon(
+                              Icons.arrow_back_rounded,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ── Terms text with tappable links ───────────────────────────────────────
+  Widget _buildTermsText(AppLocalizations l10n) {
+    return Text.rich(
+      TextSpan(
+        style: const TextStyle(
+          fontSize: 10,
+          color: Color(0xFF9A9AA8),
+          height: 1.6,
+          fontWeight: FontWeight.w400,
+        ),
+        children: [
+          TextSpan(text: '${l10n.phoneLoginTermsPrefix} '),
+          _linkSpan(l10n.phoneLoginTermsOfUse, _openTerms),
+          TextSpan(text: ' ${l10n.phoneLoginAnd} '),
+          _linkSpan(l10n.phoneLoginPrivacyPolicy, _openTerms),
+        ],
+      ),
+      textAlign: TextAlign.center,
+    );
+  }
+
+  InlineSpan _linkSpan(String text, VoidCallback onTap) {
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.baseline,
+      baseline: TextBaseline.alphabetic,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: 10,
+            color: _kPrimary,
+            fontWeight: FontWeight.w500,
+            height: 1.6,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openTerms() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const TermsOfServiceScreen(showAcceptButton: false),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 3. BOTTOM STRIP — "Offering service? Earn with AnySkill →"
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildBottomStrip(AppLocalizations l10n) {
+    return _buildStagger(
+      delay: 0.48,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const ProviderRegistrationWizardScreen(),
+              ),
+            );
+          },
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFFFAFAFF), Color(0xFFF0EEF9)],
+              ),
+              border: const Border(
+                top: BorderSide(color: Color(0xFFEEEDFE), width: 0.5),
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.badge_outlined, size: 14, color: _kPrimary),
+                const SizedBox(width: 6),
+                Text(
+                  l10n.phoneLoginOfferingService,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF5A5A68),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  l10n.phoneLoginBecomeProvider,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: _kPrimary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Stagger animation helper — fadeInUp with delay
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildStagger({required double delay, required Widget child}) {
+    // Each item: 700ms slide-in, starting at delay*totalDuration
+    final begin = delay.clamp(0.0, 1.0);
+    final end = (delay + 0.54).clamp(0.0, 1.0);
+    final anim = CurvedAnimation(
+      parent: _staggerCtrl,
+      curve: Interval(begin, end, curve: Curves.easeOutCubic),
+    );
+    return AnimatedBuilder(
+      animation: anim,
+      builder: (_, __) {
+        return Opacity(
+          opacity: anim.value,
+          child: Transform.translate(
+            offset: Offset(0, (1 - anim.value) * 14),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Social sign-in — Google + Apple (preserved from original)
+  // ═══════════════════════════════════════════════════════════════════════════
 
   Future<void> _loginGoogle() async {
-    if (_isLoading) return; // prevent double-tap
+    if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
-      // ── UNIFIED PATH: GoogleSignIn plugin for BOTH web and native ──
-      // On web: uses Google Identity Services (GIS) JS SDK — reads
-      //         client ID from <meta name="google-signin-client_id"> in index.html.
-      //         NO signInWithPopup, NO signInWithRedirect, NO /__/auth/handler.
-      // On native: uses platform OAuth (Android/iOS native SDK).
       // ignore: avoid_print
       print('🔍 [Google] Starting GoogleSignIn flow (unified)...');
 
       final googleSignIn = kIsWeb
           ? GoogleSignIn(
-              // Explicit client ID for web — matches Firebase Console config.
-              // Also set in index.html meta tag, but explicit here is safer.
               clientId: '281981409319-nck912ajndlmnagiiqm32mdahferap04.apps.googleusercontent.com',
               scopes: ['email', 'profile'],
             )
@@ -642,16 +1162,11 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
       // ignore: avoid_print
       print('✅ [Google] Firebase signIn SUCCESS: uid=${cred.user?.uid}');
 
-      // AuthWrapper already rendered OnboardingGate via authStateChanges
-      // stream — do NOT Navigator.push here. Let the profile create happen
-      // in the background without blocking the UI. Any failure in
-      // _createProfileIfNew is non-fatal: OnboardingGate's own fallbacks
-      // handle missing profiles via cached role + HomeScreen routing.
       unawaited(_createProfileIfNew(cred));
     } on FirebaseAuthException catch (e) {
       // ignore: avoid_print
       print('🔴 [Google] FirebaseAuthException: code=${e.code}, message=${e.message}');
-      if (mounted) _snack('שגיאת התחברות: ${e.code}', _kRed);
+      if (mounted) _snack(AppLocalizations.of(context).phoneLoginError(e.code), _kRed);
     } catch (e) {
       // ignore: avoid_print
       print('🔴 [Google] Error: ${e.runtimeType}: $e');
@@ -665,18 +1180,11 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     }
   }
 
-  // ── Apple Sign-In ───────────────────────────────────────────────────────
-
   Future<void> _loginApple() async {
-    if (_isLoading) return; // prevent double-tap
+    if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
       if (kIsWeb) {
-        // ── WEB: Use Firebase signInWithPopup with OAuthProvider ──
-        // sign_in_with_apple package has type-mismatch bugs on Flutter web
-        // (minified:Pc is not a subtype of minified:aL). signInWithPopup
-        // uses Firebase's /__/auth/handler which handles Apple's OAuth
-        // flow correctly without any JS SDK type issues.
         // ignore: avoid_print
         print('🔍 [Apple] Web: calling signInWithPopup(apple.com)...');
         // ignore: avoid_print
@@ -690,12 +1198,10 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
         // ignore: avoid_print
         print('✅ [Apple] signInWithPopup SUCCESS: uid=${cred.user?.uid}');
 
-        // Fire-and-forget profile create — AuthWrapper handles routing.
         unawaited(_createProfileIfNew(cred));
         return;
       }
 
-      // ── NATIVE iOS: sign_in_with_apple package ──
       // ignore: avoid_print
       print('🔍 [Apple] Native: starting Apple Sign-In...');
 
@@ -723,7 +1229,6 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
       // ignore: avoid_print
       print('✅ [Apple] Firebase signIn SUCCESS: uid=${cred.user?.uid}');
 
-      // Apple only provides name on FIRST sign-in
       final user = cred.user!;
       String displayName = user.displayName ?? '';
       if (displayName.isEmpty) {
@@ -735,12 +1240,11 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
         await user.updateDisplayName(displayName);
       }
 
-      // Fire-and-forget profile create — AuthWrapper handles routing.
       unawaited(_createProfileIfNew(cred));
     } on FirebaseAuthException catch (e) {
       // ignore: avoid_print
       print('🔴 [Apple] FirebaseAuthException: code=${e.code}, message=${e.message}');
-      if (mounted) _snack('שגיאת התחברות: ${e.code}', _kRed);
+      if (mounted) _snack(AppLocalizations.of(context).phoneLoginError(e.code), _kRed);
     } catch (e) {
       // ignore: avoid_print
       print('🔴 [Apple] Error: ${e.runtimeType}: $e');
@@ -782,26 +1286,15 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     final docRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
 
     // v12.8.0 — CRITICAL: do NOT overwrite an existing profile on re-login.
-    // The old behavior was `set(merge:true)` with a full default payload on
-    // EVERY sign-in, which reset profileImage, rating, reviewsCount, gallery,
-    // aboutMe, isProvider, onboardingComplete, etc. every time a user tapped
-    // Google/Apple. We now:
-    //   1. Read the doc once.
-    //   2. If it exists, do nothing (existing profile is the source of truth).
-    //   3. If it doesn't exist, write the initial profile (first-time signup).
     for (int attempt = 1; attempt <= 3; attempt++) {
       try {
         // ignore: avoid_print
         print('📝 [Profile] Attempt $attempt — checking existing doc');
-        // 5s cap — WebChannel can hang forever on web otherwise (Law 15).
         final existing =
             await docRef.get().timeout(const Duration(seconds: 5));
         if (existing.exists) {
           // ignore: avoid_print
           print('✅ [Profile] Existing doc preserved as-is (no overwrite).');
-          // Still mirror contact fields into private/identity (idempotent)
-          // so the dual-write invariant from the v12.2 migration holds.
-          // Fire-and-forget with internal try/catch — MUST NOT block login.
           unawaited(PrivateDataService.writeContactData(
             user.uid,
             phone: user.phoneNumber ?? '',
@@ -809,9 +1302,6 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           ));
           return true;
         }
-        // First-time signup — write the full initial profile.
-        // NEVER include server-only fields (xp, balance, isAdmin, isVerified,
-        // isPromoted, isVerifiedProvider) — doesNotTouch() blocks them.
         // ignore: avoid_print
         print('📝 [Profile] First-time doc create for ${user.uid}');
         await docRef.set({
@@ -835,7 +1325,6 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           'tourComplete':   false,
           'createdAt':      FieldValue.serverTimestamp(),
         }).timeout(const Duration(seconds: 5));
-        // Mirror contact fields — fire-and-forget (must not block login).
         unawaited(PrivateDataService.writeContactData(
           user.uid,
           phone: user.phoneNumber ?? '',
@@ -853,12 +1342,9 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
         } else {
           // ignore: avoid_print
           print('🔴 [Profile] All attempts failed — user will see onboarding');
-          // Don't throw — let OnboardingGate handle missing profile
         }
       }
     }
-    // All attempts failed but no conflict — caller can still proceed and let
-    // OnboardingGate handle the missing profile.
     return true;
   }
 
@@ -867,29 +1353,149 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     final random = math.Random.secure();
     return List.generate(length, (_) => charset[random.nextInt(charset.length)]).join();
   }
-
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Google logo painter (matches login_screen.dart)
+// Language dropdown (shown via Overlay from language button)
+// ─────────────────────────────────────────────────────────────────────────────
+class _LanguageDropdown extends StatefulWidget {
+  const _LanguageDropdown({required this.onPick});
+  final ValueChanged<Locale> onPick;
+
+  @override
+  State<_LanguageDropdown> createState() => _LanguageDropdownState();
+}
+
+class _LanguageDropdownState extends State<_LanguageDropdown>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    )..forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final current = LocaleProvider.instance.locale;
+    final items = <_LangItem>[
+      _LangItem('he', '🇮🇱', l10n.languageHe, const Locale('he')),
+      _LangItem('en', '🇺🇸', l10n.languageEn, const Locale('en')),
+      _LangItem('ar', '🇸🇦', l10n.languageAr, const Locale('ar')),
+      _LangItem('es', '🇪🇸', l10n.languageEs, const Locale('es')),
+    ];
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, __) {
+        final t = Curves.easeOutCubic.transform(_ctrl.value);
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(0, (1 - t) * -6),
+            child: Transform.scale(
+              scale: 0.96 + t * 0.04,
+              alignment: AlignmentDirectional.topEnd,
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  constraints: const BoxConstraints(minWidth: 160),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.15),
+                        blurRadius: 30,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: items.map((item) {
+                        final selected =
+                            current.languageCode == item.code;
+                        return InkWell(
+                          onTap: () => widget.onPick(item.locale),
+                          child: Container(
+                            color: selected
+                                ? const Color(0xFFEEEDFE)
+                                : Colors.transparent,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 10),
+                            child: Row(
+                              children: [
+                                Text(item.flag,
+                                    style: const TextStyle(fontSize: 14)),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    item.label,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: selected
+                                          ? FontWeight.w500
+                                          : FontWeight.w400,
+                                      color: const Color(0xFF1C1C28),
+                                    ),
+                                  ),
+                                ),
+                                if (selected)
+                                  Icon(Icons.check_rounded,
+                                      color: _kPrimary, size: 14),
+                              ],
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _LangItem {
+  final String code;
+  final String flag;
+  final String label;
+  final Locale locale;
+  _LangItem(this.code, this.flag, this.label, this.locale);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Google logo painter
 // ─────────────────────────────────────────────────────────────────────────────
 class _GoogleLogoPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final double s = size.width;
-    // Blue arc (top-right)
     canvas.drawArc(Rect.fromLTWH(0, 0, s, s), -0.5, 1.8,
         true, Paint()..color = const Color(0xFF4285F4));
-    // Green arc (bottom-right)
     canvas.drawArc(Rect.fromLTWH(0, 0, s, s), 1.3, 1.2,
         true, Paint()..color = const Color(0xFF34A853));
-    // Yellow arc (bottom-left)
     canvas.drawArc(Rect.fromLTWH(0, 0, s, s), 2.5, 1.0,
         true, Paint()..color = const Color(0xFFFBBC05));
-    // Red arc (top-left)
     canvas.drawArc(Rect.fromLTWH(0, 0, s, s), 3.5, 1.1,
         true, Paint()..color = const Color(0xFFEA4335));
-    // White center
     canvas.drawCircle(Offset(s / 2, s / 2), s * 0.3,
         Paint()..color = Colors.white);
   }
@@ -921,8 +1527,8 @@ class _CountryPickerSheet extends StatelessWidget {
               decoration: BoxDecoration(color: Colors.grey[300],
                   borderRadius: BorderRadius.circular(10))),
           const SizedBox(height: 16),
-          const Text('בחר מדינה',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold,
+          Text(AppLocalizations.of(context).phoneLoginSelectCountry,
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold,
                   color: Color(0xFF1E1B4B))),
           const SizedBox(height: 8),
           const Divider(height: 1),
@@ -940,15 +1546,15 @@ class _CountryPickerSheet extends StatelessWidget {
                   title: Text(c.name,
                       style: TextStyle(
                         fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                        color: isSelected ? _kPurple : Colors.black87,
+                        color: isSelected ? Brand.indigo : Colors.black87,
                       )),
                   trailing: Text(c.dialCode,
                       style: TextStyle(
-                        color: isSelected ? _kPurple : Colors.grey[600],
+                        color: isSelected ? Brand.indigo : Colors.grey[600],
                         fontWeight: FontWeight.w600,
                       )),
                   selected: isSelected,
-                  selectedTileColor: _kPurple.withValues(alpha: 0.06),
+                  selectedTileColor: Brand.indigo.withValues(alpha: 0.06),
                   onTap: () {
                     onPicked(c);
                     Navigator.pop(context);
@@ -962,24 +1568,4 @@ class _CountryPickerSheet extends StatelessWidget {
       ),
     );
   }
-}
-
-// ── Wave painter ──────────────────────────────────────────────────────────────
-class _WavePainter extends CustomPainter {
-  const _WavePainter({required this.color});
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final path = Path()
-      ..moveTo(0, size.height)
-      ..quadraticBezierTo(size.width * 0.25, 0, size.width * 0.5, size.height * 0.5)
-      ..quadraticBezierTo(size.width * 0.75, size.height, size.width, 0)
-      ..lineTo(size.width, size.height)
-      ..close();
-    canvas.drawPath(path, Paint()..color = color);
-  }
-
-  @override
-  bool shouldRepaint(_WavePainter old) => old.color != color;
 }

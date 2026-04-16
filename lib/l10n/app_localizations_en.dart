@@ -1933,4 +1933,1439 @@ class AppLocalizationsEn extends AppLocalizations {
   String xpEventsCount(int count) {
     return '$count events';
   }
+
+  @override
+  String get phoneLoginHeader => 'Login / Sign up';
+
+  @override
+  String get phoneLoginSubtitleSimple => 'Enter your phone number and we\'ll send a verification code';
+
+  @override
+  String get phoneLoginSubtitleSocial => 'Sign in with Google, Apple or phone number';
+
+  @override
+  String get phoneLoginOrDivider => 'or';
+
+  @override
+  String get phoneLoginPhoneHint => 'Phone number';
+
+  @override
+  String get phoneLoginSendCode => 'Send verification code';
+
+  @override
+  String get phoneLoginHeroSubtitle => 'Quick sign-in with your phone';
+
+  @override
+  String get phoneLoginChipSecure => 'Secure';
+
+  @override
+  String get phoneLoginChipFast => 'Fast';
+
+  @override
+  String get phoneLoginChipReliable => 'Reliable';
+
+  @override
+  String get phoneLoginSelectCountry => 'Select country';
+
+  @override
+  String get otpEnter6Digits => 'Enter the 6 digits';
+
+  @override
+  String get otpVerifyError => 'Verification error. Please try again.';
+
+  @override
+  String get otpErrorInvalidCode => 'Wrong code. Please try again.';
+
+  @override
+  String get otpErrorSessionExpired => 'Code expired. Request a new one.';
+
+  @override
+  String get otpErrorTooManyRequests => 'Too many attempts. Try later.';
+
+  @override
+  String otpErrorPrefix(String code) {
+    return 'Error: $code';
+  }
+
+  @override
+  String get otpTitle => 'Enter verification code';
+
+  @override
+  String otpSubtitle(String phone) {
+    return 'We sent an SMS code to $phone';
+  }
+
+  @override
+  String get otpAutoFilled => 'Auto-filled';
+
+  @override
+  String get otpResendIn => 'Resend in ';
+
+  @override
+  String get otpResendNow => 'Resend code';
+
+  @override
+  String get otpVerifyButton => 'Verify & continue';
+
+  @override
+  String get otpExistingAccountTitle => 'Existing account found';
+
+  @override
+  String get otpExistingAccountBody => 'This phone number already has an account created via email/password.\n\nLinking it to phone login requires a one-time admin action.\n\nPlease contact support and we\'ll link the account for you.';
+
+  @override
+  String get otpUnderstood => 'Got it';
+
+  @override
+  String otpCreateProfileError(String error) {
+    return 'Error creating profile: $error';
+  }
+
+  @override
+  String get otpWelcomeTitle => 'Welcome to AnySkill! 👋';
+
+  @override
+  String get otpWelcomeSubtitle => 'Choose how you want to use the app';
+
+  @override
+  String get otpTermsPrefix => 'I confirm I have read and agree to the ';
+
+  @override
+  String get otpTermsOfService => 'Terms of Service';
+
+  @override
+  String get otpPrivacyPolicy => 'Privacy Policy';
+
+  @override
+  String get otpRoleCustomer => 'Customer';
+
+  @override
+  String get otpRoleCustomerDesc => 'Looking for professional services\nand booking providers';
+
+  @override
+  String get otpRoleProvider => 'Service provider';
+
+  @override
+  String get otpRoleProviderDesc => 'Offering professional services\nand earning through AnySkill';
+
+  @override
+  String get otpRoleProviderBadge => 'Awaiting admin approval';
+
+  @override
+  String get onbValEnterName => 'Please enter your full name';
+
+  @override
+  String get onbValEnterPhone => 'Please enter your phone number';
+
+  @override
+  String get onbValEnterEmail => 'Please enter your email';
+
+  @override
+  String get onbValUploadProfile => 'Please upload a profile photo';
+
+  @override
+  String get onbValChooseBusiness => 'Please select business type';
+
+  @override
+  String get onbValEnterId => 'Please enter ID / Tax number';
+
+  @override
+  String get onbValUploadId => 'Please upload an ID or passport photo';
+
+  @override
+  String get onbValChooseCategory => 'Please choose a professional category';
+
+  @override
+  String get onbValExpertise => 'Please describe your area of expertise';
+
+  @override
+  String get onbValAcceptTerms => 'Please read and accept the terms';
+
+  @override
+  String onbSaveError(String error) {
+    return 'Error saving: $error';
+  }
+
+  @override
+  String onbUploadError(String error) {
+    return 'Upload error: $error';
+  }
+
+  @override
+  String onbCameraError(String error) {
+    return 'Camera error: $error';
+  }
+
+  @override
+  String get onbToastProvider => 'Welcome to AnySkill\'s pro team! 🚀 Your documents are in review. You\'ll get notified once approved.';
+
+  @override
+  String get onbToastCustomer => 'Welcome to AnySkill! 🌟 Need help with anything? You\'re in the right place. Thousands of pros are ready for you.';
+
+  @override
+  String get onbStepRole => 'Choose role';
+
+  @override
+  String get onbStepBusiness => 'Business details';
+
+  @override
+  String get onbStepService => 'Service area';
+
+  @override
+  String get onbStepContact => 'Contact info';
+
+  @override
+  String get onbStepProfile => 'Your profile';
+
+  @override
+  String get onbProgressComplete => 'All set!';
+
+  @override
+  String get onbProgressIncomplete => 'Complete your details';
+
+  @override
+  String onbGreeting(String name) {
+    return 'Hi $name,';
+  }
+
+  @override
+  String get onbGreetingFallback => 'Hi,';
+
+  @override
+  String get onbIntroLine => 'Just a moment. Tell us a bit about yourself.';
+
+  @override
+  String get onbSocialProof => 'Over 250 pros joined this month';
+
+  @override
+  String get onbRoleCustomerTitle => 'I\'m looking for a service';
+
+  @override
+  String get onbRoleCustomerSubtitle => 'I want to find a professional';
+
+  @override
+  String get onbRoleProviderTitle => 'I want to offer a service';
+
+  @override
+  String get onbRoleProviderSubtitle => 'I\'d like to work through AnySkill';
+
+  @override
+  String get onbBusinessTypeHint => 'Business type';
+
+  @override
+  String get onbUploadBusinessDocLabel => 'Upload business license (exempt/authorized/company)';
+
+  @override
+  String get onbIdLabel => 'ID / Tax number';
+
+  @override
+  String get onbIdHint => 'Enter ID or tax number';
+
+  @override
+  String get onbUploadIdLabel => 'Upload ID or passport photo';
+
+  @override
+  String get onbSelfieTitle => 'Selfie for identity verification';
+
+  @override
+  String get onbSelfieSuccess => 'Photo captured ✓';
+
+  @override
+  String get onbSelfiePrompt => 'Take a live photo of your face';
+
+  @override
+  String get onbSelfieRetake => 'Retake';
+
+  @override
+  String get onbSelfieTake => 'Take selfie';
+
+  @override
+  String get onbCategoryOther => 'Other / not found';
+
+  @override
+  String get onbCategoryHint => 'Choose main category';
+
+  @override
+  String get onbSubCategoryHint => 'Choose sub-category';
+
+  @override
+  String get onbExpertiseLabel => 'Describe your expertise';
+
+  @override
+  String get onbExpertiseHint => 'Up to 30 characters';
+
+  @override
+  String get onbOtherCategoryNote => 'The AnySkill team will review and assign you to the right category';
+
+  @override
+  String get onbFullNameLabel => 'Full name *';
+
+  @override
+  String get onbFullNameHint => 'The name shown on your profile';
+
+  @override
+  String get onbPhoneLabel => 'Phone number *';
+
+  @override
+  String get onbEmailLabel => 'Email *';
+
+  @override
+  String get onbReplacePhoto => 'Tap to replace';
+
+  @override
+  String get onbAddPhoto => 'Add profile photo';
+
+  @override
+  String get onbAboutLabel => 'Tell us about yourself';
+
+  @override
+  String get onbAboutHintProvider => 'Experience, skills, specialties...';
+
+  @override
+  String get onbAboutHintCustomer => 'What would you like us to know?';
+
+  @override
+  String get onbTermsTitle => 'Read the terms of service and privacy policy';
+
+  @override
+  String get onbTermsRead => 'Read';
+
+  @override
+  String get onbTermsAccept => 'I confirm I\'ve read and agree to AnySkill\'s Terms of Service and Privacy Policy';
+
+  @override
+  String get onbFinish => 'Complete registration';
+
+  @override
+  String get onbRequiredField => 'Required *';
+
+  @override
+  String get onbNotSpecified => 'Not specified';
+
+  @override
+  String get onbUserTypeProvider => 'Service provider';
+
+  @override
+  String get onbUserTypeCustomer => 'Customer';
+
+  @override
+  String get onbBizExempt => 'Exempt dealer';
+
+  @override
+  String get onbBizAuthorized => 'Authorized dealer';
+
+  @override
+  String get onbBizCompany => 'Limited company';
+
+  @override
+  String get onbBizExternal => 'Employed, invoicing through external company';
+
+  @override
+  String get profNoGooglePhoto => 'No profile photo found on Google account';
+
+  @override
+  String get profPhotoUpdatedFromGoogle => 'Profile photo updated from Google';
+
+  @override
+  String get profInvoiceEmailOn => 'Invoices will be sent to your email';
+
+  @override
+  String get profInvoiceEmailOff => 'Invoices will no longer be emailed to you';
+
+  @override
+  String profSaveError(String error) {
+    return 'Error saving: $error';
+  }
+
+  @override
+  String get profInvoiceEmailTitle => 'Receive email invoices';
+
+  @override
+  String get profInvoiceEmailSubOn => 'You\'ll receive an invoice by email after every transaction';
+
+  @override
+  String get profInvoiceEmailSubOff => 'You won\'t receive email invoices';
+
+  @override
+  String get profSyncGooglePhoto => 'Sync photo from Google';
+
+  @override
+  String get profProviderRole => 'Service Provider';
+
+  @override
+  String get profJobsStat => 'Jobs';
+
+  @override
+  String get profRatingStat => 'Rating';
+
+  @override
+  String get profReviewsStat => 'Reviews';
+
+  @override
+  String get profAngelBadge => 'Community Angel';
+
+  @override
+  String get profPillarBadge => 'Pillar';
+
+  @override
+  String get profStarterBadge => 'Active Volunteer';
+
+  @override
+  String get profWorkGallery => 'Work Gallery';
+
+  @override
+  String get profVipActive => 'VIP Active';
+
+  @override
+  String get profJoinVip => 'Join VIP';
+
+  @override
+  String get profVideoIntro => 'Video Intro';
+
+  @override
+  String get profMyDogs => 'My Dogs';
+
+  @override
+  String get profMyDogsSubtitle => 'One profile → all bookings';
+
+  @override
+  String get profJoinAsProvider => 'Join AnySkill as a service provider';
+
+  @override
+  String get profRequestInReview => 'Your request is being reviewed — we\'ll update you soon';
+
+  @override
+  String get profTermsOfService => 'Terms of Service';
+
+  @override
+  String get profPrivacyPolicy => 'Privacy Policy';
+
+  @override
+  String get profSwitchRole => 'Switch role';
+
+  @override
+  String get profLogout => 'Log out';
+
+  @override
+  String get profDeleteAccount => 'Delete account';
+
+  @override
+  String get profTitle => 'Profile';
+
+  @override
+  String get profCustomerRole => 'Customer';
+
+  @override
+  String get profStatServicesTaken => 'Services taken';
+
+  @override
+  String get profStatReviews => 'Reviews';
+
+  @override
+  String get profStatYears => 'Years on AnySkill';
+
+  @override
+  String get profReceivedService => 'Received service';
+
+  @override
+  String get profFavorites => 'Favorites';
+
+  @override
+  String get profDeleteConfirmBody => 'Are you sure you want to delete your account?\n\nAll data — history, wallet, chats — will be permanently deleted.\n\nThis action is irreversible.';
+
+  @override
+  String get profCancel => 'Cancel';
+
+  @override
+  String get profContinue => 'Continue';
+
+  @override
+  String get profFinalConfirm => 'Final confirmation';
+
+  @override
+  String get profDeleteFinalBody => 'After confirmation, your account will be permanently deleted and cannot be restored.';
+
+  @override
+  String get profDeletePermanent => 'Delete permanently';
+
+  @override
+  String get profReauthNeeded => 'Re-login required';
+
+  @override
+  String get profReauthBody => 'To delete an account, Firebase requires a recent login.\n\nPlease log out, log back in and try again.';
+
+  @override
+  String get profLogoutAndReauth => 'Log out & log in again';
+
+  @override
+  String profDeleteError(String error) {
+    return 'Account deletion error: $error';
+  }
+
+  @override
+  String get profNoWorksYet => 'You haven\'t uploaded work yet.\nTap the pencil to update!';
+
+  @override
+  String get homeTestEmailSent => 'Test email sent! Check your inbox.';
+
+  @override
+  String homeGenericError(String error) {
+    return 'Error: $error';
+  }
+
+  @override
+  String get homeShowAll => 'See all';
+
+  @override
+  String get homeMicroTasks => 'Micro-tasks — earn quickly';
+
+  @override
+  String get homeCommunityTitle => 'Giving from the heart';
+
+  @override
+  String get homeCommunitySlogan => 'One skill, one heart';
+
+  @override
+  String get homeDefaultExpert => 'the expert';
+
+  @override
+  String get homeDefaultReengageMsg => 'Ready to book again?';
+
+  @override
+  String get homeSmartOffer => 'Smart offer';
+
+  @override
+  String get homeBookNow => 'Book now';
+
+  @override
+  String get homeWelcomeTitle => 'Welcome to AnySkill';
+
+  @override
+  String get homeWelcomeSubtitle => 'Find pros in your neighborhood';
+
+  @override
+  String get homeServiceTitle => 'Professional service with one tap';
+
+  @override
+  String get homeServiceSubtitle => 'Repairs • Cleaning • Photography & more';
+
+  @override
+  String get homeBecomeExpertTitle => 'Become an expert today';
+
+  @override
+  String get homeBecomeExpertSubtitle => 'Post your service and start earning';
+
+  @override
+  String notifGenericError(String error) {
+    return 'Error: $error';
+  }
+
+  @override
+  String get notifDefaultClient => 'Customer';
+
+  @override
+  String get notifUrgentJobAvailable => 'Urgent job available!';
+
+  @override
+  String get notifJobTaken => 'Job taken';
+
+  @override
+  String get notifJobExpired => 'Job expired';
+
+  @override
+  String get notifGrabNow => 'Grab now!';
+
+  @override
+  String notifTakenBy(String name) {
+    return 'Taken by $name';
+  }
+
+  @override
+  String get notifCommunityHelpTitle => 'Community help request';
+
+  @override
+  String get notifNotNow => 'Not now';
+
+  @override
+  String get notifWantToHelp => 'I want to help!';
+
+  @override
+  String get notifCantAccept => 'Can\'t accept this request';
+
+  @override
+  String get notifAccepted => '✓ Request accepted! Opening chat with customer';
+
+  @override
+  String get notifLoadError => 'Error loading notifications';
+
+  @override
+  String get notifEmptyNow => 'No notifications right now';
+
+  @override
+  String get chatUnknown => 'Unknown';
+
+  @override
+  String get chatSafetyWarning => 'Please note: for your safety, do not exchange phone numbers or close deals outside the app.';
+
+  @override
+  String get chatNoInternet => 'No internet connection.';
+
+  @override
+  String get chatDefaultCustomer => 'Customer';
+
+  @override
+  String get chatPaymentRequest => 'Payment request';
+
+  @override
+  String get chatAmountLabel => 'Amount';
+
+  @override
+  String get chatServiceDescLabel => 'Service description';
+
+  @override
+  String get chatSend => 'Send';
+
+  @override
+  String get chatQuoteSent => 'Quote sent successfully ✅';
+
+  @override
+  String get chatQuoteError => 'Error sending the quote. Please try again.';
+
+  @override
+  String get chatOfficialQuote => 'Official quote';
+
+  @override
+  String get chatQuoteDescHint => 'Describe the service included in the price...';
+
+  @override
+  String get chatEscrowNote => 'The amount will be held in AnySkill escrow upon customer approval';
+
+  @override
+  String get chatSendQuote => 'Send quote';
+
+  @override
+  String get chatQuoteLabel => 'Quote';
+
+  @override
+  String get chatOnMyWay => 'I\'m on the way! 🚗 Will arrive soon.';
+
+  @override
+  String get chatWorkDone => 'Work done! ✅';
+
+  @override
+  String get expCantBookSelf => 'You can\'t book a service from yourself';
+
+  @override
+  String get expSlotTakenTitle => 'Slot taken';
+
+  @override
+  String get expSlotTakenBody => 'Someone has already booked the expert for that time.\nPlease choose a different date or time.';
+
+  @override
+  String get expUnderstood => 'Got it';
+
+  @override
+  String get expBookingError => 'There was a problem with the booking, please try again.';
+
+  @override
+  String get expDefaultCustomer => 'Customer';
+
+  @override
+  String expDemoBookingMsg(String name) {
+    return 'You booked $name. We\'ll update you when the provider is available.';
+  }
+
+  @override
+  String get expOptionalAddons => 'Optional add-ons';
+
+  @override
+  String get expProviderDayOff => 'The provider doesn\'t work on this day';
+
+  @override
+  String get expAnonymous => 'Anonymous';
+
+  @override
+  String get expRatingProfessional => 'Professionalism';
+
+  @override
+  String get expRatingTiming => 'Punctuality';
+
+  @override
+  String get expRatingCommunication => 'Communication';
+
+  @override
+  String get expSearchReviewsHint => 'Search reviews...';
+
+  @override
+  String get expReviewsTitle => 'Reviews';
+
+  @override
+  String expNoReviewsMatch(String query) {
+    return 'No reviews found for \"$query\"';
+  }
+
+  @override
+  String expShowAllReviews(int count) {
+    return 'Show all $count reviews';
+  }
+
+  @override
+  String get expCommunityVolunteerBadge => 'Community volunteer';
+
+  @override
+  String get expPriceAfterPhotos => 'Guaranteed after photo approval';
+
+  @override
+  String get expDeposit => 'Advance deposit';
+
+  @override
+  String get expNights => 'Nights';
+
+  @override
+  String get expNightsCount => 'Number of nights';
+
+  @override
+  String get expEndDate => 'Stay end date';
+
+  @override
+  String get expSelectDate => 'Please select a date';
+
+  @override
+  String get expMustFillAll => 'Please fill in all required fields above to continue';
+
+  @override
+  String get expBookingReceivedDemo => 'Booking received!';
+
+  @override
+  String get expBookingSuccess => 'Booking completed successfully! 🎉';
+
+  @override
+  String get expBookingDemoBody => 'You booked the service. We\'re checking if the provider is available.\nYou\'ll get notified as soon as there\'s an answer.';
+
+  @override
+  String get expWillNotify => 'We\'ll send you an update soon';
+
+  @override
+  String get expGotIt => 'Got it ✓';
+
+  @override
+  String get expProviderRole => 'Service Provider';
+
+  @override
+  String get expJobsLabel => 'Jobs';
+
+  @override
+  String get expRatingLabel => 'Rating';
+
+  @override
+  String get expReviewsLabel => 'Reviews';
+
+  @override
+  String get expVolunteersLabel => 'Community volunteering';
+
+  @override
+  String get expVideoIntro => 'Intro video';
+
+  @override
+  String get expGallery => 'Work gallery';
+
+  @override
+  String get expVerifiedCertificate => 'Verified certificate';
+
+  @override
+  String get expView => 'View';
+
+  @override
+  String get expCertificateTitle => 'Certificate';
+
+  @override
+  String get expImageLoadError => 'Error loading image';
+
+  @override
+  String get catBadgeAngel => 'Angel';
+
+  @override
+  String get catBadgePillar => 'Pillar';
+
+  @override
+  String get catBadgeVolunteer => 'Volunteer';
+
+  @override
+  String get catDayOffline => 'Not available now';
+
+  @override
+  String get catStartLesson => 'Start lesson';
+
+  @override
+  String get catYourProfile => 'Your profile';
+
+  @override
+  String get catMapView => 'Map view';
+
+  @override
+  String get catListView => 'List view';
+
+  @override
+  String get catInstantBookingSoon => 'Instant booking — coming soon 🎉';
+
+  @override
+  String get catFreeCommunityBadge => 'Community service free of charge — 100% free ❤️';
+
+  @override
+  String get catNeedHelp => 'I need help';
+
+  @override
+  String get catHelpForOther => 'Help for someone else';
+
+  @override
+  String get catRespectTime => 'Please respect volunteers\' time and use this service only for real needs.';
+
+  @override
+  String get catFilterRating => 'Rating';
+
+  @override
+  String get catFilterDistance => 'Distance';
+
+  @override
+  String get catFilterKm => 'km';
+
+  @override
+  String get catFilterMore => 'More';
+
+  @override
+  String get catFilterRatingTitle => 'Filter by rating';
+
+  @override
+  String get catFilterAll => 'All';
+
+  @override
+  String get catFilterApply => 'Apply';
+
+  @override
+  String get catFilterDistanceTitle => 'Filter by distance';
+
+  @override
+  String get catFilterNeedLocation => 'Please enable location to filter by distance';
+
+  @override
+  String get catFilterClear => 'Clear';
+
+  @override
+  String get catMaxDistance => 'Max distance';
+
+  @override
+  String get catNoLimit => 'No limit';
+
+  @override
+  String catUpToKm(int km) {
+    return 'Up to $km km';
+  }
+
+  @override
+  String get catMinRating => 'Min rating';
+
+  @override
+  String get catSupport => 'Support';
+
+  @override
+  String get catFillFields => 'Please fill in category, description and phone number';
+
+  @override
+  String get catRequestSent => 'Request sent! Matching volunteers will be notified.';
+
+  @override
+  String catRequestError(String error) {
+    return 'Error: $error';
+  }
+
+  @override
+  String get catCategory => 'Category';
+
+  @override
+  String get catChooseCategory => 'Choose help area';
+
+  @override
+  String get catRequestDescription => 'Request description';
+
+  @override
+  String get catDescHint => 'Describe what needs to be done...';
+
+  @override
+  String get catLocation => 'Location';
+
+  @override
+  String get catLocationHint => 'City / neighborhood';
+
+  @override
+  String get catContactPhone => 'Contact phone';
+
+  @override
+  String get catBeneficiaryName => 'Beneficiary name';
+
+  @override
+  String get catBeneficiaryHint => 'Name of the person who needs help';
+
+  @override
+  String get catIAmContact => 'I\'m the contact person';
+
+  @override
+  String get catIAmCoordinator => 'I\'ll coordinate with the volunteer';
+
+  @override
+  String get catSendRequest => 'Send help request';
+
+  @override
+  String get catBack => 'Back';
+
+  @override
+  String get catSearchInCategory => 'Search within the category...';
+
+  @override
+  String get catUnder100 => 'Up to ₪100';
+
+  @override
+  String get catAvailableNow => 'Available now';
+
+  @override
+  String get catInstantBook => 'Instant booking';
+
+  @override
+  String get catInNeighborhood => 'In your neighborhood';
+
+  @override
+  String get catAvailableNowUser => 'Available now';
+
+  @override
+  String get catRecommended => 'Recommended';
+
+  @override
+  String get catWhenAvailable => 'When available?';
+
+  @override
+  String get catBookNow => 'Book now';
+
+  @override
+  String editVideoUploadError(String error) {
+    return 'Error uploading video: $error';
+  }
+
+  @override
+  String get editAddSecondIdentity => 'Add a second professional identity';
+
+  @override
+  String get editSecondIdentitySubtitle => 'Earn more — offer another service under the same account';
+
+  @override
+  String get editPrimaryIdentity => 'Primary identity';
+
+  @override
+  String get editSecondaryIdentity => 'Secondary identity';
+
+  @override
+  String get editEditingNow => 'Editing';
+
+  @override
+  String get editPhoneLabel => 'Phone number';
+
+  @override
+  String get editPhoneVerified => 'Phone number verified — cannot be changed';
+
+  @override
+  String get editAppPending => 'Your application is in review 🕐';
+
+  @override
+  String get editAppPendingDesc => 'Our team is reviewing the details and will get back to you soon.';
+
+  @override
+  String get editBecomeProvider => 'Want to work and earn money? Tap here';
+
+  @override
+  String editApplicationMessage(String name) {
+    return 'Application to join as provider: $name';
+  }
+
+  @override
+  String editGenericError(String error) {
+    return 'Error: $error';
+  }
+
+  @override
+  String get editUploadClearPhoto => 'Upload a clear face photo';
+
+  @override
+  String get editClearPhotoDesc => 'Profiles with a clear photo get 3x more inquiries';
+
+  @override
+  String get editAccountTypeChange => 'Account type changes are handled by customer service only';
+
+  @override
+  String get editVolunteerToggleTitle => 'I want to volunteer';
+
+  @override
+  String get editVolunteerToggleDesc => 'Offer your skills for free to people in need';
+
+  @override
+  String get editIdentitiesTitle => 'Your professional identities';
+
+  @override
+  String get editPaymentSettings => 'Payment settings coming soon';
+
+  @override
+  String get editPaymentSettingsDesc => 'We\'re migrating to an Israeli payment provider. Meanwhile, withdrawal requests are handled manually by our team.';
+
+  @override
+  String get editAdvancedSettings => 'Advanced settings';
+
+  @override
+  String get editPricingSettings => 'Pricing settings';
+
+  @override
+  String get editWorkingHours => 'Working hours';
+
+  @override
+  String get editWorkingHoursHint => 'Mark the days and hours you work';
+
+  @override
+  String get editDayOff => 'Day off';
+
+  @override
+  String get editCertificate => 'Certificate';
+
+  @override
+  String get editCertificateDesc => 'Upload a professional certificate (optional)';
+
+  @override
+  String get editReplaceCertificate => 'Replace certificate';
+
+  @override
+  String get editUploadCertificate => 'Upload certificate';
+
+  @override
+  String get editIntroVideo => 'Intro video';
+
+  @override
+  String get editIntroVideoDesc => 'Add a short video (up to 60 seconds) showing yourself and your skills. It\'ll appear on your profile after admin approval.';
+
+  @override
+  String editUploading(int percent) {
+    return 'Uploading... $percent%';
+  }
+
+  @override
+  String get editVideoUploaded => 'Video uploaded — tap to replace';
+
+  @override
+  String get editUploadVideo => 'Upload intro video (up to 60 seconds)';
+
+  @override
+  String get editPendingAdmin => 'Awaiting admin approval — will appear on profile after approval';
+
+  @override
+  String get editManagement => 'Admin';
+
+  @override
+  String get editServiceProvider => 'Service Provider';
+
+  @override
+  String get editCustomer => 'Customer';
+
+  @override
+  String get editAdminModeActive => 'Admin mode active';
+
+  @override
+  String get editProviderModeActive => 'Provider mode active';
+
+  @override
+  String get editCustomerModeActive => 'Customer mode active';
+
+  @override
+  String get editViewMode => 'View mode';
+
+  @override
+  String get editMyDogs => 'My dogs';
+
+  @override
+  String get editShowAll => 'See all';
+
+  @override
+  String get editAddDogProfile => 'Add a dog profile';
+
+  @override
+  String get editNewDog => 'New dog';
+
+  @override
+  String get editUnnamedDog => 'Unnamed';
+
+  @override
+  String get editApplyAsProvider => 'Apply as a provider';
+
+  @override
+  String get editApplyDesc => 'Fill in the details and we\'ll review your application';
+
+  @override
+  String get editServiceFieldLabel => 'Service field *';
+
+  @override
+  String get editChooseField => 'Choose field';
+
+  @override
+  String get editIdNumberLabel => 'ID / Tax number *';
+
+  @override
+  String get editIdNumberHint => 'Enter ID or Tax number';
+
+  @override
+  String get editAboutYouLabel => 'About you *';
+
+  @override
+  String get editAboutYouHint => 'Describe your experience, the services you offer...';
+
+  @override
+  String get editSubmitApplication => 'Submit application';
+
+  @override
+  String get editChooseFieldError => 'Choose a service field';
+
+  @override
+  String get editEnterIdError => 'Enter ID number';
+
+  @override
+  String get editDaySunday => 'Sunday';
+
+  @override
+  String get editDayMonday => 'Monday';
+
+  @override
+  String get editDayTuesday => 'Tuesday';
+
+  @override
+  String get editDayWednesday => 'Wednesday';
+
+  @override
+  String get editDayThursday => 'Thursday';
+
+  @override
+  String get editDayFriday => 'Friday';
+
+  @override
+  String get editDaySaturday => 'Saturday';
+
+  @override
+  String get phoneInvalidNumber => 'Invalid phone number';
+
+  @override
+  String phoneTooManyCodes(int mins) {
+    return 'Too many codes sent. Wait $mins minutes and try again.';
+  }
+
+  @override
+  String get phoneSendCodeError => 'Error sending code. Please try again.';
+
+  @override
+  String get phoneErrorTooManyRequests => 'Too many attempts. Try later.';
+
+  @override
+  String get phoneErrorQuotaExceeded => 'SMS quota exceeded. Try tomorrow.';
+
+  @override
+  String get phoneErrorNoNetwork => 'No internet connection';
+
+  @override
+  String phoneErrorGeneric(String code) {
+    return 'Error: $code';
+  }
+
+  @override
+  String phoneRateLimitInfo(int max, int mins) {
+    return 'Up to $max codes per $mins minutes';
+  }
+
+  @override
+  String phoneLoginError(String code) {
+    return 'Login error: $code';
+  }
+
+  @override
+  String get countryIsrael => 'Israel';
+
+  @override
+  String get otpLegacyUserDialogTitle => 'Existing account';
+
+  @override
+  String get otpLegacyUserDialogBody => 'This phone number has an existing account. Please contact support.';
+
+  @override
+  String get notifMuted => 'Muted';
+
+  @override
+  String get notifMuteAll => 'Mute all';
+
+  @override
+  String get chatTyping => 'Typing...';
+
+  @override
+  String get chatOnline => 'Online';
+
+  @override
+  String get expertPhotoGalleryEmpty => 'No photos yet';
+
+  @override
+  String catMapResultsCount(int count) {
+    return '$count results in your area';
+  }
+
+  @override
+  String catSearchResultsTitle(String category) {
+    return 'Providers in $category';
+  }
+
+  @override
+  String get catAnyExpert => 'All providers';
+
+  @override
+  String get catSortBy => 'Sort by';
+
+  @override
+  String get catSortRelevance => 'Relevance';
+
+  @override
+  String get catSortDistance => 'Distance';
+
+  @override
+  String get catSortRating => 'Rating';
+
+  @override
+  String get catSortPrice => 'Price';
+
+  @override
+  String get catNoResults => 'No results found';
+
+  @override
+  String get catNoResultsDesc => 'Try changing filters or searching in a different area';
+
+  @override
+  String get catUrgent => 'Urgent';
+
+  @override
+  String get catExpressDelivery => 'Express';
+
+  @override
+  String get editVerifiedBadge => 'Verified';
+
+  @override
+  String get editAdminOnlyChange => 'This change is admin-only';
+
+  @override
+  String get editProfileSaved => 'Profile saved successfully';
+
+  @override
+  String get editPriceLabel => 'Price per hour (₪)';
+
+  @override
+  String get editPriceHint => 'Enter price in shekels';
+
+  @override
+  String get editAboutMeLabel => 'Tell us about yourself';
+
+  @override
+  String get editAboutMeHint => 'Describe your experience, the services you offer...';
+
+  @override
+  String get editCategoryLabel => 'Professional category';
+
+  @override
+  String get editSubCategoryLabel => 'Sub-category';
+
+  @override
+  String get editDogNameLabel => 'Dog\'s name';
+
+  @override
+  String get editDogBreedLabel => 'Breed';
+
+  @override
+  String get editDogAgeLabel => 'Age';
+
+  @override
+  String get editDogWeightLabel => 'Weight (kg)';
+
+  @override
+  String get editDogSizeLabel => 'Size';
+
+  @override
+  String get editDogDescLabel => 'Description';
+
+  @override
+  String get editDogSaveBtn => 'Save dog profile';
+
+  @override
+  String get editDogPickPhoto => 'Pick photo';
+
+  @override
+  String get editDogNameHint => 'What\'s the dog\'s name?';
+
+  @override
+  String get editDogBreedHint => 'e.g. Golden Retriever';
+
+  @override
+  String get editDogSizeSmall => 'Small';
+
+  @override
+  String get editDogSizeMedium => 'Medium';
+
+  @override
+  String get editDogSizeLarge => 'Large';
+
+  @override
+  String get editDogYears => 'years';
+
+  @override
+  String get editDogDescHint => 'Personality, hobbies, important things to know...';
+
+  @override
+  String get editCancellationPolicyTitle => 'Cancellation policy';
+
+  @override
+  String get editCancellationFlexible => 'Flexible';
+
+  @override
+  String get editCancellationModerate => 'Moderate';
+
+  @override
+  String get editCancellationStrict => 'Strict';
+
+  @override
+  String get editCancellationFlexibleDesc => 'Full refund up to 4 hours before';
+
+  @override
+  String get editCancellationModerateDesc => 'Full refund up to 24 hours before';
+
+  @override
+  String get editCancellationStrictDesc => 'Full refund up to 48 hours before';
+
+  @override
+  String get editResponseTimeLabel => 'Average response time';
+
+  @override
+  String get editResponseImmediate => 'Immediate';
+
+  @override
+  String get editResponse30min => 'Within 30 minutes';
+
+  @override
+  String get editResponse1h => 'Within an hour';
+
+  @override
+  String get editResponseDay => 'Within a day';
+
+  @override
+  String get editQuickTagsTitle => 'Quick tags';
+
+  @override
+  String get editQuickTagsDesc => 'Choose up to 5 tags that describe your service';
+
+  @override
+  String get editSave => 'Save';
+
+  @override
+  String get editSaving => 'Saving...';
+
+  @override
+  String get editDiscardChanges => 'Discard changes?';
+
+  @override
+  String get editDiscardConfirm => 'You have unsaved changes. Discard them?';
+
+  @override
+  String get editDiscard => 'Discard';
+
+  @override
+  String get editContinueEditing => 'Continue editing';
+
+  @override
+  String get editFieldRequired => 'Required';
+
+  @override
+  String get editInvalidPrice => 'Invalid price';
+
+  @override
+  String editMinPrice(int min) {
+    return 'Minimum price is ₪$min';
+  }
+
+  @override
+  String get editCustomerServiceType => 'Customer';
+
+  @override
+  String get editAboutMinChars => 'Write at least 20 characters about yourself';
+
+  @override
+  String get editSecondIdentityCreated => 'Second professional identity created! 🎉';
+
+  @override
+  String get editAddSecondIdentityTitle => 'Add a second professional identity';
+
+  @override
+  String get editAddSecondIdentityDesc => 'Choose a new category, price and description — the second profile will appear separately in search';
+
+  @override
+  String get editSecondServiceDesc => 'Tell customers about your second service...';
+
+  @override
+  String get editCreateIdentity => 'Create professional identity';
+
+  @override
+  String get editIdentityUpdated => 'Professional identity updated successfully';
+
+  @override
+  String get editDeleteIdentityTitle => 'Delete professional identity';
+
+  @override
+  String get editDeleteIdentityConfirm => 'Delete the second professional identity? This action cannot be undone.';
+
+  @override
+  String get editDelete => 'Delete';
+
+  @override
+  String get editIdentityDeleted => 'Professional identity deleted';
+
+  @override
+  String get editSaveChanges => 'Save changes';
+
+  @override
+  String get editDeleteIdentity => 'Delete professional identity';
+
+  @override
+  String editEditingIdentity(String type) {
+    return 'Editing $type';
+  }
+
+  @override
+  String get phoneLoginContinueGoogle => 'Continue with Google';
+
+  @override
+  String get phoneLoginContinueApple => 'Continue with Apple';
+
+  @override
+  String get phoneLoginOrPhone => 'OR WITH PHONE NUMBER';
+
+  @override
+  String get phoneLoginCtaLogin => 'Sign in';
+
+  @override
+  String get phoneLoginTermsPrefix => 'By continuing, I agree to the';
+
+  @override
+  String get phoneLoginTermsOfUse => 'Terms of Use';
+
+  @override
+  String get phoneLoginAnd => 'and';
+
+  @override
+  String get phoneLoginPrivacyPolicy => 'Privacy Policy';
+
+  @override
+  String get phoneLoginOfferingService => 'Offering a service?';
+
+  @override
+  String get phoneLoginBecomeProvider => 'Earn with AnySkill →';
 }

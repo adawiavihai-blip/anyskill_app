@@ -7,6 +7,7 @@ import 'provider_registration_screen.dart';
 import '../main.dart' show OnboardingGate;
 import '../services/private_data_service.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import '../l10n/app_localizations.dart';
 
 // ── Brand tokens ──────────────────────────────────────────────────────────────
 const _kPurple      = Color(0xFF6366F1);
@@ -87,7 +88,7 @@ class _OtpScreenState extends State<OtpScreen> {
   Future<void> _verify() async {
     final code = _otp;
     if (code.length < 6) {
-      _snack('הזן את 6 הספרות', _kAmber);
+      _snack(AppLocalizations.of(context).otpEnter6Digits, _kAmber);
       return;
     }
 
@@ -152,7 +153,7 @@ class _OtpScreenState extends State<OtpScreen> {
       if (mounted) _snack(_mapError(e.code), _kRed);
       _clearCode();
     } catch (_) {
-      if (mounted) _snack('שגיאת אימות. נסה שוב.', _kRed);
+      if (mounted) _snack(AppLocalizations.of(context).otpVerifyError, _kRed);
       _clearCode();
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -207,12 +208,13 @@ class _OtpScreenState extends State<OtpScreen> {
   }
 
   String _mapError(String code) {
+    final l10n = AppLocalizations.of(context);
     switch (code) {
-      case 'invalid-verification-code': return 'קוד שגוי. נסה שוב.';
-      case 'session-expired':           return 'הקוד פג תוקף. בקש קוד חדש.';
-      case 'code-expired':              return 'הקוד פג תוקף. בקש קוד חדש.';
-      case 'too-many-requests':         return 'יותר מדי ניסיונות. נסה מאוחר יותר.';
-      default:                          return 'שגיאה: $code';
+      case 'invalid-verification-code': return l10n.otpErrorInvalidCode;
+      case 'session-expired':           return l10n.otpErrorSessionExpired;
+      case 'code-expired':              return l10n.otpErrorSessionExpired;
+      case 'too-many-requests':         return l10n.otpErrorTooManyRequests;
+      default:                          return l10n.otpErrorPrefix(code);
     }
   }
 
@@ -296,10 +298,10 @@ class _OtpScreenState extends State<OtpScreen> {
             ),
             const SizedBox(height: 24),
 
-            const Text(
-              'הזן קוד אימות',
+            Text(
+              AppLocalizations.of(context).otpTitle,
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
                 color: Color(0xFF1E1B4B),
@@ -307,7 +309,7 @@ class _OtpScreenState extends State<OtpScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'שלחנו קוד SMS ל-${widget.phoneDisplay}',
+              AppLocalizations.of(context).otpSubtitle(widget.phoneDisplay),
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: Colors.grey[500]),
             ),
@@ -321,11 +323,11 @@ class _OtpScreenState extends State<OtpScreen> {
             if (_autoFilled)
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-                  Icon(Icons.auto_fix_high_rounded, color: _kGreen, size: 14),
-                  SizedBox(width: 4),
-                  Text('מולא אוטומטית',
-                      style: TextStyle(color: _kGreen, fontSize: 12,
+                children: [
+                  const Icon(Icons.auto_fix_high_rounded, color: _kGreen, size: 14),
+                  const SizedBox(width: 4),
+                  Text(AppLocalizations.of(context).otpAutoFilled,
+                      style: const TextStyle(color: _kGreen, fontSize: 12,
                           fontWeight: FontWeight.w500)),
                 ],
               ),
@@ -339,7 +341,7 @@ class _OtpScreenState extends State<OtpScreen> {
             Center(
               child: _resendLeft > 0
                   ? Text.rich(TextSpan(
-                      text: 'שלח קוד חדש בעוד ',
+                      text: AppLocalizations.of(context).otpResendIn,
                       style: TextStyle(color: Colors.grey[500], fontSize: 14),
                       children: [
                         TextSpan(
@@ -351,8 +353,8 @@ class _OtpScreenState extends State<OtpScreen> {
                     ))
                   : GestureDetector(
                       onTap: _resend,
-                      child: const Text('שלח קוד חדש',
-                        style: TextStyle(
+                      child: Text(AppLocalizations.of(context).otpResendNow,
+                        style: const TextStyle(
                           color: _kPurple,
                           fontWeight: FontWeight.bold,
                           fontSize: 14,
@@ -457,9 +459,9 @@ class _OtpScreenState extends State<OtpScreen> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
         icon: const Icon(Icons.verified_rounded, color: Colors.white, size: 20),
-        label: const Text(
-          'אמת ועבור',
-          style: TextStyle(color: Colors.white, fontSize: 17,
+        label: Text(
+          AppLocalizations.of(context).otpVerifyButton,
+          style: const TextStyle(color: Colors.white, fontSize: 17,
               fontWeight: FontWeight.bold),
         ),
       ),
@@ -473,11 +475,9 @@ class _OtpScreenState extends State<OtpScreen> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text('נמצא חשבון קיים'),
-        content: const Text(
-          'למספר הטלפון הזה כבר יש חשבון במערכת שנוצר דרך מייל/סיסמה.\n\n'
-          'כדי לחבר אותו לכניסה בטלפון, יש צורך בפעולה חד-פעמית של המנהל.\n\n'
-          'אנא פנה/י לתמיכה ונחבר את החשבון עבורך.',
+        title: Text(AppLocalizations.of(context).otpExistingAccountTitle),
+        content: Text(
+          AppLocalizations.of(context).otpExistingAccountBody,
           textAlign: TextAlign.start,
         ),
         actions: [
@@ -486,7 +486,7 @@ class _OtpScreenState extends State<OtpScreen> {
               Navigator.of(ctx).pop();
               if (mounted) Navigator.of(context).pop();
             },
-            child: const Text('הבנתי'),
+            child: Text(AppLocalizations.of(context).otpUnderstood),
           ),
         ],
       ),
@@ -583,7 +583,7 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('שגיאה ביצירת פרופיל: $e'),
+          content: Text(AppLocalizations.of(context).otpCreateProfileError(e.toString())),
           backgroundColor: _kRed,
         ));
       }
@@ -609,14 +609,14 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
                   borderRadius: BorderRadius.circular(10))),
           const SizedBox(height: 24),
 
-          const Text(
-            'ברוך הבא ל-AnySkill! 👋',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold,
+          Text(
+            AppLocalizations.of(context).otpWelcomeTitle,
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold,
                 color: Color(0xFF1E1B4B)),
           ),
           const SizedBox(height: 8),
           Text(
-            'בחר כיצד תרצה להשתמש באפליקציה',
+            AppLocalizations.of(context).otpWelcomeSubtitle,
             style: TextStyle(fontSize: 14, color: Colors.grey[500]),
           ),
           const SizedBox(height: 32),
@@ -651,24 +651,23 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
                           fontSize: 12.5,
                           color: Colors.grey[600],
                           height: 1.45),
-                      children: const [
-                        TextSpan(text: 'אני מאשר/ת שקראתי והסכמתי ל-'),
+                      children: [
+                        TextSpan(text: AppLocalizations.of(context).otpTermsPrefix),
                         TextSpan(
-                          text: 'תנאי השימוש',
-                          style: TextStyle(
+                          text: AppLocalizations.of(context).otpTermsOfService,
+                          style: const TextStyle(
                               color: _kPurple,
                               decoration: TextDecoration.underline,
                               decorationColor: _kPurple),
                         ),
-                        TextSpan(text: ' ול-'),
+                        const TextSpan(text: ' / '),
                         TextSpan(
-                          text: 'מדיניות הפרטיות',
-                          style: TextStyle(
+                          text: AppLocalizations.of(context).otpPrivacyPolicy,
+                          style: const TextStyle(
                               color: _kPurple,
                               decoration: TextDecoration.underline,
                               decorationColor: _kPurple),
                         ),
-                        TextSpan(text: ' של AnySkill'),
                       ],
                     ),
                   ),
@@ -682,8 +681,8 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
           _RoleCard(
             icon: Icons.search_rounded,
             color: const Color(0xFF6366F1),
-            title: 'לקוח',
-            subtitle: 'מחפש שירותים מקצועיים\nומזמין ספקים',
+            title: AppLocalizations.of(context).otpRoleCustomer,
+            subtitle: AppLocalizations.of(context).otpRoleCustomerDesc,
             enabled: _agreedToTerms,
             onTap: (_isLoading || !_agreedToTerms)
                 ? null
@@ -697,9 +696,9 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
           _RoleCard(
             icon: Icons.handyman_rounded,
             color: const Color(0xFF059669),
-            title: 'נותן שירות',
-            subtitle: 'מציע שירותים מקצועיים\nומרוויח דרך AnySkill',
-            badge: 'ממתין לאישור מנהל',
+            title: AppLocalizations.of(context).otpRoleProvider,
+            subtitle: AppLocalizations.of(context).otpRoleProviderDesc,
+            badge: AppLocalizations.of(context).otpRoleProviderBadge,
             enabled: _agreedToTerms,
             onTap: (_isLoading || !_agreedToTerms)
                 ? null

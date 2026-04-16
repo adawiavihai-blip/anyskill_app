@@ -1074,7 +1074,7 @@ abstract class AppLocalizations {
   /// No description provided for @expertEscrowSuccess.
   ///
   /// In he, this message translates to:
-  /// **'התשלום אושר! הכסף נעול באסקרו'**
+  /// **'התשלום אושר ומאובטח עד לסיום העסקה'**
   String get expertEscrowSuccess;
 
   /// No description provided for @expertTransactionTitle.
@@ -3662,6 +3662,2760 @@ abstract class AppLocalizations {
   /// In he, this message translates to:
   /// **'{count} אירועים'**
   String xpEventsCount(int count);
+
+  /// No description provided for @phoneLoginHeader.
+  ///
+  /// In he, this message translates to:
+  /// **'כניסה / הרשמה'**
+  String get phoneLoginHeader;
+
+  /// No description provided for @phoneLoginSubtitleSimple.
+  ///
+  /// In he, this message translates to:
+  /// **'הזן את מספר הטלפון שלך ונשלח קוד אימות'**
+  String get phoneLoginSubtitleSimple;
+
+  /// No description provided for @phoneLoginSubtitleSocial.
+  ///
+  /// In he, this message translates to:
+  /// **'התחבר/י עם Google, Apple או מספר טלפון'**
+  String get phoneLoginSubtitleSocial;
+
+  /// No description provided for @phoneLoginOrDivider.
+  ///
+  /// In he, this message translates to:
+  /// **'או'**
+  String get phoneLoginOrDivider;
+
+  /// No description provided for @phoneLoginPhoneHint.
+  ///
+  /// In he, this message translates to:
+  /// **'מספר טלפון'**
+  String get phoneLoginPhoneHint;
+
+  /// No description provided for @phoneLoginSendCode.
+  ///
+  /// In he, this message translates to:
+  /// **'שלח קוד אימות'**
+  String get phoneLoginSendCode;
+
+  /// No description provided for @phoneLoginHeroSubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'כניסה מהירה עם מספר טלפון'**
+  String get phoneLoginHeroSubtitle;
+
+  /// No description provided for @phoneLoginChipSecure.
+  ///
+  /// In he, this message translates to:
+  /// **'מאובטח'**
+  String get phoneLoginChipSecure;
+
+  /// No description provided for @phoneLoginChipFast.
+  ///
+  /// In he, this message translates to:
+  /// **'מהיר'**
+  String get phoneLoginChipFast;
+
+  /// No description provided for @phoneLoginChipReliable.
+  ///
+  /// In he, this message translates to:
+  /// **'אמין'**
+  String get phoneLoginChipReliable;
+
+  /// No description provided for @phoneLoginSelectCountry.
+  ///
+  /// In he, this message translates to:
+  /// **'בחר מדינה'**
+  String get phoneLoginSelectCountry;
+
+  /// No description provided for @otpEnter6Digits.
+  ///
+  /// In he, this message translates to:
+  /// **'הזן את 6 הספרות'**
+  String get otpEnter6Digits;
+
+  /// No description provided for @otpVerifyError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאת אימות. נסה שוב.'**
+  String get otpVerifyError;
+
+  /// No description provided for @otpErrorInvalidCode.
+  ///
+  /// In he, this message translates to:
+  /// **'קוד שגוי. נסה שוב.'**
+  String get otpErrorInvalidCode;
+
+  /// No description provided for @otpErrorSessionExpired.
+  ///
+  /// In he, this message translates to:
+  /// **'הקוד פג תוקף. בקש קוד חדש.'**
+  String get otpErrorSessionExpired;
+
+  /// No description provided for @otpErrorTooManyRequests.
+  ///
+  /// In he, this message translates to:
+  /// **'יותר מדי ניסיונות. נסה מאוחר יותר.'**
+  String get otpErrorTooManyRequests;
+
+  /// No description provided for @otpErrorPrefix.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה: {code}'**
+  String otpErrorPrefix(String code);
+
+  /// No description provided for @otpTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'הזן קוד אימות'**
+  String get otpTitle;
+
+  /// No description provided for @otpSubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'שלחנו קוד SMS ל-{phone}'**
+  String otpSubtitle(String phone);
+
+  /// No description provided for @otpAutoFilled.
+  ///
+  /// In he, this message translates to:
+  /// **'מולא אוטומטית'**
+  String get otpAutoFilled;
+
+  /// No description provided for @otpResendIn.
+  ///
+  /// In he, this message translates to:
+  /// **'שלח קוד חדש בעוד '**
+  String get otpResendIn;
+
+  /// No description provided for @otpResendNow.
+  ///
+  /// In he, this message translates to:
+  /// **'שלח קוד חדש'**
+  String get otpResendNow;
+
+  /// No description provided for @otpVerifyButton.
+  ///
+  /// In he, this message translates to:
+  /// **'אמת ועבור'**
+  String get otpVerifyButton;
+
+  /// No description provided for @otpExistingAccountTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'נמצא חשבון קיים'**
+  String get otpExistingAccountTitle;
+
+  /// No description provided for @otpExistingAccountBody.
+  ///
+  /// In he, this message translates to:
+  /// **'למספר הטלפון הזה כבר יש חשבון במערכת שנוצר דרך מייל/סיסמה.\n\nכדי לחבר אותו לכניסה בטלפון, יש צורך בפעולה חד-פעמית של המנהל.\n\nאנא פנה/י לתמיכה ונחבר את החשבון עבורך.'**
+  String get otpExistingAccountBody;
+
+  /// No description provided for @otpUnderstood.
+  ///
+  /// In he, this message translates to:
+  /// **'הבנתי'**
+  String get otpUnderstood;
+
+  /// No description provided for @otpCreateProfileError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה ביצירת פרופיל: {error}'**
+  String otpCreateProfileError(String error);
+
+  /// No description provided for @otpWelcomeTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'ברוך הבא ל-AnySkill! 👋'**
+  String get otpWelcomeTitle;
+
+  /// No description provided for @otpWelcomeSubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'בחר כיצד תרצה להשתמש באפליקציה'**
+  String get otpWelcomeSubtitle;
+
+  /// No description provided for @otpTermsPrefix.
+  ///
+  /// In he, this message translates to:
+  /// **'אני מאשר/ת שקראתי והסכמתי ל-'**
+  String get otpTermsPrefix;
+
+  /// No description provided for @otpTermsOfService.
+  ///
+  /// In he, this message translates to:
+  /// **'תנאי השימוש'**
+  String get otpTermsOfService;
+
+  /// No description provided for @otpPrivacyPolicy.
+  ///
+  /// In he, this message translates to:
+  /// **'מדיניות הפרטיות'**
+  String get otpPrivacyPolicy;
+
+  /// No description provided for @otpRoleCustomer.
+  ///
+  /// In he, this message translates to:
+  /// **'לקוח'**
+  String get otpRoleCustomer;
+
+  /// No description provided for @otpRoleCustomerDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'מחפש שירותים מקצועיים\nומזמין ספקים'**
+  String get otpRoleCustomerDesc;
+
+  /// No description provided for @otpRoleProvider.
+  ///
+  /// In he, this message translates to:
+  /// **'נותן שירות'**
+  String get otpRoleProvider;
+
+  /// No description provided for @otpRoleProviderDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'מציע שירותים מקצועיים\nומרוויח דרך AnySkill'**
+  String get otpRoleProviderDesc;
+
+  /// No description provided for @otpRoleProviderBadge.
+  ///
+  /// In he, this message translates to:
+  /// **'ממתין לאישור מנהל'**
+  String get otpRoleProviderBadge;
+
+  /// No description provided for @onbValEnterName.
+  ///
+  /// In he, this message translates to:
+  /// **'נא להזין שם מלא'**
+  String get onbValEnterName;
+
+  /// No description provided for @onbValEnterPhone.
+  ///
+  /// In he, this message translates to:
+  /// **'נא להזין מספר טלפון'**
+  String get onbValEnterPhone;
+
+  /// No description provided for @onbValEnterEmail.
+  ///
+  /// In he, this message translates to:
+  /// **'נא להזין כתובת אימייל'**
+  String get onbValEnterEmail;
+
+  /// No description provided for @onbValUploadProfile.
+  ///
+  /// In he, this message translates to:
+  /// **'נא להעלות תמונת פרופיל'**
+  String get onbValUploadProfile;
+
+  /// No description provided for @onbValChooseBusiness.
+  ///
+  /// In he, this message translates to:
+  /// **'נא לבחור סוג עסק'**
+  String get onbValChooseBusiness;
+
+  /// No description provided for @onbValEnterId.
+  ///
+  /// In he, this message translates to:
+  /// **'נא להזין מספר ת.ז. / ח.פ.'**
+  String get onbValEnterId;
+
+  /// No description provided for @onbValUploadId.
+  ///
+  /// In he, this message translates to:
+  /// **'נא להעלות צילום תעודת זהות או דרכון'**
+  String get onbValUploadId;
+
+  /// No description provided for @onbValChooseCategory.
+  ///
+  /// In he, this message translates to:
+  /// **'נא לבחור קטגוריה מקצועית'**
+  String get onbValChooseCategory;
+
+  /// No description provided for @onbValExpertise.
+  ///
+  /// In he, this message translates to:
+  /// **'נא לפרט את תחום המומחיות שלך'**
+  String get onbValExpertise;
+
+  /// No description provided for @onbValAcceptTerms.
+  ///
+  /// In he, this message translates to:
+  /// **'יש לקרוא ולאשר את תנאי השימוש'**
+  String get onbValAcceptTerms;
+
+  /// No description provided for @onbSaveError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה בשמירה: {error}'**
+  String onbSaveError(String error);
+
+  /// No description provided for @onbUploadError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה בהעלאה: {error}'**
+  String onbUploadError(String error);
+
+  /// No description provided for @onbCameraError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה בצילום: {error}'**
+  String onbCameraError(String error);
+
+  /// No description provided for @onbToastProvider.
+  ///
+  /// In he, this message translates to:
+  /// **'איזה כיף שהצטרפת לנבחרת אנשי המקצוע של AnySkill! 🚀 המסמכים שלך התקבלו ובביקורת. תקבל עדכון ברגע שהחשבון יאושר.'**
+  String get onbToastProvider;
+
+  /// No description provided for @onbToastCustomer.
+  ///
+  /// In he, this message translates to:
+  /// **'ברוכים הבאים ל-AnySkill! 🌟 צריכים עזרה במשהו? הגעתם למקום הנכון. אלפי אנשי מקצוע זמינים עבורכם עכשיו.'**
+  String get onbToastCustomer;
+
+  /// No description provided for @onbStepRole.
+  ///
+  /// In he, this message translates to:
+  /// **'בחר תפקיד'**
+  String get onbStepRole;
+
+  /// No description provided for @onbStepBusiness.
+  ///
+  /// In he, this message translates to:
+  /// **'פרטים עסקיים'**
+  String get onbStepBusiness;
+
+  /// No description provided for @onbStepService.
+  ///
+  /// In he, this message translates to:
+  /// **'תחום שירות'**
+  String get onbStepService;
+
+  /// No description provided for @onbStepContact.
+  ///
+  /// In he, this message translates to:
+  /// **'פרטי קשר'**
+  String get onbStepContact;
+
+  /// No description provided for @onbStepProfile.
+  ///
+  /// In he, this message translates to:
+  /// **'הפרופיל שלך'**
+  String get onbStepProfile;
+
+  /// No description provided for @onbProgressComplete.
+  ///
+  /// In he, this message translates to:
+  /// **'הכל מוכן!'**
+  String get onbProgressComplete;
+
+  /// No description provided for @onbProgressIncomplete.
+  ///
+  /// In he, this message translates to:
+  /// **'השלם את הפרטים'**
+  String get onbProgressIncomplete;
+
+  /// No description provided for @onbGreeting.
+  ///
+  /// In he, this message translates to:
+  /// **'היי {name},'**
+  String onbGreeting(String name);
+
+  /// No description provided for @onbGreetingFallback.
+  ///
+  /// In he, this message translates to:
+  /// **'היי,'**
+  String get onbGreetingFallback;
+
+  /// No description provided for @onbIntroLine.
+  ///
+  /// In he, this message translates to:
+  /// **'עוד רגע מתחילים. ספר לנו קצת על עצמך.'**
+  String get onbIntroLine;
+
+  /// No description provided for @onbSocialProof.
+  ///
+  /// In he, this message translates to:
+  /// **'מעל 250 אנשי מקצוע הצטרפו החודש'**
+  String get onbSocialProof;
+
+  /// No description provided for @onbRoleCustomerTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'אני מחפש שירות'**
+  String get onbRoleCustomerTitle;
+
+  /// No description provided for @onbRoleCustomerSubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'אני רוצה למצוא איש מקצוע'**
+  String get onbRoleCustomerSubtitle;
+
+  /// No description provided for @onbRoleProviderTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'אני רוצה לתת שירות'**
+  String get onbRoleProviderTitle;
+
+  /// No description provided for @onbRoleProviderSubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'ברצוני לעבוד דרך AnySkill'**
+  String get onbRoleProviderSubtitle;
+
+  /// No description provided for @onbBusinessTypeHint.
+  ///
+  /// In he, this message translates to:
+  /// **'סוג עסק'**
+  String get onbBusinessTypeHint;
+
+  /// No description provided for @onbUploadBusinessDocLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'העלה צילום תעודת עוסק (פטור/מורשה/חברה)'**
+  String get onbUploadBusinessDocLabel;
+
+  /// No description provided for @onbIdLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'מספר תעודת זהות / ח.פ.'**
+  String get onbIdLabel;
+
+  /// No description provided for @onbIdHint.
+  ///
+  /// In he, this message translates to:
+  /// **'הזן מספר ת.ז. או ח.פ.'**
+  String get onbIdHint;
+
+  /// No description provided for @onbUploadIdLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'העלה צילום תעודת זהות או דרכון'**
+  String get onbUploadIdLabel;
+
+  /// No description provided for @onbSelfieTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'סלפי לאימות זהות'**
+  String get onbSelfieTitle;
+
+  /// No description provided for @onbSelfieSuccess.
+  ///
+  /// In he, this message translates to:
+  /// **'תמונה צולמה בהצלחה ✓'**
+  String get onbSelfieSuccess;
+
+  /// No description provided for @onbSelfiePrompt.
+  ///
+  /// In he, this message translates to:
+  /// **'צלם תמונה חיה של הפנים שלך'**
+  String get onbSelfiePrompt;
+
+  /// No description provided for @onbSelfieRetake.
+  ///
+  /// In he, this message translates to:
+  /// **'צלם שוב'**
+  String get onbSelfieRetake;
+
+  /// No description provided for @onbSelfieTake.
+  ///
+  /// In he, this message translates to:
+  /// **'צלם סלפי'**
+  String get onbSelfieTake;
+
+  /// No description provided for @onbCategoryOther.
+  ///
+  /// In he, this message translates to:
+  /// **'אחר / לא מצאתי'**
+  String get onbCategoryOther;
+
+  /// No description provided for @onbCategoryHint.
+  ///
+  /// In he, this message translates to:
+  /// **'בחר קטגוריה ראשית'**
+  String get onbCategoryHint;
+
+  /// No description provided for @onbSubCategoryHint.
+  ///
+  /// In he, this message translates to:
+  /// **'בחר תת-קטגוריה'**
+  String get onbSubCategoryHint;
+
+  /// No description provided for @onbExpertiseLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'פרט את תחום המומחיות שלך'**
+  String get onbExpertiseLabel;
+
+  /// No description provided for @onbExpertiseHint.
+  ///
+  /// In he, this message translates to:
+  /// **'עד 30 תווים'**
+  String get onbExpertiseHint;
+
+  /// No description provided for @onbOtherCategoryNote.
+  ///
+  /// In he, this message translates to:
+  /// **'צוות AnySkill יבחן את הפרטים וישייך אותך לקטגוריה המתאימה'**
+  String get onbOtherCategoryNote;
+
+  /// No description provided for @onbFullNameLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'שם מלא *'**
+  String get onbFullNameLabel;
+
+  /// No description provided for @onbFullNameHint.
+  ///
+  /// In he, this message translates to:
+  /// **'השם שיוצג בפרופיל'**
+  String get onbFullNameHint;
+
+  /// No description provided for @onbPhoneLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'מספר טלפון *'**
+  String get onbPhoneLabel;
+
+  /// No description provided for @onbEmailLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'אימייל *'**
+  String get onbEmailLabel;
+
+  /// No description provided for @onbReplacePhoto.
+  ///
+  /// In he, this message translates to:
+  /// **'לחץ להחלפה'**
+  String get onbReplacePhoto;
+
+  /// No description provided for @onbAddPhoto.
+  ///
+  /// In he, this message translates to:
+  /// **'הוסף תמונת פרופיל'**
+  String get onbAddPhoto;
+
+  /// No description provided for @onbAboutLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'ספר על עצמך'**
+  String get onbAboutLabel;
+
+  /// No description provided for @onbAboutHintProvider.
+  ///
+  /// In he, this message translates to:
+  /// **'ניסיון, כישורים, התמחויות...'**
+  String get onbAboutHintProvider;
+
+  /// No description provided for @onbAboutHintCustomer.
+  ///
+  /// In he, this message translates to:
+  /// **'מה תרצה שנדע עליך?'**
+  String get onbAboutHintCustomer;
+
+  /// No description provided for @onbTermsTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'קרא את תנאי השימוש ומדיניות הפרטיות'**
+  String get onbTermsTitle;
+
+  /// No description provided for @onbTermsRead.
+  ///
+  /// In he, this message translates to:
+  /// **'נקרא'**
+  String get onbTermsRead;
+
+  /// No description provided for @onbTermsAccept.
+  ///
+  /// In he, this message translates to:
+  /// **'אני מאשר/ת שקראתי והסכמתי לתנאי השימוש ולמדיניות הפרטיות של AnySkill'**
+  String get onbTermsAccept;
+
+  /// No description provided for @onbFinish.
+  ///
+  /// In he, this message translates to:
+  /// **'סיום הרשמה'**
+  String get onbFinish;
+
+  /// No description provided for @onbRequiredField.
+  ///
+  /// In he, this message translates to:
+  /// **'שדה חובה *'**
+  String get onbRequiredField;
+
+  /// No description provided for @onbNotSpecified.
+  ///
+  /// In he, this message translates to:
+  /// **'לא צוין'**
+  String get onbNotSpecified;
+
+  /// No description provided for @onbUserTypeProvider.
+  ///
+  /// In he, this message translates to:
+  /// **'נותן שירות (ספק)'**
+  String get onbUserTypeProvider;
+
+  /// No description provided for @onbUserTypeCustomer.
+  ///
+  /// In he, this message translates to:
+  /// **'לקוח'**
+  String get onbUserTypeCustomer;
+
+  /// No description provided for @onbBizExempt.
+  ///
+  /// In he, this message translates to:
+  /// **'עוסק פטור'**
+  String get onbBizExempt;
+
+  /// No description provided for @onbBizAuthorized.
+  ///
+  /// In he, this message translates to:
+  /// **'עוסק מורשה'**
+  String get onbBizAuthorized;
+
+  /// No description provided for @onbBizCompany.
+  ///
+  /// In he, this message translates to:
+  /// **'חברה בע\"מ'**
+  String get onbBizCompany;
+
+  /// No description provided for @onbBizExternal.
+  ///
+  /// In he, this message translates to:
+  /// **'שכיר המוציא חשבונית דרך חברה חיצונית'**
+  String get onbBizExternal;
+
+  /// No description provided for @profNoGooglePhoto.
+  ///
+  /// In he, this message translates to:
+  /// **'לא נמצאה תמונת פרופיל בחשבון Google'**
+  String get profNoGooglePhoto;
+
+  /// No description provided for @profPhotoUpdatedFromGoogle.
+  ///
+  /// In he, this message translates to:
+  /// **'תמונת פרופיל עודכנה מ-Google'**
+  String get profPhotoUpdatedFromGoogle;
+
+  /// No description provided for @profInvoiceEmailOn.
+  ///
+  /// In he, this message translates to:
+  /// **'חשבוניות יישלחו אליך במייל'**
+  String get profInvoiceEmailOn;
+
+  /// No description provided for @profInvoiceEmailOff.
+  ///
+  /// In he, this message translates to:
+  /// **'החשבוניות לא יישלחו יותר למייל שלך'**
+  String get profInvoiceEmailOff;
+
+  /// No description provided for @profSaveError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה בשמירה: {error}'**
+  String profSaveError(String error);
+
+  /// No description provided for @profInvoiceEmailTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'קבלת חשבוניות במייל'**
+  String get profInvoiceEmailTitle;
+
+  /// No description provided for @profInvoiceEmailSubOn.
+  ///
+  /// In he, this message translates to:
+  /// **'תקבל חשבונית במייל אחרי כל עסקה'**
+  String get profInvoiceEmailSubOn;
+
+  /// No description provided for @profInvoiceEmailSubOff.
+  ///
+  /// In he, this message translates to:
+  /// **'לא תקבל חשבוניות במייל'**
+  String get profInvoiceEmailSubOff;
+
+  /// No description provided for @profSyncGooglePhoto.
+  ///
+  /// In he, this message translates to:
+  /// **'סנכרן תמונה מ-Google'**
+  String get profSyncGooglePhoto;
+
+  /// No description provided for @profProviderRole.
+  ///
+  /// In he, this message translates to:
+  /// **'נותן שירות'**
+  String get profProviderRole;
+
+  /// No description provided for @profJobsStat.
+  ///
+  /// In he, this message translates to:
+  /// **'עבודות'**
+  String get profJobsStat;
+
+  /// No description provided for @profRatingStat.
+  ///
+  /// In he, this message translates to:
+  /// **'דירוג'**
+  String get profRatingStat;
+
+  /// No description provided for @profReviewsStat.
+  ///
+  /// In he, this message translates to:
+  /// **'ביקורות'**
+  String get profReviewsStat;
+
+  /// No description provided for @profAngelBadge.
+  ///
+  /// In he, this message translates to:
+  /// **'מלאך הקהילה'**
+  String get profAngelBadge;
+
+  /// No description provided for @profPillarBadge.
+  ///
+  /// In he, this message translates to:
+  /// **'עמוד תווך'**
+  String get profPillarBadge;
+
+  /// No description provided for @profStarterBadge.
+  ///
+  /// In he, this message translates to:
+  /// **'מתנדב פעיל'**
+  String get profStarterBadge;
+
+  /// No description provided for @profWorkGallery.
+  ///
+  /// In he, this message translates to:
+  /// **'גלריית עבודות'**
+  String get profWorkGallery;
+
+  /// No description provided for @profVipActive.
+  ///
+  /// In he, this message translates to:
+  /// **'VIP פעיל'**
+  String get profVipActive;
+
+  /// No description provided for @profJoinVip.
+  ///
+  /// In he, this message translates to:
+  /// **'הצטרף ל-VIP'**
+  String get profJoinVip;
+
+  /// No description provided for @profVideoIntro.
+  ///
+  /// In he, this message translates to:
+  /// **'היכרות בווידאו'**
+  String get profVideoIntro;
+
+  /// No description provided for @profMyDogs.
+  ///
+  /// In he, this message translates to:
+  /// **'הכלבים שלי'**
+  String get profMyDogs;
+
+  /// No description provided for @profMyDogsSubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'פרופיל אחד → כל ההזמנות'**
+  String get profMyDogsSubtitle;
+
+  /// No description provided for @profJoinAsProvider.
+  ///
+  /// In he, this message translates to:
+  /// **'להצטרפות ל-AnySkill כנותן שירות'**
+  String get profJoinAsProvider;
+
+  /// No description provided for @profRequestInReview.
+  ///
+  /// In he, this message translates to:
+  /// **'הבקשה שלך בבדיקה — נעדכן בהקדם'**
+  String get profRequestInReview;
+
+  /// No description provided for @profTermsOfService.
+  ///
+  /// In he, this message translates to:
+  /// **'תנאי שימוש'**
+  String get profTermsOfService;
+
+  /// No description provided for @profPrivacyPolicy.
+  ///
+  /// In he, this message translates to:
+  /// **'מדיניות פרטיות'**
+  String get profPrivacyPolicy;
+
+  /// No description provided for @profSwitchRole.
+  ///
+  /// In he, this message translates to:
+  /// **'החלף תפקיד'**
+  String get profSwitchRole;
+
+  /// No description provided for @profLogout.
+  ///
+  /// In he, this message translates to:
+  /// **'התנתקות'**
+  String get profLogout;
+
+  /// No description provided for @profDeleteAccount.
+  ///
+  /// In he, this message translates to:
+  /// **'מחיקת חשבון'**
+  String get profDeleteAccount;
+
+  /// No description provided for @profTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'פרופיל'**
+  String get profTitle;
+
+  /// No description provided for @profCustomerRole.
+  ///
+  /// In he, this message translates to:
+  /// **'לקוח/ה'**
+  String get profCustomerRole;
+
+  /// No description provided for @profStatServicesTaken.
+  ///
+  /// In he, this message translates to:
+  /// **'שירותים שנלקחו'**
+  String get profStatServicesTaken;
+
+  /// No description provided for @profStatReviews.
+  ///
+  /// In he, this message translates to:
+  /// **'ביקורות'**
+  String get profStatReviews;
+
+  /// No description provided for @profStatYears.
+  ///
+  /// In he, this message translates to:
+  /// **'שנים ב-AnySkill'**
+  String get profStatYears;
+
+  /// No description provided for @profReceivedService.
+  ///
+  /// In he, this message translates to:
+  /// **'שירות שהתקבל'**
+  String get profReceivedService;
+
+  /// No description provided for @profFavorites.
+  ///
+  /// In he, this message translates to:
+  /// **'מועדפים'**
+  String get profFavorites;
+
+  /// No description provided for @profDeleteConfirmBody.
+  ///
+  /// In he, this message translates to:
+  /// **'האם אתה בטוח שברצונך למחוק את חשבונך?\n\nכל הנתונים — ההיסטוריה, הארנק, הצ׳אטים — ימחקו לצמיתות.\n\nפעולה זו אינה הפיכה.'**
+  String get profDeleteConfirmBody;
+
+  /// No description provided for @profCancel.
+  ///
+  /// In he, this message translates to:
+  /// **'ביטול'**
+  String get profCancel;
+
+  /// No description provided for @profContinue.
+  ///
+  /// In he, this message translates to:
+  /// **'המשך'**
+  String get profContinue;
+
+  /// No description provided for @profFinalConfirm.
+  ///
+  /// In he, this message translates to:
+  /// **'אישור סופי'**
+  String get profFinalConfirm;
+
+  /// No description provided for @profDeleteFinalBody.
+  ///
+  /// In he, this message translates to:
+  /// **'לאחר האישור, חשבונך ימחק לצמיתות ולא ניתן יהיה לשחזרו.'**
+  String get profDeleteFinalBody;
+
+  /// No description provided for @profDeletePermanent.
+  ///
+  /// In he, this message translates to:
+  /// **'מחק לצמיתות'**
+  String get profDeletePermanent;
+
+  /// No description provided for @profReauthNeeded.
+  ///
+  /// In he, this message translates to:
+  /// **'נדרשת כניסה מחדש'**
+  String get profReauthNeeded;
+
+  /// No description provided for @profReauthBody.
+  ///
+  /// In he, this message translates to:
+  /// **'לצורך מחיקת חשבון, Firebase דורש שנכנסת לאחרונה.\n\nאנא התנתק, היכנס מחדש ונסה שוב.'**
+  String get profReauthBody;
+
+  /// No description provided for @profLogoutAndReauth.
+  ///
+  /// In he, this message translates to:
+  /// **'התנתק והיכנס מחדש'**
+  String get profLogoutAndReauth;
+
+  /// No description provided for @profDeleteError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה במחיקת החשבון: {error}'**
+  String profDeleteError(String error);
+
+  /// No description provided for @profNoWorksYet.
+  ///
+  /// In he, this message translates to:
+  /// **'עדיין לא העלית עבודות.\nלחץ על העיפרון כדי לעדכן!'**
+  String get profNoWorksYet;
+
+  /// No description provided for @homeTestEmailSent.
+  ///
+  /// In he, this message translates to:
+  /// **'מייל בדיקה נשלח! בדוק את תיבת הדואר.'**
+  String get homeTestEmailSent;
+
+  /// No description provided for @homeGenericError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה: {error}'**
+  String homeGenericError(String error);
+
+  /// No description provided for @homeShowAll.
+  ///
+  /// In he, this message translates to:
+  /// **'הצג הכל'**
+  String get homeShowAll;
+
+  /// No description provided for @homeMicroTasks.
+  ///
+  /// In he, this message translates to:
+  /// **'משימות מיקרו — הרווח מהיר'**
+  String get homeMicroTasks;
+
+  /// No description provided for @homeCommunityTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'נתינה מהלב'**
+  String get homeCommunityTitle;
+
+  /// No description provided for @homeCommunitySlogan.
+  ///
+  /// In he, this message translates to:
+  /// **'כישרון אחד, לב אחד'**
+  String get homeCommunitySlogan;
+
+  /// No description provided for @homeDefaultExpert.
+  ///
+  /// In he, this message translates to:
+  /// **'המומחה'**
+  String get homeDefaultExpert;
+
+  /// No description provided for @homeDefaultReengageMsg.
+  ///
+  /// In he, this message translates to:
+  /// **'מוכן להזמין שוב?'**
+  String get homeDefaultReengageMsg;
+
+  /// No description provided for @homeSmartOffer.
+  ///
+  /// In he, this message translates to:
+  /// **'הצעה חכמה'**
+  String get homeSmartOffer;
+
+  /// No description provided for @homeBookNow.
+  ///
+  /// In he, this message translates to:
+  /// **'הזמן עכשיו'**
+  String get homeBookNow;
+
+  /// No description provided for @homeWelcomeTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'ברוכים הבאים ל-AnySkill'**
+  String get homeWelcomeTitle;
+
+  /// No description provided for @homeWelcomeSubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'מצא מומחים מהשכונה שלך'**
+  String get homeWelcomeSubtitle;
+
+  /// No description provided for @homeServiceTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'שירות מקצועי בלחיצה אחת'**
+  String get homeServiceTitle;
+
+  /// No description provided for @homeServiceSubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'שיפוצים • ניקיון • צילום ועוד'**
+  String get homeServiceSubtitle;
+
+  /// No description provided for @homeBecomeExpertTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'הפוך למומחה היום'**
+  String get homeBecomeExpertTitle;
+
+  /// No description provided for @homeBecomeExpertSubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'פרסם את השירות שלך והתחל להרוויח'**
+  String get homeBecomeExpertSubtitle;
+
+  /// No description provided for @notifGenericError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה: {error}'**
+  String notifGenericError(String error);
+
+  /// No description provided for @notifDefaultClient.
+  ///
+  /// In he, this message translates to:
+  /// **'לקוח'**
+  String get notifDefaultClient;
+
+  /// No description provided for @notifUrgentJobAvailable.
+  ///
+  /// In he, this message translates to:
+  /// **'משרה דחופה זמינה!'**
+  String get notifUrgentJobAvailable;
+
+  /// No description provided for @notifJobTaken.
+  ///
+  /// In he, this message translates to:
+  /// **'המשרה נתפסה'**
+  String get notifJobTaken;
+
+  /// No description provided for @notifJobExpired.
+  ///
+  /// In he, this message translates to:
+  /// **'המשרה פגה תוקף'**
+  String get notifJobExpired;
+
+  /// No description provided for @notifGrabNow.
+  ///
+  /// In he, this message translates to:
+  /// **'תפוס עכשיו!'**
+  String get notifGrabNow;
+
+  /// No description provided for @notifTakenBy.
+  ///
+  /// In he, this message translates to:
+  /// **'המשרה נתפסה ע\"י {name}'**
+  String notifTakenBy(String name);
+
+  /// No description provided for @notifCommunityHelpTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'בקשת עזרה מהקהילה'**
+  String get notifCommunityHelpTitle;
+
+  /// No description provided for @notifNotNow.
+  ///
+  /// In he, this message translates to:
+  /// **'לא עכשיו'**
+  String get notifNotNow;
+
+  /// No description provided for @notifWantToHelp.
+  ///
+  /// In he, this message translates to:
+  /// **'אני רוצה לעזור!'**
+  String get notifWantToHelp;
+
+  /// No description provided for @notifCantAccept.
+  ///
+  /// In he, this message translates to:
+  /// **'לא ניתן לקבל בקשה זו'**
+  String get notifCantAccept;
+
+  /// No description provided for @notifAccepted.
+  ///
+  /// In he, this message translates to:
+  /// **'✓ קיבלת את הבקשה! נפתח צ\'אט עם הלקוח'**
+  String get notifAccepted;
+
+  /// No description provided for @notifLoadError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה בטעינת ההתראות'**
+  String get notifLoadError;
+
+  /// No description provided for @notifEmptyNow.
+  ///
+  /// In he, this message translates to:
+  /// **'אין כרגע התראות'**
+  String get notifEmptyNow;
+
+  /// No description provided for @chatUnknown.
+  ///
+  /// In he, this message translates to:
+  /// **'לא ידוע'**
+  String get chatUnknown;
+
+  /// No description provided for @chatSafetyWarning.
+  ///
+  /// In he, this message translates to:
+  /// **'שימו לב: למען ביטחונכם, אין להחליף מספרי טלפון או לסגור עסקאות מחוץ לאפליקציה.'**
+  String get chatSafetyWarning;
+
+  /// No description provided for @chatNoInternet.
+  ///
+  /// In he, this message translates to:
+  /// **'אין חיבור לאינטרנט.'**
+  String get chatNoInternet;
+
+  /// No description provided for @chatDefaultCustomer.
+  ///
+  /// In he, this message translates to:
+  /// **'לקוח'**
+  String get chatDefaultCustomer;
+
+  /// No description provided for @chatPaymentRequest.
+  ///
+  /// In he, this message translates to:
+  /// **'בקשת תשלום'**
+  String get chatPaymentRequest;
+
+  /// No description provided for @chatAmountLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'סכום'**
+  String get chatAmountLabel;
+
+  /// No description provided for @chatServiceDescLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'תיאור השירות'**
+  String get chatServiceDescLabel;
+
+  /// No description provided for @chatSend.
+  ///
+  /// In he, this message translates to:
+  /// **'שלח'**
+  String get chatSend;
+
+  /// No description provided for @chatQuoteSent.
+  ///
+  /// In he, this message translates to:
+  /// **'הצעת המחיר נשלחה בהצלחה ✅'**
+  String get chatQuoteSent;
+
+  /// No description provided for @chatQuoteError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה בשליחת ההצעה. נסה שוב.'**
+  String get chatQuoteError;
+
+  /// No description provided for @chatOfficialQuote.
+  ///
+  /// In he, this message translates to:
+  /// **'הצעת מחיר רשמית'**
+  String get chatOfficialQuote;
+
+  /// No description provided for @chatQuoteDescHint.
+  ///
+  /// In he, this message translates to:
+  /// **'פרט את השירות הכלול במחיר...'**
+  String get chatQuoteDescHint;
+
+  /// No description provided for @chatEscrowNote.
+  ///
+  /// In he, this message translates to:
+  /// **'הסכום ינעל בנאמנות AnySkill עם אישור הלקוח'**
+  String get chatEscrowNote;
+
+  /// No description provided for @chatSendQuote.
+  ///
+  /// In he, this message translates to:
+  /// **'שלח הצעה'**
+  String get chatSendQuote;
+
+  /// No description provided for @chatQuoteLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'הצעת מחיר'**
+  String get chatQuoteLabel;
+
+  /// No description provided for @chatOnMyWay.
+  ///
+  /// In he, this message translates to:
+  /// **'אני בדרך! 🚗 אגיע בקרוב.'**
+  String get chatOnMyWay;
+
+  /// No description provided for @chatWorkDone.
+  ///
+  /// In he, this message translates to:
+  /// **'סיימתי את העבודה! ✅'**
+  String get chatWorkDone;
+
+  /// No description provided for @expCantBookSelf.
+  ///
+  /// In he, this message translates to:
+  /// **'לא ניתן להזמין שירות מעצמך'**
+  String get expCantBookSelf;
+
+  /// No description provided for @expSlotTakenTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'המועד תפוס'**
+  String get expSlotTakenTitle;
+
+  /// No description provided for @expSlotTakenBody.
+  ///
+  /// In he, this message translates to:
+  /// **'מישהו כבר הזמין את המומחה לאותו מועד.\nאנא בחר תאריך או שעה אחרים.'**
+  String get expSlotTakenBody;
+
+  /// No description provided for @expUnderstood.
+  ///
+  /// In he, this message translates to:
+  /// **'הבנתי'**
+  String get expUnderstood;
+
+  /// No description provided for @expBookingError.
+  ///
+  /// In he, this message translates to:
+  /// **'חלה שגיאה בתהליך ההזמנה, אנא נסה שנית.'**
+  String get expBookingError;
+
+  /// No description provided for @expDefaultCustomer.
+  ///
+  /// In he, this message translates to:
+  /// **'לקוח'**
+  String get expDefaultCustomer;
+
+  /// No description provided for @expDemoBookingMsg.
+  ///
+  /// In he, this message translates to:
+  /// **'הזמנת את {name}. אנחנו מעדכנים אותך כשנותן השירות פנוי.'**
+  String expDemoBookingMsg(String name);
+
+  /// No description provided for @expOptionalAddons.
+  ///
+  /// In he, this message translates to:
+  /// **'תוספות אופציונליות'**
+  String get expOptionalAddons;
+
+  /// No description provided for @expProviderDayOff.
+  ///
+  /// In he, this message translates to:
+  /// **'הספק לא עובד ביום הזה'**
+  String get expProviderDayOff;
+
+  /// No description provided for @expAnonymous.
+  ///
+  /// In he, this message translates to:
+  /// **'אנונימי'**
+  String get expAnonymous;
+
+  /// No description provided for @expRatingProfessional.
+  ///
+  /// In he, this message translates to:
+  /// **'מקצועיות'**
+  String get expRatingProfessional;
+
+  /// No description provided for @expRatingTiming.
+  ///
+  /// In he, this message translates to:
+  /// **'עמידה בזמנים'**
+  String get expRatingTiming;
+
+  /// No description provided for @expRatingCommunication.
+  ///
+  /// In he, this message translates to:
+  /// **'תקשורת'**
+  String get expRatingCommunication;
+
+  /// No description provided for @expSearchReviewsHint.
+  ///
+  /// In he, this message translates to:
+  /// **'חפש בביקורות...'**
+  String get expSearchReviewsHint;
+
+  /// No description provided for @expReviewsTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'ביקורות'**
+  String get expReviewsTitle;
+
+  /// No description provided for @expNoReviewsMatch.
+  ///
+  /// In he, this message translates to:
+  /// **'לא נמצאו ביקורות עבור \"{query}\"'**
+  String expNoReviewsMatch(String query);
+
+  /// No description provided for @expShowAllReviews.
+  ///
+  /// In he, this message translates to:
+  /// **'הצג את כל {count} הביקורות'**
+  String expShowAllReviews(int count);
+
+  /// No description provided for @expCommunityVolunteerBadge.
+  ///
+  /// In he, this message translates to:
+  /// **'התנדבות בקהילה'**
+  String get expCommunityVolunteerBadge;
+
+  /// No description provided for @expPriceAfterPhotos.
+  ///
+  /// In he, this message translates to:
+  /// **'מובטח אחרי אישור התמונות'**
+  String get expPriceAfterPhotos;
+
+  /// No description provided for @expDeposit.
+  ///
+  /// In he, this message translates to:
+  /// **'פיקדון מקדים'**
+  String get expDeposit;
+
+  /// No description provided for @expNights.
+  ///
+  /// In he, this message translates to:
+  /// **'לילות'**
+  String get expNights;
+
+  /// No description provided for @expNightsCount.
+  ///
+  /// In he, this message translates to:
+  /// **'מספר לילות'**
+  String get expNightsCount;
+
+  /// No description provided for @expEndDate.
+  ///
+  /// In he, this message translates to:
+  /// **'תאריך סיום השהות'**
+  String get expEndDate;
+
+  /// No description provided for @expSelectDate.
+  ///
+  /// In he, this message translates to:
+  /// **'יש לבחור תאריך'**
+  String get expSelectDate;
+
+  /// No description provided for @expMustFillAll.
+  ///
+  /// In he, this message translates to:
+  /// **'יש למלא את כל השדות הנדרשים למעלה כדי להמשיך'**
+  String get expMustFillAll;
+
+  /// No description provided for @expBookingReceivedDemo.
+  ///
+  /// In he, this message translates to:
+  /// **'ההזמנה התקבלה!'**
+  String get expBookingReceivedDemo;
+
+  /// No description provided for @expBookingSuccess.
+  ///
+  /// In he, this message translates to:
+  /// **'ההזמנה בוצעה בהצלחה! 🎉'**
+  String get expBookingSuccess;
+
+  /// No description provided for @expBookingDemoBody.
+  ///
+  /// In he, this message translates to:
+  /// **'הזמנת את השירות. אנחנו כבר מעדכנים אותך אם נותן השירות פנוי.\nתקבל הודעה ברגע שיש תשובה.'**
+  String get expBookingDemoBody;
+
+  /// No description provided for @expWillNotify.
+  ///
+  /// In he, this message translates to:
+  /// **'נשלח לך עדכון בקרוב'**
+  String get expWillNotify;
+
+  /// No description provided for @expGotIt.
+  ///
+  /// In he, this message translates to:
+  /// **'הבנתי ✓'**
+  String get expGotIt;
+
+  /// No description provided for @expProviderRole.
+  ///
+  /// In he, this message translates to:
+  /// **'נותן שירות'**
+  String get expProviderRole;
+
+  /// No description provided for @expJobsLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'עבודות'**
+  String get expJobsLabel;
+
+  /// No description provided for @expRatingLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'דירוג'**
+  String get expRatingLabel;
+
+  /// No description provided for @expReviewsLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'ביקורות'**
+  String get expReviewsLabel;
+
+  /// No description provided for @expVolunteersLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'התנדבויות בקהילה'**
+  String get expVolunteersLabel;
+
+  /// No description provided for @expVideoIntro.
+  ///
+  /// In he, this message translates to:
+  /// **'וידאו היכרות'**
+  String get expVideoIntro;
+
+  /// No description provided for @expGallery.
+  ///
+  /// In he, this message translates to:
+  /// **'גלריית עבודות'**
+  String get expGallery;
+
+  /// No description provided for @expVerifiedCertificate.
+  ///
+  /// In he, this message translates to:
+  /// **'תעודת הסמכה מאומתת'**
+  String get expVerifiedCertificate;
+
+  /// No description provided for @expView.
+  ///
+  /// In he, this message translates to:
+  /// **'לצפייה'**
+  String get expView;
+
+  /// No description provided for @expCertificateTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'תעודת הסמכה'**
+  String get expCertificateTitle;
+
+  /// No description provided for @expImageLoadError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה בטעינת התמונה'**
+  String get expImageLoadError;
+
+  /// No description provided for @catBadgeAngel.
+  ///
+  /// In he, this message translates to:
+  /// **'מלאך'**
+  String get catBadgeAngel;
+
+  /// No description provided for @catBadgePillar.
+  ///
+  /// In he, this message translates to:
+  /// **'עמוד תווך'**
+  String get catBadgePillar;
+
+  /// No description provided for @catBadgeVolunteer.
+  ///
+  /// In he, this message translates to:
+  /// **'מתנדב'**
+  String get catBadgeVolunteer;
+
+  /// No description provided for @catDayOffline.
+  ///
+  /// In he, this message translates to:
+  /// **'לא זמין כעת'**
+  String get catDayOffline;
+
+  /// No description provided for @catStartLesson.
+  ///
+  /// In he, this message translates to:
+  /// **'התחל שיעור'**
+  String get catStartLesson;
+
+  /// No description provided for @catYourProfile.
+  ///
+  /// In he, this message translates to:
+  /// **'הפרופיל שלך'**
+  String get catYourProfile;
+
+  /// No description provided for @catMapView.
+  ///
+  /// In he, this message translates to:
+  /// **'תצוגת מפה'**
+  String get catMapView;
+
+  /// No description provided for @catListView.
+  ///
+  /// In he, this message translates to:
+  /// **'תצוגת רשימה'**
+  String get catListView;
+
+  /// No description provided for @catInstantBookingSoon.
+  ///
+  /// In he, this message translates to:
+  /// **'הזמנה מיידית — בקרוב 🎉'**
+  String get catInstantBookingSoon;
+
+  /// No description provided for @catFreeCommunityBadge.
+  ///
+  /// In he, this message translates to:
+  /// **'שירות קהילתי ללא עלות — 100% חינם ❤️'**
+  String get catFreeCommunityBadge;
+
+  /// No description provided for @catNeedHelp.
+  ///
+  /// In he, this message translates to:
+  /// **'אני צריך עזרה'**
+  String get catNeedHelp;
+
+  /// No description provided for @catHelpForOther.
+  ///
+  /// In he, this message translates to:
+  /// **'עזרה עבור מישהו אחר'**
+  String get catHelpForOther;
+
+  /// No description provided for @catRespectTime.
+  ///
+  /// In he, this message translates to:
+  /// **'אנא כבדו את זמנם והשתמשו בשירות לצרכים אמיתיים בלבד.'**
+  String get catRespectTime;
+
+  /// No description provided for @catFilterRating.
+  ///
+  /// In he, this message translates to:
+  /// **'דירוג'**
+  String get catFilterRating;
+
+  /// No description provided for @catFilterDistance.
+  ///
+  /// In he, this message translates to:
+  /// **'מרחק'**
+  String get catFilterDistance;
+
+  /// No description provided for @catFilterKm.
+  ///
+  /// In he, this message translates to:
+  /// **'ק\"מ'**
+  String get catFilterKm;
+
+  /// No description provided for @catFilterMore.
+  ///
+  /// In he, this message translates to:
+  /// **'עוד'**
+  String get catFilterMore;
+
+  /// No description provided for @catFilterRatingTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'סינון לפי דירוג'**
+  String get catFilterRatingTitle;
+
+  /// No description provided for @catFilterAll.
+  ///
+  /// In he, this message translates to:
+  /// **'הכל'**
+  String get catFilterAll;
+
+  /// No description provided for @catFilterApply.
+  ///
+  /// In he, this message translates to:
+  /// **'החל'**
+  String get catFilterApply;
+
+  /// No description provided for @catFilterDistanceTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'סינון לפי מרחק'**
+  String get catFilterDistanceTitle;
+
+  /// No description provided for @catFilterNeedLocation.
+  ///
+  /// In he, this message translates to:
+  /// **'יש לאשר גישה למיקום כדי לסנן לפי מרחק'**
+  String get catFilterNeedLocation;
+
+  /// No description provided for @catFilterClear.
+  ///
+  /// In he, this message translates to:
+  /// **'נקה'**
+  String get catFilterClear;
+
+  /// No description provided for @catMaxDistance.
+  ///
+  /// In he, this message translates to:
+  /// **'מרחק מקסימלי'**
+  String get catMaxDistance;
+
+  /// No description provided for @catNoLimit.
+  ///
+  /// In he, this message translates to:
+  /// **'ללא הגבלה'**
+  String get catNoLimit;
+
+  /// No description provided for @catUpToKm.
+  ///
+  /// In he, this message translates to:
+  /// **'עד {km} ק״מ'**
+  String catUpToKm(int km);
+
+  /// No description provided for @catMinRating.
+  ///
+  /// In he, this message translates to:
+  /// **'דירוג מינימלי'**
+  String get catMinRating;
+
+  /// No description provided for @catSupport.
+  ///
+  /// In he, this message translates to:
+  /// **'תמיכה'**
+  String get catSupport;
+
+  /// No description provided for @catFillFields.
+  ///
+  /// In he, this message translates to:
+  /// **'נא למלא קטגוריה, תיאור ומספר טלפון'**
+  String get catFillFields;
+
+  /// No description provided for @catRequestSent.
+  ///
+  /// In he, this message translates to:
+  /// **'הבקשה נשלחה! מתנדבים מתאימים יקבלו התראה.'**
+  String get catRequestSent;
+
+  /// No description provided for @catRequestError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה: {error}'**
+  String catRequestError(String error);
+
+  /// No description provided for @catCategory.
+  ///
+  /// In he, this message translates to:
+  /// **'קטגוריה'**
+  String get catCategory;
+
+  /// No description provided for @catChooseCategory.
+  ///
+  /// In he, this message translates to:
+  /// **'בחר תחום עזרה'**
+  String get catChooseCategory;
+
+  /// No description provided for @catRequestDescription.
+  ///
+  /// In he, this message translates to:
+  /// **'תיאור הבקשה'**
+  String get catRequestDescription;
+
+  /// No description provided for @catDescHint.
+  ///
+  /// In he, this message translates to:
+  /// **'תאר/י מה צריך לעשות...'**
+  String get catDescHint;
+
+  /// No description provided for @catLocation.
+  ///
+  /// In he, this message translates to:
+  /// **'מיקום'**
+  String get catLocation;
+
+  /// No description provided for @catLocationHint.
+  ///
+  /// In he, this message translates to:
+  /// **'עיר / שכונה'**
+  String get catLocationHint;
+
+  /// No description provided for @catContactPhone.
+  ///
+  /// In he, this message translates to:
+  /// **'טלפון ליצירת קשר'**
+  String get catContactPhone;
+
+  /// No description provided for @catBeneficiaryName.
+  ///
+  /// In he, this message translates to:
+  /// **'שם המוטב'**
+  String get catBeneficiaryName;
+
+  /// No description provided for @catBeneficiaryHint.
+  ///
+  /// In he, this message translates to:
+  /// **'שם האדם שצריך עזרה'**
+  String get catBeneficiaryHint;
+
+  /// No description provided for @catIAmContact.
+  ///
+  /// In he, this message translates to:
+  /// **'אני איש הקשר'**
+  String get catIAmContact;
+
+  /// No description provided for @catIAmCoordinator.
+  ///
+  /// In he, this message translates to:
+  /// **'אני זה שיתואם מול המתנדב'**
+  String get catIAmCoordinator;
+
+  /// No description provided for @catSendRequest.
+  ///
+  /// In he, this message translates to:
+  /// **'שלח בקשת עזרה'**
+  String get catSendRequest;
+
+  /// No description provided for @catBack.
+  ///
+  /// In he, this message translates to:
+  /// **'חזור'**
+  String get catBack;
+
+  /// No description provided for @catSearchInCategory.
+  ///
+  /// In he, this message translates to:
+  /// **'חפש בתוך הקטגוריה...'**
+  String get catSearchInCategory;
+
+  /// No description provided for @catUnder100.
+  ///
+  /// In he, this message translates to:
+  /// **'עד ₪100'**
+  String get catUnder100;
+
+  /// No description provided for @catAvailableNow.
+  ///
+  /// In he, this message translates to:
+  /// **'זמינים עכשיו'**
+  String get catAvailableNow;
+
+  /// No description provided for @catInstantBook.
+  ///
+  /// In he, this message translates to:
+  /// **'הזמנה מיידית'**
+  String get catInstantBook;
+
+  /// No description provided for @catInNeighborhood.
+  ///
+  /// In he, this message translates to:
+  /// **'בשכונה שלך'**
+  String get catInNeighborhood;
+
+  /// No description provided for @catAvailableNowUser.
+  ///
+  /// In he, this message translates to:
+  /// **'זמין/ה עכשיו'**
+  String get catAvailableNowUser;
+
+  /// No description provided for @catRecommended.
+  ///
+  /// In he, this message translates to:
+  /// **'מומלץ'**
+  String get catRecommended;
+
+  /// No description provided for @catWhenAvailable.
+  ///
+  /// In he, this message translates to:
+  /// **'מתי פנוי?'**
+  String get catWhenAvailable;
+
+  /// No description provided for @catBookNow.
+  ///
+  /// In he, this message translates to:
+  /// **'הזמן עכשיו'**
+  String get catBookNow;
+
+  /// No description provided for @editVideoUploadError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה בהעלאת הסרטון: {error}'**
+  String editVideoUploadError(String error);
+
+  /// No description provided for @editAddSecondIdentity.
+  ///
+  /// In he, this message translates to:
+  /// **'הוסף זהות מקצועית שנייה'**
+  String get editAddSecondIdentity;
+
+  /// No description provided for @editSecondIdentitySubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'הרוויחו יותר — הציעו שירות נוסף תחת אותו חשבון'**
+  String get editSecondIdentitySubtitle;
+
+  /// No description provided for @editPrimaryIdentity.
+  ///
+  /// In he, this message translates to:
+  /// **'זהות ראשית'**
+  String get editPrimaryIdentity;
+
+  /// No description provided for @editSecondaryIdentity.
+  ///
+  /// In he, this message translates to:
+  /// **'זהות שנייה'**
+  String get editSecondaryIdentity;
+
+  /// No description provided for @editEditingNow.
+  ///
+  /// In he, this message translates to:
+  /// **'עורך כעת'**
+  String get editEditingNow;
+
+  /// No description provided for @editPhoneLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'מספר טלפון'**
+  String get editPhoneLabel;
+
+  /// No description provided for @editPhoneVerified.
+  ///
+  /// In he, this message translates to:
+  /// **'מספר הטלפון מאומת ולא ניתן לשינוי'**
+  String get editPhoneVerified;
+
+  /// No description provided for @editAppPending.
+  ///
+  /// In he, this message translates to:
+  /// **'הבקשה שלך בבדיקה 🕐'**
+  String get editAppPending;
+
+  /// No description provided for @editAppPendingDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'הצוות שלנו בודק את הפרטים ויחזור אליך בקרוב.'**
+  String get editAppPendingDesc;
+
+  /// No description provided for @editBecomeProvider.
+  ///
+  /// In he, this message translates to:
+  /// **'רוצה לעבוד ולהרוויח כסף? לחץ כאן'**
+  String get editBecomeProvider;
+
+  /// No description provided for @editApplicationMessage.
+  ///
+  /// In he, this message translates to:
+  /// **'בקשה להצטרפות כמומחה: {name}'**
+  String editApplicationMessage(String name);
+
+  /// No description provided for @editGenericError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה: {error}'**
+  String editGenericError(String error);
+
+  /// No description provided for @editUploadClearPhoto.
+  ///
+  /// In he, this message translates to:
+  /// **'העלה תמונת פנים ברורה'**
+  String get editUploadClearPhoto;
+
+  /// No description provided for @editClearPhotoDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'פרופילים עם תמונה ברורה נהנים מפי 3 יותר פניות'**
+  String get editClearPhotoDesc;
+
+  /// No description provided for @editAccountTypeChange.
+  ///
+  /// In he, this message translates to:
+  /// **'שינוי סוג חשבון מתבצע מול שירות הלקוחות בלבד'**
+  String get editAccountTypeChange;
+
+  /// No description provided for @editVolunteerToggleTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'אני מעוניין להתנדב'**
+  String get editVolunteerToggleTitle;
+
+  /// No description provided for @editVolunteerToggleDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'הצע את כישוריך ללא עלות לאנשים הזקוקים לעזרה'**
+  String get editVolunteerToggleDesc;
+
+  /// No description provided for @editIdentitiesTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'הזהויות המקצועיות שלך'**
+  String get editIdentitiesTitle;
+
+  /// No description provided for @editPaymentSettings.
+  ///
+  /// In he, this message translates to:
+  /// **'הגדרות תשלום בקרוב'**
+  String get editPaymentSettings;
+
+  /// No description provided for @editPaymentSettingsDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'אנו עוברים לספק תשלומים ישראלי. בינתיים בקשות משיכה מטופלות ידנית על ידי הצוות.'**
+  String get editPaymentSettingsDesc;
+
+  /// No description provided for @editAdvancedSettings.
+  ///
+  /// In he, this message translates to:
+  /// **'הגדרות מתקדמות'**
+  String get editAdvancedSettings;
+
+  /// No description provided for @editPricingSettings.
+  ///
+  /// In he, this message translates to:
+  /// **'הגדרות תמחור'**
+  String get editPricingSettings;
+
+  /// No description provided for @editWorkingHours.
+  ///
+  /// In he, this message translates to:
+  /// **'שעות עבודה'**
+  String get editWorkingHours;
+
+  /// No description provided for @editWorkingHoursHint.
+  ///
+  /// In he, this message translates to:
+  /// **'סמן את הימים ושעות העבודה שלך'**
+  String get editWorkingHoursHint;
+
+  /// No description provided for @editDayOff.
+  ///
+  /// In he, this message translates to:
+  /// **'לא עובד'**
+  String get editDayOff;
+
+  /// No description provided for @editCertificate.
+  ///
+  /// In he, this message translates to:
+  /// **'תעודת הסמכה'**
+  String get editCertificate;
+
+  /// No description provided for @editCertificateDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'העלה תעודה / תעודת הסמכה מקצועית (אופציונלי)'**
+  String get editCertificateDesc;
+
+  /// No description provided for @editReplaceCertificate.
+  ///
+  /// In he, this message translates to:
+  /// **'החלף תעודה'**
+  String get editReplaceCertificate;
+
+  /// No description provided for @editUploadCertificate.
+  ///
+  /// In he, this message translates to:
+  /// **'העלה תעודת הסמכה'**
+  String get editUploadCertificate;
+
+  /// No description provided for @editIntroVideo.
+  ///
+  /// In he, this message translates to:
+  /// **'סרטון היכרות'**
+  String get editIntroVideo;
+
+  /// No description provided for @editIntroVideoDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'הוסף סרטון קצר (עד 60 שניות) שמציג אותך ואת כישוריך. הסרטון יופיע בפרופיל שלך לאחר אישור מנהל.'**
+  String get editIntroVideoDesc;
+
+  /// No description provided for @editUploading.
+  ///
+  /// In he, this message translates to:
+  /// **'מעלה... {percent}%'**
+  String editUploading(int percent);
+
+  /// No description provided for @editVideoUploaded.
+  ///
+  /// In he, this message translates to:
+  /// **'סרטון הועלה — לחץ להחלפה'**
+  String get editVideoUploaded;
+
+  /// No description provided for @editUploadVideo.
+  ///
+  /// In he, this message translates to:
+  /// **'העלה סרטון היכרות (עד 60 שניות)'**
+  String get editUploadVideo;
+
+  /// No description provided for @editPendingAdmin.
+  ///
+  /// In he, this message translates to:
+  /// **'ממתין לאישור מנהל — יופיע בפרופיל לאחר האישור'**
+  String get editPendingAdmin;
+
+  /// No description provided for @editManagement.
+  ///
+  /// In he, this message translates to:
+  /// **'ניהול'**
+  String get editManagement;
+
+  /// No description provided for @editServiceProvider.
+  ///
+  /// In he, this message translates to:
+  /// **'נותן שירות'**
+  String get editServiceProvider;
+
+  /// No description provided for @editCustomer.
+  ///
+  /// In he, this message translates to:
+  /// **'לקוח'**
+  String get editCustomer;
+
+  /// No description provided for @editAdminModeActive.
+  ///
+  /// In he, this message translates to:
+  /// **'מצב ניהול פעיל'**
+  String get editAdminModeActive;
+
+  /// No description provided for @editProviderModeActive.
+  ///
+  /// In he, this message translates to:
+  /// **'מצב נותן שירות פעיל'**
+  String get editProviderModeActive;
+
+  /// No description provided for @editCustomerModeActive.
+  ///
+  /// In he, this message translates to:
+  /// **'מצב לקוח פעיל'**
+  String get editCustomerModeActive;
+
+  /// No description provided for @editViewMode.
+  ///
+  /// In he, this message translates to:
+  /// **'מצב תצוגה'**
+  String get editViewMode;
+
+  /// No description provided for @editMyDogs.
+  ///
+  /// In he, this message translates to:
+  /// **'הכלבים שלי'**
+  String get editMyDogs;
+
+  /// No description provided for @editShowAll.
+  ///
+  /// In he, this message translates to:
+  /// **'הצג הכל'**
+  String get editShowAll;
+
+  /// No description provided for @editAddDogProfile.
+  ///
+  /// In he, this message translates to:
+  /// **'הוסף פרופיל כלב'**
+  String get editAddDogProfile;
+
+  /// No description provided for @editNewDog.
+  ///
+  /// In he, this message translates to:
+  /// **'כלב חדש'**
+  String get editNewDog;
+
+  /// No description provided for @editUnnamedDog.
+  ///
+  /// In he, this message translates to:
+  /// **'ללא שם'**
+  String get editUnnamedDog;
+
+  /// No description provided for @editApplyAsProvider.
+  ///
+  /// In he, this message translates to:
+  /// **'הגש מועמדות כמומחה'**
+  String get editApplyAsProvider;
+
+  /// No description provided for @editApplyDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'מלא את הפרטים ואנחנו נבדוק את הבקשה שלך'**
+  String get editApplyDesc;
+
+  /// No description provided for @editServiceFieldLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'תחום עיסוק *'**
+  String get editServiceFieldLabel;
+
+  /// No description provided for @editChooseField.
+  ///
+  /// In he, this message translates to:
+  /// **'בחר תחום'**
+  String get editChooseField;
+
+  /// No description provided for @editIdNumberLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'מספר ת.ז. / ח.פ. *'**
+  String get editIdNumberLabel;
+
+  /// No description provided for @editIdNumberHint.
+  ///
+  /// In he, this message translates to:
+  /// **'הכנס מספר זהות'**
+  String get editIdNumberHint;
+
+  /// No description provided for @editAboutYouLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'ספר על עצמך *'**
+  String get editAboutYouLabel;
+
+  /// No description provided for @editAboutYouHint.
+  ///
+  /// In he, this message translates to:
+  /// **'תאר את הניסיון שלך, השירותים שאתה מציע...'**
+  String get editAboutYouHint;
+
+  /// No description provided for @editSubmitApplication.
+  ///
+  /// In he, this message translates to:
+  /// **'שלח בקשה'**
+  String get editSubmitApplication;
+
+  /// No description provided for @editChooseFieldError.
+  ///
+  /// In he, this message translates to:
+  /// **'בחר תחום עיסוק'**
+  String get editChooseFieldError;
+
+  /// No description provided for @editEnterIdError.
+  ///
+  /// In he, this message translates to:
+  /// **'הכנס מספר זהות'**
+  String get editEnterIdError;
+
+  /// No description provided for @editDaySunday.
+  ///
+  /// In he, this message translates to:
+  /// **'ראשון'**
+  String get editDaySunday;
+
+  /// No description provided for @editDayMonday.
+  ///
+  /// In he, this message translates to:
+  /// **'שני'**
+  String get editDayMonday;
+
+  /// No description provided for @editDayTuesday.
+  ///
+  /// In he, this message translates to:
+  /// **'שלישי'**
+  String get editDayTuesday;
+
+  /// No description provided for @editDayWednesday.
+  ///
+  /// In he, this message translates to:
+  /// **'רביעי'**
+  String get editDayWednesday;
+
+  /// No description provided for @editDayThursday.
+  ///
+  /// In he, this message translates to:
+  /// **'חמישי'**
+  String get editDayThursday;
+
+  /// No description provided for @editDayFriday.
+  ///
+  /// In he, this message translates to:
+  /// **'שישי'**
+  String get editDayFriday;
+
+  /// No description provided for @editDaySaturday.
+  ///
+  /// In he, this message translates to:
+  /// **'שבת'**
+  String get editDaySaturday;
+
+  /// No description provided for @phoneInvalidNumber.
+  ///
+  /// In he, this message translates to:
+  /// **'מספר טלפון לא תקין'**
+  String get phoneInvalidNumber;
+
+  /// No description provided for @phoneTooManyCodes.
+  ///
+  /// In he, this message translates to:
+  /// **'שלחת יותר מדי קודים. המתן {mins} דקות ונסה שוב.'**
+  String phoneTooManyCodes(int mins);
+
+  /// No description provided for @phoneSendCodeError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה בשליחת הקוד. נסה שוב.'**
+  String get phoneSendCodeError;
+
+  /// No description provided for @phoneErrorTooManyRequests.
+  ///
+  /// In he, this message translates to:
+  /// **'יותר מדי ניסיונות. נסה מאוחר יותר.'**
+  String get phoneErrorTooManyRequests;
+
+  /// No description provided for @phoneErrorQuotaExceeded.
+  ///
+  /// In he, this message translates to:
+  /// **'מכסת SMS חרגה. נסה מחר.'**
+  String get phoneErrorQuotaExceeded;
+
+  /// No description provided for @phoneErrorNoNetwork.
+  ///
+  /// In he, this message translates to:
+  /// **'אין חיבור לאינטרנט'**
+  String get phoneErrorNoNetwork;
+
+  /// No description provided for @phoneErrorGeneric.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאה: {code}'**
+  String phoneErrorGeneric(String code);
+
+  /// No description provided for @phoneRateLimitInfo.
+  ///
+  /// In he, this message translates to:
+  /// **'ניתן לשלוח עד {max} קודים בכל {mins} דקות'**
+  String phoneRateLimitInfo(int max, int mins);
+
+  /// No description provided for @phoneLoginError.
+  ///
+  /// In he, this message translates to:
+  /// **'שגיאת התחברות: {code}'**
+  String phoneLoginError(String code);
+
+  /// No description provided for @countryIsrael.
+  ///
+  /// In he, this message translates to:
+  /// **'ישראל'**
+  String get countryIsrael;
+
+  /// No description provided for @otpLegacyUserDialogTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'חשבון קיים'**
+  String get otpLegacyUserDialogTitle;
+
+  /// No description provided for @otpLegacyUserDialogBody.
+  ///
+  /// In he, this message translates to:
+  /// **'למספר הזה יש חשבון קיים. נא לפנות לתמיכה.'**
+  String get otpLegacyUserDialogBody;
+
+  /// No description provided for @notifMuted.
+  ///
+  /// In he, this message translates to:
+  /// **'השתקה'**
+  String get notifMuted;
+
+  /// No description provided for @notifMuteAll.
+  ///
+  /// In he, this message translates to:
+  /// **'השתק הכל'**
+  String get notifMuteAll;
+
+  /// No description provided for @chatTyping.
+  ///
+  /// In he, this message translates to:
+  /// **'מקליד...'**
+  String get chatTyping;
+
+  /// No description provided for @chatOnline.
+  ///
+  /// In he, this message translates to:
+  /// **'מחובר'**
+  String get chatOnline;
+
+  /// No description provided for @expertPhotoGalleryEmpty.
+  ///
+  /// In he, this message translates to:
+  /// **'אין עדיין תמונות'**
+  String get expertPhotoGalleryEmpty;
+
+  /// No description provided for @catMapResultsCount.
+  ///
+  /// In he, this message translates to:
+  /// **'{count} תוצאות באזור שלך'**
+  String catMapResultsCount(int count);
+
+  /// No description provided for @catSearchResultsTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'נותני שירות ב-{category}'**
+  String catSearchResultsTitle(String category);
+
+  /// No description provided for @catAnyExpert.
+  ///
+  /// In he, this message translates to:
+  /// **'כל נותני השירות'**
+  String get catAnyExpert;
+
+  /// No description provided for @catSortBy.
+  ///
+  /// In he, this message translates to:
+  /// **'מיון לפי'**
+  String get catSortBy;
+
+  /// No description provided for @catSortRelevance.
+  ///
+  /// In he, this message translates to:
+  /// **'רלוונטיות'**
+  String get catSortRelevance;
+
+  /// No description provided for @catSortDistance.
+  ///
+  /// In he, this message translates to:
+  /// **'מרחק'**
+  String get catSortDistance;
+
+  /// No description provided for @catSortRating.
+  ///
+  /// In he, this message translates to:
+  /// **'דירוג'**
+  String get catSortRating;
+
+  /// No description provided for @catSortPrice.
+  ///
+  /// In he, this message translates to:
+  /// **'מחיר'**
+  String get catSortPrice;
+
+  /// No description provided for @catNoResults.
+  ///
+  /// In he, this message translates to:
+  /// **'לא נמצאו תוצאות'**
+  String get catNoResults;
+
+  /// No description provided for @catNoResultsDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'נסה לשנות את הפילטרים או לחפש באזור אחר'**
+  String get catNoResultsDesc;
+
+  /// No description provided for @catUrgent.
+  ///
+  /// In he, this message translates to:
+  /// **'דחוף'**
+  String get catUrgent;
+
+  /// No description provided for @catExpressDelivery.
+  ///
+  /// In he, this message translates to:
+  /// **'משלוח מהיר'**
+  String get catExpressDelivery;
+
+  /// No description provided for @editVerifiedBadge.
+  ///
+  /// In he, this message translates to:
+  /// **'מאומת'**
+  String get editVerifiedBadge;
+
+  /// No description provided for @editAdminOnlyChange.
+  ///
+  /// In he, this message translates to:
+  /// **'שינוי זה זמין רק למנהל המערכת'**
+  String get editAdminOnlyChange;
+
+  /// No description provided for @editProfileSaved.
+  ///
+  /// In he, this message translates to:
+  /// **'הפרופיל נשמר בהצלחה'**
+  String get editProfileSaved;
+
+  /// No description provided for @editPriceLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'מחיר לשעה (₪)'**
+  String get editPriceLabel;
+
+  /// No description provided for @editPriceHint.
+  ///
+  /// In he, this message translates to:
+  /// **'הכנס מחיר בשקלים'**
+  String get editPriceHint;
+
+  /// No description provided for @editAboutMeLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'ספר על עצמך'**
+  String get editAboutMeLabel;
+
+  /// No description provided for @editAboutMeHint.
+  ///
+  /// In he, this message translates to:
+  /// **'תאר את הניסיון שלך, השירותים שאתה מציע...'**
+  String get editAboutMeHint;
+
+  /// No description provided for @editCategoryLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'קטגוריה מקצועית'**
+  String get editCategoryLabel;
+
+  /// No description provided for @editSubCategoryLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'תת-קטגוריה'**
+  String get editSubCategoryLabel;
+
+  /// No description provided for @editDogNameLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'שם הכלב'**
+  String get editDogNameLabel;
+
+  /// No description provided for @editDogBreedLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'גזע'**
+  String get editDogBreedLabel;
+
+  /// No description provided for @editDogAgeLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'גיל'**
+  String get editDogAgeLabel;
+
+  /// No description provided for @editDogWeightLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'משקל (ק\"ג)'**
+  String get editDogWeightLabel;
+
+  /// No description provided for @editDogSizeLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'גודל'**
+  String get editDogSizeLabel;
+
+  /// No description provided for @editDogDescLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'תיאור'**
+  String get editDogDescLabel;
+
+  /// No description provided for @editDogSaveBtn.
+  ///
+  /// In he, this message translates to:
+  /// **'שמור פרופיל כלב'**
+  String get editDogSaveBtn;
+
+  /// No description provided for @editDogPickPhoto.
+  ///
+  /// In he, this message translates to:
+  /// **'בחר תמונה'**
+  String get editDogPickPhoto;
+
+  /// No description provided for @editDogNameHint.
+  ///
+  /// In he, this message translates to:
+  /// **'איך קוראים לכלב?'**
+  String get editDogNameHint;
+
+  /// No description provided for @editDogBreedHint.
+  ///
+  /// In he, this message translates to:
+  /// **'למשל: גולדן רטריבר'**
+  String get editDogBreedHint;
+
+  /// No description provided for @editDogSizeSmall.
+  ///
+  /// In he, this message translates to:
+  /// **'קטן'**
+  String get editDogSizeSmall;
+
+  /// No description provided for @editDogSizeMedium.
+  ///
+  /// In he, this message translates to:
+  /// **'בינוני'**
+  String get editDogSizeMedium;
+
+  /// No description provided for @editDogSizeLarge.
+  ///
+  /// In he, this message translates to:
+  /// **'גדול'**
+  String get editDogSizeLarge;
+
+  /// No description provided for @editDogYears.
+  ///
+  /// In he, this message translates to:
+  /// **'שנים'**
+  String get editDogYears;
+
+  /// No description provided for @editDogDescHint.
+  ///
+  /// In he, this message translates to:
+  /// **'אופי, תחביבים, דברים חשובים לדעת...'**
+  String get editDogDescHint;
+
+  /// No description provided for @editCancellationPolicyTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'מדיניות ביטול'**
+  String get editCancellationPolicyTitle;
+
+  /// No description provided for @editCancellationFlexible.
+  ///
+  /// In he, this message translates to:
+  /// **'גמיש'**
+  String get editCancellationFlexible;
+
+  /// No description provided for @editCancellationModerate.
+  ///
+  /// In he, this message translates to:
+  /// **'בינוני'**
+  String get editCancellationModerate;
+
+  /// No description provided for @editCancellationStrict.
+  ///
+  /// In he, this message translates to:
+  /// **'מחמיר'**
+  String get editCancellationStrict;
+
+  /// No description provided for @editCancellationFlexibleDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'החזר מלא עד 4 שעות לפני'**
+  String get editCancellationFlexibleDesc;
+
+  /// No description provided for @editCancellationModerateDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'החזר מלא עד 24 שעות לפני'**
+  String get editCancellationModerateDesc;
+
+  /// No description provided for @editCancellationStrictDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'החזר מלא עד 48 שעות לפני'**
+  String get editCancellationStrictDesc;
+
+  /// No description provided for @editResponseTimeLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'זמן תגובה ממוצע'**
+  String get editResponseTimeLabel;
+
+  /// No description provided for @editResponseImmediate.
+  ///
+  /// In he, this message translates to:
+  /// **'מיידי'**
+  String get editResponseImmediate;
+
+  /// No description provided for @editResponse30min.
+  ///
+  /// In he, this message translates to:
+  /// **'תוך 30 דקות'**
+  String get editResponse30min;
+
+  /// No description provided for @editResponse1h.
+  ///
+  /// In he, this message translates to:
+  /// **'תוך שעה'**
+  String get editResponse1h;
+
+  /// No description provided for @editResponseDay.
+  ///
+  /// In he, this message translates to:
+  /// **'תוך יום'**
+  String get editResponseDay;
+
+  /// No description provided for @editQuickTagsTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'תגיות מהירות'**
+  String get editQuickTagsTitle;
+
+  /// No description provided for @editQuickTagsDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'בחר עד 5 תגיות שמתארות את השירות שלך'**
+  String get editQuickTagsDesc;
+
+  /// No description provided for @editSave.
+  ///
+  /// In he, this message translates to:
+  /// **'שמור'**
+  String get editSave;
+
+  /// No description provided for @editSaving.
+  ///
+  /// In he, this message translates to:
+  /// **'שומר...'**
+  String get editSaving;
+
+  /// No description provided for @editDiscardChanges.
+  ///
+  /// In he, this message translates to:
+  /// **'לבטל שינויים?'**
+  String get editDiscardChanges;
+
+  /// No description provided for @editDiscardConfirm.
+  ///
+  /// In he, this message translates to:
+  /// **'יש לך שינויים שלא נשמרו. לבטל אותם?'**
+  String get editDiscardConfirm;
+
+  /// No description provided for @editDiscard.
+  ///
+  /// In he, this message translates to:
+  /// **'ביטול שינויים'**
+  String get editDiscard;
+
+  /// No description provided for @editContinueEditing.
+  ///
+  /// In he, this message translates to:
+  /// **'המשך עריכה'**
+  String get editContinueEditing;
+
+  /// No description provided for @editFieldRequired.
+  ///
+  /// In he, this message translates to:
+  /// **'שדה חובה'**
+  String get editFieldRequired;
+
+  /// No description provided for @editInvalidPrice.
+  ///
+  /// In he, this message translates to:
+  /// **'מחיר לא תקין'**
+  String get editInvalidPrice;
+
+  /// No description provided for @editMinPrice.
+  ///
+  /// In he, this message translates to:
+  /// **'המחיר המינימלי הוא ₪{min}'**
+  String editMinPrice(int min);
+
+  /// No description provided for @editCustomerServiceType.
+  ///
+  /// In he, this message translates to:
+  /// **'לקוח'**
+  String get editCustomerServiceType;
+
+  /// No description provided for @editAboutMinChars.
+  ///
+  /// In he, this message translates to:
+  /// **'כתוב לפחות 20 תווים על עצמך'**
+  String get editAboutMinChars;
+
+  /// No description provided for @editSecondIdentityCreated.
+  ///
+  /// In he, this message translates to:
+  /// **'זהות מקצועית שנייה נוצרה בהצלחה! 🎉'**
+  String get editSecondIdentityCreated;
+
+  /// No description provided for @editAddSecondIdentityTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'הוספת זהות מקצועית שנייה'**
+  String get editAddSecondIdentityTitle;
+
+  /// No description provided for @editAddSecondIdentityDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'בחר קטגוריה חדשה, מחיר ותיאור — הפרופיל השני יוצג בנפרד בחיפוש'**
+  String get editAddSecondIdentityDesc;
+
+  /// No description provided for @editSecondServiceDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'ספרו ללקוחות על השירות השני שלכם...'**
+  String get editSecondServiceDesc;
+
+  /// No description provided for @editCreateIdentity.
+  ///
+  /// In he, this message translates to:
+  /// **'צור זהות מקצועית'**
+  String get editCreateIdentity;
+
+  /// No description provided for @editIdentityUpdated.
+  ///
+  /// In he, this message translates to:
+  /// **'הזהות המקצועית עודכנה בהצלחה'**
+  String get editIdentityUpdated;
+
+  /// No description provided for @editDeleteIdentityTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'מחיקת זהות מקצועית'**
+  String get editDeleteIdentityTitle;
+
+  /// No description provided for @editDeleteIdentityConfirm.
+  ///
+  /// In he, this message translates to:
+  /// **'האם למחוק את הזהות המקצועית השנייה? הפעולה לא ניתנת לביטול.'**
+  String get editDeleteIdentityConfirm;
+
+  /// No description provided for @editDelete.
+  ///
+  /// In he, this message translates to:
+  /// **'מחק'**
+  String get editDelete;
+
+  /// No description provided for @editIdentityDeleted.
+  ///
+  /// In he, this message translates to:
+  /// **'הזהות המקצועית נמחקה'**
+  String get editIdentityDeleted;
+
+  /// No description provided for @editSaveChanges.
+  ///
+  /// In he, this message translates to:
+  /// **'שמור שינויים'**
+  String get editSaveChanges;
+
+  /// No description provided for @editDeleteIdentity.
+  ///
+  /// In he, this message translates to:
+  /// **'מחק זהות מקצועית'**
+  String get editDeleteIdentity;
+
+  /// No description provided for @editEditingIdentity.
+  ///
+  /// In he, this message translates to:
+  /// **'עריכת {type}'**
+  String editEditingIdentity(String type);
+
+  /// No description provided for @phoneLoginContinueGoogle.
+  ///
+  /// In he, this message translates to:
+  /// **'המשך עם Google'**
+  String get phoneLoginContinueGoogle;
+
+  /// No description provided for @phoneLoginContinueApple.
+  ///
+  /// In he, this message translates to:
+  /// **'המשך עם Apple'**
+  String get phoneLoginContinueApple;
+
+  /// No description provided for @phoneLoginOrPhone.
+  ///
+  /// In he, this message translates to:
+  /// **'או עם מספר טלפון'**
+  String get phoneLoginOrPhone;
+
+  /// No description provided for @phoneLoginCtaLogin.
+  ///
+  /// In he, this message translates to:
+  /// **'להתחברות'**
+  String get phoneLoginCtaLogin;
+
+  /// No description provided for @phoneLoginTermsPrefix.
+  ///
+  /// In he, this message translates to:
+  /// **'בהמשך אני מאשר את'**
+  String get phoneLoginTermsPrefix;
+
+  /// No description provided for @phoneLoginTermsOfUse.
+  ///
+  /// In he, this message translates to:
+  /// **'תנאי השימוש'**
+  String get phoneLoginTermsOfUse;
+
+  /// No description provided for @phoneLoginAnd.
+  ///
+  /// In he, this message translates to:
+  /// **'ו'**
+  String get phoneLoginAnd;
+
+  /// No description provided for @phoneLoginPrivacyPolicy.
+  ///
+  /// In he, this message translates to:
+  /// **'מדיניות הפרטיות'**
+  String get phoneLoginPrivacyPolicy;
+
+  /// No description provided for @phoneLoginOfferingService.
+  ///
+  /// In he, this message translates to:
+  /// **'מציע שירות?'**
+  String get phoneLoginOfferingService;
+
+  /// No description provided for @phoneLoginBecomeProvider.
+  ///
+  /// In he, this message translates to:
+  /// **'הרוויח עם AnySkill ←'**
+  String get phoneLoginBecomeProvider;
 }
 
 class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

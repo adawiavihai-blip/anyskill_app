@@ -12,6 +12,7 @@ import '../services/location_service.dart';
 import '../services/search_ranking_service.dart';
 import '../services/volunteer_service.dart';
 import '../services/category_service.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 import '../widgets/category_specs_widget.dart';
 import '../widgets/level_badge.dart';
 import '../constants/quick_tags.dart';
@@ -91,11 +92,12 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   bool _showMap = false;
 
   /// Returns the display label for community badges on search cards.
-  static String _communityBadgeLabel(Map<String, dynamic> data) {
+  static String _communityBadgeLabel(Map<String, dynamic> data, BuildContext ctx) {
     final badges = data['communityBadges'] as List<dynamic>?;
-    if (badges != null && badges.contains('angel')) return 'מלאך';
-    if (badges != null && badges.contains('pillar')) return 'עמוד תווך';
-    return 'מתנדב';
+    final l = AppLocalizations.of(ctx);
+    if (badges != null && badges.contains('angel')) return l.catBadgeAngel;
+    if (badges != null && badges.contains('pillar')) return l.catBadgePillar;
+    return l.catBadgeVolunteer;
   }
 
   // ── Pagination state ───────────────────────────────────────────────────────
@@ -364,11 +366,20 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
     // Dynamic time options based on provider's workingHours, with legacy fallback
     final rawHours = data['workingHours'] as Map<String, dynamic>?;
-    final dayLabels = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
-    final monthLabels = [
-      'ינו׳', 'פבר׳', 'מרץ', 'אפר׳', 'מאי', 'יוני',
-      'יולי', 'אוג׳', 'ספט׳', 'אוק׳', 'נוב׳', 'דצמ׳',
+    final dayLabels = [
+      AppLocalizations.of(context).editDaySunday,
+      AppLocalizations.of(context).editDayMonday,
+      AppLocalizations.of(context).editDayTuesday,
+      AppLocalizations.of(context).editDayWednesday,
+      AppLocalizations.of(context).editDayThursday,
+      AppLocalizations.of(context).editDayFriday,
+      AppLocalizations.of(context).editDaySaturday,
     ];
+    // Use short locale-aware month names via intl
+    final monthLabels = List<String>.generate(12, (i) {
+      final d = DateTime(2024, i + 1, 1);
+      return DateFormat.MMM(AppLocalizations.of(context).localeName).format(d);
+    });
 
     final expertDefaultName = l10n.catResultsExpertDefault;
     final availableSlotsTitle = l10n.catResultsAvailableSlots;
@@ -676,13 +687,13 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                         color: Colors.black.withValues(alpha: 0.50),
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.circle, color: Color(0xFF9CA3AF), size: 7),
-                          SizedBox(width: 3),
-                          Text('לא זמין כעת',
-                              style: TextStyle(
+                          const Icon(Icons.circle, color: Color(0xFF9CA3AF), size: 7),
+                          const SizedBox(width: 3),
+                          Text(AppLocalizations.of(context).catDayOffline,
+                              style: const TextStyle(
                                   color: Colors.white70,
                                   fontSize: 9,
                                   fontWeight: FontWeight.w600)),
@@ -906,7 +917,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                                     color: Colors.white, size: 11),
                                 const SizedBox(width: 2),
                                 Text(
-                                  _communityBadgeLabel(data),
+                                  _communityBadgeLabel(data, context),
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 9,
@@ -1332,8 +1343,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                           ),
                           icon: const Icon(Icons.play_circle_filled_rounded,
                               size: 18),
-                          label: const Text('התחל שיעור',
-                              style: TextStyle(
+                          label: Text(AppLocalizations.of(context).catStartLesson,
+                              style: const TextStyle(
                                   fontWeight: FontWeight.bold, fontSize: 13)),
                           onPressed: () => Navigator.push(
                             context,
@@ -1435,13 +1446,13 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                   color: const Color(0xFF6366F1),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Row(
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.person_rounded, size: 12, color: Colors.white),
-                    SizedBox(width: 4),
-                    Text('הפרופיל שלך',
-                        style: TextStyle(
+                    const Icon(Icons.person_rounded, size: 12, color: Colors.white),
+                    const SizedBox(width: 4),
+                    Text(AppLocalizations.of(context).catYourProfile,
+                        style: const TextStyle(
                             color: Colors.white,
                             fontSize: 10,
                             fontWeight: FontWeight.bold)),
@@ -1488,7 +1499,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
               child: IconButton(
                 icon: Icon(Icons.map_rounded,
                     color: Colors.grey[600], size: 24),
-                tooltip: 'תצוגת מפה',
+                tooltip: AppLocalizations.of(context).catMapView,
                 onPressed: () => setState(() => _showMap = true),
               ),
             ),
@@ -1546,9 +1557,9 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                                     () => _onlineOnly = !_onlineOnly),
                                 onInstantBook: () {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('הזמנה מיידית — בקרוב 🎉'),
-                                      duration: Duration(seconds: 2),
+                                    SnackBar(
+                                      content: Text(AppLocalizations.of(context).catInstantBookingSoon),
+                                      duration: const Duration(seconds: 2),
                                     ),
                                   );
                                 },
@@ -1600,10 +1611,10 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // ── Tag line ──────────────────────────────────────────────────────
-          const Text(
-            'שירות קהילתי ללא עלות — 100% חינם ❤️',
+          Text(
+            AppLocalizations.of(context).catFreeCommunityBadge,
             textAlign: TextAlign.center,
-            style: TextStyle(
+            style: const TextStyle(
                 color: Color(0xFF6EE7B7),
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -1617,7 +1628,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
               // Button A — I need help
               Expanded(
                 child: _CommunityActionButton(
-                  label: 'אני צריך עזרה',
+                  label: AppLocalizations.of(context).catNeedHelp,
                   icon: Icons.volunteer_activism_rounded,
                   gradient: const LinearGradient(
                     colors: [Color(0xFF10B981), Color(0xFF059669)],
@@ -1629,7 +1640,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
               // Button B — Help someone else
               Expanded(
                 child: _CommunityActionButton(
-                  label: 'עזרה עבור מישהו אחר',
+                  label: AppLocalizations.of(context).catHelpForOther,
                   icon: Icons.people_alt_rounded,
                   gradient: const LinearGradient(
                     colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
@@ -1648,11 +1659,10 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
               color: Colors.white.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Text(
-              'AnySkill מחבר אתכם עם מומחים בעלי לב טוב. '
-              'אנא כבדו את זמנם והשתמשו בשירות לצרכים אמיתיים בלבד.',
+            child: Text(
+              AppLocalizations.of(context).catRespectTime,
               textAlign: TextAlign.right,
-              style: TextStyle(
+              style: const TextStyle(
                   color: Color(0xFFD1FAE5), fontSize: 11, height: 1.5),
             ),
           ),
@@ -1717,7 +1727,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                 const SizedBox(width: 8),
                 // Rating filter
                 _buildFilterChip(
-                  label: _minRating > 0 ? '⭐ ${_minRating.toStringAsFixed(1)}+' : 'דירוג',
+                  label: _minRating > 0 ? '⭐ ${_minRating.toStringAsFixed(1)}+' : AppLocalizations.of(context).catFilterRating,
                   icon: Icons.star_rounded,
                   active: _minRating > 0,
                   onTap: () => _showRatingFilterSheet(),
@@ -1725,7 +1735,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                 const SizedBox(width: 8),
                 // Distance filter
                 _buildFilterChip(
-                  label: _maxDistanceKm != null ? '${_maxDistanceKm!.toInt()} ק"מ' : 'מרחק',
+                  label: _maxDistanceKm != null ? '${_maxDistanceKm!.toInt()} ${AppLocalizations.of(context).catFilterKm}' : AppLocalizations.of(context).catFilterDistance,
                   icon: Icons.location_on_outlined,
                   active: _maxDistanceKm != null,
                   onTap: () => _showDistanceFilterSheet(),
@@ -1733,7 +1743,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                 const SizedBox(width: 8),
                 // Advanced toggle
                 _buildFilterChip(
-                  label: 'עוד',
+                  label: AppLocalizations.of(context).catFilterMore,
                   icon: Icons.tune_rounded,
                   active: _showAdvancedFilters,
                   onTap: () => setState(() => _showAdvancedFilters = !_showAdvancedFilters),
@@ -1792,7 +1802,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('סינון לפי דירוג', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              Text(AppLocalizations.of(context).catFilterRatingTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -1801,7 +1811,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 4),
                       child: ChoiceChip(
-                        label: Text(r == 0 ? 'הכל' : '${r.toStringAsFixed(1)}+'),
+                        label: Text(r == 0 ? AppLocalizations.of(context).catFilterAll : '${r.toStringAsFixed(1)}+'),
                         selected: tempRating == r,
                         selectedColor: _kPurple,
                         labelStyle: TextStyle(color: tempRating == r ? Colors.white : Colors.black87, fontSize: 13),
@@ -1816,7 +1826,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(backgroundColor: _kPurple, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                   onPressed: () { Navigator.pop(ctx); setState(() => _minRating = tempRating); },
-                  child: const Text('החל', style: TextStyle(fontWeight: FontWeight.bold)),
+                  child: Text(AppLocalizations.of(context).catFilterApply, style: const TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -1842,12 +1852,12 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('סינון לפי מרחק', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              Text(AppLocalizations.of(context).catFilterDistanceTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               const SizedBox(height: 8),
               if (!hasLocation)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: Text('יש לאשר גישה למיקום כדי לסנן לפי מרחק', style: TextStyle(color: Colors.orange[700], fontSize: 13)),
+                  child: Text(AppLocalizations.of(context).catFilterNeedLocation, style: TextStyle(color: Colors.orange[700], fontSize: 13)),
                 ),
               Text('${tempKm.toInt()} ק"מ', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: _kPurple)),
               Slider(
@@ -1873,7 +1883,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                     child: OutlinedButton(
                       style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                       onPressed: () { Navigator.pop(ctx); setState(() => _maxDistanceKm = null); },
-                      child: const Text('נקה'),
+                      child: Text(AppLocalizations.of(context).catFilterClear),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -1881,7 +1891,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(backgroundColor: _kPurple, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                       onPressed: hasLocation ? () { Navigator.pop(ctx); setState(() => _maxDistanceKm = tempKm); } : null,
-                      child: const Text('החל', style: TextStyle(fontWeight: FontWeight.bold)),
+                      child: Text(AppLocalizations.of(context).catFilterApply, style: const TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ],
@@ -2058,18 +2068,20 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: Text('מרחק מקסימלי',
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(AppLocalizations.of(context).catMaxDistance,
                     textAlign: TextAlign.center,
-                    style: TextStyle(
+                    style: const TextStyle(
                         fontSize: 16, fontWeight: FontWeight.w700,
                         color: MapPalette.textPrimary)),
               ),
               for (final opt in options)
                 ListTile(
                   title: Text(
-                    opt == null ? 'ללא הגבלה' : 'עד ${opt.toInt()} ק״מ',
+                    opt == null
+                        ? AppLocalizations.of(context).catNoLimit
+                        : AppLocalizations.of(context).catUpToKm(opt.toInt()),
                     textDirection: TextDirection.rtl,
                   ),
                   trailing: _maxDistanceKm == opt
@@ -2105,18 +2117,18 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: Text('דירוג מינימלי',
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(AppLocalizations.of(context).catMinRating,
                     textAlign: TextAlign.center,
-                    style: TextStyle(
+                    style: const TextStyle(
                         fontSize: 16, fontWeight: FontWeight.w700,
                         color: MapPalette.textPrimary)),
               ),
               for (final opt in options)
                 ListTile(
                   title: Text(
-                    opt == 0 ? 'ללא הגבלה' : '${opt.toStringAsFixed(opt == 5 ? 0 : 1)}+ ⭐',
+                    opt == 0 ? AppLocalizations.of(context).catNoLimit : '${opt.toStringAsFixed(opt == 5 ? 0 : 1)}+ ⭐',
                     textDirection: TextDirection.rtl,
                   ),
                   trailing: _minRating == opt
@@ -2420,9 +2432,9 @@ class _WhatsAppSosButton extends StatelessWidget {
       backgroundColor: const Color(0xFF6366F1),
       elevation: 6,
       icon: const Icon(Icons.support_agent_rounded, color: Colors.white),
-      label: const Text(
-        'תמיכה',
-        style: TextStyle(
+      label: Text(
+        AppLocalizations.of(context).catSupport,
+        style: const TextStyle(
             color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
       ),
       onPressed: () {
@@ -2485,8 +2497,8 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
         _descCtrl.text.trim().isEmpty ||
         _phoneCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('נא למלא קטגוריה, תיאור ומספר טלפון'),
+        SnackBar(
+          content: Text(AppLocalizations.of(context).catFillFields),
           backgroundColor: Colors.orange,
           behavior: SnackBarBehavior.floating,
         ),
@@ -2526,13 +2538,13 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
           backgroundColor: const Color(0xFF10B981),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          content: const Row(children: [
-            Icon(Icons.check_circle_rounded, color: Colors.white),
-            SizedBox(width: 10),
+          content: Row(children: [
+            const Icon(Icons.check_circle_rounded, color: Colors.white),
+            const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'הבקשה נשלחה! מתנדבים מתאימים יקבלו התראה.',
-                style: TextStyle(fontWeight: FontWeight.w600),
+                AppLocalizations.of(context).catRequestSent,
+                style: const TextStyle(fontWeight: FontWeight.w600),
               ),
             ),
           ]),
@@ -2542,7 +2554,7 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('שגיאה: $e'),
+            content: Text(AppLocalizations.of(context).catRequestError(e.toString())),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
           ),
@@ -2629,7 +2641,7 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
                             fontWeight: FontWeight.bold)),
                   ),
                   Text(
-                    widget.forOther ? 'עזרה עבור מישהו אחר' : 'אני צריך עזרה',
+                    widget.forOther ? AppLocalizations.of(context).catHelpForOther : AppLocalizations.of(context).catNeedHelp,
                     style: const TextStyle(
                         fontSize: 18, fontWeight: FontWeight.bold),
                   ),
@@ -2640,7 +2652,7 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
               // ── Category picker ──────────────────────────────────────────
               Align(
                 alignment: Alignment.centerRight,
-                child: Text('קטגוריה',
+                child: Text(AppLocalizations.of(context).catCategory,
                     style: TextStyle(
                         fontWeight: FontWeight.bold, color: Colors.grey[700])),
               ),
@@ -2648,7 +2660,7 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
               DropdownButtonFormField<String>(
                 isExpanded: true,
                 value: _selectedCategory,
-                hint: const Text('בחר תחום עזרה', textAlign: TextAlign.right),
+                hint: Text(AppLocalizations.of(context).catChooseCategory, textAlign: TextAlign.right),
                 items: _mainCategories
                     .map((c) => DropdownMenuItem(
                           value: c['name'] as String,
@@ -2674,7 +2686,7 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
               // ── Description ──────────────────────────────────────────────
               Align(
                 alignment: Alignment.centerRight,
-                child: Text('תיאור הבקשה',
+                child: Text(AppLocalizations.of(context).catRequestDescription,
                     style: TextStyle(
                         fontWeight: FontWeight.bold, color: Colors.grey[700])),
               ),
@@ -2684,7 +2696,7 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
                 maxLines: 3,
                 textAlign: TextAlign.right,
                 decoration: InputDecoration(
-                  hintText: 'תאר/י מה צריך לעשות...',
+                  hintText: AppLocalizations.of(context).catDescHint,
                   filled: true,
                   fillColor: const Color(0xFFF5F6FA),
                   border: OutlineInputBorder(
@@ -2701,7 +2713,7 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
               // ── Location ─────────────────────────────────────────────────
               Align(
                 alignment: Alignment.centerRight,
-                child: Text('מיקום',
+                child: Text(AppLocalizations.of(context).catLocation,
                     style: TextStyle(
                         fontWeight: FontWeight.bold, color: Colors.grey[700])),
               ),
@@ -2710,7 +2722,7 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
                 controller: _locationCtrl,
                 textAlign: TextAlign.right,
                 decoration: InputDecoration(
-                  hintText: 'עיר / שכונה',
+                  hintText: AppLocalizations.of(context).catLocationHint,
                   prefixIcon: const Icon(Icons.location_on_outlined,
                       color: Color(0xFF10B981)),
                   filled: true,
@@ -2729,7 +2741,7 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
               // ── Contact phone ─────────────────────────────────────────────
               Align(
                 alignment: Alignment.centerRight,
-                child: Text('טלפון ליצירת קשר',
+                child: Text(AppLocalizations.of(context).catContactPhone,
                     style: TextStyle(
                         fontWeight: FontWeight.bold, color: Colors.grey[700])),
               ),
@@ -2759,7 +2771,7 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
                 const SizedBox(height: 16),
                 Align(
                   alignment: Alignment.centerRight,
-                  child: Text('שם המוטב',
+                  child: Text(AppLocalizations.of(context).catBeneficiaryName,
                       style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: Colors.grey[700])),
@@ -2769,7 +2781,7 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
                   controller: _beneficiaryCtrl,
                   textAlign: TextAlign.right,
                   decoration: InputDecoration(
-                    hintText: 'שם האדם שצריך עזרה',
+                    hintText: AppLocalizations.of(context).catBeneficiaryHint,
                     filled: true,
                     fillColor: const Color(0xFFF5F6FA),
                     border: OutlineInputBorder(
@@ -2787,13 +2799,13 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
                   onChanged: (v) => setState(() => _iAmContact = v),
                   activeColor: const Color(0xFF10B981),
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('אני איש הקשר',
+                  title: Text(AppLocalizations.of(context).catIAmContact,
                       textAlign: TextAlign.right,
-                      style: TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: const Text(
-                      'אני זה שיתואם מול המתנדב',
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: Text(
+                      AppLocalizations.of(context).catIAmCoordinator,
                       textAlign: TextAlign.right,
-                      style: TextStyle(fontSize: 12)),
+                      style: const TextStyle(fontSize: 12)),
                 ),
               ],
 
@@ -2816,9 +2828,9 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
                         width: 20, height: 20,
                         child: CircularProgressIndicator(
                             strokeWidth: 2.5, color: Colors.white))
-                    : const Text(
-                        'שלח בקשת עזרה',
-                        style: TextStyle(
+                    : Text(
+                        AppLocalizations.of(context).catSendRequest,
+                        style: const TextStyle(
                             color: Colors.white,
                             fontSize: 16,
                             fontWeight: FontWeight.bold),
@@ -2901,7 +2913,7 @@ class _MapTopBarState extends State<_MapTopBar> {
           _RoundIconButton(
             icon: Icons.arrow_forward_rounded,
             onTap: widget.onBack,
-            tooltip: 'חזור',
+            tooltip: AppLocalizations.of(context).catBack,
           ),
           const SizedBox(width: 10),
           Expanded(child: _buildSearchPill()),
@@ -2909,7 +2921,7 @@ class _MapTopBarState extends State<_MapTopBar> {
           _RoundIconButton(
             icon: Icons.view_list_rounded,
             onTap: widget.onListPressed,
-            tooltip: 'תצוגת רשימה',
+            tooltip: AppLocalizations.of(context).catListView,
           ),
         ],
       ),
@@ -2936,15 +2948,15 @@ class _MapTopBarState extends State<_MapTopBar> {
               textDirection: TextDirection.rtl,
               onChanged: widget.onQueryChanged,
               style: const TextStyle(fontSize: 13.5, color: MapPalette.textPrimary),
-              decoration: const InputDecoration(
-                hintText: 'חפש בתוך הקטגוריה...',
-                hintStyle: TextStyle(
+              decoration: InputDecoration(
+                hintText: AppLocalizations.of(context).catSearchInCategory,
+                hintStyle: const TextStyle(
                     fontSize: 13.5, color: MapPalette.textTertiary),
                 isDense: true,
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
-                contentPadding: EdgeInsets.symmetric(vertical: 10),
+                contentPadding: const EdgeInsets.symmetric(vertical: 10),
               ),
             ),
           ),
@@ -3035,10 +3047,10 @@ class _MapFilterChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final distanceLabel = maxDistanceKm == null
-        ? 'מרחק'
-        : 'עד ${maxDistanceKm!.toInt()} ק״מ';
+        ? AppLocalizations.of(context).catFilterDistance
+        : AppLocalizations.of(context).catUpToKm(maxDistanceKm!.toInt());
     final ratingLabel = minRating == 0
-        ? 'דירוג'
+        ? AppLocalizations.of(context).catFilterRating
         : '${minRating.toStringAsFixed(minRating == 5 ? 0 : 1)}+ ⭐';
 
     return SizedBox(
@@ -3065,7 +3077,7 @@ class _MapFilterChips extends StatelessWidget {
             const SizedBox(width: 8),
             _FilterChip(
               icon: Icons.attach_money_rounded,
-              label: 'עד ₪100',
+              label: AppLocalizations.of(context).catUnder100,
               active: under100,
               onTap: onToggleUnder100,
             ),
@@ -3074,14 +3086,14 @@ class _MapFilterChips extends StatelessWidget {
               icon: Icons.circle,
               iconColor: onlineOnly ? Colors.white : MapPalette.online,
               iconSize: 10,
-              label: 'זמינים עכשיו',
+              label: AppLocalizations.of(context).catAvailableNow,
               active: onlineOnly,
               onTap: onToggleOnline,
             ),
             const SizedBox(width: 8),
             _FilterChip(
               icon: Icons.bolt_rounded,
-              label: 'הזמנה מיידית',
+              label: AppLocalizations.of(context).catInstantBook,
               active: false,
               disabledLookSoft: true,
               onTap: onInstantBook,
@@ -3248,8 +3260,8 @@ class _MapProviderCardState extends State<_MapProviderCard>
               myPosition.latitude, myPosition.longitude, lat, lng) /
           1000.0;
       distanceLabel = km < 1
-          ? 'בשכונה שלך'
-          : '${km.toStringAsFixed(km < 10 ? 1 : 0)} ק״מ';
+          ? AppLocalizations.of(context).catInNeighborhood
+          : '${km.toStringAsFixed(km < 10 ? 1 : 0)} ${AppLocalizations.of(context).catFilterKm}';
       // Assume 40 km/h average urban speed.
       etaMinutes = (km / 40.0 * 60.0).round().clamp(1, 999);
     }
@@ -3373,7 +3385,7 @@ class _MapProviderCardState extends State<_MapProviderCard>
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  isOnline ? 'זמין/ה עכשיו' : 'לא זמין כעת',
+                  isOnline ? AppLocalizations.of(context).catAvailableNowUser : AppLocalizations.of(context).catDayOffline,
                   style: TextStyle(
                     fontSize: 10.5,
                     fontWeight: FontWeight.w700,
@@ -3554,9 +3566,9 @@ class _MapProviderCardState extends State<_MapProviderCard>
                         color: const Color(0xFFFEF3C7),
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: const Text(
-                        'מומלץ',
-                        style: TextStyle(
+                      child: Text(
+                        AppLocalizations.of(context).catRecommended,
+                        style: const TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
                           color: Color(0xFFB45309),
@@ -3718,9 +3730,9 @@ class _MapProviderCardState extends State<_MapProviderCard>
             minimumSize: const Size(0, 36),
           ),
           icon: const Icon(Icons.event_available_rounded, size: 16),
-          label: const Text(
-            'מתי פנוי?',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          label: Text(
+            AppLocalizations.of(context).catWhenAvailable,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           ),
         ),
         const Spacer(),
@@ -3746,12 +3758,12 @@ class _MapProviderCardState extends State<_MapProviderCard>
           child: InkWell(
             customBorder: const StadiumBorder(),
             onTap: widget.onBookNow,
-            child: const Padding(
+            child: Padding(
               padding:
-                  EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
               child: Text(
-                'הזמן עכשיו',
-                style: TextStyle(
+                AppLocalizations.of(context).catBookNow,
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 13,
                   fontWeight: FontWeight.w700,

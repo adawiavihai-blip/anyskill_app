@@ -1,0 +1,9 @@
+[2026-04-17 Phase 1 START] Launched pre-launch audit per docs/claude_code_audit_prompt.md
+[2026-04-17] Read CLAUDE.md — internalized current state. Key facts: v15.x shipped, Stripe removed v11.9.x (Israeli payment provider TBD), AI CEO uses Claude Sonnet (Section 12c), Monetization uses Gemini (Section 31), Sentry+Crashlytics+Watchtower triple-channel, 4 locales (he/en/es/ar).
+[2026-04-17] POTENTIAL CONFLICT: audit prompt says "Gemini only, NEVER Claude". CLAUDE.md documents Claude Sonnet in AI CEO tab. Will flag as decision, NOT auto-fix.
+[2026-04-17] Launching 4 parallel Explore agents covering sections 1.1-1.10.
+[2026-04-17] Agent 1 (1.1 + 1.5): 91 CFs, 70 rule blocks, 67 indexes, no wildcards. App Check disabled intentionally. 15+ deps with major gaps. AI hybrid Claude+Gemini confirmed intentional.
+[2026-04-17] Agent 2 (1.2 + 1.6): ~32 print() (should be debugPrint), ~40+ unprotected .get() in repos, 5 auth CF calls missing .timeout(). Phone OTP + email code + account deletion all solid. NO rate limit on lookupLegacyUidByPhone (CRITICAL).
+[2026-04-17] Agent 3 (1.3 + 1.4): No external payment provider (expected, Stripe removed). Amount validation + currency lock + escrow machine solid. No max booking cap. No idempotency on payQuote/release. i18n 1504 keys × 4 locales 100% sync. 11 DateFormat missing 'he' locale.
+[2026-04-17] Agent 4 (1.7 + 1.8 + 1.9 + 1.10): Onboarding 11 fields + live selfie solid. No founding-provider badge (expected). Account deletion IS true deletion (Israeli law compliant). No FCM push on vault_alerts. vault_alerts collection missing Firestore rule.
+[2026-04-17] Phase 1 COMPLETE. LAUNCH_AUDIT_REPORT.md + LAUNCH_AUDIT_QUESTIONS.md written. 3 critical, 8 high, 7 medium, 8 founder decisions. STOPPING before Phase 2 per audit prompt rule.

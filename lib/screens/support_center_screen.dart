@@ -10,6 +10,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'support/support_bot_screen.dart' as support_bot;
 
 class SupportCenterScreen extends StatefulWidget {
   /// If provided, the ticket is pre-linked to this job.
@@ -214,6 +215,64 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
           const Text(
             'בחרו קטגוריה כדי למצוא פתרון מהיר',
             style: TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
+          ),
+          const SizedBox(height: 14),
+          // Phase 5 — Bot entry point (Wolt-style "Ask the bot")
+          InkWell(
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const support_bot.SupportBotScreen(),
+              ),
+            ),
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                ),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.smart_toy_rounded,
+                        color: Colors.white, size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'דבר עם הבוט החכם',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'מענה מיידי 24/7 — פותר את רוב הבעיות בלי המתנה',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.arrow_back_ios_rounded,
+                      color: Colors.white, size: 14),
+                ],
+              ),
+            ),
           ),
           const SizedBox(height: 8),
 

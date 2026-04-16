@@ -1933,4 +1933,1439 @@ class AppLocalizationsAr extends AppLocalizations {
   String xpEventsCount(int count) {
     return '$count أحداث';
   }
+
+  @override
+  String get phoneLoginHeader => 'تسجيل الدخول / التسجيل';
+
+  @override
+  String get phoneLoginSubtitleSimple => 'أدخل رقم هاتفك وسنرسل رمز تحقق';
+
+  @override
+  String get phoneLoginSubtitleSocial => 'سجّل الدخول بـ Google أو Apple أو رقم الهاتف';
+
+  @override
+  String get phoneLoginOrDivider => 'أو';
+
+  @override
+  String get phoneLoginPhoneHint => 'رقم الهاتف';
+
+  @override
+  String get phoneLoginSendCode => 'إرسال رمز التحقق';
+
+  @override
+  String get phoneLoginHeroSubtitle => 'دخول سريع برقم هاتفك';
+
+  @override
+  String get phoneLoginChipSecure => 'آمن';
+
+  @override
+  String get phoneLoginChipFast => 'سريع';
+
+  @override
+  String get phoneLoginChipReliable => 'موثوق';
+
+  @override
+  String get phoneLoginSelectCountry => 'اختر الدولة';
+
+  @override
+  String get otpEnter6Digits => 'أدخل الأرقام الستة';
+
+  @override
+  String get otpVerifyError => 'خطأ في التحقق. حاول مرة أخرى.';
+
+  @override
+  String get otpErrorInvalidCode => 'رمز غير صحيح. حاول مرة أخرى.';
+
+  @override
+  String get otpErrorSessionExpired => 'انتهت صلاحية الرمز. اطلب رمزاً جديداً.';
+
+  @override
+  String get otpErrorTooManyRequests => 'محاولات كثيرة. حاول لاحقاً.';
+
+  @override
+  String otpErrorPrefix(String code) {
+    return 'خطأ: $code';
+  }
+
+  @override
+  String get otpTitle => 'أدخل رمز التحقق';
+
+  @override
+  String otpSubtitle(String phone) {
+    return 'أرسلنا رمز SMS إلى $phone';
+  }
+
+  @override
+  String get otpAutoFilled => 'تم التعبئة تلقائياً';
+
+  @override
+  String get otpResendIn => 'إعادة الإرسال خلال ';
+
+  @override
+  String get otpResendNow => 'إرسال رمز جديد';
+
+  @override
+  String get otpVerifyButton => 'تحقق وتابع';
+
+  @override
+  String get otpExistingAccountTitle => 'تم العثور على حساب موجود';
+
+  @override
+  String get otpExistingAccountBody => 'لهذا الرقم حساب موجود تم إنشاؤه بالبريد/كلمة مرور.\n\nربطه بتسجيل الدخول بالهاتف يتطلب إجراءً لمرة واحدة من المدير.\n\nيرجى التواصل مع الدعم وسنقوم بربط الحساب.';
+
+  @override
+  String get otpUnderstood => 'فهمت';
+
+  @override
+  String otpCreateProfileError(String error) {
+    return 'خطأ في إنشاء الملف: $error';
+  }
+
+  @override
+  String get otpWelcomeTitle => 'مرحباً بك في AnySkill! 👋';
+
+  @override
+  String get otpWelcomeSubtitle => 'اختر كيف تريد استخدام التطبيق';
+
+  @override
+  String get otpTermsPrefix => 'أؤكد أنني قرأت ووافقت على ';
+
+  @override
+  String get otpTermsOfService => 'شروط الخدمة';
+
+  @override
+  String get otpPrivacyPolicy => 'سياسة الخصوصية';
+
+  @override
+  String get otpRoleCustomer => 'عميل';
+
+  @override
+  String get otpRoleCustomerDesc => 'أبحث عن خدمات احترافية\nوأحجز مزودين';
+
+  @override
+  String get otpRoleProvider => 'مزود خدمة';
+
+  @override
+  String get otpRoleProviderDesc => 'أقدم خدمات احترافية\nوأكسب عبر AnySkill';
+
+  @override
+  String get otpRoleProviderBadge => 'بانتظار موافقة المدير';
+
+  @override
+  String get onbValEnterName => 'يرجى إدخال الاسم الكامل';
+
+  @override
+  String get onbValEnterPhone => 'يرجى إدخال رقم الهاتف';
+
+  @override
+  String get onbValEnterEmail => 'يرجى إدخال البريد الإلكتروني';
+
+  @override
+  String get onbValUploadProfile => 'يرجى رفع صورة الملف الشخصي';
+
+  @override
+  String get onbValChooseBusiness => 'يرجى اختيار نوع العمل';
+
+  @override
+  String get onbValEnterId => 'يرجى إدخال رقم الهوية / السجل التجاري';
+
+  @override
+  String get onbValUploadId => 'يرجى رفع صورة الهوية أو جواز السفر';
+
+  @override
+  String get onbValChooseCategory => 'يرجى اختيار فئة مهنية';
+
+  @override
+  String get onbValExpertise => 'يرجى وصف مجال خبرتك';
+
+  @override
+  String get onbValAcceptTerms => 'يرجى قراءة شروط الخدمة والموافقة عليها';
+
+  @override
+  String onbSaveError(String error) {
+    return 'خطأ في الحفظ: $error';
+  }
+
+  @override
+  String onbUploadError(String error) {
+    return 'خطأ في الرفع: $error';
+  }
+
+  @override
+  String onbCameraError(String error) {
+    return 'خطأ في التصوير: $error';
+  }
+
+  @override
+  String get onbToastProvider => 'أهلاً بك في فريق محترفي AnySkill! 🚀 مستنداتك قيد المراجعة. سنبلغك عند الموافقة.';
+
+  @override
+  String get onbToastCustomer => 'أهلاً بك في AnySkill! 🌟 تحتاج مساعدة؟ أنت في المكان الصحيح. آلاف المحترفين بانتظارك.';
+
+  @override
+  String get onbStepRole => 'اختر الدور';
+
+  @override
+  String get onbStepBusiness => 'بيانات العمل';
+
+  @override
+  String get onbStepService => 'مجال الخدمة';
+
+  @override
+  String get onbStepContact => 'معلومات الاتصال';
+
+  @override
+  String get onbStepProfile => 'ملفك الشخصي';
+
+  @override
+  String get onbProgressComplete => 'كل شيء جاهز!';
+
+  @override
+  String get onbProgressIncomplete => 'أكمل بياناتك';
+
+  @override
+  String onbGreeting(String name) {
+    return 'مرحباً $name،';
+  }
+
+  @override
+  String get onbGreetingFallback => 'مرحباً،';
+
+  @override
+  String get onbIntroLine => 'لحظة فقط. أخبرنا قليلاً عن نفسك.';
+
+  @override
+  String get onbSocialProof => 'أكثر من 250 محترفاً انضموا هذا الشهر';
+
+  @override
+  String get onbRoleCustomerTitle => 'أبحث عن خدمة';
+
+  @override
+  String get onbRoleCustomerSubtitle => 'أريد العثور على محترف';
+
+  @override
+  String get onbRoleProviderTitle => 'أريد تقديم خدمة';
+
+  @override
+  String get onbRoleProviderSubtitle => 'أود العمل عبر AnySkill';
+
+  @override
+  String get onbBusinessTypeHint => 'نوع العمل';
+
+  @override
+  String get onbUploadBusinessDocLabel => 'ارفع الرخصة التجارية';
+
+  @override
+  String get onbIdLabel => 'رقم الهوية / السجل التجاري';
+
+  @override
+  String get onbIdHint => 'أدخل الرقم';
+
+  @override
+  String get onbUploadIdLabel => 'ارفع صورة الهوية أو جواز السفر';
+
+  @override
+  String get onbSelfieTitle => 'سيلفي للتحقق من الهوية';
+
+  @override
+  String get onbSelfieSuccess => 'تم التقاط الصورة ✓';
+
+  @override
+  String get onbSelfiePrompt => 'التقط صورة مباشرة لوجهك';
+
+  @override
+  String get onbSelfieRetake => 'إعادة التقاط';
+
+  @override
+  String get onbSelfieTake => 'التقط سيلفي';
+
+  @override
+  String get onbCategoryOther => 'أخرى / لم أجد';
+
+  @override
+  String get onbCategoryHint => 'اختر الفئة الرئيسية';
+
+  @override
+  String get onbSubCategoryHint => 'اختر الفئة الفرعية';
+
+  @override
+  String get onbExpertiseLabel => 'صف مجال خبرتك';
+
+  @override
+  String get onbExpertiseHint => 'حتى 30 حرفاً';
+
+  @override
+  String get onbOtherCategoryNote => 'سيقوم فريق AnySkill بمراجعة البيانات وإسنادك للفئة المناسبة';
+
+  @override
+  String get onbFullNameLabel => 'الاسم الكامل *';
+
+  @override
+  String get onbFullNameHint => 'الاسم الذي سيظهر في الملف';
+
+  @override
+  String get onbPhoneLabel => 'رقم الهاتف *';
+
+  @override
+  String get onbEmailLabel => 'البريد الإلكتروني *';
+
+  @override
+  String get onbReplacePhoto => 'اضغط للاستبدال';
+
+  @override
+  String get onbAddPhoto => 'أضف صورة الملف';
+
+  @override
+  String get onbAboutLabel => 'أخبرنا عن نفسك';
+
+  @override
+  String get onbAboutHintProvider => 'الخبرة، المهارات، التخصصات...';
+
+  @override
+  String get onbAboutHintCustomer => 'ماذا تود أن نعرف عنك؟';
+
+  @override
+  String get onbTermsTitle => 'اقرأ شروط الخدمة وسياسة الخصوصية';
+
+  @override
+  String get onbTermsRead => 'مقروء';
+
+  @override
+  String get onbTermsAccept => 'أؤكد أنني قرأت ووافقت على شروط الخدمة وسياسة الخصوصية لـ AnySkill';
+
+  @override
+  String get onbFinish => 'إنهاء التسجيل';
+
+  @override
+  String get onbRequiredField => 'حقل مطلوب *';
+
+  @override
+  String get onbNotSpecified => 'غير محدد';
+
+  @override
+  String get onbUserTypeProvider => 'مزود خدمة';
+
+  @override
+  String get onbUserTypeCustomer => 'عميل';
+
+  @override
+  String get onbBizExempt => 'معفى من الضرائب';
+
+  @override
+  String get onbBizAuthorized => 'مسجل للضرائب';
+
+  @override
+  String get onbBizCompany => 'شركة محدودة';
+
+  @override
+  String get onbBizExternal => 'موظف، يصدر فواتير عبر شركة خارجية';
+
+  @override
+  String get profNoGooglePhoto => 'لم يتم العثور على صورة في حساب Google';
+
+  @override
+  String get profPhotoUpdatedFromGoogle => 'تم تحديث الصورة من Google';
+
+  @override
+  String get profInvoiceEmailOn => 'ستُرسل الفواتير إلى بريدك';
+
+  @override
+  String get profInvoiceEmailOff => 'لن تُرسل الفواتير إلى بريدك';
+
+  @override
+  String profSaveError(String error) {
+    return 'خطأ في الحفظ: $error';
+  }
+
+  @override
+  String get profInvoiceEmailTitle => 'استلام الفواتير بالبريد';
+
+  @override
+  String get profInvoiceEmailSubOn => 'ستستلم فاتورة بالبريد بعد كل معاملة';
+
+  @override
+  String get profInvoiceEmailSubOff => 'لن تستلم فواتير بالبريد';
+
+  @override
+  String get profSyncGooglePhoto => 'مزامنة الصورة من Google';
+
+  @override
+  String get profProviderRole => 'مزود خدمة';
+
+  @override
+  String get profJobsStat => 'الأعمال';
+
+  @override
+  String get profRatingStat => 'التقييم';
+
+  @override
+  String get profReviewsStat => 'المراجعات';
+
+  @override
+  String get profAngelBadge => 'ملاك المجتمع';
+
+  @override
+  String get profPillarBadge => 'ركيزة';
+
+  @override
+  String get profStarterBadge => 'متطوع نشط';
+
+  @override
+  String get profWorkGallery => 'معرض الأعمال';
+
+  @override
+  String get profVipActive => 'VIP فعال';
+
+  @override
+  String get profJoinVip => 'الانضمام إلى VIP';
+
+  @override
+  String get profVideoIntro => 'فيديو التعريف';
+
+  @override
+  String get profMyDogs => 'كلابي';
+
+  @override
+  String get profMyDogsSubtitle => 'ملف واحد → كل الحجوزات';
+
+  @override
+  String get profJoinAsProvider => 'الانضمام إلى AnySkill كمزود خدمة';
+
+  @override
+  String get profRequestInReview => 'طلبك قيد المراجعة — سنبلغك قريباً';
+
+  @override
+  String get profTermsOfService => 'شروط الخدمة';
+
+  @override
+  String get profPrivacyPolicy => 'سياسة الخصوصية';
+
+  @override
+  String get profSwitchRole => 'تبديل الدور';
+
+  @override
+  String get profLogout => 'تسجيل الخروج';
+
+  @override
+  String get profDeleteAccount => 'حذف الحساب';
+
+  @override
+  String get profTitle => 'الملف الشخصي';
+
+  @override
+  String get profCustomerRole => 'عميل';
+
+  @override
+  String get profStatServicesTaken => 'الخدمات التي استعنت بها';
+
+  @override
+  String get profStatReviews => 'المراجعات';
+
+  @override
+  String get profStatYears => 'سنوات في AnySkill';
+
+  @override
+  String get profReceivedService => 'خدمة مستلمة';
+
+  @override
+  String get profFavorites => 'المفضلة';
+
+  @override
+  String get profDeleteConfirmBody => 'هل أنت متأكد من حذف حسابك؟\n\nجميع البيانات — السجل، المحفظة، المحادثات — ستُحذف نهائياً.\n\nهذا الإجراء لا يمكن التراجع عنه.';
+
+  @override
+  String get profCancel => 'إلغاء';
+
+  @override
+  String get profContinue => 'متابعة';
+
+  @override
+  String get profFinalConfirm => 'تأكيد نهائي';
+
+  @override
+  String get profDeleteFinalBody => 'بعد التأكيد، سيتم حذف حسابك نهائياً ولا يمكن استعادته.';
+
+  @override
+  String get profDeletePermanent => 'حذف نهائي';
+
+  @override
+  String get profReauthNeeded => 'يلزم تسجيل دخول جديد';
+
+  @override
+  String get profReauthBody => 'لحذف الحساب، يتطلب Firebase تسجيل دخول حديث.\n\nيرجى تسجيل الخروج والدخول مجدداً ثم المحاولة.';
+
+  @override
+  String get profLogoutAndReauth => 'تسجيل خروج ودخول من جديد';
+
+  @override
+  String profDeleteError(String error) {
+    return 'خطأ في حذف الحساب: $error';
+  }
+
+  @override
+  String get profNoWorksYet => 'لم ترفع أعمالاً بعد.\nاضغط على القلم للتحديث!';
+
+  @override
+  String get homeTestEmailSent => 'تم إرسال بريد اختبار! تحقق من صندوق الوارد.';
+
+  @override
+  String homeGenericError(String error) {
+    return 'خطأ: $error';
+  }
+
+  @override
+  String get homeShowAll => 'عرض الكل';
+
+  @override
+  String get homeMicroTasks => 'مهام صغيرة — اكسب بسرعة';
+
+  @override
+  String get homeCommunityTitle => 'العطاء من القلب';
+
+  @override
+  String get homeCommunitySlogan => 'مهارة واحدة، قلب واحد';
+
+  @override
+  String get homeDefaultExpert => 'المحترف';
+
+  @override
+  String get homeDefaultReengageMsg => 'جاهز للحجز مجدداً؟';
+
+  @override
+  String get homeSmartOffer => 'عرض ذكي';
+
+  @override
+  String get homeBookNow => 'احجز الآن';
+
+  @override
+  String get homeWelcomeTitle => 'مرحباً بك في AnySkill';
+
+  @override
+  String get homeWelcomeSubtitle => 'اعثر على محترفين من حيّك';
+
+  @override
+  String get homeServiceTitle => 'خدمة احترافية بنقرة واحدة';
+
+  @override
+  String get homeServiceSubtitle => 'ترميم • تنظيف • تصوير والمزيد';
+
+  @override
+  String get homeBecomeExpertTitle => 'كن محترفاً اليوم';
+
+  @override
+  String get homeBecomeExpertSubtitle => 'انشر خدمتك وابدأ الكسب';
+
+  @override
+  String notifGenericError(String error) {
+    return 'خطأ: $error';
+  }
+
+  @override
+  String get notifDefaultClient => 'عميل';
+
+  @override
+  String get notifUrgentJobAvailable => 'وظيفة عاجلة متاحة!';
+
+  @override
+  String get notifJobTaken => 'تم أخذ الوظيفة';
+
+  @override
+  String get notifJobExpired => 'انتهت الوظيفة';
+
+  @override
+  String get notifGrabNow => 'خذها الآن!';
+
+  @override
+  String notifTakenBy(String name) {
+    return 'أخذها $name';
+  }
+
+  @override
+  String get notifCommunityHelpTitle => 'طلب مساعدة مجتمعية';
+
+  @override
+  String get notifNotNow => 'ليس الآن';
+
+  @override
+  String get notifWantToHelp => 'أريد المساعدة!';
+
+  @override
+  String get notifCantAccept => 'لا يمكن قبول هذا الطلب';
+
+  @override
+  String get notifAccepted => '✓ تم القبول! نفتح محادثة مع العميل';
+
+  @override
+  String get notifLoadError => 'خطأ في تحميل الإشعارات';
+
+  @override
+  String get notifEmptyNow => 'لا توجد إشعارات حالياً';
+
+  @override
+  String get chatUnknown => 'غير معروف';
+
+  @override
+  String get chatSafetyWarning => 'تنبيه: من أجل سلامتك، لا تتبادل أرقام الهواتف ولا تبرم صفقات خارج التطبيق.';
+
+  @override
+  String get chatNoInternet => 'لا يوجد اتصال بالإنترنت.';
+
+  @override
+  String get chatDefaultCustomer => 'عميل';
+
+  @override
+  String get chatPaymentRequest => 'طلب دفع';
+
+  @override
+  String get chatAmountLabel => 'المبلغ';
+
+  @override
+  String get chatServiceDescLabel => 'وصف الخدمة';
+
+  @override
+  String get chatSend => 'إرسال';
+
+  @override
+  String get chatQuoteSent => 'تم إرسال العرض بنجاح ✅';
+
+  @override
+  String get chatQuoteError => 'خطأ في إرسال العرض. حاول مرة أخرى.';
+
+  @override
+  String get chatOfficialQuote => 'عرض رسمي';
+
+  @override
+  String get chatQuoteDescHint => 'صف الخدمة المشمولة في السعر...';
+
+  @override
+  String get chatEscrowNote => 'سيُحجز المبلغ في ضمان AnySkill بعد موافقة العميل';
+
+  @override
+  String get chatSendQuote => 'إرسال العرض';
+
+  @override
+  String get chatQuoteLabel => 'عرض سعر';
+
+  @override
+  String get chatOnMyWay => 'أنا في الطريق! 🚗 سأصل قريباً.';
+
+  @override
+  String get chatWorkDone => 'تم إنجاز العمل! ✅';
+
+  @override
+  String get expCantBookSelf => 'لا يمكنك حجز خدمة من نفسك';
+
+  @override
+  String get expSlotTakenTitle => 'الموعد محجوز';
+
+  @override
+  String get expSlotTakenBody => 'قام شخص آخر بحجز الخبير لنفس الموعد.\nالرجاء اختيار تاريخ أو وقت آخر.';
+
+  @override
+  String get expUnderstood => 'فهمت';
+
+  @override
+  String get expBookingError => 'حدث خطأ في عملية الحجز، يرجى المحاولة مرة أخرى.';
+
+  @override
+  String get expDefaultCustomer => 'عميل';
+
+  @override
+  String expDemoBookingMsg(String name) {
+    return 'قمت بحجز $name. سنبلغك عند توفر مزود الخدمة.';
+  }
+
+  @override
+  String get expOptionalAddons => 'إضافات اختيارية';
+
+  @override
+  String get expProviderDayOff => 'المزود لا يعمل في هذا اليوم';
+
+  @override
+  String get expAnonymous => 'مجهول';
+
+  @override
+  String get expRatingProfessional => 'المهنية';
+
+  @override
+  String get expRatingTiming => 'الالتزام بالوقت';
+
+  @override
+  String get expRatingCommunication => 'التواصل';
+
+  @override
+  String get expSearchReviewsHint => 'ابحث في المراجعات...';
+
+  @override
+  String get expReviewsTitle => 'المراجعات';
+
+  @override
+  String expNoReviewsMatch(String query) {
+    return 'لا توجد مراجعات لـ \"$query\"';
+  }
+
+  @override
+  String expShowAllReviews(int count) {
+    return 'عرض كل $count المراجعات';
+  }
+
+  @override
+  String get expCommunityVolunteerBadge => 'متطوع مجتمعي';
+
+  @override
+  String get expPriceAfterPhotos => 'مضمون بعد الموافقة على الصور';
+
+  @override
+  String get expDeposit => 'دفعة مقدمة';
+
+  @override
+  String get expNights => 'ليالي';
+
+  @override
+  String get expNightsCount => 'عدد الليالي';
+
+  @override
+  String get expEndDate => 'تاريخ انتهاء الإقامة';
+
+  @override
+  String get expSelectDate => 'الرجاء اختيار تاريخ';
+
+  @override
+  String get expMustFillAll => 'الرجاء تعبئة جميع الحقول المطلوبة للمتابعة';
+
+  @override
+  String get expBookingReceivedDemo => 'تم استلام الحجز!';
+
+  @override
+  String get expBookingSuccess => 'تم الحجز بنجاح! 🎉';
+
+  @override
+  String get expBookingDemoBody => 'قمت بحجز الخدمة. نتحقق من توفر مزود الخدمة.\nسنبلغك فور الحصول على رد.';
+
+  @override
+  String get expWillNotify => 'سنرسل لك تحديثاً قريباً';
+
+  @override
+  String get expGotIt => 'فهمت ✓';
+
+  @override
+  String get expProviderRole => 'مزود خدمة';
+
+  @override
+  String get expJobsLabel => 'الأعمال';
+
+  @override
+  String get expRatingLabel => 'التقييم';
+
+  @override
+  String get expReviewsLabel => 'المراجعات';
+
+  @override
+  String get expVolunteersLabel => 'التطوع المجتمعي';
+
+  @override
+  String get expVideoIntro => 'فيديو التعريف';
+
+  @override
+  String get expGallery => 'معرض الأعمال';
+
+  @override
+  String get expVerifiedCertificate => 'شهادة معتمدة';
+
+  @override
+  String get expView => 'عرض';
+
+  @override
+  String get expCertificateTitle => 'شهادة';
+
+  @override
+  String get expImageLoadError => 'خطأ في تحميل الصورة';
+
+  @override
+  String get catBadgeAngel => 'ملاك';
+
+  @override
+  String get catBadgePillar => 'ركيزة';
+
+  @override
+  String get catBadgeVolunteer => 'متطوع';
+
+  @override
+  String get catDayOffline => 'غير متاح الآن';
+
+  @override
+  String get catStartLesson => 'ابدأ الدرس';
+
+  @override
+  String get catYourProfile => 'ملفك الشخصي';
+
+  @override
+  String get catMapView => 'عرض الخريطة';
+
+  @override
+  String get catListView => 'عرض القائمة';
+
+  @override
+  String get catInstantBookingSoon => 'حجز فوري — قريباً 🎉';
+
+  @override
+  String get catFreeCommunityBadge => 'خدمة مجتمعية مجانية — 100% مجانية ❤️';
+
+  @override
+  String get catNeedHelp => 'أحتاج مساعدة';
+
+  @override
+  String get catHelpForOther => 'مساعدة لشخص آخر';
+
+  @override
+  String get catRespectTime => 'يرجى احترام وقتهم واستخدام هذه الخدمة للاحتياجات الحقيقية فقط.';
+
+  @override
+  String get catFilterRating => 'التقييم';
+
+  @override
+  String get catFilterDistance => 'المسافة';
+
+  @override
+  String get catFilterKm => 'كم';
+
+  @override
+  String get catFilterMore => 'المزيد';
+
+  @override
+  String get catFilterRatingTitle => 'تصفية حسب التقييم';
+
+  @override
+  String get catFilterAll => 'الكل';
+
+  @override
+  String get catFilterApply => 'تطبيق';
+
+  @override
+  String get catFilterDistanceTitle => 'تصفية حسب المسافة';
+
+  @override
+  String get catFilterNeedLocation => 'يرجى تفعيل الموقع للتصفية حسب المسافة';
+
+  @override
+  String get catFilterClear => 'مسح';
+
+  @override
+  String get catMaxDistance => 'أقصى مسافة';
+
+  @override
+  String get catNoLimit => 'بدون حد';
+
+  @override
+  String catUpToKm(int km) {
+    return 'حتى $km كم';
+  }
+
+  @override
+  String get catMinRating => 'الحد الأدنى للتقييم';
+
+  @override
+  String get catSupport => 'الدعم';
+
+  @override
+  String get catFillFields => 'يرجى تعبئة الفئة والوصف ورقم الهاتف';
+
+  @override
+  String get catRequestSent => 'تم إرسال الطلب! سيتم إبلاغ المتطوعين المناسبين.';
+
+  @override
+  String catRequestError(String error) {
+    return 'خطأ: $error';
+  }
+
+  @override
+  String get catCategory => 'الفئة';
+
+  @override
+  String get catChooseCategory => 'اختر مجال المساعدة';
+
+  @override
+  String get catRequestDescription => 'وصف الطلب';
+
+  @override
+  String get catDescHint => 'صف ما يجب فعله...';
+
+  @override
+  String get catLocation => 'الموقع';
+
+  @override
+  String get catLocationHint => 'المدينة / الحي';
+
+  @override
+  String get catContactPhone => 'هاتف للتواصل';
+
+  @override
+  String get catBeneficiaryName => 'اسم المستفيد';
+
+  @override
+  String get catBeneficiaryHint => 'اسم الشخص الذي يحتاج المساعدة';
+
+  @override
+  String get catIAmContact => 'أنا جهة الاتصال';
+
+  @override
+  String get catIAmCoordinator => 'سأنسق مع المتطوع';
+
+  @override
+  String get catSendRequest => 'إرسال طلب المساعدة';
+
+  @override
+  String get catBack => 'رجوع';
+
+  @override
+  String get catSearchInCategory => 'ابحث داخل الفئة...';
+
+  @override
+  String get catUnder100 => 'حتى ₪100';
+
+  @override
+  String get catAvailableNow => 'متاح الآن';
+
+  @override
+  String get catInstantBook => 'حجز فوري';
+
+  @override
+  String get catInNeighborhood => 'في حيك';
+
+  @override
+  String get catAvailableNowUser => 'متاح الآن';
+
+  @override
+  String get catRecommended => 'موصى به';
+
+  @override
+  String get catWhenAvailable => 'متى متاح؟';
+
+  @override
+  String get catBookNow => 'احجز الآن';
+
+  @override
+  String editVideoUploadError(String error) {
+    return 'خطأ في رفع الفيديو: $error';
+  }
+
+  @override
+  String get editAddSecondIdentity => 'أضف هوية مهنية ثانية';
+
+  @override
+  String get editSecondIdentitySubtitle => 'اربح أكثر — قدّم خدمة أخرى تحت نفس الحساب';
+
+  @override
+  String get editPrimaryIdentity => 'الهوية الأساسية';
+
+  @override
+  String get editSecondaryIdentity => 'الهوية الثانوية';
+
+  @override
+  String get editEditingNow => 'جاري التحرير';
+
+  @override
+  String get editPhoneLabel => 'رقم الهاتف';
+
+  @override
+  String get editPhoneVerified => 'الرقم موثّق — لا يمكن تغييره';
+
+  @override
+  String get editAppPending => 'طلبك قيد المراجعة 🕐';
+
+  @override
+  String get editAppPendingDesc => 'فريقنا يراجع التفاصيل وسيرد عليك قريباً.';
+
+  @override
+  String get editBecomeProvider => 'تريد العمل والربح؟ اضغط هنا';
+
+  @override
+  String editApplicationMessage(String name) {
+    return 'طلب الانضمام كمزود خدمة: $name';
+  }
+
+  @override
+  String editGenericError(String error) {
+    return 'خطأ: $error';
+  }
+
+  @override
+  String get editUploadClearPhoto => 'ارفع صورة واضحة لوجهك';
+
+  @override
+  String get editClearPhotoDesc => 'الملفات ذات الصور الواضحة تحصل على استفسارات أكثر بـ 3 أضعاف';
+
+  @override
+  String get editAccountTypeChange => 'يتم تغيير نوع الحساب عبر خدمة العملاء فقط';
+
+  @override
+  String get editVolunteerToggleTitle => 'أريد التطوع';
+
+  @override
+  String get editVolunteerToggleDesc => 'قدّم مهاراتك مجاناً لمن يحتاجها';
+
+  @override
+  String get editIdentitiesTitle => 'هوياتك المهنية';
+
+  @override
+  String get editPaymentSettings => 'إعدادات الدفع قريباً';
+
+  @override
+  String get editPaymentSettingsDesc => 'نعمل على الانتقال إلى مزود دفع إسرائيلي. خلال ذلك يتم معالجة طلبات السحب يدوياً بواسطة فريقنا.';
+
+  @override
+  String get editAdvancedSettings => 'إعدادات متقدمة';
+
+  @override
+  String get editPricingSettings => 'إعدادات التسعير';
+
+  @override
+  String get editWorkingHours => 'ساعات العمل';
+
+  @override
+  String get editWorkingHoursHint => 'حدد أيام وساعات عملك';
+
+  @override
+  String get editDayOff => 'إجازة';
+
+  @override
+  String get editCertificate => 'شهادة';
+
+  @override
+  String get editCertificateDesc => 'ارفع شهادة مهنية (اختياري)';
+
+  @override
+  String get editReplaceCertificate => 'استبدال الشهادة';
+
+  @override
+  String get editUploadCertificate => 'رفع شهادة';
+
+  @override
+  String get editIntroVideo => 'فيديو تعريفي';
+
+  @override
+  String get editIntroVideoDesc => 'أضف فيديو قصير (حتى 60 ثانية) يعرّف بك وبمهاراتك. سيظهر في ملفك بعد موافقة المدير.';
+
+  @override
+  String editUploading(int percent) {
+    return 'جاري الرفع... $percent%';
+  }
+
+  @override
+  String get editVideoUploaded => 'تم رفع الفيديو — اضغط للاستبدال';
+
+  @override
+  String get editUploadVideo => 'رفع فيديو تعريفي (حتى 60 ثانية)';
+
+  @override
+  String get editPendingAdmin => 'بانتظار موافقة المدير — سيظهر في الملف بعد الموافقة';
+
+  @override
+  String get editManagement => 'إدارة';
+
+  @override
+  String get editServiceProvider => 'مزود خدمة';
+
+  @override
+  String get editCustomer => 'عميل';
+
+  @override
+  String get editAdminModeActive => 'وضع الإدارة فعّال';
+
+  @override
+  String get editProviderModeActive => 'وضع مزود الخدمة فعّال';
+
+  @override
+  String get editCustomerModeActive => 'وضع العميل فعّال';
+
+  @override
+  String get editViewMode => 'وضع العرض';
+
+  @override
+  String get editMyDogs => 'كلابي';
+
+  @override
+  String get editShowAll => 'عرض الكل';
+
+  @override
+  String get editAddDogProfile => 'إضافة ملف كلب';
+
+  @override
+  String get editNewDog => 'كلب جديد';
+
+  @override
+  String get editUnnamedDog => 'بدون اسم';
+
+  @override
+  String get editApplyAsProvider => 'تقديم طلب كمزود خدمة';
+
+  @override
+  String get editApplyDesc => 'املأ البيانات وسنراجع طلبك';
+
+  @override
+  String get editServiceFieldLabel => 'مجال الخدمة *';
+
+  @override
+  String get editChooseField => 'اختر المجال';
+
+  @override
+  String get editIdNumberLabel => 'رقم الهوية / السجل *';
+
+  @override
+  String get editIdNumberHint => 'أدخل رقم الهوية أو السجل';
+
+  @override
+  String get editAboutYouLabel => 'عن نفسك *';
+
+  @override
+  String get editAboutYouHint => 'صف خبرتك، الخدمات التي تقدمها...';
+
+  @override
+  String get editSubmitApplication => 'إرسال الطلب';
+
+  @override
+  String get editChooseFieldError => 'اختر مجال الخدمة';
+
+  @override
+  String get editEnterIdError => 'أدخل رقم الهوية';
+
+  @override
+  String get editDaySunday => 'الأحد';
+
+  @override
+  String get editDayMonday => 'الاثنين';
+
+  @override
+  String get editDayTuesday => 'الثلاثاء';
+
+  @override
+  String get editDayWednesday => 'الأربعاء';
+
+  @override
+  String get editDayThursday => 'الخميس';
+
+  @override
+  String get editDayFriday => 'الجمعة';
+
+  @override
+  String get editDaySaturday => 'السبت';
+
+  @override
+  String get phoneInvalidNumber => 'رقم هاتف غير صالح';
+
+  @override
+  String phoneTooManyCodes(int mins) {
+    return 'تم إرسال رموز كثيرة. انتظر $mins دقائق.';
+  }
+
+  @override
+  String get phoneSendCodeError => 'خطأ في إرسال الرمز. حاول مرة أخرى.';
+
+  @override
+  String get phoneErrorTooManyRequests => 'محاولات كثيرة. حاول لاحقاً.';
+
+  @override
+  String get phoneErrorQuotaExceeded => 'تجاوزت حصة SMS. حاول غداً.';
+
+  @override
+  String get phoneErrorNoNetwork => 'لا يوجد اتصال بالإنترنت';
+
+  @override
+  String phoneErrorGeneric(String code) {
+    return 'خطأ: $code';
+  }
+
+  @override
+  String phoneRateLimitInfo(int max, int mins) {
+    return 'حتى $max رموز كل $mins دقائق';
+  }
+
+  @override
+  String phoneLoginError(String code) {
+    return 'خطأ في الدخول: $code';
+  }
+
+  @override
+  String get countryIsrael => 'إسرائيل';
+
+  @override
+  String get otpLegacyUserDialogTitle => 'حساب موجود';
+
+  @override
+  String get otpLegacyUserDialogBody => 'لهذا الرقم حساب موجود. يرجى التواصل مع الدعم.';
+
+  @override
+  String get notifMuted => 'مكتوم';
+
+  @override
+  String get notifMuteAll => 'كتم الكل';
+
+  @override
+  String get chatTyping => 'يكتب...';
+
+  @override
+  String get chatOnline => 'متصل';
+
+  @override
+  String get expertPhotoGalleryEmpty => 'لا توجد صور بعد';
+
+  @override
+  String catMapResultsCount(int count) {
+    return '$count نتائج في منطقتك';
+  }
+
+  @override
+  String catSearchResultsTitle(String category) {
+    return 'مزودو الخدمة في $category';
+  }
+
+  @override
+  String get catAnyExpert => 'جميع مزودي الخدمة';
+
+  @override
+  String get catSortBy => 'ترتيب حسب';
+
+  @override
+  String get catSortRelevance => 'الصلة';
+
+  @override
+  String get catSortDistance => 'المسافة';
+
+  @override
+  String get catSortRating => 'التقييم';
+
+  @override
+  String get catSortPrice => 'السعر';
+
+  @override
+  String get catNoResults => 'لا توجد نتائج';
+
+  @override
+  String get catNoResultsDesc => 'جرب تغيير التصفية أو البحث في منطقة أخرى';
+
+  @override
+  String get catUrgent => 'عاجل';
+
+  @override
+  String get catExpressDelivery => 'توصيل سريع';
+
+  @override
+  String get editVerifiedBadge => 'موثّق';
+
+  @override
+  String get editAdminOnlyChange => 'هذا التغيير متاح للمدير فقط';
+
+  @override
+  String get editProfileSaved => 'تم حفظ الملف بنجاح';
+
+  @override
+  String get editPriceLabel => 'السعر في الساعة (₪)';
+
+  @override
+  String get editPriceHint => 'أدخل السعر بالشيكل';
+
+  @override
+  String get editAboutMeLabel => 'أخبرنا عن نفسك';
+
+  @override
+  String get editAboutMeHint => 'صف خبرتك، الخدمات التي تقدمها...';
+
+  @override
+  String get editCategoryLabel => 'الفئة المهنية';
+
+  @override
+  String get editSubCategoryLabel => 'الفئة الفرعية';
+
+  @override
+  String get editDogNameLabel => 'اسم الكلب';
+
+  @override
+  String get editDogBreedLabel => 'السلالة';
+
+  @override
+  String get editDogAgeLabel => 'العمر';
+
+  @override
+  String get editDogWeightLabel => 'الوزن (كغ)';
+
+  @override
+  String get editDogSizeLabel => 'الحجم';
+
+  @override
+  String get editDogDescLabel => 'الوصف';
+
+  @override
+  String get editDogSaveBtn => 'حفظ ملف الكلب';
+
+  @override
+  String get editDogPickPhoto => 'اختر صورة';
+
+  @override
+  String get editDogNameHint => 'ما اسم الكلب؟';
+
+  @override
+  String get editDogBreedHint => 'مثلاً: غولدن ريتريفر';
+
+  @override
+  String get editDogSizeSmall => 'صغير';
+
+  @override
+  String get editDogSizeMedium => 'متوسط';
+
+  @override
+  String get editDogSizeLarge => 'كبير';
+
+  @override
+  String get editDogYears => 'سنوات';
+
+  @override
+  String get editDogDescHint => 'الشخصية، الهوايات، أشياء مهمة...';
+
+  @override
+  String get editCancellationPolicyTitle => 'سياسة الإلغاء';
+
+  @override
+  String get editCancellationFlexible => 'مرنة';
+
+  @override
+  String get editCancellationModerate => 'متوسطة';
+
+  @override
+  String get editCancellationStrict => 'صارمة';
+
+  @override
+  String get editCancellationFlexibleDesc => 'استرداد كامل حتى 4 ساعات قبل';
+
+  @override
+  String get editCancellationModerateDesc => 'استرداد كامل حتى 24 ساعة قبل';
+
+  @override
+  String get editCancellationStrictDesc => 'استرداد كامل حتى 48 ساعة قبل';
+
+  @override
+  String get editResponseTimeLabel => 'متوسط وقت الرد';
+
+  @override
+  String get editResponseImmediate => 'فوري';
+
+  @override
+  String get editResponse30min => 'خلال 30 دقيقة';
+
+  @override
+  String get editResponse1h => 'خلال ساعة';
+
+  @override
+  String get editResponseDay => 'خلال يوم';
+
+  @override
+  String get editQuickTagsTitle => 'علامات سريعة';
+
+  @override
+  String get editQuickTagsDesc => 'اختر حتى 5 علامات تصف خدمتك';
+
+  @override
+  String get editSave => 'حفظ';
+
+  @override
+  String get editSaving => 'جاري الحفظ...';
+
+  @override
+  String get editDiscardChanges => 'إلغاء التغييرات؟';
+
+  @override
+  String get editDiscardConfirm => 'لديك تغييرات غير محفوظة. إلغاؤها؟';
+
+  @override
+  String get editDiscard => 'إلغاء التغييرات';
+
+  @override
+  String get editContinueEditing => 'متابعة التحرير';
+
+  @override
+  String get editFieldRequired => 'مطلوب';
+
+  @override
+  String get editInvalidPrice => 'سعر غير صالح';
+
+  @override
+  String editMinPrice(int min) {
+    return 'السعر الأدنى هو ₪$min';
+  }
+
+  @override
+  String get editCustomerServiceType => 'عميل';
+
+  @override
+  String get editAboutMinChars => 'اكتب على الأقل 20 حرفاً عن نفسك';
+
+  @override
+  String get editSecondIdentityCreated => 'تم إنشاء الهوية المهنية الثانية! 🎉';
+
+  @override
+  String get editAddSecondIdentityTitle => 'إضافة هوية مهنية ثانية';
+
+  @override
+  String get editAddSecondIdentityDesc => 'اختر فئة وسعراً ووصفاً جديداً — ستظهر الهوية الثانية بشكل منفصل في البحث';
+
+  @override
+  String get editSecondServiceDesc => 'أخبر العملاء عن خدمتك الثانية...';
+
+  @override
+  String get editCreateIdentity => 'إنشاء هوية مهنية';
+
+  @override
+  String get editIdentityUpdated => 'تم تحديث الهوية المهنية بنجاح';
+
+  @override
+  String get editDeleteIdentityTitle => 'حذف الهوية المهنية';
+
+  @override
+  String get editDeleteIdentityConfirm => 'حذف الهوية المهنية الثانية؟ لا يمكن التراجع عن هذا الإجراء.';
+
+  @override
+  String get editDelete => 'حذف';
+
+  @override
+  String get editIdentityDeleted => 'تم حذف الهوية المهنية';
+
+  @override
+  String get editSaveChanges => 'حفظ التغييرات';
+
+  @override
+  String get editDeleteIdentity => 'حذف الهوية المهنية';
+
+  @override
+  String editEditingIdentity(String type) {
+    return 'تحرير $type';
+  }
+
+  @override
+  String get phoneLoginContinueGoogle => 'المتابعة مع Google';
+
+  @override
+  String get phoneLoginContinueApple => 'المتابعة مع Apple';
+
+  @override
+  String get phoneLoginOrPhone => 'أو برقم الهاتف';
+
+  @override
+  String get phoneLoginCtaLogin => 'تسجيل الدخول';
+
+  @override
+  String get phoneLoginTermsPrefix => 'بالمتابعة، أوافق على';
+
+  @override
+  String get phoneLoginTermsOfUse => 'شروط الاستخدام';
+
+  @override
+  String get phoneLoginAnd => 'و';
+
+  @override
+  String get phoneLoginPrivacyPolicy => 'سياسة الخصوصية';
+
+  @override
+  String get phoneLoginOfferingService => 'تقدّم خدمة؟';
+
+  @override
+  String get phoneLoginBecomeProvider => 'اربح مع AnySkill ←';
 }

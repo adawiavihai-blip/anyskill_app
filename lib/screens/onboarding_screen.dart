@@ -15,6 +15,7 @@ import '../utils/safe_image_provider.dart';
 import 'home_screen.dart';
 import 'pending_verification_screen.dart';
 import 'terms_of_service_screen.dart';
+import '../l10n/app_localizations.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const _kPurple      = Color(0xFF6366F1);
@@ -29,12 +30,10 @@ const _kMuted       = Color(0xFF6B7280);
 
 enum UserRole { customer, expert }
 
-const _kBusinessTypes = [
-  'עוסק פטור',
-  'עוסק מורשה',
-  'חברה בע"מ',
-  'שכיר המוציא חשבונית דרך חברה חיצונית',
-];
+List<String> _businessTypes(BuildContext ctx) {
+  final l = AppLocalizations.of(ctx);
+  return [l.onbBizExempt, l.onbBizAuthorized, l.onbBizCompany, l.onbBizExternal];
+}
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -174,49 +173,50 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // ══════════════════════════════════════════════════════════════════════════
 
   void _submit() {
+    final l = AppLocalizations.of(context);
     // ── Mandatory for ALL roles ────────────────────────────────────────
     if (_nameController.text.trim().isEmpty) {
-      _snack('נא להזין שם מלא', _kRed);
+      _snack(l.onbValEnterName, _kRed);
       return;
     }
     if (_phoneController.text.trim().isEmpty) {
-      _snack('נא להזין מספר טלפון', _kRed);
+      _snack(l.onbValEnterPhone, _kRed);
       return;
     }
 
     // ── Provider-only mandatory fields ─────────────────────────────────
     if (_isProvider) {
       if (_emailController.text.trim().isEmpty) {
-        _snack('נא להזין כתובת אימייל', _kRed);
+        _snack(l.onbValEnterEmail, _kRed);
         return;
       }
       if (_profileImageBase64 == null) {
-        _snack('נא להעלות תמונת פרופיל', _kRed);
+        _snack(l.onbValUploadProfile, _kRed);
         return;
       }
       if (_businessType == null) {
-        _snack('נא לבחור סוג עסק', _kRed);
+        _snack(l.onbValChooseBusiness, _kRed);
         return;
       }
       if (_idController.text.trim().isEmpty) {
-        _snack('נא להזין מספר ת.ז. / ח.פ.', _kRed);
+        _snack(l.onbValEnterId, _kRed);
         return;
       }
       if (_idDocUrl == null) {
-        _snack('נא להעלות צילום תעודת זהות או דרכון', _kRed);
+        _snack(l.onbValUploadId, _kRed);
         return;
       }
       if (_selectedCategory == null && !_isOtherCategory) {
-        _snack('נא לבחור קטגוריה מקצועית', _kRed);
+        _snack(l.onbValChooseCategory, _kRed);
         return;
       }
       if (_isOtherCategory && _otherCategoryController.text.trim().length < 3) {
-        _snack('נא לפרט את תחום המומחיות שלך', _kRed);
+        _snack(l.onbValExpertise, _kRed);
         return;
       }
     }
     if (!_termsAccepted) {
-      _snack('יש לקרוא ולאשר את תנאי השימוש', _kRed);
+      _snack(l.onbValAcceptTerms, _kRed);
       return;
     }
     _finish();
@@ -372,12 +372,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
       // Admin email
       try {
+        final l = AppLocalizations.of(context);
         final authUser  = FirebaseAuth.instance.currentUser;
         final userName  = _nameController.text.trim().isNotEmpty
             ? _nameController.text.trim()
-            : (authUser?.displayName ?? 'לא צוין');
-        final userEmail = authUser?.email ?? 'לא צוין';
-        final userType  = _isProvider ? 'נותן שירות (ספק)' : 'לקוח';
+            : (authUser?.displayName ?? l.onbNotSpecified);
+        final userEmail = authUser?.email ?? l.onbNotSpecified;
+        final userType  = _isProvider ? l.onbUserTypeProvider : l.onbUserTypeCustomer;
         final serviceStr = _isProvider
             ? (_selectedCategory ?? _otherCategoryController.text.trim())
             : '—';
@@ -414,7 +415,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         }
       }
     } catch (e) {
-      if (mounted) _snack('שגיאה בשמירה: $e', _kRed);
+      if (mounted) _snack(AppLocalizations.of(context).onbSaveError(e.toString()), _kRed);
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -423,11 +424,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   Future<void> _sendWelcomeMessage(String uid, bool isProvider) async {
     const systemUid = 'anyskill_system';
     final db = FirebaseFirestore.instance;
-    final text = isProvider
-        ? 'איזה כיף שהצטרפת לנבחרת אנשי המקצוע של AnySkill! 🚀 '
-          'המסמכים שלך התקבלו ובביקורת. תקבל עדכון ברגע שהחשבון יאושר.'
-        : 'ברוכים הבאים ל-AnySkill! 🌟 צריכים עזרה במשהו? הגעתם למקום הנכון. '
-          'אלפי אנשי מקצוע זמינים עבורכם עכשיו.';
+    if (!mounted) return;
+    final l = AppLocalizations.of(context);
+    final text = isProvider ? l.onbToastProvider : l.onbToastCustomer;
 
     try {
       await db.collection('users').doc(systemUid).set({
@@ -491,7 +490,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       // Use the uploaded bytes as thumbnail preview
       if (mounted) onSuccess(url, image.name, bytes);
     } catch (e) {
-      if (mounted) _snack('שגיאה בהעלאה: $e', _kRed);
+      if (mounted) _snack(AppLocalizations.of(context).onbUploadError(e.toString()), _kRed);
     } finally {
       if (mounted) setUploading(false);
     }
@@ -512,6 +511,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: _kScaffoldBg,
       body: SafeArea(
@@ -533,7 +533,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                         // 1. Role
                         _sectionCard(
                           icon: Icons.person_outline_rounded,
-                          title: 'בחר תפקיד',
+                          title: l.onbStepRole,
                           check: true,
                           child: _buildRoleCards(),
                         ),
@@ -543,14 +543,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                         if (_isProvider) ...[
                           _sectionCard(
                             icon: Icons.business_center_outlined,
-                            title: 'פרטים עסקיים',
+                            title: l.onbStepBusiness,
                             check: _businessType != null && _idController.text.trim().isNotEmpty,
                             child: _buildBusinessFields(),
                           ),
                           const SizedBox(height: 16),
                           _sectionCard(
                             icon: Icons.category_outlined,
-                            title: 'תחום שירות',
+                            title: l.onbStepService,
                             check: _selectedCategory != null || _isOtherCategory,
                             child: _buildCategoryFields(),
                           ),
@@ -560,7 +560,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                         // 3. Contact info (mandatory for all)
                         _sectionCard(
                           icon: Icons.contact_phone_outlined,
-                          title: 'פרטי קשר',
+                          title: l.onbStepContact,
                           check: _phoneController.text.trim().isNotEmpty &&
                               _nameController.text.trim().isNotEmpty,
                           child: _buildContactFields(),
@@ -570,7 +570,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                         // 4. Profile
                         _sectionCard(
                           icon: Icons.badge_outlined,
-                          title: 'הפרופיל שלך',
+                          title: l.onbStepProfile,
                           check: _profileImageBase64 != null || _bioController.text.trim().isNotEmpty,
                           child: _buildProfileSection(),
                         ),
@@ -615,7 +615,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 )),
               const SizedBox(width: 8),
               Expanded(child: Text(
-                pct >= 1.0 ? 'הכל מוכן!' : 'השלם את הפרטים',
+                pct >= 1.0
+                    ? AppLocalizations.of(context).onbProgressComplete
+                    : AppLocalizations.of(context).onbProgressIncomplete,
                 style: const TextStyle(fontSize: 12, color: _kMuted),
               )),
               if (pct >= 1.0)
@@ -647,10 +649,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // ── Header ──────────────────────────────────────────────────────────────
 
   Widget _buildHeader() {
+    final l = AppLocalizations.of(context);
     final user = FirebaseAuth.instance.currentUser;
     final greeting = user?.displayName?.isNotEmpty == true
-        ? 'היי ${user!.displayName!.split(' ').first},'
-        : 'היי,';
+        ? l.onbGreeting(user!.displayName!.split(' ').first)
+        : l.onbGreetingFallback;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
@@ -677,13 +680,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           ),
           const SizedBox(height: 12),
           Text(
-            '$greeting ברוכים הבאים!',
+            greeting,
             textAlign: TextAlign.center,
             style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
           ),
           const SizedBox(height: 6),
           Text(
-            'עוד רגע מתחילים. ספר לנו קצת על עצמך.',
+            l.onbIntroLine,
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.85)),
           ),
@@ -715,10 +718,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
               child: const Icon(Icons.trending_up_rounded, size: 16, color: _kGreen),
             ),
             const SizedBox(width: 10),
-            const Expanded(
+            Expanded(
               child: Text(
-                'מעל 250 אנשי מקצוע הצטרפו החודש',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _kGreen),
+                AppLocalizations.of(context).onbSocialProof,
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _kGreen),
               ),
             ),
             const Text('🔥', style: TextStyle(fontSize: 16)),
@@ -778,20 +781,21 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // ── Role cards ──────────────────────────────────────────────────────────
 
   Widget _buildRoleCards() {
+    final l = AppLocalizations.of(context);
     return Row(
       children: [
         Expanded(child: _roleCard(
           role: UserRole.customer,
           icon: Icons.search_rounded,
-          title: 'אני מחפש שירות',
-          subtitle: 'אני רוצה למצוא איש מקצוע',
+          title: l.onbRoleCustomerTitle,
+          subtitle: l.onbRoleCustomerSubtitle,
         )),
         const SizedBox(width: 12),
         Expanded(child: _roleCard(
           role: UserRole.expert,
           icon: Icons.star_rounded,
-          title: 'אני רוצה לתת שירות',
-          subtitle: 'ברצוני לעבוד דרך AnySkill',
+          title: l.onbRoleProviderTitle,
+          subtitle: l.onbRoleProviderSubtitle,
         )),
       ],
     );
@@ -845,14 +849,15 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // ══════════════════════════════════════════════════════════════════════════
 
   Widget _buildBusinessFields() {
+    final l = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // Business type
         _buildDropdown(
           value: _businessType,
-          hint: 'סוג עסק',
-          items: _kBusinessTypes,
+          hint: l.onbBusinessTypeHint,
+          items: _businessTypes(context),
           onChanged: (v) => setState(() => _businessType = v),
         ),
         const SizedBox(height: 12),
@@ -860,7 +865,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         // Business doc upload (conditional)
         if (_businessType != null) ...[
           _buildUploadCard(
-            label: 'העלה צילום תעודת עוסק (פטור/מורשה/חברה)',
+            label: l.onbUploadBusinessDocLabel,
             fileName: _businessDocName,
             thumb: _businessDocThumb,
             isUploading: _isUploadingBizDoc,
@@ -878,8 +883,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         // ID Number
         _buildTextField(
           controller: _idController,
-          label: 'מספר תעודת זהות / ח.פ.',
-          hint: 'הזן מספר ת.ז. או ח.פ.',
+          label: l.onbIdLabel,
+          hint: l.onbIdHint,
           keyboardType: TextInputType.number,
           prefixIcon: const Icon(Icons.badge_outlined, size: 20, color: _kMuted),
         ),
@@ -887,7 +892,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
         // ID doc upload
         _buildUploadCard(
-          label: 'העלה צילום תעודת זהות או דרכון',
+          label: l.onbUploadIdLabel,
           fileName: _idDocName,
           thumb: _idDocThumb,
           isUploading: _isUploadingIdDoc,
@@ -945,16 +950,16 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                               const Icon(Icons.check_circle_rounded,
                                   size: 16, color: Color(0xFF22C55E)),
                             if (_selfieUrl != null) const SizedBox(width: 4),
-                            const Text('סלפי לאימות זהות',
-                                style: TextStyle(
+                            Text(AppLocalizations.of(context).onbSelfieTitle,
+                                style: const TextStyle(
                                     fontWeight: FontWeight.bold, fontSize: 14)),
                           ],
                         ),
                         const SizedBox(height: 2),
                         Text(
                           _selfieUrl != null
-                              ? 'תמונה צולמה בהצלחה ✓'
-                              : 'צלם תמונה חיה של הפנים שלך',
+                              ? AppLocalizations.of(context).onbSelfieSuccess
+                              : AppLocalizations.of(context).onbSelfiePrompt,
                           textAlign: TextAlign.end,
                           style: TextStyle(
                             fontSize: 12,
@@ -984,7 +989,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                               : Icons.camera_alt_rounded,
                           size: 18),
                   label: Text(
-                    _selfieUrl != null ? 'צלם שוב' : 'צלם סלפי',
+                    _selfieUrl != null
+                        ? AppLocalizations.of(context).onbSelfieRetake
+                        : AppLocalizations.of(context).onbSelfieTake,
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                   style: ElevatedButton.styleFrom(
@@ -1034,7 +1041,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     } catch (e) {
       if (mounted) {
         setState(() => _isUploadingSelfie = false);
-        _snack('שגיאה בצילום: $e', _kRed);
+        _snack(AppLocalizations.of(context).onbCameraError(e.toString()), _kRed);
       }
     }
   }
@@ -1044,6 +1051,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // ══════════════════════════════════════════════════════════════════════════
 
   Widget _buildCategoryFields() {
+    final l = AppLocalizations.of(context);
+    final otherLabel = l.onbCategoryOther;
     // Use live Firestore categories if available, fallback to hardcoded
     final mainCatNames = _firestoreCategories.isNotEmpty
         ? _firestoreCategories.map((c) => c['name'] as String).toList()
@@ -1060,12 +1069,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildDropdown(
-          value: _isOtherCategory ? 'אחר / לא מצאתי' : _selectedCategory,
-          hint: 'בחר קטגוריה ראשית',
-          items: [...mainCatNames, 'אחר / לא מצאתי'],
+          value: _isOtherCategory ? otherLabel : _selectedCategory,
+          hint: l.onbCategoryHint,
+          items: [...mainCatNames, otherLabel],
           onChanged: (v) {
             setState(() {
-              if (v == 'אחר / לא מצאתי') {
+              if (v == otherLabel) {
                 _isOtherCategory = true;
                 _selectedCategory = null;
                 _selectedSubCategory = null;
@@ -1093,11 +1102,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
         if (!_isOtherCategory && _selectedCategory != null && subCatNames.isNotEmpty) ...[
           _buildDropdown(
-            value: _isOtherSubCategory ? 'אחר / לא מצאתי' : _selectedSubCategory,
-            hint: 'בחר תת-קטגוריה',
-            items: [...subCatNames, 'אחר / לא מצאתי'],
+            value: _isOtherSubCategory ? otherLabel : _selectedSubCategory,
+            hint: l.onbSubCategoryHint,
+            items: [...subCatNames, otherLabel],
             onChanged: (v) => setState(() {
-              if (v == 'אחר / לא מצאתי') {
+              if (v == otherLabel) {
                 _isOtherSubCategory = true; _selectedSubCategory = null;
               } else {
                 _isOtherSubCategory = false; _selectedSubCategory = v;
@@ -1110,8 +1119,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         if (_isOtherCategory) ...[
           _buildTextField(
             controller: _otherCategoryController,
-            label: 'פרט את תחום המומחיות שלך',
-            hint: 'עד 30 תווים',
+            label: l.onbExpertiseLabel,
+            hint: l.onbExpertiseHint,
             maxLength: 30,
           ),
           const SizedBox(height: 8),
@@ -1122,13 +1131,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: _kAmber.withValues(alpha: 0.3)),
             ),
-            child: const Row(
+            child: Row(
               children: [
-                Icon(Icons.info_outline_rounded, size: 18, color: _kAmber),
-                SizedBox(width: 8),
+                const Icon(Icons.info_outline_rounded, size: 18, color: _kAmber),
+                const SizedBox(width: 8),
                 Expanded(child: Text(
-                  'צוות AnySkill יבחן את הפרטים וישייך אותך לקטגוריה המתאימה',
-                  style: TextStyle(fontSize: 12, color: _kDarkText),
+                  l.onbOtherCategoryNote,
+                  style: const TextStyle(fontSize: 12, color: _kDarkText),
                 )),
               ],
             ),
@@ -1145,19 +1154,20 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // ══════════════════════════════════════════════════════════════════════════
 
   Widget _buildContactFields() {
+    final l = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildTextField(
           controller: _nameController,
-          label: 'שם מלא *',
-          hint: 'השם שיוצג בפרופיל',
+          label: l.onbFullNameLabel,
+          hint: l.onbFullNameHint,
           prefixIcon: const Icon(Icons.person_outline_rounded, size: 20),
         ),
         const SizedBox(height: 12),
         _buildTextField(
           controller: _phoneController,
-          label: 'מספר טלפון *',
+          label: l.onbPhoneLabel,
           hint: '050-1234567',
           keyboardType: TextInputType.phone,
           prefixIcon: const Icon(Icons.phone_outlined, size: 20),
@@ -1166,7 +1176,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           const SizedBox(height: 12),
           _buildTextField(
             controller: _emailController,
-            label: 'אימייל *',
+            label: l.onbEmailLabel,
             hint: 'example@mail.com',
             keyboardType: TextInputType.emailAddress,
             prefixIcon: const Icon(Icons.email_outlined, size: 20),
@@ -1174,9 +1184,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         ],
         const SizedBox(height: 6),
         Text(
-          _isProvider
-              ? '* כל השדות חובה לנותני שירות'
-              : '* שם וטלפון הם שדות חובה',
+          l.onbRequiredField,
           style: const TextStyle(fontSize: 11, color: _kMuted),
         ),
       ],
@@ -1231,16 +1239,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         ),
         const SizedBox(height: 6),
         Center(child: Text(
-          _profileImageBase64 != null ? 'לחץ להחלפה' : 'הוסף תמונת פרופיל',
+          _profileImageBase64 != null
+              ? AppLocalizations.of(context).onbReplacePhoto
+              : AppLocalizations.of(context).onbAddPhoto,
           style: const TextStyle(fontSize: 12, color: _kPurple),
         )),
         const SizedBox(height: 14),
         _buildTextField(
           controller: _bioController,
-          label: 'ספר על עצמך',
+          label: AppLocalizations.of(context).onbAboutLabel,
           hint: _isProvider
-              ? 'ניסיון, כישורים, התמחויות...'
-              : 'מה תרצה שנדע עליך?',
+              ? AppLocalizations.of(context).onbAboutHintProvider
+              : AppLocalizations.of(context).onbAboutHintCustomer,
           maxLines: 3,
         ),
       ],
@@ -1286,9 +1296,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 children: [
                   const Icon(Icons.description_outlined, size: 18, color: _kPurple),
                   const SizedBox(width: 8),
-                  const Expanded(child: Text(
-                    'קרא את תנאי השימוש ומדיניות הפרטיות',
-                    style: TextStyle(fontSize: 13, color: _kPurple, decoration: TextDecoration.underline),
+                  Expanded(child: Text(
+                    AppLocalizations.of(context).onbTermsTitle,
+                    style: const TextStyle(fontSize: 13, color: _kPurple, decoration: TextDecoration.underline),
                   )),
                   if (_termsRead)
                     Container(
@@ -1297,7 +1307,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                         color: _kGreen.withValues(alpha: 0.10),
                         borderRadius: BorderRadius.circular(6),
                       ),
-                      child: const Text('נקרא', style: TextStyle(fontSize: 10, color: _kGreen, fontWeight: FontWeight.w600)),
+                      child: Text(AppLocalizations.of(context).onbTermsRead, style: const TextStyle(fontSize: 10, color: _kGreen, fontWeight: FontWeight.w600)),
                     ),
                 ],
               ),
@@ -1320,7 +1330,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
               ),
               const SizedBox(width: 8),
               Expanded(child: Text(
-                'אני מאשר/ת שקראתי והסכמתי לתנאי השימוש ולמדיניות הפרטיות של AnySkill',
+                AppLocalizations.of(context).onbTermsAccept,
                 style: TextStyle(fontSize: 12, color: _termsRead ? _kDarkText : _kMuted),
               )),
             ],
@@ -1354,13 +1364,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             ? const SizedBox(
                 width: 22, height: 22,
                 child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
-            : const Row(
+            : Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text('סיום הרשמה',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white)),
-                  SizedBox(width: 8),
-                  Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 20),
+                  Text(AppLocalizations.of(context).onbFinish,
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white)),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 20),
                 ],
               ),
       ),
@@ -1506,7 +1516,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   ],
                   if (required_ && !hasFile) ...[
                     const SizedBox(height: 2),
-                    const Text('שדה חובה *', style: TextStyle(fontSize: 10, color: _kRed)),
+                    Text(AppLocalizations.of(context).onbRequiredField, style: const TextStyle(fontSize: 10, color: _kRed)),
                   ],
                 ],
               ),

@@ -249,9 +249,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     final selfUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     if (selfUid == widget.expertId) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('לא ניתן להזמין שירות מעצמך'),
-          backgroundColor: Color(0xFFEF4444),
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(AppLocalizations.of(context).expCantBookSelf),
+          backgroundColor: const Color(0xFFEF4444),
         ));
       }
       return false;
@@ -511,16 +511,15 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             builder: (ctx) => AlertDialog(
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(20)),
-              title: const Row(children: [
-                Icon(Icons.event_busy_rounded,
+              title: Row(children: [
+                const Icon(Icons.event_busy_rounded,
                     color: Color(0xFFEF4444), size: 22),
-                SizedBox(width: 8),
-                Text('המועד תפוס',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(width: 8),
+                Text(AppLocalizations.of(context).expSlotTakenTitle,
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
               ]),
-              content: const Text(
-                'מישהו כבר הזמין את המומחה לאותו מועד.\n'
-                'אנא בחר תאריך או שעה אחרים.',
+              content: Text(
+                AppLocalizations.of(context).expSlotTakenBody,
                 textAlign: TextAlign.right,
               ),
               actions: [
@@ -530,8 +529,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12))),
                   onPressed: () => Navigator.pop(ctx),
-                  child: const Text('הבנתי',
-                      style: TextStyle(color: Colors.white)),
+                  child: Text(AppLocalizations.of(context).expUnderstood,
+                      style: const TextStyle(color: Colors.white)),
                 ),
               ],
             ),
@@ -544,7 +543,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   ? msgInsufficientBalance
                   : e.toString().toLowerCase().contains('permission') ||
                           e.toString().toLowerCase().contains('insufficient')
-                      ? 'חלה שגיאה בתהליך ההזמנה, אנא נסה שנית.'
+                      ? AppLocalizations.of(context).expBookingError
                       : e.toString(),
             ),
           ));
@@ -578,13 +577,16 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
 
     // ── 1. Read customer profile (best-effort) ───────────────────────────
-    String customerName = 'לקוח';
+    final defaultCustomerName = context.mounted
+        ? AppLocalizations.of(context).expDefaultCustomer
+        : 'Customer';
+    String customerName = defaultCustomerName;
     String customerImage = '';
     String customerPhone = '';
     try {
       final customerDoc = await db.collection('users').doc(uid).get();
       final cd = customerDoc.data() ?? {};
-      customerName = cd['name'] as String? ?? 'לקוח';
+      customerName = cd['name'] as String? ?? defaultCustomerName;
       customerImage = cd['profileImage'] as String? ?? '';
       customerPhone = cd['phone'] as String? ?? '';
     } catch (_) {}
@@ -698,7 +700,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         'type': 'demo_booking_received',
         'title': '⏳ הזמנתך התקבלה',
         'body':
-            'הזמנת את ${widget.expertName}. אנחנו מעדכנים אותך כשנותן השירות פנוי.',
+            AppLocalizations.of(context).expDemoBookingMsg(widget.expertName),
         'isRead': false,
         'createdAt': FieldValue.serverTimestamp(),
       });
@@ -913,14 +915,14 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          const Row(
+          Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              Text('תוספות אופציונליות',
+              Text(AppLocalizations.of(context).expOptionalAddons,
                   style:
-                      TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-              SizedBox(width: 6),
-              Icon(Icons.add_circle_outline_rounded,
+                      const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              const SizedBox(width: 6),
+              const Icon(Icons.add_circle_outline_rounded,
                   size: 16, color: _kPurple),
             ],
           ),
@@ -1189,7 +1191,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Text(
-          'הספק לא עובד ביום הזה',
+          AppLocalizations.of(context).expProviderDayOff,
           style: TextStyle(color: Colors.grey[500], fontSize: 14),
           textAlign: TextAlign.center,
         ),
@@ -1350,7 +1352,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             if (review.isEmpty) continue; // no review text = skip
             final photoUrl = d['completionPhotoUrl'] as String? ?? '';
             items.add({
-              'reviewerName': d['requesterName'] as String? ?? 'אנונימי',
+              'reviewerName': d['requesterName'] as String? ?? AppLocalizations.of(context).expAnonymous,
               'reviewerId': d['requesterId'] as String?,
               'reviewerImage': d['requesterImage'] as String?,
               'comment': review,
@@ -1450,11 +1452,11 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
               const SizedBox(height: 16),
 
               if (paramCount > 0) ...[
-                _ratingBar('מקצועיות', avgProfessional),
+                _ratingBar(AppLocalizations.of(context).expRatingProfessional, avgProfessional),
                 const SizedBox(height: 8),
-                _ratingBar('עמידה בזמנים', avgTiming),
+                _ratingBar(AppLocalizations.of(context).expRatingTiming, avgTiming),
                 const SizedBox(height: 8),
-                _ratingBar('תקשורת', avgComm),
+                _ratingBar(AppLocalizations.of(context).expRatingCommunication, avgComm),
                 const SizedBox(height: 16),
               ],
 
@@ -1468,7 +1470,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   textAlign: TextAlign.start,
                   style: const TextStyle(fontSize: 13),
                   decoration: InputDecoration(
-                    hintText: 'חפש בביקורות...',
+                    hintText: AppLocalizations.of(context).expSearchReviewsHint,
                     hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
                     prefixIcon: Icon(Icons.search_rounded,
                         size: 18, color: Colors.grey[400]),
@@ -1487,8 +1489,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const SizedBox(),
-                  const Text('ביקורות',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  Text(AppLocalizations.of(context).expReviewsTitle,
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 ],
               ),
               const SizedBox(height: 4),
@@ -1503,7 +1505,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                 child: Center(
                   child: Text(
                     _reviewSearchQuery.isNotEmpty
-                        ? 'לא נמצאו ביקורות עבור "$_reviewSearchQuery"'
+                        ? AppLocalizations.of(context).expNoReviewsMatch(_reviewSearchQuery)
                         : l10n.expertNoReviews,
                     style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
                   ),
@@ -1563,7 +1565,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                           borderRadius: BorderRadius.circular(10)),
                       ),
                       child: Text(
-                        'הצג את כל ${filtered.length} הביקורות',
+                        AppLocalizations.of(context).expShowAllReviews(filtered.length),
                         style: const TextStyle(
                           fontSize: 14, fontWeight: FontWeight.w600),
                       ),
@@ -1662,14 +1664,14 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                 ),
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.favorite_rounded, color: Colors.white, size: 11),
-                  SizedBox(width: 3),
+                  const Icon(Icons.favorite_rounded, color: Colors.white, size: 11),
+                  const SizedBox(width: 3),
                   Text(
-                    'התנדבות בקהילה',
-                    style: TextStyle(
+                    AppLocalizations.of(context).expCommunityVolunteerBadge,
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 10,
                       fontWeight: FontWeight.bold,
@@ -2087,14 +2089,14 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                         ? const CircularProgressIndicator(
                             color: Colors.white, strokeWidth: 2.5)
                         : isSelf
-                            ? const Row(
+                            ? Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.block_rounded,
+                                  const Icon(Icons.block_rounded,
                                       color: Colors.white, size: 16),
-                                  SizedBox(width: 6),
-                                  Text('לא ניתן להזמין שירות מעצמך',
-                                      style: TextStyle(
+                                  const SizedBox(width: 6),
+                                  Text(AppLocalizations.of(context).expCantBookSelf,
+                                      style: const TextStyle(
                                           color: Colors.white,
                                           fontWeight: FontWeight.w600,
                                           fontSize: 13)),
@@ -2350,18 +2352,18 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   if (_serviceSchema.priceLocked)
                     _summaryRow(
                       '🔒 מחיר נעול',
-                      'מובטח אחרי אישור התמונות',
+                      AppLocalizations.of(context).expPriceAfterPhotos,
                       isGreen: true,
                     ),
                   // ── Deposit notice (high-ticket services) ─────────────────
                   if (_serviceSchema.depositPercent > 0)
                     _summaryRow(
-                      'פיקדון מקדים',
+                      AppLocalizations.of(context).expDeposit,
                       '₪${(price * _serviceSchema.depositPercent / 100).toStringAsFixed(0)} '
                           '(${_serviceSchema.depositPercent.toStringAsFixed(0)}%)',
                     ),
                   if (isPensionBooking) ...[
-                    _summaryRow('לילות', '$nights × ₪${price.toStringAsFixed(0)}'),
+                    _summaryRow(AppLocalizations.of(context).expNights, '$nights × ₪${price.toStringAsFixed(0)}'),
                   ],
                   const Divider(height: 16),
                   _summaryRow(l10n.expertSummaryRowTotal,
@@ -2395,10 +2397,10 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                           color: Color(0xFF6366F1), size: 20),
                     ),
                     const SizedBox(width: 12),
-                    const Expanded(
+                    Expanded(
                       child: Text(
-                        'מספר לילות',
-                        style: TextStyle(
+                        AppLocalizations.of(context).expNightsCount,
+                        style: const TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 14,
                           color: Color(0xFF1A1A2E),
@@ -2501,9 +2503,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                           crossAxisAlignment:
                               CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'תאריך סיום השהות',
-                              style: TextStyle(
+                            Text(
+                              AppLocalizations.of(context).expEndDate,
+                              style: const TextStyle(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 14,
                                 color: Color(0xFF1A1A2E),
@@ -2512,9 +2514,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                             const SizedBox(height: 2),
                             Text(
                               petStayEnd == null
-                                  ? 'יש לבחור תאריך'
+                                  ? AppLocalizations.of(context).expSelectDate
                                   : '${petStayEnd!.day}/${petStayEnd!.month}/${petStayEnd!.year}'
-                                      ' · ${_selectedDay != null ? petStayEnd!.difference(_selectedDay!).inDays : 0} לילות',
+                                      ' · ${_selectedDay != null ? petStayEnd!.difference(_selectedDay!).inDays : 0} ${AppLocalizations.of(context).expNights}',
                               style: const TextStyle(
                                 color: Color(0xFF6B7280),
                                 fontSize: 12,
@@ -2601,15 +2603,15 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: const Color(0xFFFCD34D)),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
-                    Icon(Icons.error_outline_rounded,
+                    const Icon(Icons.error_outline_rounded,
                         size: 16, color: Color(0xFF92400E)),
-                    SizedBox(width: 8),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'יש למלא את כל השדות הנדרשים למעלה כדי להמשיך',
-                        style: TextStyle(
+                        AppLocalizations.of(context).expMustFillAll,
+                        style: const TextStyle(
                             fontSize: 12,
                             color: Color(0xFF92400E),
                             fontWeight: FontWeight.w600),
@@ -2698,12 +2700,11 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         : const Color(0xFF22C55E); // green for real bookings
 
     final title = isDemo
-        ? 'ההזמנה התקבלה!'
-        : 'ההזמנה בוצעה בהצלחה! 🎉';
+        ? AppLocalizations.of(context).expBookingReceivedDemo
+        : AppLocalizations.of(context).expBookingSuccess;
 
     final subtitle = isDemo
-        ? 'הזמנת את השירות. אנחנו כבר מעדכנים אותך אם נותן השירות פנוי.\n'
-            'תקבל הודעה ברגע שיש תשובה.'
+        ? AppLocalizations.of(context).expBookingDemoBody
         : l10n.expertEscrowSuccess;
 
     return Container(
@@ -2762,16 +2763,16 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                 border: Border.all(
                     color: const Color(0xFF6366F1).withValues(alpha: 0.2)),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.notifications_active_outlined,
+                  const Icon(Icons.notifications_active_outlined,
                       color: Color(0xFF6366F1), size: 16),
-                  SizedBox(width: 8),
+                  const SizedBox(width: 8),
                   Flexible(
                     child: Text(
-                      'נשלח לך עדכון בקרוב',
-                      style: TextStyle(
+                      AppLocalizations.of(context).expWillNotify,
+                      style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                         color: Color(0xFF6366F1),
@@ -2793,9 +2794,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
               elevation: 0,
             ),
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text(
-              'הבנתי ✓',
-              style: TextStyle(
+            child: Text(
+              AppLocalizations.of(context).expGotIt,
+              style: const TextStyle(
                   fontSize: 17,
                   color: Colors.white,
                   fontWeight: FontWeight.bold),
@@ -2939,9 +2940,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                       ],
                     ),
                     const SizedBox(height: 2),
-                    const Text(
-                      'נותן שירות',
-                      style: TextStyle(
+                    Text(
+                      AppLocalizations.of(context).expProviderRole,
+                      style: const TextStyle(
                           fontSize: 12,
                           color: Color(0xFF9CA3AF),
                           fontWeight: FontWeight.w400),
@@ -2966,19 +2967,19 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                     ],
                     const SizedBox(height: 14),
                     _expertStatRow(
-                        label: 'עבודות',
+                        label: AppLocalizations.of(context).expJobsLabel,
                         value: '$jobsCount',
                         icon: Icons.shield_outlined,
                         iconColor: _kPurple),
                     const Divider(height: 20, color: Color(0xFFF3F4F6), thickness: 1),
                     _expertStatRow(
-                        label: 'דירוג',
+                        label: AppLocalizations.of(context).expRatingLabel,
                         value: '$rating',
                         icon: Icons.star_rounded,
                         iconColor: _kGold),
                     const Divider(height: 20, color: Color(0xFFF3F4F6), thickness: 1),
                     _expertStatRow(
-                        label: 'ביקורות',
+                        label: AppLocalizations.of(context).expReviewsLabel,
                         value: '$reviewsCount',
                         icon: Icons.chat_bubble_outline_rounded,
                         iconColor: Colors.teal),
@@ -2994,7 +2995,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                 color: Color(0xFFF3F4F6),
                                 thickness: 1),
                             _expertStatRow(
-                                label: 'התנדבויות בקהילה',
+                                label: AppLocalizations.of(context).expVolunteersLabel,
                                 value: '$count',
                                 icon: Icons.favorite_rounded,
                                 iconColor: const Color(0xFFD4AF37)),
@@ -3093,6 +3094,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
 
   Widget _buildActionSquares(BuildContext context, Map<String, dynamic> data) {
     final gallery = (data['gallery'] as List? ?? []).cast<String>();
+    final certImage = data['certificationImage'] as String?;
+    final hasCert = certImage != null && certImage.isNotEmpty;
 
     // Video data
     final verifiedVideoUrl     = data['verificationVideoUrl'] as String? ?? '';
@@ -3102,101 +3105,192 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     final videoId              = _extractYouTubeId(youtubeUrl);
     final hasAnyVideo          = hasVerifiedVideo || videoId != null;
 
-    return Row(
+    return Column(
       children: [
-        // ── Video Introduction square ──────────────────────────────────
-        Expanded(
-          child: InkWell(
-            onTap: hasAnyVideo
-                ? () async {
-                    final url = hasVerifiedVideo
-                        ? verifiedVideoUrl
-                        : (youtubeUrl.startsWith('http')
-                            ? youtubeUrl
-                            : 'https://www.youtube.com/watch?v=$videoId');
-                    final uri = Uri.parse(url);
-                    if (await canLaunchUrl(uri)) launchUrl(uri);
-                  }
-                : null,
-            borderRadius: BorderRadius.circular(24),
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
+        Row(
+          children: [
+            // ── Video Introduction square ──────────────────────────────────
+            Expanded(
+              child: InkWell(
+                onTap: hasAnyVideo
+                    ? () async {
+                        final url = hasVerifiedVideo
+                            ? verifiedVideoUrl
+                            : (youtubeUrl.startsWith('http')
+                                ? youtubeUrl
+                                : 'https://www.youtube.com/watch?v=$videoId');
+                        final uri = Uri.parse(url);
+                        if (await canLaunchUrl(uri)) launchUrl(uri);
+                      }
+                    : null,
                 borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.07),
-                    blurRadius: 20,
-                    offset: const Offset(0, 6),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.07),
+                        blurRadius: 20,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
                   ),
-                ],
+                  padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.play_circle_outline_rounded,
+                          size: 32,
+                          color: hasAnyVideo ? _kPurple : Colors.grey[300]),
+                      const SizedBox(height: 10),
+                      Text(
+                        AppLocalizations.of(context).expVideoIntro,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: hasAnyVideo ? Colors.black : Colors.grey[300]!,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+            ),
+            const SizedBox(width: 14),
+            // ── Work Gallery square ────────────────────────────────────────
+            Expanded(
+              child: InkWell(
+                onTap: gallery.isEmpty
+                    ? null
+                    : () => _expandPortfolioImage(context, gallery, 0),
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.07),
+                        blurRadius: 20,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.photo_library_outlined,
+                          size: 32,
+                          color: gallery.isEmpty ? Colors.grey[300] : Colors.black),
+                      const SizedBox(height: 10),
+                      Text(
+                        AppLocalizations.of(context).expGallery,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: gallery.isEmpty ? Colors.grey[300] : Colors.black,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        // ── Certification badge ─────────────────────────────────────────
+        if (hasCert) ...[
+          const SizedBox(height: 14),
+          InkWell(
+            onTap: () => _showCertificationDialog(context, certImage),
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.amber.shade50, Colors.amber.shade100],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.amber.shade300),
+              ),
+              child: Row(
                 children: [
-                  Icon(Icons.play_circle_outline_rounded,
-                      size: 32,
-                      color: hasAnyVideo ? _kPurple : Colors.grey[300]),
-                  const SizedBox(height: 10),
-                  Text(
-                    'וידאו היכרות',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: hasAnyVideo ? Colors.black : Colors.grey[300]!,
+                  Icon(Icons.workspace_premium_rounded, color: Colors.amber[700], size: 24),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      AppLocalizations.of(context).expVerifiedCertificate,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF92400E),
+                      ),
                     ),
                   ),
+                  Text(AppLocalizations.of(context).expView,
+                      style: TextStyle(fontSize: 12, color: Colors.amber[800])),
+                  const SizedBox(width: 4),
+                  Icon(Icons.arrow_back_ios_rounded, size: 12, color: Colors.amber[800]),
                 ],
               ),
             ),
           ),
-        ),
-        const SizedBox(width: 14),
-        // ── Work Gallery square ────────────────────────────────────────
-        Expanded(
-          child: InkWell(
-            onTap: gallery.isEmpty
-                ? null
-                : () => _expandPortfolioImage(context, gallery, 0),
-            borderRadius: BorderRadius.circular(24),
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.07),
-                    blurRadius: 20,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.photo_library_outlined,
-                      size: 32,
-                      color: gallery.isEmpty ? Colors.grey[300] : Colors.black),
-                  const SizedBox(height: 10),
-                  Text(
-                    'גלריית עבודות',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: gallery.isEmpty ? Colors.grey[300] : Colors.black,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+        ],
       ],
     );
+  }
+
+  void _showCertificationDialog(BuildContext context, String imageData) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Row(
+                children: [
+                  Icon(Icons.workspace_premium_rounded, color: Colors.amber[700]),
+                  const SizedBox(width: 8),
+                  Text(AppLocalizations.of(context).expCertificateTitle,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            ClipRRect(
+              borderRadius: const BorderRadius.only(
+                bottomLeft: Radius.circular(16),
+                bottomRight: Radius.circular(16),
+              ),
+              child: _buildCertImage(imageData),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCertImage(String raw) {
+    if (raw.startsWith('http')) {
+      return Image.network(raw, fit: BoxFit.contain);
+    }
+    try {
+      final b64 = raw.contains(',') ? raw.split(',').last : raw;
+      return Image.memory(base64Decode(b64), fit: BoxFit.contain);
+    } catch (_) {
+      return SizedBox(height: 200, child: Center(child: Text(AppLocalizations.of(context).expImageLoadError)));
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────

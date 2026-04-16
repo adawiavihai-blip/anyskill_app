@@ -21,6 +21,8 @@ import '../main.dart' show currentAppVersion, rootNavigatorKey;
 import 'favorites_screen.dart';
 import 'phone_login_screen.dart';
 import '../features/pet_stay/screens/dog_profile_list_screen.dart';
+import '../services/user_roles.dart';
+import 'role_switcher_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -103,8 +105,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final photoUrl = refreshed?.photoURL ?? '';
 
     if (photoUrl.isEmpty) {
-      messenger.showSnackBar(const SnackBar(
-        content: Text('לא נמצאה תמונת פרופיל בחשבון Google'),
+      if (!mounted) return;
+      final msg = AppLocalizations.of(context).profNoGooglePhoto;
+      messenger.showSnackBar(SnackBar(
+        content: Text(msg),
         backgroundColor: Colors.orange,
       ));
       return;
@@ -117,10 +121,64 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     _syncAttempted = false; // allow re-read on next stream event
 
-    messenger.showSnackBar(const SnackBar(
-      content: Text('תמונת פרופיל עודכנה מ-Google'),
-      backgroundColor: Color(0xFF10B981),
+    if (!mounted) return;
+    final okMsg = AppLocalizations.of(context).profPhotoUpdatedFromGoogle;
+    messenger.showSnackBar(SnackBar(
+      content: Text(okMsg),
+      backgroundColor: const Color(0xFF10B981),
     ));
+  }
+
+  // ── Email Invoice Preference Toggle ────────────────────────────────────────
+  Widget _buildEmailInvoiceToggle(Map<String, dynamic> data) {
+    // Default: true (new accounts receive invoices by default — backwards compatible)
+    final receiveEmail = data['receiveEmailReceipts'] as bool? ?? true;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: SwitchListTile.adaptive(
+        value: receiveEmail,
+        onChanged: (val) async {
+          final uid = FirebaseAuth.instance.currentUser?.uid;
+          if (uid == null) return;
+          try {
+            await FirebaseFirestore.instance
+                .collection('users')
+                .doc(uid)
+                .update({'receiveEmailReceipts': val});
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(val
+                    ? AppLocalizations.of(context).profInvoiceEmailOn
+                    : AppLocalizations.of(context).profInvoiceEmailOff),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          } catch (e) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(AppLocalizations.of(context).profSaveError(e.toString()))),
+            );
+          }
+        },
+        activeColor: const Color(0xFF10B981),
+        secondary: const Icon(Icons.receipt_long_rounded, color: Color(0xFF6366F1)),
+        title: Text(
+          AppLocalizations.of(context).profInvoiceEmailTitle,
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          receiveEmail
+              ? AppLocalizations.of(context).profInvoiceEmailSubOn
+              : AppLocalizations.of(context).profInvoiceEmailSubOff,
+          style: TextStyle(color: Colors.grey[600], fontSize: 12),
+        ),
+      ),
+    );
   }
 
   // ── Logout ────────────────────────────────────────────────────────────────
@@ -269,7 +327,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   if ((data['profileImage'] as String? ?? '').isEmpty)
                     IconButton(
                       icon: const Icon(Icons.sync_rounded, color: Colors.orange),
-                      tooltip: 'סנכרן תמונה מ-Google',
+                      tooltip: AppLocalizations.of(context).profSyncGooglePhoto,
                       onPressed: _forceResyncProfileImage,
                     ),
                   IconButton(
@@ -406,9 +464,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     ),
                                     const SizedBox(height: 2),
                                     // Role label — always visible for specialists
-                                    const Text(
-                                      'נותן שירות',
-                                      style: TextStyle(
+                                    Text(
+                                      AppLocalizations.of(context).profProviderRole,
+                                      style: const TextStyle(
                                         fontSize: 12,
                                         color: Color(0xFF9CA3AF),
                                         fontWeight: FontWeight.w400,
@@ -428,21 +486,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     ],
                                     const SizedBox(height: 14),
                                     _specialistStat(
-                                      label: 'עבודות',
+                                      label: AppLocalizations.of(context).profJobsStat,
                                       value: '${(data['completedJobsCount'] as num? ?? data['reviewsCount'] as num? ?? 0).toInt()}',
                                       icon: Icons.shield_outlined,
                                       iconColor: const Color(0xFF6366F1),
                                     ),
                                     const Divider(height: 20, color: Color(0xFFF3F4F6), thickness: 1),
                                     _specialistStat(
-                                      label: 'דירוג',
+                                      label: AppLocalizations.of(context).profRatingStat,
                                       value: '${data['rating'] ?? '5.0'}',
                                       icon: Icons.star_rounded,
                                       iconColor: Colors.amber,
                                     ),
                                     const Divider(height: 20, color: Color(0xFFF3F4F6), thickness: 1),
                                     _specialistStat(
-                                      label: 'ביקורות',
+                                      label: AppLocalizations.of(context).profReviewsStat,
                                       value: '${(data['reviewsCount'] as num? ?? 0).toInt()}',
                                       icon: Icons.chat_bubble_outline_rounded,
                                       iconColor: Colors.teal,
@@ -508,10 +566,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               final isAngel = badges != null && badges.contains('angel');
                               final isPillar = badges != null && badges.contains('pillar');
                               final badgeLabel = isAngel
-                                  ? 'מלאך הקהילה'
+                                  ? AppLocalizations.of(context).profAngelBadge
                                   : isPillar
-                                      ? 'עמוד תווך'
-                                      : 'מתנדב פעיל';
+                                      ? AppLocalizations.of(context).profPillarBadge
+                                      : AppLocalizations.of(context).profStarterBadge;
                               final badgeIcon = isAngel
                                   ? Icons.auto_awesome_rounded
                                   : isPillar
@@ -586,15 +644,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   ],
                                 ),
                                 padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-                                child: const Column(
+                                child: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(Icons.photo_library_outlined, size: 32, color: Colors.black),
-                                    SizedBox(height: 10),
+                                    const Icon(Icons.photo_library_outlined, size: 32, color: Colors.black),
+                                    const SizedBox(height: 10),
                                     Text(
-                                      'גלריית עבודות',
+                                      AppLocalizations.of(context).profWorkGallery,
                                       textAlign: TextAlign.center,
-                                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.black),
+                                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.black),
                                     ),
                                   ],
                                 ),
@@ -632,7 +690,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     ),
                                     const SizedBox(height: 10),
                                     Text(
-                                      isVipActive ? 'VIP פעיל' : 'הצטרף ל-VIP',
+                                      isVipActive
+                                          ? AppLocalizations.of(context).profVipActive
+                                          : AppLocalizations.of(context).profJoinVip,
                                       textAlign: TextAlign.center,
                                       style: TextStyle(
                                         fontSize: 13,
@@ -679,21 +739,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ],
                             ),
                             padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
-                            child: const Row(
+                            child: Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.play_circle_fill_rounded, size: 28, color: Colors.white),
-                                SizedBox(width: 10),
+                                const Icon(Icons.play_circle_fill_rounded, size: 28, color: Colors.white),
+                                const SizedBox(width: 10),
                                 Text(
-                                  'היכרות בווידאו',
-                                  style: TextStyle(
+                                  AppLocalizations.of(context).profVideoIntro,
+                                  style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 15,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                                SizedBox(width: 8),
-                                Icon(Icons.verified_rounded, size: 16, color: Colors.white70),
+                                const SizedBox(width: 8),
+                                const Icon(Icons.verified_rounded, size: 16, color: Colors.white70),
                               ],
                             ),
                           ),
@@ -749,9 +809,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         child: const Icon(Icons.pets_rounded,
                             color: Color(0xFF6366F1)),
                       ),
-                      title: const Text('הכלבים שלי',
-                          style: TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: Text('פרופיל אחד → כל ההזמנות',
+                      title: Text(AppLocalizations.of(context).profMyDogs,
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      subtitle: Text(AppLocalizations.of(context).profMyDogsSubtitle,
                           style: TextStyle(
                               color: Colors.grey[600], fontSize: 13)),
                       trailing: const Icon(Icons.arrow_forward_ios_rounded,
@@ -780,9 +840,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                       icon: const Icon(Icons.work_outline_rounded,
                           size: 18, color: Color(0xFF6366F1)),
-                      label: const Text(
-                        'להצטרפות ל-AnySkill כנותן שירות',
-                        style: TextStyle(
+                      label: Text(
+                        AppLocalizations.of(context).profJoinAsProvider,
+                        style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
                           color: Color(0xFF6366F1),
@@ -812,17 +872,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         border: Border.all(
                             color: const Color(0xFFFBBF24), width: 1.2),
                       ),
-                      child: const Row(
+                      child: Row(
                         textDirection: TextDirection.rtl,
                         children: [
-                          Icon(Icons.hourglass_top_rounded,
+                          const Icon(Icons.hourglass_top_rounded,
                               color: Color(0xFFF59E0B), size: 20),
-                          SizedBox(width: 10),
+                          const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              'הבקשה שלך בבדיקה — נעדכן בהקדם',
+                              AppLocalizations.of(context).profRequestInReview,
                               textAlign: TextAlign.right,
-                              style: TextStyle(
+                              style: const TextStyle(
                                   color: Color(0xFF92400E),
                                   fontWeight: FontWeight.w600,
                                   fontSize: 13),
@@ -844,29 +904,66 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         onPressed: () => Navigator.push(context,
                           MaterialPageRoute(builder: (_) =>
                             const TermsOfServiceScreen(showAcceptButton: false))),
-                        child: const Text('תנאי שימוש',
-                          style: TextStyle(fontSize: 13, color: Color(0xFF6366F1))),
+                        child: Text(AppLocalizations.of(context).profTermsOfService,
+                          style: const TextStyle(fontSize: 13, color: Color(0xFF6366F1))),
                       ),
                       Text(' • ', style: TextStyle(color: Colors.grey[400])),
                       TextButton(
                         onPressed: () => Navigator.push(context,
                           MaterialPageRoute(builder: (_) =>
                             const TermsOfServiceScreen(showAcceptButton: false))),
-                        child: const Text('מדיניות פרטיות',
-                          style: TextStyle(fontSize: 13, color: Color(0xFF6366F1))),
+                        child: Text(AppLocalizations.of(context).profPrivacyPolicy,
+                          style: const TextStyle(fontSize: 13, color: Color(0xFF6366F1))),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 8),
+                // ── Switch Role (multi-role users only) ───────────────────
+                Builder(builder: (_) {
+                  final roles = UserRoles.fromUserDoc(data);
+                  if (!roles.hasMultiple) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 25)
+                        .copyWith(bottom: 8),
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              const RoleSwitcherScreen(allowBack: true),
+                        ),
+                      ),
+                      icon: const Icon(Icons.swap_horiz_rounded,
+                          size: 18, color: Color(0xFF8B5CF6)),
+                      label: Text(AppLocalizations.of(context).profSwitchRole,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF8B5CF6))),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 48),
+                        side: const BorderSide(
+                            color: Color(0xFF8B5CF6), width: 1.5),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+                  );
+                }),
+                // ── Email Invoice Preference ──────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 25),
+                  child: _buildEmailInvoiceToggle(data),
+                ),
+                const SizedBox(height: 12),
                 // ── Logout ────────────────────────────────────────────────
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 25),
                   child: OutlinedButton.icon(
                     onPressed: _logout,
                     icon: const Icon(Icons.logout_rounded, size: 18, color: Color(0xFF6366F1)),
-                    label: const Text('התנתקות',
-                        style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF6366F1))),
+                    label: Text(AppLocalizations.of(context).profLogout,
+                        style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF6366F1))),
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 48),
                       side: const BorderSide(color: Color(0xFF6366F1), width: 1.5),
@@ -882,8 +979,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: OutlinedButton.icon(
                     onPressed: () => _showDeleteAccountDialog(context),
                     icon: const Icon(Icons.delete_forever_rounded, size: 18, color: Colors.red),
-                    label: const Text('מחיקת חשבון',
-                        style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+                    label: Text(AppLocalizations.of(context).profDeleteAccount,
+                        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 48),
                       side: const BorderSide(color: Colors.red, width: 1.5),
@@ -1033,9 +1130,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // ── Large heading — far right ───────────────────────────────────
-          const Text(
-            'פרופיל',
-            style: TextStyle(
+          Text(
+            AppLocalizations.of(context).profTitle,
+            style: const TextStyle(
               fontSize: 30,
               fontWeight: FontWeight.bold,
               color: Colors.black,
@@ -1080,9 +1177,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                     const SizedBox(height: 3),
-                    const Text(
-                      'לקוח/ה',
-                      style: TextStyle(
+                    Text(
+                      AppLocalizations.of(context).profCustomerRole,
+                      style: const TextStyle(
                         fontSize: 12,
                         color: Color(0xFF9CA3AF),
                         fontWeight: FontWeight.w400,
@@ -1100,11 +1197,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        _customerStat('שירותים שנלקחו', services.toString()),
+                        _customerStat(AppLocalizations.of(context).profStatServicesTaken, services.toString()),
                         const Divider(height: 24, color: Color(0xFFF3F4F6), thickness: 1),
-                        _customerStat('ביקורות', '0'), // TODO: reviews count
+                        _customerStat(AppLocalizations.of(context).profStatReviews, '0'), // TODO: reviews count
                         const Divider(height: 24, color: Color(0xFFF3F4F6), thickness: 1),
-                        _customerStat('שנים ב-AnySkill', yearsInApp.toString()),
+                        _customerStat(AppLocalizations.of(context).profStatYears, yearsInApp.toString()),
                       ],
                     );
                   },
@@ -1147,24 +1244,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   padding: const EdgeInsets.symmetric(
                       vertical: 18, horizontal: 18),
-                  child: const Row(
+                  child: Row(
                     textDirection: TextDirection.rtl,
                     children: [
-                      Icon(Icons.work_outline_rounded,
+                      const Icon(Icons.work_outline_rounded,
                           color: Colors.white, size: 24),
-                      SizedBox(width: 12),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          'להצטרפות ל-AnySkill כנותן שירות',
+                          AppLocalizations.of(context).profJoinAsProvider,
                           textAlign: TextAlign.right,
-                          style: TextStyle(
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 15,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
                       ),
-                      Icon(Icons.arrow_back_rounded,
+                      const Icon(Icons.arrow_back_rounded,
                           color: Colors.white70, size: 18),
                     ],
                   ),
@@ -1198,15 +1295,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ],
                     ),
                     padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-                    child: const Column(
+                    child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.assignment_turned_in_outlined, size: 32, color: Colors.black),
-                        SizedBox(height: 10),
+                        const Icon(Icons.assignment_turned_in_outlined, size: 32, color: Colors.black),
+                        const SizedBox(height: 10),
                         Text(
-                          'שירות שהתקבל',
+                          AppLocalizations.of(context).profReceivedService,
                           textAlign: TextAlign.center,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                             color: Colors.black,
@@ -1242,15 +1339,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ],
                     ),
                     padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-                    child: const Column(
+                    child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.favorite_border, size: 32, color: Colors.black),
-                        SizedBox(height: 10),
+                        const Icon(Icons.favorite_border, size: 32, color: Colors.black),
+                        const SizedBox(height: 10),
                         Text(
-                          'מועדפים',
+                          AppLocalizations.of(context).profFavorites,
                           textAlign: TextAlign.center,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                             color: Colors.black,
@@ -1265,6 +1362,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
 
           const SizedBox(height: 24),
+
+          // ── Email Invoice Preference ──────────────────────────────────────
+          _buildEmailInvoiceToggle(data),
+
+          const SizedBox(height: 16),
 
           // ── Language Selector ─────────────────────────────────────────────
           Container(
@@ -1290,9 +1392,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           OutlinedButton.icon(
             onPressed: _logout,
             icon: const Icon(Icons.logout_rounded, size: 18, color: Color(0xFF6366F1)),
-            label: const Text(
-              'התנתקות',
-              style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF6366F1)),
+            label: Text(
+              AppLocalizations.of(context).profLogout,
+              style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF6366F1)),
             ),
             style: OutlinedButton.styleFrom(
               minimumSize: const Size(double.infinity, 48),
@@ -1308,9 +1410,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           OutlinedButton.icon(
             onPressed: () => _showDeleteAccountDialog(context),
             icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-            label: const Text(
-              'מחיקת חשבון',
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
+            label: Text(
+              AppLocalizations.of(context).profDeleteAccount,
+              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
             ),
             style: OutlinedButton.styleFrom(
               minimumSize: const Size(double.infinity, 48),
@@ -1484,30 +1586,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
         title: Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
-            const Text('מחיקת חשבון',
-                style: TextStyle(
+            Text(AppLocalizations.of(context).profDeleteAccount,
+                style: const TextStyle(
                     color: Colors.red, fontWeight: FontWeight.bold)),
             const SizedBox(width: 8),
             Icon(Icons.warning_amber_rounded, color: Colors.red[700]),
           ],
         ),
-        content: const Text(
-          'האם אתה בטוח שברצונך למחוק את חשבונך?\n\n'
-          'כל הנתונים — ההיסטוריה, הארנק, הצ׳אטים — ימחקו לצמיתות.\n\n'
-          'פעולה זו אינה הפיכה.',
+        content: Text(
+          AppLocalizations.of(context).profDeleteConfirmBody,
           textAlign: TextAlign.right,
-          style: TextStyle(height: 1.5, fontSize: 14),
+          style: const TextStyle(height: 1.5, fontSize: 14),
         ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('ביטול')),
+              child: Text(AppLocalizations.of(context).profCancel)),
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
               _showFinalDeleteConfirmation(context);
             },
-            child: Text('המשך',
+            child: Text(AppLocalizations.of(context).profContinue,
                 style: TextStyle(
                     color: Colors.red[700], fontWeight: FontWeight.bold)),
           ),
@@ -1527,24 +1627,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
           return AlertDialog(
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: const Row(
+            title: Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                Text('אישור סופי',
-                    style: TextStyle(
+                Text(AppLocalizations.of(context).profFinalConfirm,
+                    style: const TextStyle(
                         color: Colors.red, fontWeight: FontWeight.bold)),
-                SizedBox(width: 8),
-                Icon(Icons.delete_forever_rounded, color: Colors.red),
+                const SizedBox(width: 8),
+                const Icon(Icons.delete_forever_rounded, color: Colors.red),
               ],
             ),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                const Text(
-                  'לאחר האישור, חשבונך ימחק לצמיתות ולא ניתן יהיה לשחזרו.',
+                Text(
+                  AppLocalizations.of(context).profDeleteFinalBody,
                   textAlign: TextAlign.right,
-                  style: TextStyle(height: 1.5, fontSize: 13),
+                  style: const TextStyle(height: 1.5, fontSize: 13),
                 ),
                 if (isDeleting) ...[
                   const SizedBox(height: 20),
@@ -1558,7 +1658,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 : [
                     TextButton(
                         onPressed: () => Navigator.pop(ctx),
-                        child: const Text('ביטול')),
+                        child: Text(AppLocalizations.of(context).profCancel)),
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.red,
@@ -1570,8 +1670,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         setDialog(() => isDeleting = true);
                         await _deleteAccount(ctx);
                       },
-                      child: const Text('מחק לצמיתות',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      child: Text(AppLocalizations.of(context).profDeletePermanent,
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ],
           );
@@ -1608,25 +1708,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
           context: context,
           builder: (ctx) => AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: const Row(
+            title: Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                Text('נדרשת כניסה מחדש',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                SizedBox(width: 8),
-                Icon(Icons.lock_outline_rounded, color: Colors.orange),
+                Text(AppLocalizations.of(context).profReauthNeeded,
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(width: 8),
+                const Icon(Icons.lock_outline_rounded, color: Colors.orange),
               ],
             ),
-            content: const Text(
-              'לצורך מחיקת חשבון, Firebase דורש שנכנסת לאחרונה.\n\n'
-              'אנא התנתק, היכנס מחדש ונסה שוב.',
+            content: Text(
+              AppLocalizations.of(context).profReauthBody,
               textAlign: TextAlign.right,
-              style: TextStyle(height: 1.5, fontSize: 14),
+              style: const TextStyle(height: 1.5, fontSize: 14),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('ביטול'),
+                child: Text(AppLocalizations.of(context).profCancel),
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
@@ -1644,7 +1743,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     (_) => false,
                   );
                 },
-                child: const Text('התנתק והיכנס מחדש'),
+                child: Text(AppLocalizations.of(context).profLogoutAndReauth),
               ),
             ],
           ),
@@ -1652,7 +1751,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       case DeletionOutcome.error:
         messenger.showSnackBar(SnackBar(
-          content: Text('שגיאה במחיקת החשבון: ${result.errorMessage}'),
+          content: Text(AppLocalizations.of(context).profDeleteError(result.errorMessage ?? '')),
           backgroundColor: Colors.red,
           behavior: SnackBarBehavior.floating,
         ));
@@ -1720,9 +1819,9 @@ class _SpecialistGalleryScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: const Color(0xFFF4F7F9),
       appBar: AppBar(
-        title: const Text(
-          'גלריית עבודות',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+        title: Text(
+          AppLocalizations.of(context).profWorkGallery,
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
         ),
         centerTitle: true,
         backgroundColor: Colors.white,
@@ -1748,10 +1847,10 @@ class _SpecialistGalleryScreen extends StatelessWidget {
                   children: [
                     Icon(Icons.photo_library_outlined, size: 64, color: Colors.grey[350]),
                     const SizedBox(height: 16),
-                    const Text(
-                      'עדיין לא העלית עבודות.\nלחץ על העיפרון כדי לעדכן!',
+                    Text(
+                      AppLocalizations.of(context).profNoWorksYet,
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 15, color: Colors.grey, height: 1.6),
+                      style: const TextStyle(fontSize: 15, color: Colors.grey, height: 1.6),
                     ),
                   ],
                 ),
@@ -1862,8 +1961,8 @@ class _VideoIntroScreenState extends State<_VideoIntroScreen> {
       appBar: AppBar(
         backgroundColor: Colors.black,
         iconTheme: const IconThemeData(color: Colors.white),
-        title: const Text('היכרות בווידאו',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: Text(AppLocalizations.of(context).profVideoIntro,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         centerTitle: true,
       ),
       body: Center(

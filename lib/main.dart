@@ -19,6 +19,8 @@ import 'services/offline_message_queue.dart';
 import 'services/private_data_service.dart';
 import 'services/auth_duplicate_guard.dart';
 import 'services/view_mode_service.dart';
+import 'services/user_roles.dart';
+import 'screens/role_switcher_screen.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'repositories/logger_repository.dart';
 import 'models/app_log.dart';
@@ -1072,10 +1074,14 @@ class _OnboardingGateState extends State<OnboardingGate> {
       }
     });
 
-    // Hard ceiling at 8s — force to HomeScreen regardless.
-    // Reduced from 10s: no user should stare at a spinner for 10 seconds.
+    // Hard ceiling at 8s — force to HomeScreen ONLY if still waiting on
+    // the initial fetch. If the FutureBuilder already resolved (e.g. user
+    // is parked on RoleSwitcherScreen waiting to pick), do NOT override —
+    // that would auto-pick a role behind their back.
     Future.delayed(const Duration(seconds: 8), () {
-      if (mounted && !_gateTimedOut) setState(() => _gateTimedOut = true);
+      if (mounted && !_resolved && !_gateTimedOut) {
+        setState(() => _gateTimedOut = true);
+      }
     });
   }
 
@@ -1229,8 +1235,24 @@ class _OnboardingGateState extends State<OnboardingGate> {
         final isVerified = data['isVerified'] == true;
         final isPendingExpert = data['isPendingExpert'] == true;
 
+        // ── PHASE 1 MULTI-ROLE GATE ──────────────────────────────────────
+        // Resolve the user's roles array + activeRole (new schema) with
+        // full fallback to the legacy flags. If the user holds more than
+        // one role and hasn't explicitly picked an activeRole yet, force
+        // the role switcher before any routing decision.
+        final userRoles = UserRoles.fromUserDoc(data);
+        final activeRoleRaw = (data['activeRole'] as String? ?? '').trim();
+        if (userRoles.hasMultiple && activeRoleRaw.isEmpty) {
+          // ignore: avoid_print
+          print('✅ [OnboardingGate] Multi-role user without activeRole → RoleSwitcher');
+          return const RoleSwitcherScreen(allowBack: false);
+        }
+        final activeRole = userRoles.activeRole;
+
         // ── PRIORITY 1: ADMIN — bypass ALL gates ─────────────────────────
-        if (isAdmin) {
+        // Admin routing honored only when the user is actively using the
+        // admin role (activeRole == 'admin' or legacy single-role admin).
+        if (isAdmin && (activeRole == UserRoles.admin || activeRoleRaw.isEmpty)) {
           // ignore: avoid_print
           print('✅ [OnboardingGate] Admin detected — bypassing all gates');
           return const HomeScreen();
@@ -1240,9 +1262,10 @@ class _OnboardingGateState extends State<OnboardingGate> {
         // Support agents bypass the entire customer/provider flow and land
         // directly in the SupportDashboardScreen. They cannot access the
         // regular HomeScreen with their work account — that's by design.
-        // To use AnySkill as a customer, agents sign in with a separate
-        // account.
-        if (role == 'support_agent') {
+        // Triggered when active role is support_agent OR legacy single-role
+        // support_agent user.
+        if (activeRole == UserRoles.supportAgent ||
+            (role == 'support_agent' && activeRoleRaw.isEmpty)) {
           // ignore: avoid_print
           print('✅ [OnboardingGate] Support agent detected — routing to SupportDashboardScreen');
           return const SupportDashboardScreen();

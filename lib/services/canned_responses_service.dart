@@ -92,6 +92,35 @@ class CannedResponsesService {
 
   // ── Stream + load ───────────────────────────────────────────────────────
 
+  /// Phase 2 — derive the slash-shortcut for autocomplete. If the doc has
+  /// an explicit `shortcut` field that wins; otherwise we fall back to
+  /// `/<category>` so legacy templates seeded before the shortcut feature
+  /// still match.
+  static String shortcutFor(Map<String, dynamic> template) {
+    final raw = (template['shortcut'] as String?)?.trim();
+    if (raw != null && raw.isNotEmpty) {
+      return raw.startsWith('/') ? raw : '/$raw';
+    }
+    final cat = (template['category'] as String?)?.trim();
+    if (cat != null && cat.isNotEmpty) return '/$cat';
+    return '';
+  }
+
+  /// Filters a templates list to those whose shortcut starts with the
+  /// given query (excluding the leading '/'). Empty query returns all.
+  static List<Map<String, dynamic>> filterByShortcut(
+    List<Map<String, dynamic>> templates,
+    String rawQuery,
+  ) {
+    final q = rawQuery.trim().toLowerCase();
+    final stripped = q.startsWith('/') ? q.substring(1) : q;
+    if (stripped.isEmpty) return templates;
+    return templates.where((t) {
+      final s = shortcutFor(t).toLowerCase();
+      return s.startsWith('/$stripped');
+    }).toList();
+  }
+
   /// Stream all canned responses for the picker UI.
   static Stream<List<Map<String, dynamic>>> streamAll() {
     return _db

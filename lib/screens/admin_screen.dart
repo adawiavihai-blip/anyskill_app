@@ -201,6 +201,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
                 _buildSystemSection(),
                 const AdminDesignTab(),
                 const AdminAiCeoTab(),
+                const AdminAgentManagementTab(),
               ],
             ),
     );
@@ -236,6 +237,11 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
           label: Text('אילון'),
           icon: Icon(Icons.psychology_rounded, size: 15),
         ),
+        ButtonSegment(
+          value: 5,
+          label: Text('סוכני תמיכה'),
+          icon: Icon(Icons.support_agent_rounded, size: 15),
+        ),
       ],
       selected: {_sectionIndex},
       onSelectionChanged: (s) => setState(() => _sectionIndex = s.first),
@@ -259,7 +265,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
         adminUsersNotifierProvider.select((s) => s.totalProviders));
 
     return DefaultTabController(
-      length: 16,
+      length: 15,
       child: Column(
         children: [
           // Search bar — updates the Riverpod provider, NOT local setState
@@ -315,7 +321,6 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
               Tab(text: "Pro ⭐"),
               Tab(text: "בינה עסקית 🧠"),
               Tab(text: "תיבת פניות 📮"),
-              Tab(text: "סוכני תמיכה 🎧"),
             ],
           ),
           Expanded(
@@ -336,7 +341,6 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
                 const AdminProTab(),
                 const BusinessAiScreen(),
                 const AdminSupportInboxTab(),
-                const AdminAgentManagementTab(),
               ],
             ),
           ),

@@ -68,7 +68,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   /// Empty map = "all hours" (legacy behaviour — no restrictions).
   Map<int, Map<String, String>> _workingHours = {};
 
-  static const _kDayNames = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+  static List<String> _dayNames(BuildContext ctx) {
+    final l = AppLocalizations.of(ctx);
+    return [l.editDaySunday, l.editDayMonday, l.editDayTuesday, l.editDayWednesday, l.editDayThursday, l.editDayFriday, l.editDaySaturday];
+  }
   static const _kHourOptions = [
     '07:00', '08:00', '09:00', '10:00', '11:00', '12:00',
     '13:00', '14:00', '15:00', '16:00', '17:00', '18:00',
@@ -83,6 +86,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String? _verificationVideoUrl;
   bool _videoUploadInProgress = false;
   double _videoUploadProgress = 0.0;
+
+  String? _certificationImage;
 
   bool _isCustomer = false;
   bool _isProvider = false;
@@ -132,6 +137,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
     _profileImageUrl = widget.userData['profileImage'];
     _verificationVideoUrl = widget.userData['verificationVideoUrl'] as String?;
+    _certificationImage = widget.userData['certificationImage'] as String?;
 
     // Phone: prefer Firestore value, fall back to Firebase Auth phoneNumber
     _phoneDisplay = (widget.userData['phone'] as String? ?? '').trim();
@@ -404,6 +410,26 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  Future<void> _pickCertificationImage() async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 800,
+      maxHeight: 800,
+      imageQuality: 65,
+    );
+    if (image != null) {
+      setState(() => _isLoading = true);
+      try {
+        final Uint8List imageBytes = await image.readAsBytes();
+        final String encoded = base64Encode(imageBytes);
+        if (mounted) setState(() => _certificationImage = encoded);
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
+    }
+  }
+
   Future<void> _pickAndUploadVerificationVideo() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
@@ -460,7 +486,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('שגיאה בהעלאת הסרטון: $e'),
+            content: Text(AppLocalizations.of(context).editVideoUploadError(e.toString())),
             backgroundColor: Colors.red,
           ),
         );
@@ -637,7 +663,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         if (_isProvider && serviceTypeName != null)
           'serviceType': serviceTypeName
         else if (!_isProvider)
-          'serviceType': 'לקוח',
+          'serviceType': AppLocalizations.of(context).editCustomerServiceType,
         if (_isProvider && parentCategoryName != null)
           'parentCategory': parentCategoryName
         else if (_isProvider && _selectedSubCatId == null)
@@ -654,6 +680,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         payload['pricePerHour'] = double.tryParse(_priceController.text) ?? 0.0;
         payload['aboutMe'] = aboutResult!.value; // ← sanitized
         payload['gallery'] = _galleryImages;
+        if (_certificationImage != null) {
+          payload['certificationImage'] = _certificationImage;
+        }
         payload['taxId'] = taxResult!.value; // ← sanitized
         payload['quickTags'] = _selectedQuickTags.toList();
         payload['categoryTags'] = _selectedCategoryTags.toList();
@@ -810,15 +839,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('הוסף זהות מקצועית שנייה',
-                            style: TextStyle(
+                        Text(AppLocalizations.of(context).editAddSecondIdentity,
+                            style: const TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.bold,
                               color: Color(0xFF1A1A2E),
                             )),
                         const SizedBox(height: 4),
                         Text(
-                          'הרוויחו יותר — הציעו שירות נוסף תחת אותו חשבון',
+                          AppLocalizations.of(context).editSecondIdentitySubtitle,
                           style: TextStyle(fontSize: 12.5, color: Colors.grey[600], height: 1.3),
                         ),
                       ],
@@ -901,7 +930,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
                     ),
                     Text(
-                      index == 0 ? 'זהות ראשית' : 'זהות שנייה',
+                      index == 0 ? AppLocalizations.of(context).editPrimaryIdentity : AppLocalizations.of(context).editSecondaryIdentity,
                       style: TextStyle(fontSize: 12, color: Colors.grey[500]),
                     ),
                   ],
@@ -915,7 +944,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     color: const Color(0xFF6366F1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Text('עורך כעת',
+                  child: Text(AppLocalizations.of(context).editEditingNow,
                       style: TextStyle(
                           fontSize: 10,
                           color: Colors.white,
@@ -1013,9 +1042,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           children: [
             const Icon(Icons.lock_rounded, size: 13, color: Color(0xFF6366F1)),
             const SizedBox(width: 4),
-            const Text(
-              'מספר טלפון',
-              style: TextStyle(fontWeight: FontWeight.bold),
+            Text(
+              AppLocalizations.of(context).editPhoneLabel,
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
           ],
         ),
@@ -1056,11 +1085,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ),
         ),
         const SizedBox(height: 4),
-        const Align(
+        Align(
           alignment: AlignmentDirectional.centerEnd,
           child: Text(
-            'מספר הטלפון מאומת ולא ניתן לשינוי',
-            style: TextStyle(fontSize: 11, color: Colors.grey),
+            AppLocalizations.of(context).editPhoneVerified,
+            style: const TextStyle(fontSize: 11, color: Colors.grey),
           ),
         ),
       ],
@@ -1076,9 +1105,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFFFC107)),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          SizedBox(
+          const SizedBox(
             width: 20,
             height: 20,
             child: CircularProgressIndicator(
@@ -1086,21 +1115,21 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               color: Colors.amber,
             ),
           ),
-          SizedBox(width: 12),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  'הבקשה שלך בבדיקה 🕐',
+                  AppLocalizations.of(context).editAppPending,
                   textAlign: TextAlign.right,
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                 ),
-                SizedBox(height: 4),
+                const SizedBox(height: 4),
                 Text(
-                  'הצוות שלנו בודק את הפרטים ויחזור אליך בקרוב.',
+                  AppLocalizations.of(context).editAppPendingDesc,
                   textAlign: TextAlign.right,
-                  style: TextStyle(fontSize: 12, color: Colors.brown),
+                  style: const TextStyle(fontSize: 12, color: Colors.brown),
                 ),
               ],
             ),
@@ -1130,14 +1159,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               ),
             ],
           ),
-          child: const Row(
+          child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.work_outline_rounded, color: Colors.white, size: 22),
-              SizedBox(width: 10),
+              const Icon(Icons.work_outline_rounded, color: Colors.white, size: 22),
+              const SizedBox(width: 10),
               Text(
-                'רוצה לעבוד ולהרוויח כסף? לחץ כאן',
-                style: TextStyle(
+                AppLocalizations.of(context).editBecomeProvider,
+                style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
                   fontSize: 15,
@@ -1189,7 +1218,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'category': category,
         'priority': 'high',
         'timestamp': FieldValue.serverTimestamp(),
-        'message': 'בקשה להצטרפות כמומחה: ${widget.userData['name'] ?? uid}',
+        'message': AppLocalizations.of(context).editApplicationMessage((widget.userData['name'] as String?) ?? uid),
         'expireAt': Timestamp.fromDate(
             DateTime.now().add(const Duration(days: 30))),
       });
@@ -1206,7 +1235,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     } catch (e) {
       if (mounted) {
         messenger.showSnackBar(
-          SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(AppLocalizations.of(context).editGenericError(e.toString())), backgroundColor: Colors.red),
         );
       }
     }
@@ -1295,17 +1324,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                 ),
                               ),
                               const SizedBox(height: 8),
-                              const Text(
-                                'העלה תמונת פנים ברורה',
-                                style: TextStyle(
+                              Text(
+                                AppLocalizations.of(context).editUploadClearPhoto,
+                                style: const TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 13,
                                 ),
                               ),
                               const SizedBox(height: 2),
-                              const Text(
-                                'פרופילים עם תמונה ברורה נהנים מפי 3 יותר פניות',
-                                style: TextStyle(
+                              Text(
+                                AppLocalizations.of(context).editClearPhotoDesc,
+                                style: const TextStyle(
                                   fontSize: 11,
                                   color: Color(0xFF6366F1),
                                 ),
@@ -1367,10 +1396,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                 ],
                               ),
                               const SizedBox(height: 6),
-                              const Text(
-                                'שינוי סוג חשבון מתבצע מול שירות הלקוחות בלבד',
+                              Text(
+                                AppLocalizations.of(context).editAccountTypeChange,
                                 textAlign: TextAlign.end,
-                                style: TextStyle(
+                                style: const TextStyle(
                                   fontSize: 11.5,
                                   color: Colors.grey,
                                 ),
@@ -1408,9 +1437,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                               title: Row(
                                 mainAxisAlignment: MainAxisAlignment.end,
                                 children: [
-                                  const Text(
-                                    'אני מעוניין להתנדב',
-                                    style: TextStyle(
+                                  Text(
+                                    AppLocalizations.of(context).editVolunteerToggleTitle,
+                                    style: const TextStyle(
                                       fontWeight: FontWeight.bold,
                                       fontSize: 15,
                                     ),
@@ -1427,7 +1456,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                               subtitle: Align(
                                 alignment: AlignmentDirectional.centerEnd,
                                 child: Text(
-                                  'הצע את כישוריך ללא עלות לאנשים הזקוקים לעזרה',
+                                  AppLocalizations.of(context).editVolunteerToggleDesc,
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: Colors.grey[600],
@@ -1448,11 +1477,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           // "תחום עיסוק" so providers can instantly flip between
                           // identities and see the right fields loaded.
                           const SizedBox(height: 25),
-                          const Align(
+                          Align(
                             alignment: AlignmentDirectional.centerEnd,
                             child: Text(
-                              'הזהויות המקצועיות שלך',
-                              style: TextStyle(
+                              AppLocalizations.of(context).editIdentitiesTitle,
+                              style: const TextStyle(
                                 fontWeight: FontWeight.bold, fontSize: 14),
                             ),
                           ),
@@ -1635,21 +1664,21 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                 color: const Color(0xFFF59E0B).withValues(alpha: 0.3),
                               ),
                             ),
-                            child: const Column(
+                            child: Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 Row(
                                   children: [
-                                    Icon(
+                                    const Icon(
                                       Icons.construction_rounded,
                                       color: Color(0xFFF59E0B),
                                       size: 20,
                                     ),
-                                    SizedBox(width: 8),
+                                    const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        'הגדרות תשלום בקרוב',
-                                        style: TextStyle(
+                                        AppLocalizations.of(context).editPaymentSettings,
+                                        style: const TextStyle(
                                           fontWeight: FontWeight.bold,
                                           fontSize: 15,
                                           color: Color(0xFF1A1A2E),
@@ -1658,10 +1687,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                     ),
                                   ],
                                 ),
-                                SizedBox(height: 6),
+                                const SizedBox(height: 6),
                                 Text(
-                                  'אנו עוברים לספק תשלומים ישראלי. בינתיים בקשות משיכה מטופלות ידנית על ידי הצוות.',
-                                  style: TextStyle(
+                                  AppLocalizations.of(context).editPaymentSettingsDesc,
+                                  style: const TextStyle(
                                     fontSize: 12,
                                     color: Color(0xFF7C2D12),
                                     height: 1.4,
@@ -1717,21 +1746,21 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                   ),
                                 ],
                               ),
-                              child: const Row(
+                              child: Row(
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
                                 children: [
                                   Row(
                                     children: [
-                                      Icon(
+                                      const Icon(
                                         Icons.arrow_back_ios_new_rounded,
                                         color: Colors.white70,
                                         size: 14,
                                       ),
-                                      SizedBox(width: 4),
+                                      const SizedBox(width: 4),
                                       Text(
-                                        'הגדרות מתקדמות',
-                                        style: TextStyle(
+                                        AppLocalizations.of(context).editAdvancedSettings,
+                                        style: const TextStyle(
                                           color: Colors.white70,
                                           fontSize: 12,
                                         ),
@@ -1741,15 +1770,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                   Row(
                                     children: [
                                       Text(
-                                        'הגדרות תמחור',
-                                        style: TextStyle(
+                                        AppLocalizations.of(context).editPricingSettings,
+                                        style: const TextStyle(
                                           color: Colors.white,
                                           fontWeight: FontWeight.bold,
                                           fontSize: 15,
                                         ),
                                       ),
-                                      SizedBox(width: 8),
-                                      Icon(
+                                      const SizedBox(width: 8),
+                                      const Icon(
                                         Icons.price_change_outlined,
                                         color: Colors.white,
                                         size: 20,
@@ -2100,14 +2129,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
                           // ── Working Hours (שעות עבודה) ─────────────────────────
                           Text(
-                            'שעות עבודה',
+                            AppLocalizations.of(context).editWorkingHours,
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 4),
                           Align(
                             alignment: AlignmentDirectional.centerEnd,
                             child: Text(
-                              'סמן את הימים ושעות העבודה שלך',
+                              AppLocalizations.of(context).editWorkingHoursHint,
                               style: const TextStyle(fontSize: 12, color: Colors.grey),
                             ),
                           ),
@@ -2142,7 +2171,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                   SizedBox(
                                     width: 52,
                                     child: Text(
-                                      _kDayNames[dayIndex],
+                                      _dayNames(context)[dayIndex],
                                       style: TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
@@ -2165,7 +2194,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                     }),
                                   ] else
                                     Text(
-                                      'לא עובד',
+                                      AppLocalizations.of(context).editDayOff,
                                       style: TextStyle(fontSize: 12, color: Colors.grey[400]),
                                     ),
                                 ],
@@ -2269,21 +2298,95 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           ),
                           const SizedBox(height: 25),
 
-                          // ── Video Verification Upload ───────────────────────────
-                          const Align(
+                          // ── Certification Image ────────────────────────────────
+                          Align(
                             alignment: AlignmentDirectional.centerEnd,
                             child: Text(
-                              'סרטון היכרות',
-                              style: TextStyle(fontWeight: FontWeight.bold),
+                              AppLocalizations.of(context).editCertificate,
+                              style: const TextStyle(fontWeight: FontWeight.bold),
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Align(
+                          Align(
                             alignment: AlignmentDirectional.centerEnd,
                             child: Text(
-                              'הוסף סרטון קצר (עד 60 שניות) שמציג אותך ואת כישוריך. הסרטון יופיע בפרופיל שלך לאחר אישור מנהל.',
+                              AppLocalizations.of(context).editCertificateDesc,
+                              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          if (_certificationImage != null) ...[
+                            Stack(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: _buildGalleryImage(_certificationImage!),
+                                ),
+                                Positioned(
+                                  top: 4,
+                                  right: 4,
+                                  child: GestureDetector(
+                                    onTap: () => setState(() => _certificationImage = null),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(2),
+                                      decoration: const BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(Icons.cancel, color: Colors.red, size: 22),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            TextButton.icon(
+                              onPressed: _pickCertificationImage,
+                              icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+                              label: Text(AppLocalizations.of(context).editReplaceCertificate),
+                            ),
+                          ] else
+                            GestureDetector(
+                              onTap: _pickCertificationImage,
+                              child: Container(
+                                height: 120,
+                                decoration: BoxDecoration(
+                                  color: Colors.amber.shade50,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: Colors.amber.shade200),
+                                ),
+                                child: Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.workspace_premium_rounded, size: 36, color: Colors.amber[700]),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        AppLocalizations.of(context).editUploadCertificate,
+                                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.amber[800]),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          const SizedBox(height: 25),
+
+                          // ── Video Verification Upload ───────────────────────────
+                          Align(
+                            alignment: AlignmentDirectional.centerEnd,
+                            child: Text(
+                              AppLocalizations.of(context).editIntroVideo,
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Align(
+                            alignment: AlignmentDirectional.centerEnd,
+                            child: Text(
+                              AppLocalizations.of(context).editIntroVideoDesc,
                               textAlign: TextAlign.right,
-                              style: TextStyle(
+                              style: const TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey,
                               ),
@@ -2335,7 +2438,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                           ),
                                           const SizedBox(height: 10),
                                           Text(
-                                            'מעלה... ${(_videoUploadProgress * 100).toInt()}%',
+                                            AppLocalizations.of(context).editUploading((_videoUploadProgress * 100).toInt()),
                                             textAlign: TextAlign.center,
                                             style: const TextStyle(
                                               fontSize: 13,
@@ -2361,8 +2464,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                           const SizedBox(width: 10),
                                           Text(
                                             _verificationVideoUrl != null
-                                                ? 'סרטון הועלה — לחץ להחלפה'
-                                                : 'העלה סרטון היכרות (עד 60 שניות)',
+                                                ? AppLocalizations.of(context).editVideoUploaded
+                                                : AppLocalizations.of(context).editUploadVideo,
                                             style: TextStyle(
                                               fontWeight: FontWeight.bold,
                                               fontSize: 14,
@@ -2378,11 +2481,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           ),
                           if (_verificationVideoUrl != null) ...[
                             const SizedBox(height: 6),
-                            const Align(
+                            Align(
                               alignment: AlignmentDirectional.centerEnd,
                               child: Text(
-                                'ממתין לאישור מנהל — יופיע בפרופיל לאחר האישור',
-                                style: TextStyle(
+                                AppLocalizations.of(context).editPendingAdmin,
+                                style: const TextStyle(
                                   fontSize: 11,
                                   color: Colors.grey,
                                 ),
@@ -2440,17 +2543,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       );
     }
 
+    final l = AppLocalizations.of(context);
     final chips = <Widget>[
       if (isAdmin)
         _buildModeChip(
-          label: 'ניהול',
+          label: l.editManagement,
           icon: Icons.admin_panel_settings_rounded,
           selected: current == ViewMode.normal,
           gradient: const [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-          onTap: () => apply(ViewMode.normal, 'מצב ניהול פעיל'),
+          onTap: () => apply(ViewMode.normal, l.editAdminModeActive),
         ),
       _buildModeChip(
-        label: 'נותן שירות',
+        label: l.editServiceProvider,
         icon: Icons.work_outline_rounded,
         // For admin: providerOnly. For non-admin provider: normal = provider.
         selected: isAdmin
@@ -2459,15 +2563,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         gradient: const [Color(0xFF0EA5E9), Color(0xFF3B82F6)],
         onTap: () => apply(
           isAdmin ? ViewMode.providerOnly : ViewMode.normal,
-          'מצב נותן שירות פעיל',
+          l.editProviderModeActive,
         ),
       ),
       _buildModeChip(
-        label: 'לקוח',
+        label: l.editCustomer,
         icon: Icons.visibility_rounded,
         selected: current == ViewMode.customer,
         gradient: const [Color(0xFF10B981), Color(0xFF22C55E)],
-        onTap: () => apply(ViewMode.customer, 'מצב לקוח פעיל'),
+        onTap: () => apply(ViewMode.customer, l.editCustomerModeActive),
       ),
     ];
 
@@ -2481,11 +2585,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          const Padding(
-            padding: EdgeInsets.only(right: 2, bottom: 8),
+          Padding(
+            padding: const EdgeInsets.only(right: 2, bottom: 8),
             child: Text(
-              'מצב תצוגה',
-              style: TextStyle(
+              AppLocalizations.of(context).editViewMode,
+              style: const TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
                 color: Color(0xFF6B7280),
@@ -2601,9 +2705,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       color: Color(0xFF6366F1), size: 18),
                 ),
                 const SizedBox(width: 8),
-                const Expanded(
-                  child: Text('הכלבים שלי',
-                      style: TextStyle(
+                Expanded(
+                  child: Text(AppLocalizations.of(context).editMyDogs,
+                      style: const TextStyle(
                           fontSize: 15, fontWeight: FontWeight.w800)),
                 ),
                 if (dogs.isNotEmpty)
@@ -2618,8 +2722,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           const EdgeInsets.symmetric(horizontal: 8),
                       visualDensity: VisualDensity.compact,
                     ),
-                    child: const Text('הצג הכל',
-                        style: TextStyle(
+                    child: Text(AppLocalizations.of(context).editShowAll,
+                        style: const TextStyle(
                             fontSize: 12,
                             color: Color(0xFF6366F1),
                             fontWeight: FontWeight.w700)),
@@ -2643,13 +2747,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       border:
                           Border.all(color: const Color(0xFFE5E7EB)),
                     ),
-                    child: const Column(
+                    child: Column(
                       children: [
-                        Icon(Icons.add_circle_outline_rounded,
+                        const Icon(Icons.add_circle_outline_rounded,
                             size: 28, color: Color(0xFF6366F1)),
-                        SizedBox(height: 6),
-                        Text('הוסף פרופיל כלב',
-                            style: TextStyle(
+                        const SizedBox(height: 6),
+                        Text(AppLocalizations.of(context).editAddDogProfile,
+                            style: const TextStyle(
                                 fontWeight: FontWeight.w700,
                                 color: Color(0xFF6366F1))),
                       ],
@@ -2682,14 +2786,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                   color: const Color(0xFF6366F1),
                                   width: 1.2),
                             ),
-                            child: const Column(
+                            child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.add_rounded,
+                                const Icon(Icons.add_rounded,
                                     color: Color(0xFF6366F1)),
-                                SizedBox(height: 4),
-                                Text('כלב חדש',
-                                    style: TextStyle(
+                                const SizedBox(height: 4),
+                                Text(AppLocalizations.of(context).editNewDog,
+                                    style: const TextStyle(
                                         fontSize: 11,
                                         color: Color(0xFF6366F1),
                                         fontWeight: FontWeight.w700)),
@@ -2740,7 +2844,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                               ),
                               const SizedBox(height: 6),
                               Text(
-                                d.name.isEmpty ? 'ללא שם' : d.name,
+                                d.name.isEmpty ? AppLocalizations.of(context).editUnnamedDog : d.name,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -2834,29 +2938,29 @@ class _ExpertApplicationSheetState extends State<_ExpertApplicationSheet> {
                 ),
                 const SizedBox(height: 20),
                 // Header
-                const Text(
-                  'הגש מועמדות כמומחה',
+                Text(
+                  AppLocalizations.of(context).editApplyAsProvider,
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'מלא את הפרטים ואנחנו נבדוק את הבקשה שלך',
+                  AppLocalizations.of(context).editApplyDesc,
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                 ),
                 const SizedBox(height: 24),
 
                 // Category
-                const Text(
-                  'תחום עיסוק *',
+                Text(
+                  AppLocalizations.of(context).editServiceFieldLabel,
                   textAlign: TextAlign.right,
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 6),
                 DropdownButtonFormField<String>(
                   value: _selectedCategory,
-                  hint: const Text('בחר תחום', textAlign: TextAlign.right),
+                  hint: Text(AppLocalizations.of(context).editChooseField, textAlign: TextAlign.right),
                   decoration: InputDecoration(
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -2878,10 +2982,10 @@ class _ExpertApplicationSheetState extends State<_ExpertApplicationSheet> {
                 const SizedBox(height: 16),
 
                 // Tax / ID
-                const Text(
-                  'מספר ת.ז. / ח.פ. *',
+                Text(
+                  AppLocalizations.of(context).editIdNumberLabel,
                   textAlign: TextAlign.right,
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 6),
                 TextField(
@@ -2889,7 +2993,7 @@ class _ExpertApplicationSheetState extends State<_ExpertApplicationSheet> {
                   keyboardType: TextInputType.number,
                   textAlign: TextAlign.right,
                   decoration: InputDecoration(
-                    hintText: 'הכנס מספר זהות',
+                    hintText: AppLocalizations.of(context).editIdNumberHint,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
                     ),
@@ -2898,10 +3002,10 @@ class _ExpertApplicationSheetState extends State<_ExpertApplicationSheet> {
                 const SizedBox(height: 16),
 
                 // About Me
-                const Text(
-                  'ספר על עצמך *',
+                Text(
+                  AppLocalizations.of(context).editAboutYouLabel,
                   textAlign: TextAlign.right,
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 6),
                 TextField(
@@ -2909,7 +3013,7 @@ class _ExpertApplicationSheetState extends State<_ExpertApplicationSheet> {
                   maxLines: 4,
                   textAlign: TextAlign.right,
                   decoration: InputDecoration(
-                    hintText: 'תאר את הניסיון שלך, השירותים שאתה מציע...',
+                    hintText: AppLocalizations.of(context).editAboutYouHint,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
                     ),
@@ -2937,9 +3041,9 @@ class _ExpertApplicationSheetState extends State<_ExpertApplicationSheet> {
                               strokeWidth: 2,
                             ),
                           )
-                          : const Text(
-                            'שלח בקשה',
-                            style: TextStyle(
+                          : Text(
+                            AppLocalizations.of(context).editSubmitApplication,
+                            style: const TextStyle(
                               color: Colors.white,
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
@@ -2955,8 +3059,8 @@ class _ExpertApplicationSheetState extends State<_ExpertApplicationSheet> {
   Future<void> _handleSubmit() async {
     if (_selectedCategory == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('בחר תחום עיסוק'),
+        SnackBar(
+          content: Text(AppLocalizations.of(context).editChooseFieldError),
           backgroundColor: Colors.orange,
         ),
       );
@@ -2964,8 +3068,8 @@ class _ExpertApplicationSheetState extends State<_ExpertApplicationSheet> {
     }
     if (_taxIdCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('הכנס מספר זהות'),
+        SnackBar(
+          content: Text(AppLocalizations.of(context).editEnterIdError),
           backgroundColor: Colors.orange,
         ),
       );
@@ -2973,8 +3077,8 @@ class _ExpertApplicationSheetState extends State<_ExpertApplicationSheet> {
     }
     if (_aboutCtrl.text.trim().length < 20) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('כתוב לפחות 20 תווים על עצמך'),
+        SnackBar(
+          content: Text(AppLocalizations.of(context).editAboutMinChars),
           backgroundColor: Colors.orange,
         ),
       );
@@ -3053,16 +3157,16 @@ class _AddSecondIdentitySheetState extends State<_AddSecondIdentitySheet> {
         Navigator.pop(context);
         widget.onCreated();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Color(0xFF22C55E),
-            content: Text('זהות מקצועית שנייה נוצרה בהצלחה! 🎉'),
+          SnackBar(
+            backgroundColor: const Color(0xFF22C55E),
+            content: Text(AppLocalizations.of(context).editSecondIdentityCreated),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('שגיאה: $e')),
+          SnackBar(content: Text(AppLocalizations.of(context).editGenericError(e.toString()))),
         );
       }
     } finally {
@@ -3090,11 +3194,11 @@ class _AddSecondIdentitySheetState extends State<_AddSecondIdentitySheet> {
                 color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
             )),
             const SizedBox(height: 20),
-            const Text('הוספת זהות מקצועית שנייה',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            Text(AppLocalizations.of(context).editAddSecondIdentityTitle,
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center),
             const SizedBox(height: 6),
-            Text('בחר קטגוריה חדשה, מחיר ותיאור — הפרופיל השני יוצג בנפרד בחיפוש',
+            Text(AppLocalizations.of(context).editAddSecondIdentityDesc,
                 style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                 textAlign: TextAlign.center),
             const SizedBox(height: 24),
@@ -3103,7 +3207,7 @@ class _AddSecondIdentitySheetState extends State<_AddSecondIdentitySheet> {
             DropdownButtonFormField<String>(
               value: _selectedCatId,
               decoration: InputDecoration(
-                labelText: 'קטגוריה מקצועית',
+                labelText: AppLocalizations.of(context).editCategoryLabel,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
               items: widget.mainCategories.map((c) => DropdownMenuItem(
@@ -3119,7 +3223,7 @@ class _AddSecondIdentitySheetState extends State<_AddSecondIdentitySheet> {
               controller: _priceCtrl,
               keyboardType: TextInputType.number,
               decoration: InputDecoration(
-                labelText: 'מחיר לשעה (₪)',
+                labelText: AppLocalizations.of(context).editPriceLabel,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 prefixText: '₪ ',
               ),
@@ -3131,8 +3235,8 @@ class _AddSecondIdentitySheetState extends State<_AddSecondIdentitySheet> {
               controller: _aboutCtrl,
               maxLines: 3,
               decoration: InputDecoration(
-                labelText: 'תיאור השירות',
-                hintText: 'ספרו ללקוחות על השירות השני שלכם...',
+                labelText: AppLocalizations.of(context).chatServiceDescLabel,
+                hintText: AppLocalizations.of(context).editSecondServiceDesc,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
@@ -3153,8 +3257,8 @@ class _AddSecondIdentitySheetState extends State<_AddSecondIdentitySheet> {
                 child: _saving
                     ? const SizedBox(width: 22, height: 22,
                         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Text('צור זהות מקצועית',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    : Text(AppLocalizations.of(context).editCreateIdentity,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
           ],
@@ -3220,16 +3324,16 @@ class _EditSecondIdentitySheetState extends State<_EditSecondIdentitySheet> {
         Navigator.pop(context);
         widget.onSaved();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Color(0xFF22C55E),
-            content: Text('הזהות המקצועית עודכנה בהצלחה'),
+          SnackBar(
+            backgroundColor: const Color(0xFF22C55E),
+            content: Text(AppLocalizations.of(context).editIdentityUpdated),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('שגיאה: $e')),
+          SnackBar(content: Text(AppLocalizations.of(context).editGenericError(e.toString()))),
         );
       }
     } finally {
@@ -3238,16 +3342,17 @@ class _EditSecondIdentitySheetState extends State<_EditSecondIdentitySheet> {
   }
 
   Future<void> _delete() async {
+    final l10n = AppLocalizations.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('מחיקת זהות מקצועית'),
-        content: const Text('האם למחוק את הזהות המקצועית השנייה? הפעולה לא ניתנת לביטול.'),
+        title: Text(l10n.editDeleteIdentityTitle),
+        content: Text(l10n.editDeleteIdentityConfirm),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('ביטול')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l10n.profCancel)),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('מחק', style: TextStyle(color: Colors.red)),
+            child: Text(l10n.editDelete, style: const TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -3263,15 +3368,15 @@ class _EditSecondIdentitySheetState extends State<_EditSecondIdentitySheet> {
         Navigator.pop(context);
         widget.onSaved();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Color(0xFFEF4444),
-            content: Text('הזהות המקצועית נמחקה'),
+          SnackBar(
+            backgroundColor: const Color(0xFFEF4444),
+            content: Text(AppLocalizations.of(context).editIdentityDeleted),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('שגיאה: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).editGenericError(e.toString()))));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -3299,7 +3404,7 @@ class _EditSecondIdentitySheetState extends State<_EditSecondIdentitySheet> {
                 color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
             )),
             const SizedBox(height: 20),
-            Text('עריכת $serviceType',
+            Text(AppLocalizations.of(context).editEditingIdentity(serviceType),
                 style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center),
             const SizedBox(height: 20),
@@ -3308,7 +3413,7 @@ class _EditSecondIdentitySheetState extends State<_EditSecondIdentitySheet> {
               controller: _priceCtrl,
               keyboardType: TextInputType.number,
               decoration: InputDecoration(
-                labelText: 'מחיר לשעה (₪)',
+                labelText: AppLocalizations.of(context).editPriceLabel,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 prefixText: '₪ ',
               ),
@@ -3319,7 +3424,7 @@ class _EditSecondIdentitySheetState extends State<_EditSecondIdentitySheet> {
               controller: _aboutCtrl,
               maxLines: 3,
               decoration: InputDecoration(
-                labelText: 'תיאור השירות',
+                labelText: AppLocalizations.of(context).chatServiceDescLabel,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
@@ -3340,8 +3445,8 @@ class _EditSecondIdentitySheetState extends State<_EditSecondIdentitySheet> {
                 child: _saving
                     ? const SizedBox(width: 22, height: 22,
                         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Text('שמור שינויים',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    : Text(AppLocalizations.of(context).editSaveChanges,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
             const SizedBox(height: 12),
@@ -3350,8 +3455,8 @@ class _EditSecondIdentitySheetState extends State<_EditSecondIdentitySheet> {
             TextButton.icon(
               onPressed: _saving ? null : _delete,
               icon: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 18),
-              label: const Text('מחק זהות מקצועית',
-                  style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
+              label: Text(AppLocalizations.of(context).editDeleteIdentity,
+                  style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
             ),
           ],
         ),
