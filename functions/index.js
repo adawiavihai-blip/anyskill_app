@@ -9234,8 +9234,8 @@ exports.createEscrowPayment = onCall(
     if (typeof amount !== "number" || amount <= 0) {
       throw new HttpsError("invalid-argument", "Amount must be positive.");
     }
-    if (amount > 50000) {
-      throw new HttpsError("invalid-argument", "Amount exceeds maximum (₪50,000).");
+    if (amount > 5000) {
+      throw new HttpsError("invalid-argument", "הסכום חורג מהמקסימום (₪5,000). פנה לתמיכה.");
     }
 
     const db = admin.firestore();
@@ -9251,7 +9251,10 @@ exports.createEscrowPayment = onCall(
       const providerDoc = await tx.get(db.collection("users").doc(providerId));
 
       const currentStatus = (quoteDoc.data() || {}).status || "";
-      if (currentStatus === "paid") return; // idempotent
+      if (currentStatus === "paid") {
+        createdJobId = (quoteDoc.data() || {}).jobId || "__already_paid";
+        return; // idempotent — return existing jobId
+      }
 
       const clientBalance = Number((clientDoc.data() || {}).balance || 0);
       if (clientBalance < amount) {
@@ -11244,6 +11247,38 @@ exports.generateVaultAlerts = onSchedule(
         }
         await batch.commit();
         console.log("Generated " + alerts.length + " vault alerts");
+
+        // H4 audit fix: push FCM to all admins on risk/warning alerts
+        const critical = alerts.filter(
+          (a) => a.severity === "critical" || a.severity === "warning"
+        );
+        if (critical.length > 0) {
+          try {
+            const adminsSnap = await db
+              .collection("users")
+              .where("isAdmin", "==", true)
+              .limit(10)
+              .get();
+            for (const adminDoc of adminsSnap.docs) {
+              const token = adminDoc.data().fcmToken;
+              if (!token) continue;
+              try {
+                await admin.messaging().send({
+                  token,
+                  notification: {
+                    title: "🔐 Vault Alert",
+                    body: critical.map((a) => a.title).join(", "),
+                  },
+                  data: { type: "vault_alert", count: String(critical.length) },
+                  android: { priority: "high" },
+                  apns: { payload: { aps: { sound: "default" } } },
+                });
+              } catch (_) { /* token may be stale */ }
+            }
+          } catch (fcmErr) {
+            console.error("Vault FCM push error:", fcmErr);
+          }
+        }
       }
     } catch (err) {
       console.error("Vault alerts error:", err);

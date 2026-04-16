@@ -40,6 +40,9 @@ class JobBroadcastService {
   ///
   /// [sourceJobRequestId] links back to the original `job_requests` doc.
   /// Returns the broadcast document ID.
+  /// Max broadcasts per user per hour (velocity check, H6 audit fix).
+  static const int _maxBroadcastsPerHour = 10;
+
   static Future<String> broadcastUrgentJob({
     required String clientId,
     required String clientName,
@@ -50,6 +53,19 @@ class JobBroadcastService {
     double? clientLat,
     double? clientLng,
   }) async {
+    // H6 velocity check: max 10 broadcasts per hour per user
+    final oneHourAgo = Timestamp.fromDate(
+        DateTime.now().subtract(const Duration(hours: 1)));
+    final recentSnap = await _db
+        .collection('job_broadcasts')
+        .where('clientId', isEqualTo: clientId)
+        .where('createdAt', isGreaterThan: oneHourAgo)
+        .limit(_maxBroadcastsPerHour + 1)
+        .get();
+    if (recentSnap.size >= _maxBroadcastsPerHour) {
+      throw Exception('הגעת למגבלת הפרסומים ($_maxBroadcastsPerHour/שעה). נסה שוב מאוחר יותר.');
+    }
+
     final expiresAt = Timestamp.fromDate(
       DateTime.now().add(Duration(minutes: broadcastExpiryMinutes)),
     );

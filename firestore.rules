@@ -1364,6 +1364,24 @@ service cloud.firestore {
       allow write: if false; // Admin SDK (Cloud Functions) only
     }
 
+    // ── Vault alerts (H5 audit fix) ──────────────────────────────────────
+    // Written by generateVaultAlerts CF (Admin SDK). Admin resolves.
+    match /vault_alerts/{alertId} {
+      allow read:   if isAdmin();
+      allow update: if isAdmin();
+      allow create, delete: if false;
+    }
+
+    // ── Vault analytics + balance (CF-populated) ────────────────────────
+    match /vault_analytics/{period} {
+      allow read:  if isAdmin();
+      allow write: if false;
+    }
+    match /vault_balance/{docId} {
+      allow read:  if isAdmin();
+      allow write: if false;
+    }
+
 
     // ═══════════════════════════════════════════════════════════════════════
     // PENDINGBALANCE HARDENING
