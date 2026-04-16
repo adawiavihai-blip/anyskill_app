@@ -46,9 +46,15 @@ service cloud.firestore {
 
     // Admin check — Firestore flag only; email removed (see security audit).
     // isAdmin can only be set via Admin SDK / Firebase Console.
+    // Phase 1 multi-role: admin iff legacy isAdmin flag is true OR
+    // 'admin' appears in the new roles[] array. Both are kept in sync by
+    // setUserRole CF, so either check is sufficient.
     function isAdmin() {
       return isVerifiedAuth()
-          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+          && (
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
+               || ('admin' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roles', []))
+             );
     }
 
     // ── Support Agent role (v11.9.x) ────────────────────────────────────
@@ -61,7 +67,10 @@ service cloud.firestore {
     // Role assignment goes through the setUserRole CF (admin-only).
     function isSupportAgent() {
       return isVerifiedAuth()
-          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'support_agent';
+          && (
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'support_agent'
+               || ('support_agent' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roles', []))
+             );
     }
 
     // Convenience: any staff member (admin OR support_agent).
@@ -476,6 +485,39 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // MONETIZATION (v15.x — layered commission control + AI insights + alerts)
+    // Writes from the admin UI are allowed ONLY for admins. Cloud Functions
+    // (Admin SDK) bypass rules and can freely write to all of these.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Category-level commission overrides. Public read (provider/customer
+    // UIs may need to preview the effective fee at booking time); admin-only
+    // write. Deletion permitted so admins can remove an override and fall
+    // back to the global default.
+    match /category_commissions/{categoryId} {
+      allow read:   if isAuth() || isAppCheckValid();
+      allow write:  if isAdmin();
+    }
+
+    // AI-generated monetization insights (Gemini output, refreshed by
+    // `generateMonetizationInsight`). Admin-only read; writes are blocked at
+    // the client — the CF uses Admin SDK.
+    match /ai_insights/{insightId} {
+      allow read:                  if isAdmin();
+      allow create, delete:        if false;
+      // Admin may flip `applied`/`dismissedBy` fields via MonetizationService.
+      allow update:                if isAdmin();
+    }
+
+    // Anomaly / churn / growth alerts. Append-only from the CF; admins may
+    // update to mark as resolved.
+    match /monetization_alerts/{alertId} {
+      allow read:           if isAdmin();
+      allow create, delete: if false;
+      allow update:         if isAdmin();
+    }
+
 
     // ═══════════════════════════════════════════════════════════════════════
     // PUBLIC CATALOGUES
@@ -676,21 +718,33 @@ service cloud.firestore {
       allow delete: if isAdmin() || isCmsAdmin();
 
       match /messages/{msgId} {
-        // Read: staff sees everything (including internal notes).
-        // Customer sees only NON-internal messages — enforced via the
-        // resource.data.isInternal field. Internal notes have isInternal=true
-        // and are filtered out from customer queries.
+        // Phase 2 — message channels: 'customer' | 'provider' | 'internal'.
+        // Read access:
+        //   • Staff sees everything (all channels, including internal).
+        //   • Ticket customer sees only the 'customer' channel
+        //     (legacy messages w/o channel: only when isInternal != true).
+        //   • Ticket provider sees only the 'provider' channel.
         allow read: if isStaff()
                     || (isVerifiedAuth()
                         && resource.data.isInternal != true
-                        && get(/databases/$(database)/documents/support_tickets/$(ticketId)).data.userId == request.auth.uid);
+                        && resource.data.get('channel', 'customer') == 'customer'
+                        && get(/databases/$(database)/documents/support_tickets/$(ticketId)).data.userId == request.auth.uid)
+                    || (isVerifiedAuth()
+                        && resource.data.get('channel', '') == 'provider'
+                        && get(/databases/$(database)/documents/support_tickets/$(ticketId)).data.get('providerId', '') == request.auth.uid);
 
-        // Create: staff can write any message (including internal notes).
-        // Customer can only write non-internal messages tagged with their uid.
+        // Create access:
+        //   • Staff can write any channel.
+        //   • Ticket customer can only write on the 'customer' channel.
+        //   • Ticket provider can only write on the 'provider' channel.
         allow create: if isStaff()
                       || (isVerifiedAuth()
                           && request.resource.data.isInternal != true
-                          && get(/databases/$(database)/documents/support_tickets/$(ticketId)).data.userId == request.auth.uid);
+                          && request.resource.data.get('channel', 'customer') == 'customer'
+                          && get(/databases/$(database)/documents/support_tickets/$(ticketId)).data.userId == request.auth.uid)
+                      || (isVerifiedAuth()
+                          && request.resource.data.get('channel', '') == 'provider'
+                          && get(/databases/$(database)/documents/support_tickets/$(ticketId)).data.get('providerId', '') == request.auth.uid);
       }
     }
 
@@ -722,6 +776,18 @@ service cloud.firestore {
     match /canned_responses/{templateId} {
       allow read: if isStaff();
       allow create, update, delete: if isAdmin();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PLATFORM SETTINGS (Phase 3 — routing + proactive config, etc.)
+    //
+    // Routing rules and proactive-ticket toggles live under
+    // platform_settings/routing_config. Readable by staff (agents need the
+    // config to render the admin UI); writable only by admins.
+    // ═══════════════════════════════════════════════════════════════════════
+    match /platform_settings/{docId} {
+      allow read:  if isStaff();
+      allow write: if isAdmin();
     }
 
 

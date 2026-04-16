@@ -66,10 +66,25 @@ class EscrowService {
       String? createdJobId;
 
       await _db.runTransaction((tx) async {
-        // ── Read required docs ──────────────────────────────────────────────
+        // ── Read required docs (v15.x: layered commission) ─────────────────
+        // ORDER MATTERS: every tx.get MUST happen before any tx.set/update.
         final clientDoc   = await tx.get(_db.collection('users').doc(clientId));
         final adminDoc    = await tx.get(adminSettingsRef);
         final quoteDoc    = await tx.get(_db.collection('quotes').doc(quoteId));
+        final providerDoc = await tx.get(_db.collection('users').doc(providerId));
+
+        // Provider's serviceType drives the category-level commission lookup.
+        final providerData = providerDoc.data() ?? {};
+        final providerCategory = (providerData['serviceType'] ?? '').toString();
+
+        // Conditionally read category override. Using category NAME as the
+        // doc ID (consistent with provider.serviceType storing the name).
+        DocumentSnapshot<Map<String, dynamic>>? categoryCommissionDoc;
+        if (providerCategory.isNotEmpty) {
+          categoryCommissionDoc = await tx.get(
+            _db.collection('category_commissions').doc(providerCategory),
+          );
+        }
 
         // Guard: already paid (idempotency)
         final currentStatus = (quoteDoc.data() ?? {})['status']?.toString() ?? '';
@@ -81,8 +96,38 @@ class EscrowService {
           throw Exception('אין מספיק יתרה בארנק. נדרשת יתרה של ₪${amount.toStringAsFixed(0)}.');
         }
 
-        final feePct =
-            ((adminDoc.data() ?? {})['feePercentage'] as num? ?? 0.1).toDouble();
+        // ── Resolve effective commission (custom > category > global) ──────
+        // All percentages below are fractions (0.10 = 10%) to match the
+        // existing feePercentage convention.
+        double feePct = ((adminDoc.data() ?? {})['feePercentage'] as num? ?? 0.1)
+            .toDouble();
+        String feeSource = 'global';
+
+        // Layer 2: category override
+        if (categoryCommissionDoc != null && categoryCommissionDoc.exists) {
+          final catPct = (categoryCommissionDoc.data()?['percentage'] as num?)
+              ?.toDouble();
+          if (catPct != null) {
+            feePct = catPct / 100;
+            feeSource = 'category';
+          }
+        }
+
+        // Layer 3: per-provider custom override (highest priority)
+        final customActive = providerData['customCommissionActive'] == true;
+        final custom = providerData['customCommission'];
+        if (customActive && custom is Map) {
+          final pct = (custom['percentage'] as num?)?.toDouble();
+          final expiresAt = custom['expiresAt'];
+          DateTime? expiresDt;
+          if (expiresAt is Timestamp) expiresDt = expiresAt.toDate();
+          final live = expiresDt == null || expiresDt.isAfter(DateTime.now());
+          if (pct != null && live) {
+            feePct = pct / 100;
+            feeSource = 'custom';
+          }
+        }
+
         final commission     = double.parse((amount * feePct).toStringAsFixed(2));
         final netToProvider  = double.parse((amount - commission).toStringAsFixed(2));
 
@@ -97,6 +142,8 @@ class EscrowService {
           'totalAmount':        amount,
           'netAmountForExpert': netToProvider,
           'commission':         commission,
+          'commissionFeePct':   feePct * 100, // 0-100 scale for readability
+          'commissionSource':   feeSource,
           'description':        description,
           'status':             'paid_escrow',
           'source':             'quote',

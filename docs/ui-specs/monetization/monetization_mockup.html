@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AnySkill — Monetization Dashboard v3 Pro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    font-family: 'Assistant', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background: #FAF9F6;
+    color: #1D1D1B;
+    direction: rtl;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  body { padding: 24px; max-width: 1440px; margin: 0 auto; }
+  h1, h2, h3 { font-weight: 500; }
+  button { font-family: inherit; cursor: pointer; }
+  input[type="text"], input[type="number"] {
+    font-family: inherit;
+    border: 0.5px solid rgba(0,0,0,0.2);
+    border-radius: 8px;
+    padding: 8px 12px;
+    background: white;
+    font-size: 13px;
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    background: #E5E3DD;
+    border-radius: 2px;
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    background: #1D1D1B;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 18px; height: 18px; background: #1D1D1B; border-radius: 50%; cursor: pointer; border: none;
+  }
+  .card { background: white; border: 0.5px solid rgba(0,0,0,0.15); border-radius: 12px; padding: 20px 24px; }
+  .mb-md { margin-bottom: 12px; }
+  .mb-lg { margin-bottom: 20px; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+</style>
+</head>
+<body>
+
+<!-- =================================================== -->
+<!-- SECTION 1: TOP BAR                                   -->
+<!-- =================================================== -->
+<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; gap: 12px;">
+  <div style="display: flex; align-items: center; gap: 12px;">
+    <div style="width: 40px; height: 40px; border-radius: 12px; background: #1D1D1B; display: flex; align-items: center; justify-content: center;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FAC775" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+    </div>
+    <div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <h1 style="font-size: 22px;">מוניטיזציה</h1>
+        <span style="font-size: 10px; background: #E1F5EE; color: #085041; padding: 2px 7px; border-radius: 10px; font-weight: 500;">LIVE</span>
+      </div>
+      <p style="font-size: 12px; color: #5F5E5A; margin-top: 2px;">עודכן לפני 3 שניות · אפריל 2026</p>
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 8px; flex: 1; max-width: 460px;">
+    <div style="flex: 1; position: relative;">
+      <div style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: #888780;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </div>
+      <input type="text" placeholder="שאל כל שאלה על הנתונים… (למשל: מי הכי רווחי החודש?)" style="width: 100%; padding-right: 36px; padding-left: 60px;">
+      <span style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 10px; background: #F1EFE8; color: #5F5E5A; padding: 2px 6px; border-radius: 4px; font-family: monospace;">⌘K</span>
+    </div>
+    <button style="font-size: 12px; padding: 10px 18px; background: #1D1D1B; color: white; border: none; border-radius: 8px; font-weight: 500; white-space: nowrap;">שמור שינויים</button>
+  </div>
+</div>
+
+<!-- =================================================== -->
+<!-- SECTION 2: AI INSIGHT BANNER                         -->
+<!-- =================================================== -->
+<div style="background: #EEEDFE; border: 0.5px solid #AFA9EC; border-radius: 12px; padding: 14px 18px; margin-bottom: 20px; display: flex; align-items: flex-start; gap: 14px;">
+  <div style="width: 32px; height: 32px; border-radius: 50%; background: #7F77DD; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+  </div>
+  <div style="flex: 1;">
+    <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+      <span style="font-size: 13px; font-weight: 500; color: #26215C;">תובנת AI CEO</span>
+      <span style="font-size: 10px; background: white; color: #3C3489; padding: 1px 6px; border-radius: 8px; font-weight: 500;">Gemini 2.5</span>
+    </div>
+    <p style="font-size: 13px; color: #3C3489; line-height: 1.6;">
+      זיהיתי הזדמנות: קטגוריית <b style="color: #26215C;">אימון אישי</b> מציגה GMV גבוה (+34%) אבל churn של 23% בספקים חדשים. המלצה — הפחת עמלה ל-12% לספקים ב-30 ימים ראשונים. השפעה צפויה: +₪890/חודש, שימור 5 ספקים.
+    </p>
+  </div>
+  <div style="display: flex; gap: 6px; flex-shrink: 0;">
+    <button style="font-size: 11px; padding: 6px 12px; background: #3C3489; color: white; border: none; border-radius: 6px; font-weight: 500;">הפעל</button>
+    <button style="font-size: 11px; padding: 6px 12px; background: transparent; border: 0.5px solid #AFA9EC; color: #3C3489; border-radius: 6px;">דחה</button>
+  </div>
+</div>
+
+<!-- =================================================== -->
+<!-- SECTION 3: 4 KPIs                                    -->
+<!-- =================================================== -->
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px;">
+
+  <div class="card" style="padding: 14px 16px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+      <span style="font-size: 12px; color: #5F5E5A;">עמלות החודש</span>
+      <span style="font-size: 10px; font-weight: 500; background: #E1F5EE; color: #085041; padding: 2px 6px; border-radius: 10px;">▲ 23%</span>
+    </div>
+    <div style="display: flex; align-items: baseline; gap: 6px;">
+      <span style="font-size: 22px; font-weight: 500;">₪491</span>
+      <span style="font-size: 11px; color: #888780;">/ ₪399</span>
+    </div>
+    <svg viewBox="0 0 100 24" style="width: 100%; height: 20px; margin-top: 6px;" preserveAspectRatio="none">
+      <polyline points="0,20 10,18 20,15 30,17 40,12 50,14 60,9 70,11 80,7 90,5 100,6" fill="none" stroke="#1D9E75" stroke-width="1.5"/>
+      <polyline points="0,20 10,18 20,15 30,17 40,12 50,14 60,9 70,11 80,7 90,5 100,6 100,24 0,24" fill="#1D9E75" fill-opacity="0.1" stroke="none"/>
+    </svg>
+    <div style="font-size: 10px; color: #888780; margin-top: 2px;">צפי סוף חודש: ₪612</div>
+  </div>
+
+  <div class="card" style="padding: 14px 16px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+      <span style="font-size: 12px; color: #5F5E5A;">בנאמנות כרגע</span>
+      <span style="font-size: 10px; font-weight: 500; background: #FAEEDA; color: #854F0B; padding: 2px 6px; border-radius: 10px;">1 פעילה</span>
+    </div>
+    <div style="display: flex; align-items: baseline; gap: 6px;">
+      <span style="font-size: 22px; font-weight: 500;">₪80</span>
+      <span style="font-size: 11px; color: #888780;">ממתין 2ש׳</span>
+    </div>
+    <div style="display: flex; gap: 3px; margin-top: 8px;">
+      <div style="flex: 1; height: 20px; background: #FAC775; border-radius: 3px; opacity: 0.3;"></div>
+      <div style="flex: 1; height: 20px; background: #FAC775; border-radius: 3px; opacity: 0.5;"></div>
+      <div style="flex: 1; height: 20px; background: #FAC775; border-radius: 3px; opacity: 0.7;"></div>
+      <div style="flex: 1; height: 20px; background: #FAC775; border-radius: 3px;"></div>
+    </div>
+    <div style="font-size: 10px; color: #888780; margin-top: 2px;">ממוצע שחרור: 18 שעות</div>
+  </div>
+
+  <div class="card" style="padding: 14px 16px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+      <span style="font-size: 12px; color: #5F5E5A;">עמלה משוקללת</span>
+      <span style="font-size: 10px; font-weight: 500; background: #EEEDFE; color: #3C3489; padding: 2px 6px; border-radius: 10px;">יעד 10%</span>
+    </div>
+    <div style="display: flex; align-items: baseline; gap: 6px;">
+      <span style="font-size: 22px; font-weight: 500;">9.2<span style="font-size: 14px; color: #5F5E5A;">%</span></span>
+      <span style="font-size: 11px; color: #993C1D;">-0.8pt</span>
+    </div>
+    <div style="position: relative; height: 4px; background: #F1EFE8; border-radius: 2px; margin-top: 10px;">
+      <div style="position: absolute; right: 0; top: 0; height: 100%; width: 92%; background: #7F77DD; border-radius: 2px;"></div>
+      <div style="position: absolute; right: 100%; top: -2px; width: 2px; height: 8px; background: #26215C; transform: translateX(-1px);"></div>
+    </div>
+    <div style="font-size: 10px; color: #888780; margin-top: 6px;">פער ליעד: ₪42/חודש</div>
+  </div>
+
+  <div class="card" style="padding: 14px 16px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+      <span style="font-size: 12px; color: #5F5E5A;">עמלות מותאמות</span>
+      <span style="font-size: 10px; font-weight: 500; background: #FBEAF0; color: #72243E; padding: 2px 6px; border-radius: 10px;">8 פעילות</span>
+    </div>
+    <div style="display: flex; align-items: baseline; gap: 6px;">
+      <span style="font-size: 22px; font-weight: 500;">6.3<span style="font-size: 14px; color: #5F5E5A;">%</span></span>
+      <span style="font-size: 11px; color: #888780;">מהספקים</span>
+    </div>
+    <div style="display: flex; gap: 2px; margin-top: 10px; align-items: flex-end; height: 20px;">
+      <div style="flex: 1; background: #D4537E; height: 100%; border-radius: 2px;"></div>
+      <div style="flex: 1; background: #D4537E; height: 80%; border-radius: 2px;"></div>
+      <div style="flex: 1; background: #D4537E; height: 60%; border-radius: 2px;"></div>
+      <div style="flex: 1; background: #F4C0D1; height: 40%; border-radius: 2px;"></div>
+      <div style="flex: 1; background: #F4C0D1; height: 30%; border-radius: 2px;"></div>
+      <div style="flex: 1; background: #F4C0D1; height: 25%; border-radius: 2px;"></div>
+      <div style="flex: 1; background: #F4C0D1; height: 20%; border-radius: 2px;"></div>
+      <div style="flex: 1; background: #F4C0D1; height: 15%; border-radius: 2px;"></div>
+    </div>
+    <div style="font-size: 10px; color: #888780; margin-top: 2px;">מניב 38% מההכנסה</div>
+  </div>
+</div>
+
+<!-- =================================================== -->
+<!-- SECTION 4: SMART ALERTS                              -->
+<!-- =================================================== -->
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 20px;">
+
+  <div class="card" style="border-color: #F09595; padding: 12px 14px; display: flex; gap: 10px;">
+    <div style="width: 28px; height: 28px; border-radius: 50%; background: #FCEBEB; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A32D2D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    </div>
+    <div style="flex: 1; min-width: 0;">
+      <div style="font-size: 12px; font-weight: 500; color: #791F1F; margin-bottom: 2px;">Anomaly זוהה</div>
+      <div style="font-size: 11px; color: #5F5E5A; line-height: 1.5;">יוסי כהן — GMV ירד 40% ב-7 ימים</div>
+    </div>
+    <button style="font-size: 10px; padding: 4px 8px; background: transparent; border: 0.5px solid #F09595; color: #791F1F; border-radius: 5px; align-self: flex-start; white-space: nowrap;">בדוק</button>
+  </div>
+
+  <div class="card" style="border-color: #F4C0D1; padding: 12px 14px; display: flex; gap: 10px;">
+    <div style="width: 28px; height: 28px; border-radius: 50%; background: #FBEAF0; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#993556" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    </div>
+    <div style="flex: 1; min-width: 0;">
+      <div style="font-size: 12px; font-weight: 500; color: #72243E; margin-bottom: 2px;">Churn Risk</div>
+      <div style="font-size: 11px; color: #5F5E5A; line-height: 1.5;">3 ספקי VIP לא התחברו 10+ ימים</div>
+    </div>
+    <button style="font-size: 10px; padding: 4px 8px; background: transparent; border: 0.5px solid #F4C0D1; color: #72243E; border-radius: 5px; align-self: flex-start; white-space: nowrap;">צפה</button>
+  </div>
+
+  <div class="card" style="border-color: #9FE1CB; padding: 12px 14px; display: flex; gap: 10px;">
+    <div style="width: 28px; height: 28px; border-radius: 50%; background: #E1F5EE; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#085041" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+    </div>
+    <div style="flex: 1; min-width: 0;">
+      <div style="font-size: 12px; font-weight: 500; color: #085041; margin-bottom: 2px;">הזדמנות צמיחה</div>
+      <div style="font-size: 11px; color: #5F5E5A; line-height: 1.5;">אימון אישי +34% — שווה להרחיב</div>
+    </div>
+    <button style="font-size: 10px; padding: 4px 8px; background: transparent; border: 0.5px solid #9FE1CB; color: #085041; border-radius: 5px; align-self: flex-start; white-space: nowrap;">פעל</button>
+  </div>
+</div>
+
+<!-- =================================================== -->
+<!-- SECTION 5: COMMISSION CONTROL + LIVE SIMULATOR      -->
+<!-- =================================================== -->
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 20px;">
+
+  <div class="card">
+    <div style="margin-bottom: 16px;">
+      <h2 style="font-size: 17px;">מרכז שליטה בעמלות</h2>
+      <p style="font-size: 12px; color: #5F5E5A; margin-top: 4px;">היררכיה: גלובלי → קטגוריה → ספק (הספציפי דורס)</p>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 18px; padding: 10px; background: #F7F5F0; border-radius: 8px;">
+      <div style="flex: 1; text-align: center; padding: 8px; background: white; border-radius: 6px; border: 0.5px solid rgba(0,0,0,0.15);">
+        <div style="font-size: 10px; color: #888780; margin-bottom: 2px;">שכבה 1 — גלובלי</div>
+        <div style="font-size: 14px; font-weight: 500;">10%</div>
+      </div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#888780" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      <div style="flex: 1; text-align: center; padding: 8px; background: white; border-radius: 6px; border: 0.5px solid rgba(0,0,0,0.15);">
+        <div style="font-size: 10px; color: #888780; margin-bottom: 2px;">שכבה 2 — קטגוריה</div>
+        <div style="font-size: 14px; font-weight: 500;">5 מותאמות</div>
+      </div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#888780" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      <div style="flex: 1; text-align: center; padding: 8px; background: white; border-radius: 6px; border: 0.5px solid rgba(0,0,0,0.15);">
+        <div style="font-size: 10px; color: #888780; margin-bottom: 2px;">שכבה 3 — ספק</div>
+        <div style="font-size: 14px; font-weight: 500;">8 פרטניות</div>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 4px; border-bottom: 0.5px solid rgba(0,0,0,0.15); margin-bottom: 16px;">
+      <button style="padding: 8px 14px; background: transparent; border: none; border-bottom: 2px solid #1D1D1B; font-size: 13px; font-weight: 500;">גלובלי</button>
+      <button style="padding: 8px 14px; background: transparent; border: none; font-size: 13px; color: #5F5E5A;">קטגוריות (5)</button>
+      <button style="padding: 8px 14px; background: transparent; border: none; font-size: 13px; color: #5F5E5A;">ספקים (127)</button>
+      <button style="padding: 8px 14px; background: transparent; border: none; font-size: 13px; color: #5F5E5A;">A/B בדיקות</button>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 18px;">
+      <div>
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+          <span style="font-size: 13px; font-weight: 500;">עמלה גלובלית</span>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <input type="number" value="10" style="width: 52px; text-align: center; font-size: 14px; font-weight: 500; padding: 4px 6px;">
+            <span style="font-size: 13px; color: #5F5E5A;">%</span>
+          </div>
+        </div>
+        <input type="range" min="0" max="30" value="10" step="1" style="width: 100%;">
+        <div style="display: flex; justify-content: space-between; font-size: 10px; color: #888780; margin-top: 4px;">
+          <span>0%</span><span>15%</span><span>30%</span>
+        </div>
+      </div>
+      <div>
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+          <span style="font-size: 13px; font-weight: 500;">תוספת דחיפות</span>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span style="font-size: 13px; color: #5F5E5A;">+</span>
+            <input type="number" value="5" style="width: 52px; text-align: center; font-size: 14px; font-weight: 500; padding: 4px 6px;">
+            <span style="font-size: 13px; color: #5F5E5A;">%</span>
+          </div>
+        </div>
+        <input type="range" min="0" max="20" value="5" step="1" style="width: 100%;">
+        <div style="display: flex; justify-content: space-between; font-size: 10px; color: #888780; margin-top: 4px;">
+          <span>0%</span><span>10%</span><span>20%</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: 20px; padding-top: 16px; border-top: 0.5px solid rgba(0,0,0,0.15);">
+      <div style="font-size: 12px; color: #5F5E5A; margin-bottom: 10px; font-weight: 500;">כללים חכמים</div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: #F7F5F0; border-radius: 8px;">
+          <div>
+            <div style="font-size: 12px; font-weight: 500;">פטור מעמלה ל-3 העסקאות הראשונות</div>
+            <div style="font-size: 11px; color: #888780;">מעודד onboarding · פעיל על 12 ספקים חדשים</div>
+          </div>
+          <div style="width: 32px; height: 18px; background: #1D9E75; border-radius: 9px; position: relative;">
+            <div style="position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; background: white; border-radius: 50%;"></div>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: #F7F5F0; border-radius: 8px;">
+          <div>
+            <div style="font-size: 12px; font-weight: 500;">עמלה מדורגת לפי volume</div>
+            <div style="font-size: 11px; color: #888780;">מעל ₪5,000/חודש → -2% · מעל ₪10,000 → -4%</div>
+          </div>
+          <div style="width: 32px; height: 18px; background: rgba(0,0,0,0.15); border-radius: 9px; position: relative;">
+            <div style="position: absolute; right: 2px; top: 2px; width: 14px; height: 14px; background: white; border-radius: 50%;"></div>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: #F7F5F0; border-radius: 8px;">
+          <div>
+            <div style="font-size: 12px; font-weight: 500;">בוסט סוף שבוע</div>
+            <div style="font-size: 11px; color: #888780;">+2% בשישי-שבת (ביקוש גבוה)</div>
+          </div>
+          <div style="width: 32px; height: 18px; background: rgba(0,0,0,0.15); border-radius: 9px; position: relative;">
+            <div style="position: absolute; right: 2px; top: 2px; width: 14px; height: 14px; background: white; border-radius: 50%;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="background: #1D1D1B; border-radius: 12px; padding: 20px; color: white;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+      <div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <h2 style="font-size: 15px; color: white;">סימולטור השפעה</h2>
+          <span style="font-size: 9px; background: #FAC775; color: #412402; padding: 2px 6px; border-radius: 8px; font-weight: 500;">LIVE</span>
+        </div>
+        <p style="font-size: 11px; color: #B4B2A9; margin-top: 4px;">לפני שמבצעים שינוי</p>
+      </div>
+    </div>
+
+    <div style="background: #2C2C2A; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+      <div style="font-size: 10px; color: #B4B2A9; margin-bottom: 4px;">אם תשנה עמלה ל-</div>
+      <div style="display: flex; align-items: baseline; gap: 4px;">
+        <span style="font-size: 24px; font-weight: 500;">12</span>
+        <span style="font-size: 14px; color: #B4B2A9;">%</span>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px;">
+      <div style="display: flex; justify-content: space-between; font-size: 12px;">
+        <span style="color: #B4B2A9;">הכנסה צפויה</span>
+        <span style="color: #5DCAA5; font-weight: 500;">₪589 <span style="font-size: 10px;">(+₪98)</span></span>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 12px;">
+        <span style="color: #B4B2A9;">ספקים בסיכון churn</span>
+        <span style="color: #F09595; font-weight: 500;">7 <span style="font-size: 10px;">(מתוך 127)</span></span>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 12px;">
+        <span style="color: #B4B2A9;">אחוז קבלה</span>
+        <span style="color: #FAC775; font-weight: 500;">92%</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 12px;">
+        <span style="color: #B4B2A9;">GMV צפוי</span>
+        <span style="color: white; font-weight: 500;">₪4,908</span>
+      </div>
+    </div>
+
+    <div style="padding-top: 12px; border-top: 0.5px solid #444441;">
+      <div style="font-size: 10px; color: #888780; margin-bottom: 6px;">דעת ה-AI</div>
+      <p style="font-size: 11px; line-height: 1.6; color: #D3D1C7;">סיכון נמוך — ההפרש לתחרות קטן (±1%). מומלץ לבדוק על קטגוריה אחת לפני rollout.</p>
+    </div>
+
+    <button style="width: 100%; font-size: 12px; padding: 10px; background: #FAC775; color: #412402; border: none; border-radius: 8px; font-weight: 500; margin-top: 12px;">הפעל סימולציה מלאה ↗</button>
+  </div>
+</div>
+
+<!-- =================================================== -->
+<!-- SECTION 6: REVENUE CHART + HEATMAP                  -->
+<!-- =================================================== -->
+<div style="display: grid; grid-template-columns: 3fr 2fr; gap: 12px; margin-bottom: 20px;">
+
+  <div class="card">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+      <div>
+        <h2 style="font-size: 17px;">הכנסות ומגמות</h2>
+        <p style="font-size: 12px; color: #5F5E5A; margin-top: 4px;">השוואת חודש נוכחי מול קודם · קו המגמה מוקרן</p>
+      </div>
+      <div style="display: flex; gap: 10px; font-size: 11px;">
+        <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 8px; height: 8px; background: #7F77DD; border-radius: 50%;"></span>אפריל</span>
+        <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 8px; height: 8px; background: #D3D1C7; border-radius: 50%;"></span>מרץ</span>
+        <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 10px; height: 2px; background: #1D9E75; border-radius: 1px;"></span>תחזית</span>
+      </div>
+    </div>
+
+    <svg viewBox="0 0 600 180" style="width: 100%; height: 180px;" preserveAspectRatio="none">
+      <line x1="0" y1="40" x2="600" y2="40" stroke="#D3D1C7" stroke-width="0.5" stroke-dasharray="2,3"/>
+      <line x1="0" y1="90" x2="600" y2="90" stroke="#D3D1C7" stroke-width="0.5" stroke-dasharray="2,3"/>
+      <line x1="0" y1="140" x2="600" y2="140" stroke="#D3D1C7" stroke-width="0.5" stroke-dasharray="2,3"/>
+
+      <polyline points="10,135 30,140 50,130 70,115 90,120 110,105 130,100 150,110 170,90 190,95 210,80 230,65 250,45 270,60 290,75 310,85 330,100 350,110 370,95 390,105" fill="none" stroke="#D3D1C7" stroke-width="1.5" stroke-dasharray="3,2"/>
+
+      <polygon points="10,140 30,135 50,125 70,110 90,115 110,100 130,95 150,105 170,85 190,90 210,75 230,60 250,40 270,55 290,70 310,80 330,95 350,105 370,90 390,100 410,115 410,160 10,160" fill="#AFA9EC" fill-opacity="0.2"/>
+      <polyline points="10,140 30,135 50,125 70,110 90,115 110,100 130,95 150,105 170,85 190,90 210,75 230,60 250,40 270,55 290,70 310,80 330,95 350,105 370,90 390,100 410,115" fill="none" stroke="#7F77DD" stroke-width="2"/>
+
+      <polyline points="410,115 430,105 450,95 470,85 490,75 510,65 530,55 550,50 570,45 585,40" fill="none" stroke="#1D9E75" stroke-width="1.5" stroke-dasharray="4,2"/>
+      <rect x="410" y="20" width="190" height="135" fill="#1D9E75" fill-opacity="0.05"/>
+
+      <circle cx="250" cy="40" r="4" fill="#7F77DD"/>
+      <text x="250" y="28" font-size="10" fill="#3C3489" text-anchor="middle" font-weight="500">שיא ₪38</text>
+
+      <text x="600" y="45" font-size="10" fill="#888780" text-anchor="end">₪40</text>
+      <text x="600" y="95" font-size="10" fill="#888780" text-anchor="end">₪25</text>
+      <text x="600" y="145" font-size="10" fill="#888780" text-anchor="end">₪10</text>
+
+      <text x="10" y="175" font-size="10" fill="#888780">1</text>
+      <text x="155" y="175" font-size="10" fill="#888780">10</text>
+      <text x="305" y="175" font-size="10" fill="#888780">היום</text>
+      <text x="450" y="175" font-size="10" fill="#1D9E75">תחזית</text>
+      <text x="585" y="175" font-size="10" fill="#888780" text-anchor="end">30</text>
+    </svg>
+
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 0.5px solid rgba(0,0,0,0.15);">
+      <div><div style="font-size: 10px; color: #888780;">ממוצע יומי</div><div style="font-size: 14px; font-weight: 500;">₪16.40</div></div>
+      <div><div style="font-size: 10px; color: #888780;">שיא</div><div style="font-size: 14px; font-weight: 500;">₪38</div></div>
+      <div><div style="font-size: 10px; color: #888780;">תחזית סוף חודש</div><div style="font-size: 14px; font-weight: 500; color: #085041;">₪612</div></div>
+      <div><div style="font-size: 10px; color: #888780;">MoM</div><div style="font-size: 14px; font-weight: 500; color: #085041;">+23%</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="margin-bottom: 14px;">
+      <h2 style="font-size: 17px;">עסקאות לפי יום ושעה</h2>
+      <p style="font-size: 12px; color: #5F5E5A; margin-top: 4px;">מתי השיא — ומתי הפסגה של הדחיפות</p>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 30px repeat(7, 1fr); gap: 2px; font-size: 9px;">
+      <div></div>
+      <div style="text-align: center; color: #888780;">א</div>
+      <div style="text-align: center; color: #888780;">ב</div>
+      <div style="text-align: center; color: #888780;">ג</div>
+      <div style="text-align: center; color: #888780;">ד</div>
+      <div style="text-align: center; color: #888780;">ה</div>
+      <div style="text-align: center; color: #888780;">ו</div>
+      <div style="text-align: center; color: #888780;">ש</div>
+
+      <div style="color: #888780; text-align: left;">08</div>
+      <div style="aspect-ratio: 1; background: #F1EFE8; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #EEEDFE; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #EEEDFE; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #CECBF6; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #CECBF6; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #F1EFE8; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #F1EFE8; border-radius: 2px;"></div>
+
+      <div style="color: #888780; text-align: left;">12</div>
+      <div style="aspect-ratio: 1; background: #CECBF6; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #AFA9EC; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #AFA9EC; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #7F77DD; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #7F77DD; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #CECBF6; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #EEEDFE; border-radius: 2px;"></div>
+
+      <div style="color: #888780; text-align: left;">16</div>
+      <div style="aspect-ratio: 1; background: #7F77DD; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #534AB7; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #534AB7; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #534AB7; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #26215C; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #7F77DD; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #AFA9EC; border-radius: 2px;"></div>
+
+      <div style="color: #888780; text-align: left;">20</div>
+      <div style="aspect-ratio: 1; background: #AFA9EC; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #7F77DD; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #7F77DD; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #534AB7; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #534AB7; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #AFA9EC; border-radius: 2px;"></div>
+      <div style="aspect-ratio: 1; background: #CECBF6; border-radius: 2px;"></div>
+    </div>
+
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 12px; font-size: 10px; color: #888780;">
+      <span>נמוך</span>
+      <div style="display: flex; gap: 2px;">
+        <span style="width: 10px; height: 10px; background: #F1EFE8; border-radius: 2px;"></span>
+        <span style="width: 10px; height: 10px; background: #EEEDFE; border-radius: 2px;"></span>
+        <span style="width: 10px; height: 10px; background: #CECBF6; border-radius: 2px;"></span>
+        <span style="width: 10px; height: 10px; background: #AFA9EC; border-radius: 2px;"></span>
+        <span style="width: 10px; height: 10px; background: #7F77DD; border-radius: 2px;"></span>
+        <span style="width: 10px; height: 10px; background: #534AB7; border-radius: 2px;"></span>
+        <span style="width: 10px; height: 10px; background: #26215C; border-radius: 2px;"></span>
+      </div>
+      <span>גבוה</span>
+    </div>
+
+    <div style="margin-top: 12px; padding: 10px 12px; background: #EEEDFE; border-radius: 8px; font-size: 11px; color: #3C3489; line-height: 1.5;">
+      <b>תובנה:</b> שיא הפעילות ה׳ 16:00-20:00. שקול תוספת דחיפות של +3% בחלון הזה.
+    </div>
+  </div>
+</div>
+
+<!-- =================================================== -->
+<!-- SECTION 7: PROVIDERS TABLE                          -->
+<!-- =================================================== -->
+<div class="card" style="margin-bottom: 20px;">
+
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+    <div>
+      <h2 style="font-size: 17px;">ניהול ספקים — עמלות ודירוג</h2>
+      <p style="font-size: 12px; color: #5F5E5A; margin-top: 4px;">127 ספקים · סה״כ GMV החודש ₪11,325 · ממוצע עמלה 9.2%</p>
+    </div>
+    <div style="display: flex; gap: 6px;">
+      <button style="font-size: 12px; padding: 6px 12px; background: transparent; border: 0.5px solid rgba(0,0,0,0.2); border-radius: 8px;">עריכה מרוכזת</button>
+      <button style="font-size: 12px; padding: 6px 12px; background: transparent; border: 0.5px solid rgba(0,0,0,0.2); border-radius: 8px;">ייצא CSV</button>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap;">
+    <button style="font-size: 11px; padding: 5px 10px; background: #1D1D1B; color: white; border: none; border-radius: 12px; font-weight: 500;">הכל · 127</button>
+    <button style="font-size: 11px; padding: 5px 10px; background: transparent; border: 0.5px solid rgba(0,0,0,0.15); border-radius: 12px;">מותאמים · 8</button>
+    <button style="font-size: 11px; padding: 5px 10px; background: transparent; border: 0.5px solid rgba(0,0,0,0.15); border-radius: 12px;">VIP · 2</button>
+    <button style="font-size: 11px; padding: 5px 10px; background: transparent; border: 0.5px solid rgba(0,0,0,0.15); border-radius: 12px;">Top 10% הכנסה</button>
+    <button style="font-size: 11px; padding: 5px 10px; background: #FCEBEB; color: #791F1F; border: 0.5px solid #F4C0D1; border-radius: 12px; font-weight: 500;">בסיכון churn · 3</button>
+    <button style="font-size: 11px; padding: 5px 10px; background: transparent; border: 0.5px solid rgba(0,0,0,0.15); border-radius: 12px;">ללא פעילות 7י׳</button>
+  </div>
+
+  <div style="border: 0.5px solid rgba(0,0,0,0.15); border-radius: 8px; overflow: hidden;">
+    <table style="font-size: 13px;">
+      <thead>
+        <tr style="background: #F7F5F0; text-align: right;">
+          <th style="padding: 10px 14px; font-weight: 500; font-size: 11px; color: #5F5E5A; width: 25%;">ספק</th>
+          <th style="padding: 10px 14px; font-weight: 500; font-size: 11px; color: #5F5E5A; width: 13%;">קטגוריה</th>
+          <th style="padding: 10px 14px; font-weight: 500; font-size: 11px; color: #5F5E5A; width: 12%;">GMV (30י)</th>
+          <th style="padding: 10px 14px; font-weight: 500; font-size: 11px; color: #5F5E5A; width: 13%;">עמלה</th>
+          <th style="padding: 10px 14px; font-weight: 500; font-size: 11px; color: #5F5E5A; width: 14%;">בריאות</th>
+          <th style="padding: 10px 14px; font-weight: 500; font-size: 11px; color: #5F5E5A; width: 12%;">מגמה</th>
+          <th style="padding: 10px 14px; font-weight: 500; font-size: 11px; color: #5F5E5A; width: 11%;"></th>
+        </tr>
+      </thead>
+      <tbody>
+
+        <tr style="border-top: 0.5px solid rgba(0,0,0,0.15);">
+          <td style="padding: 10px 14px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div style="width: 30px; height: 30px; border-radius: 50%; background: #FBEAF0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; color: #72243E;">מד</div>
+              <div>
+                <div style="font-size: 13px; font-weight: 500;">מרים דדון <span style="font-size: 9px; background: #FAEEDA; color: #854F0B; padding: 1px 5px; border-radius: 6px; margin-right: 3px;">VIP</span></div>
+                <div style="font-size: 10px; color: #888780;">34 עסקאות · מאז 02/24</div>
+              </div>
+            </div>
+          </td>
+          <td style="padding: 10px 14px; color: #5F5E5A; font-size: 12px;">יופי וטיפוח</td>
+          <td style="padding: 10px 14px; font-weight: 500;">₪3,840</td>
+          <td style="padding: 10px 14px;">
+            <div style="font-weight: 500;">8%</div>
+            <div style="font-size: 9px; color: #085041;">מותאם (-2%)</div>
+          </td>
+          <td style="padding: 10px 14px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <div style="width: 28px; height: 4px; background: #E1F5EE; border-radius: 2px; overflow: hidden;">
+                <div style="width: 92%; height: 100%; background: #1D9E75;"></div>
+              </div>
+              <span style="font-size: 11px; color: #085041; font-weight: 500;">92</span>
+            </div>
+          </td>
+          <td style="padding: 10px 14px;">
+            <svg viewBox="0 0 60 16" style="width: 60px; height: 16px;">
+              <polyline points="0,12 10,10 20,8 30,9 40,6 50,5 60,3" fill="none" stroke="#1D9E75" stroke-width="1.5"/>
+            </svg>
+          </td>
+          <td style="padding: 10px 14px;">
+            <button style="font-size: 11px; padding: 4px 10px; background: transparent; border: 0.5px solid rgba(0,0,0,0.2); border-radius: 5px;">ערוך</button>
+          </td>
+        </tr>
+
+        <tr style="border-top: 0.5px solid rgba(0,0,0,0.15);">
+          <td style="padding: 10px 14px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div style="width: 30px; height: 30px; border-radius: 50%; background: #EEEDFE; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; color: #3C3489;">סמ</div>
+              <div>
+                <div style="font-size: 13px; font-weight: 500;">סיגלית מלסה <span style="font-size: 9px; background: #FAEEDA; color: #854F0B; padding: 1px 5px; border-radius: 6px; margin-right: 3px;">VIP</span></div>
+                <div style="font-size: 10px; color: #888780;">12 עסקאות · מאז 08/24</div>
+              </div>
+            </div>
+          </td>
+          <td style="padding: 10px 14px; color: #5F5E5A; font-size: 12px;">אירוח</td>
+          <td style="padding: 10px 14px; font-weight: 500;">₪2,400</td>
+          <td style="padding: 10px 14px;">
+            <div style="font-weight: 500;">10%</div>
+            <div style="font-size: 9px; color: #888780;">ברירת מחדל</div>
+          </td>
+          <td style="padding: 10px 14px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <div style="width: 28px; height: 4px; background: #FAEEDA; border-radius: 2px; overflow: hidden;">
+                <div style="width: 68%; height: 100%; background: #EF9F27;"></div>
+              </div>
+              <span style="font-size: 11px; color: #854F0B; font-weight: 500;">68</span>
+            </div>
+          </td>
+          <td style="padding: 10px 14px;">
+            <svg viewBox="0 0 60 16" style="width: 60px; height: 16px;">
+              <polyline points="0,5 10,6 20,8 30,7 40,9 50,10 60,11" fill="none" stroke="#EF9F27" stroke-width="1.5"/>
+            </svg>
+          </td>
+          <td style="padding: 10px 14px;">
+            <button style="font-size: 11px; padding: 4px 10px; background: transparent; border: 0.5px solid rgba(0,0,0,0.2); border-radius: 5px;">ערוך</button>
+          </td>
+        </tr>
+
+        <tr style="border-top: 0.5px solid rgba(0,0,0,0.15); background: #FEFCFC;">
+          <td style="padding: 10px 14px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div style="width: 30px; height: 30px; border-radius: 50%; background: #FCEBEB; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; color: #791F1F;">יכ</div>
+              <div>
+                <div style="font-size: 13px; font-weight: 500;">יוסי כהן <span style="font-size: 9px; background: #FCEBEB; color: #791F1F; padding: 1px 5px; border-radius: 6px; margin-right: 3px;">⚠ Churn</span></div>
+                <div style="font-size: 10px; color: #888780;">47 → 28 עסקאות</div>
+              </div>
+            </div>
+          </td>
+          <td style="padding: 10px 14px; color: #5F5E5A; font-size: 12px;">שליחויות</td>
+          <td style="padding: 10px 14px; font-weight: 500; color: #791F1F;">₪2,115 ↓</td>
+          <td style="padding: 10px 14px;">
+            <div style="font-weight: 500;">8%</div>
+            <div style="font-size: 9px; color: #888780;">מקטגוריה</div>
+          </td>
+          <td style="padding: 10px 14px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <div style="width: 28px; height: 4px; background: #FCEBEB; border-radius: 2px; overflow: hidden;">
+                <div style="width: 34%; height: 100%; background: #E24B4A;"></div>
+              </div>
+              <span style="font-size: 11px; color: #791F1F; font-weight: 500;">34</span>
+            </div>
+          </td>
+          <td style="padding: 10px 14px;">
+            <svg viewBox="0 0 60 16" style="width: 60px; height: 16px;">
+              <polyline points="0,3 10,4 20,6 30,8 40,10 50,12 60,13" fill="none" stroke="#E24B4A" stroke-width="1.5"/>
+            </svg>
+          </td>
+          <td style="padding: 10px 14px;">
+            <button style="font-size: 11px; padding: 4px 10px; background: #FCEBEB; color: #791F1F; border: 0.5px solid #F09595; border-radius: 5px; font-weight: 500;">פעל ↗</button>
+          </td>
+        </tr>
+
+        <tr style="border-top: 0.5px solid rgba(0,0,0,0.15);">
+          <td style="padding: 10px 14px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div style="width: 30px; height: 30px; border-radius: 50%; background: #FAECE7; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; color: #993C1D;">אא</div>
+              <div>
+                <div style="font-size: 13px; font-weight: 500;">אביחי אדאוי</div>
+                <div style="font-size: 10px; color: #888780;">18 עסקאות</div>
+              </div>
+            </div>
+          </td>
+          <td style="padding: 10px 14px; color: #5F5E5A; font-size: 12px;">ניקיון</td>
+          <td style="padding: 10px 14px; font-weight: 500;">₪1,620</td>
+          <td style="padding: 10px 14px;">
+            <div style="font-weight: 500;">5%</div>
+            <div style="font-size: 9px; color: #72243E;">מותאם (-5%)</div>
+          </td>
+          <td style="padding: 10px 14px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <div style="width: 28px; height: 4px; background: #E1F5EE; border-radius: 2px; overflow: hidden;">
+                <div style="width: 85%; height: 100%; background: #1D9E75;"></div>
+              </div>
+              <span style="font-size: 11px; color: #085041; font-weight: 500;">85</span>
+            </div>
+          </td>
+          <td style="padding: 10px 14px;">
+            <svg viewBox="0 0 60 16" style="width: 60px; height: 16px;">
+              <polyline points="0,10 10,9 20,8 30,7 40,7 50,5 60,4" fill="none" stroke="#1D9E75" stroke-width="1.5"/>
+            </svg>
+          </td>
+          <td style="padding: 10px 14px;">
+            <button style="font-size: 11px; padding: 4px 10px; background: transparent; border: 0.5px solid rgba(0,0,0,0.2); border-radius: 5px;">ערוך</button>
+          </td>
+        </tr>
+
+        <tr style="border-top: 0.5px solid rgba(0,0,0,0.15);">
+          <td style="padding: 10px 14px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div style="width: 30px; height: 30px; border-radius: 50%; background: #E6F1FB; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; color: #0C447C;">רל</div>
+              <div>
+                <div style="font-size: 13px; font-weight: 500;">רונית לוי <span style="font-size: 9px; background: #E1F5EE; color: #085041; padding: 1px 5px; border-radius: 6px; margin-right: 3px;">Top 10%</span></div>
+                <div style="font-size: 10px; color: #888780;">9 עסקאות · AOV גבוה</div>
+              </div>
+            </div>
+          </td>
+          <td style="padding: 10px 14px; color: #5F5E5A; font-size: 12px;">אימון אישי</td>
+          <td style="padding: 10px 14px; font-weight: 500;">₪1,350</td>
+          <td style="padding: 10px 14px;">
+            <div style="font-weight: 500;">15%</div>
+            <div style="font-size: 9px; color: #888780;">מקטגוריה</div>
+          </td>
+          <td style="padding: 10px 14px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <div style="width: 28px; height: 4px; background: #E1F5EE; border-radius: 2px; overflow: hidden;">
+                <div style="width: 78%; height: 100%; background: #1D9E75;"></div>
+              </div>
+              <span style="font-size: 11px; color: #085041; font-weight: 500;">78</span>
+            </div>
+          </td>
+          <td style="padding: 10px 14px;">
+            <svg viewBox="0 0 60 16" style="width: 60px; height: 16px;">
+              <polyline points="0,11 10,8 20,9 30,7 40,5 50,6 60,4" fill="none" stroke="#1D9E75" stroke-width="1.5"/>
+            </svg>
+          </td>
+          <td style="padding: 10px 14px;">
+            <button style="font-size: 11px; padding: 4px 10px; background: transparent; border: 0.5px solid rgba(0,0,0,0.2); border-radius: 5px;">ערוך</button>
+          </td>
+        </tr>
+
+      </tbody>
+    </table>
+  </div>
+
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 12px; font-size: 12px; color: #888780;">
+    <span>מציג 5 מתוך 127 ספקים</span>
+    <div style="display: flex; gap: 6px;">
+      <button style="font-size: 12px; padding: 4px 10px; background: transparent; border: 0.5px solid rgba(0,0,0,0.15); border-radius: 6px;">קודם</button>
+      <button style="font-size: 12px; padding: 4px 10px; background: transparent; border: 0.5px solid rgba(0,0,0,0.15); border-radius: 6px;">הבא</button>
+    </div>
+  </div>
+</div>
+
+<!-- =================================================== -->
+<!-- SECTION 8: ESCROW + ACTIVITY TIMELINE               -->
+<!-- =================================================== -->
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+
+  <div class="card">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+      <div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <h2 style="font-size: 17px;">נאמנות — Escrow</h2>
+          <span style="font-size: 10px; background: #FAEEDA; color: #854F0B; padding: 2px 7px; border-radius: 10px; font-weight: 500;">1 פעילה</span>
+        </div>
+        <p style="font-size: 12px; color: #5F5E5A; margin-top: 4px;">₪80 מוחזק · ממוצע שחרור 18ש׳</p>
+      </div>
+    </div>
+
+    <div style="border: 0.5px solid rgba(0,0,0,0.15); border-radius: 8px; padding: 12px 14px; background: #FEFCF6;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+        <div style="font-size: 16px; font-weight: 500;">₪80</div>
+        <div style="font-size: 10px; color: #888780;">06:32 · 15/04</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #5F5E5A; margin-bottom: 10px;">
+        <span>אביחי אדאוי</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        <span>סיגלית מלסה</span>
+      </div>
+
+      <div style="display: flex; gap: 3px; margin-bottom: 10px;">
+        <div style="flex: 1; height: 4px; background: #1D9E75; border-radius: 2px;"></div>
+        <div style="flex: 1; height: 4px; background: #EF9F27; border-radius: 2px;"></div>
+        <div style="flex: 1; height: 4px; background: #D3D1C7; border-radius: 2px;"></div>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 9px; color: #888780; margin-bottom: 12px;">
+        <span>שולם ✓</span>
+        <span>בביצוע</span>
+        <span>שחרור</span>
+      </div>
+
+      <div style="display: flex; gap: 6px;">
+        <button style="flex: 1; font-size: 11px; padding: 6px; background: #E1F5EE; color: #085041; border: none; border-radius: 6px; font-weight: 500;">שחרר לספק</button>
+        <button style="flex: 1; font-size: 11px; padding: 6px; background: transparent; border: 0.5px solid rgba(0,0,0,0.2); border-radius: 6px;">החזר ללקוח</button>
+        <button style="font-size: 11px; padding: 6px 10px; background: transparent; border: 0.5px solid rgba(0,0,0,0.2); border-radius: 6px;">⋯</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+      <div>
+        <h2 style="font-size: 17px;">פעילות חיה</h2>
+        <p style="font-size: 12px; color: #5F5E5A; margin-top: 4px;">כל הפעולות במערכת</p>
+      </div>
+      <span style="font-size: 10px; background: #E1F5EE; color: #085041; padding: 2px 7px; border-radius: 10px; font-weight: 500;">● Live</span>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+
+      <div style="display: flex; gap: 10px;">
+        <div style="width: 24px; height: 24px; border-radius: 50%; background: #E1F5EE; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#085041" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 12px;"><b>עסקה שוחררה</b> — ₪150 לרונית לוי</div>
+          <div style="font-size: 10px; color: #888780;">לפני 3 דקות · עמלה ₪22.50</div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <div style="width: 24px; height: 24px; border-radius: 50%; background: #EEEDFE; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#3C3489" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        </div>
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 12px;"><b>עמלה עודכנה</b> — אביחי אדאוי מ-10% ל-5%</div>
+          <div style="font-size: 10px; color: #888780;">לפני 14 דקות · ידני</div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <div style="width: 24px; height: 24px; border-radius: 50%; background: #FAEEDA; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#854F0B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 12px;"><b>עסקה בנאמנות</b> — ₪80 אביחי ← סיגלית</div>
+          <div style="font-size: 10px; color: #888780;">לפני שעה · ממתין לשחרור</div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <div style="width: 24px; height: 24px; border-radius: 50%; background: #FBEAF0; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="#EF9F27" stroke="none"><polygon points="12 2 15 9 22 9 17 14 19 22 12 18 5 22 7 14 2 9 9 9"/></svg>
+        </div>
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 12px;"><b>VIP חדש</b> — מרים דדון שדרגה ל-₪99/חודש</div>
+          <div style="font-size: 10px; color: #888780;">לפני 3 שעות</div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <div style="width: 24px; height: 24px; border-radius: 50%; background: #EEEDFE; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#3C3489" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/></svg>
+        </div>
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 12px;"><b>AI תובנה</b> — זיהוי הזדמנות באימון אישי</div>
+          <div style="font-size: 10px; color: #888780;">לפני 4 שעות · ממתין לאישור</div>
+        </div>
+      </div>
+
+    </div>
+
+    <button style="width: 100%; margin-top: 14px; font-size: 12px; padding: 8px; background: transparent; border: 0.5px solid rgba(0,0,0,0.15); border-radius: 8px;">צפה בכל הפעילות ←</button>
+  </div>
+
+</div>
+
+</body>
+</html>

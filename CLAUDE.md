@@ -4236,4 +4236,452 @@ Pet Stay post-QA: `flutter analyze lib/features/pet_stay/` → **0 issues**.
 
 ---
 
-*Last updated: 2026-04-14 | Version: 13.0.0 (STABLE — Pet Stay Tracker + QA'd)*
+---
+
+## 29. Vault Financial Dashboard (v14.x, 2026-04-16)
+
+Premium financial dashboard for the admin panel, located in the **System
+(מערכת)** section as tab 5: **"כספת 🔐"** (between "כספים 💵" and "תובנות 📊").
+
+### Overview
+
+The Vault dashboard gives the admin a real-time, data-driven view of all
+platform financials: revenue, active escrows, transaction pipeline,
+category breakdown, peak hours, top providers, and a live activity feed.
+Every number on screen comes from real Firestore data — no mock data.
+
+### Data Architecture
+
+The Vault queries **existing** collections — no duplicate data stores:
+
+| Metric | Source Collection | Query |
+|--------|-------------------|-------|
+| Platform balance | `admin/admin/settings/settings.totalPlatformBalance` | `.snapshots()` |
+| Commission fee % | `admin/admin/settings/settings.feePercentage` | Same stream |
+| Period revenue | `platform_earnings` | `.where('timestamp', >=, periodStart).limit(500)` |
+| Active jobs (escrow) | `jobs` | `.where('status', whereIn: ['paid_escrow', 'expert_completed', 'disputed'])` |
+| Recent transactions | `transactions` | `.orderBy('timestamp', desc).limit(20)` |
+| Activity feed | `activity_log` | `.orderBy('timestamp', desc).limit(15)` |
+| Top providers | `users` | `.where('isProvider', ==, true).limit(100)` client-sorted by `orderCount` |
+| User/provider counts | `users` | `.count()` aggregation queries |
+| Withdrawals | `withdrawals` | `.where('status', ==, status).limit(50)` |
+
+### Dashboard Sections (top to bottom)
+
+| # | Section | Description |
+|---|---------|-------------|
+| 1 | Header + Period Selector | "AnySkill Vault" + pulsing green dot + live clock + day/week/month/year pills |
+| 2 | Live Ticker | Dark gradient bar: LIVE badge + period revenue + active count + pending commission + completed count |
+| 3 | Balance + Health Score | Platform balance card (total + fee %) + circular health score ring (growth/retention/settlement/diversity) |
+| 4 | Metrics Grid | 4 cards: Revenue, Transactions, Avg Commission, Providers — each with change %, previous period, accent colors |
+| 5 | Live Transactions Monitor | Green-bordered card: pipeline visualization (escrow → completed → disputed), active job rows with status pills |
+| 6 | Revenue Chart | `fl_chart` LineChart with daily breakdown, purple gradient fill, date labels |
+| 7 | Category + Type Breakdown | PieChart by category + waterfall by source type (quote/anytask/any_tasks) |
+| 8 | Peak Hours Heatmap | 24-bar histogram colored by intensity, hour labels every 4h |
+| 9 | Top Providers | Ranked list with avatar, name, VIP badge, order count, rating |
+| 10 | Recent Transactions | Last 20 transactions with type label (Hebrew), direction arrow, amount, timestamp |
+| 11 | Activity Feed | Live stream with color-coded dots by event type, relative timestamps |
+| 12 | Quick Actions | 6 action chips: Monthly Report, CSV Export, Real-time, Alerts, VIP, Anomalies |
+
+### Color Palette (VaultColors)
+
+| Name | Hex | Usage |
+|------|-----|-------|
+| Green | `#1D9E75` | Revenue, success, health |
+| Blue | `#378ADD` | Transactions, info |
+| Amber | `#EF9F27` | Pending, warnings, VIP |
+| Purple | `#7F77DD` | Providers, premium, charts |
+| Red | `#E24B4A` | Cancellations, risk |
+
+Each color has `Bg` (light) and `Text` (dark) variants for status pills.
+
+### Health Score Computation
+
+```
+Score = growth×0.3 + retention×0.3 + settlement×0.2 + diversity×0.2
+```
+
+| Component | Calculation |
+|-----------|-------------|
+| Growth | `(revenueGrowth% + 100) / 3` clamped 0-100 |
+| Retention | `completedJobs / (completed + cancelled) × 100` |
+| Settlement | Fixed 80 (placeholder until avg settlement time is tracked) |
+| Diversity | `activeProviders / 50 × 100` clamped 0-100 |
+
+### Cloud Functions Added
+
+| CF | Trigger | Purpose |
+|----|---------|---------|
+| `updateVaultAnalytics` | `onSchedule` every 1 hour | Aggregates metrics for all 4 periods into `vault_analytics/{period}` |
+| `generateVaultAlerts` | `onSchedule` every 1 hour | Creates smart alerts in `vault_alerts` (stuck escrows, milestones, high cancellation rate) |
+| `updateVaultBalance` | `onDocumentWritten("transactions/{id}")` | Recomputes `vault_balance/main` from admin settings + pending jobs + completed withdrawals |
+
+### New Firestore Collections
+
+| Collection | Purpose | Written by |
+|-----------|---------|------------|
+| `vault_analytics/{period}` | Pre-aggregated metrics per period (day/week/month/year) | `updateVaultAnalytics` CF |
+| `vault_alerts/{id}` | Smart alerts (achievement, warning, risk, recommendation) | `generateVaultAlerts` CF |
+| `vault_balance/main` | Computed balance snapshot (available, pending, withdrawn) | `updateVaultBalance` CF |
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `lib/services/vault_service.dart` | Firestore queries, computed metrics, helper functions |
+| `lib/screens/admin_vault_tab.dart` | Full dashboard UI (~1500 lines) |
+| `lib/screens/admin_screen.dart` | Tab registration (length 10→11, position after כספים) |
+| `functions/index.js` | 3 new CFs appended (updateVaultAnalytics, generateVaultAlerts, updateVaultBalance) |
+| `functions/vault_functions.js` | Standalone copy for reference (same code as appended to index.js) |
+
+### Deployment
+
+```bash
+firebase deploy --only functions:updateVaultAnalytics,functions:generateVaultAlerts,functions:updateVaultBalance
+flutter build web --release && firebase deploy --only hosting
+```
+
+After first deploy, the `vault_analytics` docs won't exist until the hourly
+CF fires. To populate immediately, invoke `updateVaultAnalytics` manually
+from the Firebase Console or via `firebase functions:shell`.
+
+### Future Enhancements
+
+- **Withdrawal flow:** Dialog + `initiateWithdrawal` CF with double verification
+- **PDF export:** `generateVaultReport` CF producing downloadable reports
+- **Conversion funnel:** Requires Firebase Analytics event tracking integration
+- **AI Insights:** Gemini-powered opportunity analysis on vault_analytics data
+- **Push alerts:** FCM notifications to admin on critical vault_alerts
+- **Scheduled withdrawals:** Recurring withdrawal rules in `withdrawals` collection
+
+---
+
+## 30. Phone Login Screen — Premium Redesign (v14.x, 2026-04-16)
+
+> **World-class sign-in / sign-up redesign.** Full UI rebuild of
+> [phone_login_screen.dart](lib/screens/phone_login_screen.dart) inspired by
+> Airbnb/Revolut. Every line of existing Auth logic is preserved — only the
+> UI layer changed.
+
+### What's preserved (do NOT touch)
+
+| Logic | Status |
+|-------|--------|
+| `_sendOtp()` — web `signInWithPhoneNumber`, mobile `verifyPhoneNumber` | unchanged |
+| `_loginGoogle()` — unified `GoogleSignIn` plugin for web+native | unchanged |
+| `_loginApple()` — web `signInWithPopup`, native `sign_in_with_apple` + nonce | unchanged |
+| `_createProfileIfNew()` — anti-duplicate guard + 3-attempt retry + dual-write | unchanged |
+| `_isIOSPwa` — hides social buttons in iOS PWA mode | unchanged |
+| Rate limiting — 3 OTP sends per 10 minutes | unchanged |
+| Country picker — 15 countries via bottom sheet | unchanged |
+| Phone validation regex `^\d{7,12}$` | unchanged |
+| AuthWrapper routes after sign-in — NO Navigator.push on success | unchanged |
+
+### What's new (UI only)
+
+**Design language**: single white card with rounded 28px corners floating over
+a soft purple background (`#F5F5FF`). The card has three vertical sections:
+
+1. **Hero** — gradient `[indigoDark → indigo → purple]` at 135deg with:
+   - Animated floating orbs (warning-yellow + white, 12s loop, opposite phases)
+   - 3 pulsing dots with staggered delays
+   - Glass-morphism language button (top-start corner, `BackdropFilter blur 10px`)
+   - White 84×84 rounded square wrapping `AnySkillBrandIcon(size: 56)`
+   - Centered subtitle with `maxWidth: 280`
+
+2. **Form** — padded white section with:
+   - Google + Apple social buttons (hidden on iOS PWA)
+   - Uppercase letter-spaced divider "OR WITH PHONE NUMBER"
+   - Phone input with LTR inner direction + country prefix on the left
+   - Focus ring: 1.5px purple border + 4px spread glow
+   - Primary CTA button with:
+     - Gradient `[indigo, indigoDark]`
+     - Infinite pulse via two stacked `BoxShadow` layers
+     - Shimmer stripe sweeping left-to-right every 3 seconds
+     - Loading spinner replaces text+arrow when `_isLoading`
+   - Terms text with two tappable links (both open `TermsOfServiceScreen`)
+
+3. **Bottom strip** — soft gradient `[#FAFAFF → #F0EEF9]` with:
+   - Badge icon + "Offering a service?" + "Earn with AnySkill →"
+   - On tap: `Navigator.push → ProviderRegistrationWizardScreen`
+
+### Language switcher — dropdown instead of bottom sheet
+
+Replaces the old `showModalBottomSheet` pattern with an overlay-based
+dropdown anchored to the language button:
+
+| Behavior | Detail |
+|----------|--------|
+| Trigger | Tap the pill button (top-start of hero) |
+| Open | 200ms fade+scale-in (`Curves.easeOutCubic`) |
+| Position | `top: button.bottom + 6px`, aligned to button's trailing edge |
+| Dismiss | Tap outside (full-screen `GestureDetector` behind menu) |
+| Languages | he, en, ar, es — **same 4 as before**, no change |
+| On pick | Calls `LocaleProvider.instance.setLocale(locale)` + `setState()` |
+
+Implementation: `OverlayEntry` inserted into `Overlay.of(context)` with a
+click-catcher `Positioned.fill` behind the menu. Menu itself is
+`_LanguageDropdown` widget with its own animation controller.
+
+### Stagger animation on mount
+
+Single `AnimationController` (1300ms total) drives fade-in + translateY(14→0)
+for each element via `Interval` curves:
+
+| Element | Start (% of duration) |
+|---------|------------------------|
+| Language button, logo | 0% |
+| Subtitle | 14% |
+| Google button | 22% |
+| Apple button | 26% |
+| Divider | 30% |
+| Phone input | 34% |
+| CTA button | 38% |
+| Terms text | 44% |
+| Bottom strip | 48% |
+
+Each element animates over 54% of total duration → effectively 700ms each.
+Helper: `_buildStagger(delay: ..., child: ...)`.
+
+### New localization keys (4 languages)
+
+Added to all four `.arb` files (he/en/es/ar):
+
+```
+phoneLoginContinueGoogle  — "Continue with Google"
+phoneLoginContinueApple   — "Continue with Apple"
+phoneLoginOrPhone         — "OR WITH PHONE NUMBER"
+phoneLoginCtaLogin        — "Sign in"
+phoneLoginTermsPrefix     — "By continuing, I agree to the"
+phoneLoginTermsOfUse      — "Terms of Use"
+phoneLoginAnd             — "and"
+phoneLoginPrivacyPolicy   — "Privacy Policy"
+phoneLoginOfferingService — "Offering a service?"
+phoneLoginBecomeProvider  — "Earn with AnySkill →"
+```
+
+Existing keys (`phoneLoginHeroSubtitle`, `phoneLoginPhoneHint`,
+`phoneLoginSelectCountry`, `phoneInvalidNumber`, etc.) are reused as-is.
+
+### Color palette — uses existing `Brand.*`
+
+Per user instruction: **no new color file**. All colors sourced from
+`lib/theme/app_theme.dart`:
+
+| Purpose | Source |
+|---------|--------|
+| Hero gradient | `[Brand.indigoDark, Brand.indigo, Brand.purple]` |
+| CTA gradient | `[Brand.indigo, Brand.indigoDark]` (matches existing `Brand.ctaGradient`) |
+| Focus ring | `Brand.indigo` |
+| Check icon on valid phone | `Brand.success` |
+| Orb 1 color | `Brand.warning.withValues(alpha: 0.22)` |
+| Error snackbar | `Brand.error` |
+
+### Performance
+
+- Hero content wrapped in `RepaintBoundary` so orbs + pulses don't repaint
+  the rest of the card
+- All animation controllers disposed properly in `dispose()`
+- Overlay removed on dispose + on tap-outside + on language pick
+- Shimmer and pulse use `AnimatedBuilder` (not `setState`) for 60fps
+
+### Removed
+
+- Old `login_screen.dart` (email+password dead code from v12.5 era) —
+  zero call sites, deleted in this PR
+- Old `_WavePainter` at the bottom of the hero — not used in new design
+- `_chip()` helper (security/fast/reliable pills) — redundant with subtitle
+
+### Files
+
+| File | Role |
+|------|------|
+| [lib/screens/phone_login_screen.dart](lib/screens/phone_login_screen.dart) | Full rewrite — ~1000 lines, keeps class name `PhoneLoginScreen` |
+| `lib/screens/login_screen.dart` | **Deleted** (was dead code) |
+| `lib/l10n/app_he.arb` + 3 others | +10 keys each (40 new translations) |
+
+### Rules for future changes
+
+- **Never add Navigator.push after successful sign-in** — AuthWrapper handles
+  routing. Adding navigation here causes a double-push race (v12.8 bug).
+- **Never overwrite existing user doc** in `_createProfileIfNew` — read first,
+  only write if `!exists`. See v12.8 fix.
+- **Always call `AuthDuplicateGuard.enforceOrSignOut` before writing**
+  `users/{uid}` with an email field (PR-A, Section 20).
+- **Country list is per-spec: do not replace.** The user explicitly kept it.
+- **Language list is 4: he/en/ar/es.** Do not add ru/fr without user ack.
+
+---
+
+## 31. Monetization Tab — Premium Redesign v15.x (2026-04-17)
+
+Full rewrite of the admin Monetization tab ([lib/screens/admin_monetization_tab.dart](lib/screens/admin_monetization_tab.dart)) — from a flat 6-section fee manager into a 9-section commission + AI + simulator control center.
+
+**Location:** ניהול → מערכת → מוניטיזציה
+**Spec:** [docs/ui-specs/monetization/PROMPT_FOR_CLAUDE_CODE.md](docs/ui-specs/monetization/PROMPT_FOR_CLAUDE_CODE.md) + `monetization_mockup.html`. Spec rule: "HTML wins over text".
+
+### 3-Layer Commission Hierarchy (the spine of v15.x)
+
+**Rule:** specific beats general.
+
+```
+Layer 1 — Global      admin/admin/settings/settings.feePercentage (fraction, 0.10 = 10%)
+   ↓ overridden by
+Layer 2 — Category    category_commissions/{categoryName}.percentage (0-100 scale)
+   ↓ overridden by
+Layer 3 — Per-user    users/{uid}.customCommission.{percentage, expiresAt, reason, notes}
+                      guarded by users/{uid}.customCommissionActive == true
+```
+
+**IMPORTANT — category doc ID is the category NAME**, not a generated ID. That's because `users.serviceType` stores the NAME (see [lib/constants.dart](lib/constants.dart) `APP_CATEGORIES`), and `escrow_service.dart` needs a direct lookup inside the transaction. Do not switch to UUIDs.
+
+**Resolution happens in 3 places — all in sync:**
+
+| Consumer | File | Why |
+|----------|------|-----|
+| Flutter UI preview | [lib/services/commission_calculator.dart](lib/services/commission_calculator.dart) — `CommissionCalculator.resolve()` | Live slider tick, edit dialog preview |
+| Server authoritative | [functions/index.js](functions/index.js) — `_getEffectiveCommission(userId, categoryId)` | Used by `getEffectiveCommission` callable |
+| Live escrow booking | [lib/services/escrow_service.dart](lib/services/escrow_service.dart) lines 71-127 | Reads all 3 layers INSIDE the Firestore transaction and writes `commissionSource` + `commissionFeePct` on the job doc |
+
+**Fee fraction vs percentage — the one gotcha:**
+- `admin/settings.feePercentage` + `urgencyFeePercentage` are **fractions** (0.10 = 10%). Historical format, unchanged.
+- `category_commissions.percentage` + `users.customCommission.percentage` are **0-100 scale**. New v15.x convention — less error-prone.
+- UI slider is always 0-100. `MonetizationService.updateGlobalCommission` does `/100` on write; `streamGlobalSettings` callers do `*100` on read.
+
+### 9 Sections — File-by-File
+
+| # | Section | Widget | Data Source |
+|---|---------|--------|-------------|
+| 1 | Top bar + save | inline `_buildTopBar` | `_hasUnsavedChanges` (slider vs persisted) |
+| 2 | AI Insight Banner | `ai_insight_banner.dart` | `ai_insights/monetization` stream |
+| 3 | 4 KPI cards | `kpi_card.dart` + Sparkline / EscrowWaitBars / FeeTargetBar / CustomProviderBars | `MonetizationKpiService` snapshot |
+| 4 | Smart alerts strip | `smart_alert_card.dart` | `monetization_alerts` stream |
+| 5 | Commission Control + Simulator | `commission_hierarchy_visual` + `category_commission_grid` + `commission_simulator` | `_computeSimulation()` heuristic |
+| 6 | Revenue chart + Heatmap | `revenue_chart` + `activity_heatmap` | KPI snapshot `currentMonthDaily` / `heatmap` |
+| 7 | Provider table (full) | `provider_commission_table` + `provider_edit_dialog` | `MonetizationProviderService.load()` |
+| 8 | Escrow + Activity | `escrow_transaction_card` + `activity_timeline` | `jobs where status==paid_escrow` + `activity_log where category==monetization` |
+
+### Service Layer (`lib/services/`)
+
+| Service | Responsibility |
+|---------|----------------|
+| `monetization_service.dart` | **Single source of truth for all writes.** Every commission change + smart-rule toggle goes through here and lands in `activity_log` with `category: 'monetization'`. Also exposes streams used by widgets. |
+| `monetization_kpi_service.dart` | One-shot aggregator. 6 parallel queries → `MonetizationKpis` snapshot (KPIs + chart series + heatmap). Called from tab `initState` + refreshed every 60s. |
+| `monetization_provider_service.dart` | One-shot aggregator for section 7. 4 parallel queries → up to 500 `ProviderTableRow` with `effectivePct`, `healthScore`, `gmv30d`, `isChurnRisk`, `isTopPerformer`. |
+| `commission_calculator.dart` | Pure-function resolver. Mirrors server `_getEffectiveCommission` + applies smart-rule adjustments (waive, tiered, weekend boost). |
+
+### Cloud Functions Added
+
+| CF | Trigger | Purpose | Auth |
+|----|---------|---------|------|
+| `getEffectiveCommission` | callable | Preview effective commission for `(userId, categoryId)`. Returns `{percentage, source, ...}`. | Self or admin |
+| `detectMonetizationAnomalies` | `onSchedule("every 60 minutes")` | Scans 28d of `platform_earnings` + users + categories. Writes 3 signal types to `monetization_alerts`: anomaly (≥30% GMV drop), churn_risk (VIP 10d / regular 14d inactive), growth_opportunity (≥20% GMV up). Idempotent via 24h dedupe. | scheduled |
+| `generateMonetizationInsight` | `onSchedule("every 6 hours")` | Feeds metrics JSON to **Gemini 2.5 Flash Lite** and writes one strategic recommendation to `ai_insights/monetization`. Schema: `{title, recommendation, expectedImpact, actionType, actionParams}`. `actionType` ∈ `adjust_category_commission | reduce_provider_commission | promote_provider | none`. | scheduled |
+| `adminReleaseEscrow` | callable | **Admin-only** force-release of paid_escrow jobs. Uses the commission baked into the job at booking time — does NOT re-compute. | `isAdminCaller` |
+
+**AI model pinned to Gemini**, NOT Claude. The AI CEO tab (Section 12c) uses Claude Sonnet for deeper reasoning; this tab uses Gemini per spec's explicit requirement. They co-exist.
+
+### Firestore Schema Additions
+
+```
+category_commissions/{categoryName}          // doc ID = category name
+  categoryId, categoryName, percentage (0-100), updatedAt, updatedBy, reason?
+
+users/{uid}.customCommissionActive: bool     // sentinel for `.where()`
+users/{uid}.customCommission: {
+  percentage, setAt, setBy, reason, notes?, expiresAt?
+}
+
+ai_insights/monetization                     // single doc, merge-written
+  title, recommendation, expectedImpact,
+  actionType, actionParams, model, generatedAt,
+  applied, appliedBy?, appliedAt?, dismissedBy?, dismissedAt?
+
+monetization_alerts/{alertId}                // append-only (CF writes, admin updates `resolved`)
+  type, severity, entityType, entityId, message,
+  detectedAt, resolved, suggestedAction, resolvedAt?, resolvedBy?, resolutionNote?
+
+admin/admin/settings/settings                // extended with smart-rule fields
+  waiveFeeFirstNJobs: int                     // 0 = disabled
+  tieredCommission: { enabled, tiers:[{minGMV, discount}] }
+  weekendBoost: { enabled, daysOfWeek, extraPercentage }
+```
+
+### Firestore Rules Added ([firestore.rules](firestore.rules))
+
+```
+match /category_commissions/{id}  { allow read: if isAuth() || isAppCheckValid(); allow write: if isAdmin(); }
+match /ai_insights/{id}           { allow read: if isAdmin(); allow update: if isAdmin(); allow create, delete: if false; }
+match /monetization_alerts/{id}   { allow read: if isAdmin(); allow update: if isAdmin(); allow create, delete: if false; }
+```
+
+Admin writes to `users/{uid}.customCommission` are already covered by the existing `isAdmin()` branch in the users rule — no rule change needed.
+
+### Jobs Now Carry Commission Provenance
+
+Every job written by `EscrowService.payQuote` now includes:
+- `commissionFeePct`: number (0-100 scale) — what percentage was actually charged
+- `commissionSource`: `'global' | 'category' | 'custom'` — which layer won
+
+Lets admin screens explain why a job had a given fee, and enables audit reports.
+
+### Design Tokens ([lib/widgets/monetization/design_tokens.dart](lib/widgets/monetization/design_tokens.dart))
+
+**Scoped palette** — does NOT replace `Brand.*`. Same pattern as `MapPalette` (§26) and the Vault palette (§29). Every color extracted from the mockup HTML; do not change without updating the mockup first.
+
+Shared helpers: `MonetizationCard` (white card, 0.5px border, radius 12), `MonetizationPill` (rounded badge), `cardDecoration()`, `badgeDecoration()`.
+
+### Dark Mode Decision — Light-Only
+
+This tab is **light-mode only**, consistent with the Vault tab (§29) and the rest of the admin panel. The mockup defines a warm cream + white aesthetic. If dark mode is needed later, add a `Theme.of(context).brightness` switch in `design_tokens.dart` — but only after redesigning each visual (the simulator already uses a dark card on a light background, which would conflict with a dark scaffold).
+
+### Responsive Breakpoints
+
+Tab uses `LayoutBuilder` at the root. Three breakpoints:
+
+| Width | Layout |
+|-------|--------|
+| `< 720px` (phone) | Top bar wraps to 2 rows · KPI grid 2-col · alerts stack vertically · every side-by-side grid collapses to a column |
+| `720-1024px` (tablet) | Top bar single row · KPI 2-col · side-by-side grids (control, charts, escrow) stack vertically |
+| `≥ 1024px` (desktop) | Original mockup: 4-col KPI · 2/3+1/3 · 3/5+2/5 · 1/2+1/2 |
+
+Phone breakpoint added for completeness — admin panel's primary target is desktop.
+
+### Rules for Future Code
+
+- **Never hard-code a fee percentage.** Always read from the layered source. If writing a new payment path, study `escrow_service.dart:71-127` and replicate the 3-read pattern INSIDE the transaction.
+- **Never write to `users.customCommission` outside `MonetizationService.setUserCommission`** — you'll lose the audit-log entry and the `customCommissionActive` sentinel.
+- **Every admin action in this tab must hit `activity_log`** with `category: 'monetization'`. `MonetizationService._logActivity()` handles it — use the service, not direct Firestore writes.
+- **Don't switch AI to Claude** for this tab. Spec is explicit.
+- **`category_commissions` doc ID must equal the Hebrew category NAME.** Do not change to UUIDs without updating `escrow_service.dart` (direct `.doc(serviceType)` lookup) and `MonetizationProviderService`.
+- **Keep the Gemini JSON schema stable** (`title`, `recommendation`, `expectedImpact`, `actionType`, `actionParams`). The "הפעל" button in `_applyInsight()` dispatches on `actionType` — a new type requires a new case there.
+
+### Deploy Checklist
+
+```bash
+firebase deploy --only \
+  functions:getEffectiveCommission,\
+  functions:detectMonetizationAnomalies,\
+  functions:generateMonetizationInsight,\
+  functions:adminReleaseEscrow
+firebase deploy --only firestore:rules
+flutter build web --release && firebase deploy --only hosting
+```
+
+After first deploy: the scheduled CFs run hourly / every 6h. To populate immediately, invoke them once from the Firebase Console ("Force run") or `firebase functions:shell`.
+
+### Files Touched
+
+**Created (17):**
+- 4 services: `monetization_service.dart`, `monetization_kpi_service.dart`, `monetization_provider_service.dart`, `commission_calculator.dart`
+- 13 widgets under `lib/widgets/monetization/`
+
+**Modified:**
+- `lib/screens/admin_monetization_tab.dart` — full rewrite
+- `lib/services/escrow_service.dart` — 3-layer commission resolution inside the tx
+- `functions/index.js` — 4 new CFs + 1 internal helper
+- `firestore.rules` — 3 new match blocks
+
+---
+
+*Last updated: 2026-04-17 | Version: 15.x (Monetization redesign)*

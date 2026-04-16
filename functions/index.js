@@ -1,4 +1,4 @@
-const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentUpdated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
@@ -1272,6 +1272,11 @@ exports.sendReceiptEmail = onDocumentUpdated(
         const expertEmail   = expertSnap.data()?.email;
         const expertTaxId   = expertSnap.data()?.taxId || '';
 
+        // Per-user opt-out: default true (backwards compatible — existing
+        // users keep receiving invoices until they explicitly turn it off).
+        const customerWantsEmail = customerSnap.data()?.receiveEmailReceipts !== false;
+        const expertWantsEmail   = expertSnap.data()?.receiveEmailReceipts !== false;
+
         const total      = after.totalPaidByCustomer || 0;
         const commission = after.commissionAmount    || 0;
         const net        = after.netAmountForExpert  || (total - commission);
@@ -1341,8 +1346,9 @@ exports.sendReceiptEmail = onDocumentUpdated(
 
         const batch = db.batch();
 
-        // Email to customer
-        if (customerEmail) {
+        // Email to customer (skip if opted out)
+        const sendToCustomer = customerEmail && customerWantsEmail;
+        if (sendToCustomer) {
             batch.set(db.collection('mail').doc(), {
                 to:      [customerEmail],
                 message: {
@@ -1352,8 +1358,9 @@ exports.sendReceiptEmail = onDocumentUpdated(
             });
         }
 
-        // Email to expert (shows net amount)
-        if (expertEmail) {
+        // Email to expert (shows net amount) — skip if opted out
+        const sendToExpert = expertEmail && expertWantsEmail;
+        if (sendToExpert) {
             batch.set(db.collection('mail').doc(), {
                 to:      [expertEmail],
                 message: {
@@ -1363,9 +1370,11 @@ exports.sendReceiptEmail = onDocumentUpdated(
             });
         }
 
-        if (customerEmail || expertEmail) {
+        if (sendToCustomer || sendToExpert) {
             await batch.commit();
-            console.log(`sendReceiptEmail: queued for job ${jobId} (customer=${!!customerEmail}, expert=${!!expertEmail})`);
+            console.log(`sendReceiptEmail: queued for job ${jobId} (customer=${sendToCustomer}, expert=${sendToExpert})`);
+        } else {
+            console.log(`sendReceiptEmail: skipped for job ${jobId} — no emails or both opted out`);
         }
         return null;
     }
@@ -8343,16 +8352,23 @@ exports.grantAdminCredit = onCall(
 // Setting / changing a role requires an admin caller. Audit-logged.
 
 // ── setUserRole ────────────────────────────────────────────────────────────
-// Admin grants or revokes the support_agent role from a user.
-// Body: { targetUserId, newRole: 'admin' | 'support_agent' | 'user' }
+// Admin adds or removes roles on a user. Supports two call shapes:
 //
-// Sync rules:
-//   • If newRole == 'admin'         → role='admin',         isAdmin=true
-//   • If newRole == 'support_agent' → role='support_agent', isAdmin=false
-//   • If newRole == 'user'          → role='user',          isAdmin=false
+// NEW (Phase 1 multi-role):
+//   { targetUserId, rolesToAdd?: string[], rolesToRemove?: string[],
+//     activeRole?: string }
 //
-// Audit log: writes to admin_audit_log AND support_audit_log so both
-// admin and post-revocation audits can find the change.
+// LEGACY (single-role, still accepted until all clients migrate):
+//   { targetUserId, newRole: 'admin' | 'support_agent' | 'user' }
+//   → translated to a full replacement of the roles array.
+//
+// Role catalog: admin, support_agent, provider, customer.
+// Backwards-compat shadow writes:
+//   • role     = highest-priority role (admin > support_agent > provider > customer)
+//   • isAdmin  = true iff 'admin' in roles
+//   • isProvider/isCustomer kept unchanged here (provider flows manage them).
+//
+// Audit log: writes to admin_audit_log AND support_audit_log.
 exports.setUserRole = onCall(
   { maxInstances: 10 },
   async (request) => {
@@ -8363,16 +8379,11 @@ exports.setUserRole = onCall(
       throw new HttpsError("permission-denied", "Admin only.");
     }
 
-    const { targetUserId, newRole } = request.data || {};
+    const data = request.data || {};
+    const { targetUserId, newRole, activeRole } = data;
+    let { rolesToAdd, rolesToRemove } = data;
     if (!targetUserId || typeof targetUserId !== "string") {
       throw new HttpsError("invalid-argument", "targetUserId is required.");
-    }
-    const VALID_ROLES = ["admin", "support_agent", "user"];
-    if (!VALID_ROLES.includes(newRole)) {
-      throw new HttpsError(
-        "invalid-argument",
-        `newRole must be one of: ${VALID_ROLES.join(", ")}`,
-      );
     }
     if (targetUserId === request.auth.uid) {
       throw new HttpsError(
@@ -8381,10 +8392,61 @@ exports.setUserRole = onCall(
       );
     }
 
+    const VALID_ROLES = ["admin", "support_agent", "provider", "customer"];
+
+    const validate = (arr, label) => {
+      if (arr === undefined || arr === null) return [];
+      if (!Array.isArray(arr)) {
+        throw new HttpsError("invalid-argument", `${label} must be an array.`);
+      }
+      for (const r of arr) {
+        if (!VALID_ROLES.includes(r)) {
+          throw new HttpsError(
+            "invalid-argument",
+            `${label} contains invalid role "${r}". ` +
+            `Allowed: ${VALID_ROLES.join(", ")}`,
+          );
+        }
+      }
+      return arr;
+    };
+
+    rolesToAdd = validate(rolesToAdd, "rolesToAdd");
+    rolesToRemove = validate(rolesToRemove, "rolesToRemove");
+
+    const legacyMode = rolesToAdd.length === 0
+      && rolesToRemove.length === 0
+      && typeof newRole === "string";
+
+    if (legacyMode) {
+      const LEGACY = ["admin", "support_agent", "user", "provider", "customer"];
+      if (!LEGACY.includes(newRole)) {
+        throw new HttpsError(
+          "invalid-argument",
+          `newRole must be one of: ${LEGACY.join(", ")}`,
+        );
+      }
+    } else if (rolesToAdd.length === 0 && rolesToRemove.length === 0) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Provide rolesToAdd, rolesToRemove, or legacy newRole.",
+      );
+    }
+
+    if (activeRole !== undefined && activeRole !== null) {
+      if (typeof activeRole !== "string" || !VALID_ROLES.includes(activeRole)) {
+        throw new HttpsError(
+          "invalid-argument",
+          `activeRole must be one of: ${VALID_ROLES.join(", ")}`,
+        );
+      }
+    }
+
     const db = admin.firestore();
     const callerUid = request.auth.uid;
 
-    let beforeRole = "user";
+    let beforeRoles = [];
+    let afterRoles = [];
     let targetName = "";
 
     try {
@@ -8394,25 +8456,85 @@ exports.setUserRole = onCall(
         throw new HttpsError("not-found", `User ${targetUserId} does not exist.`);
       }
       const targetData = targetSnap.data();
-      beforeRole = targetData.role || (targetData.isAdmin === true ? "admin" : "user");
       targetName = targetData.name || targetData.email || targetUserId;
 
-      // Atomic update of role + isAdmin sync
+      // Compute current roles (new schema first, fall back to legacy).
+      beforeRoles = Array.isArray(targetData.roles)
+        ? [...targetData.roles]
+        : [];
+      if (beforeRoles.length === 0) {
+        const legacy = targetData.role;
+        if (typeof legacy === "string" && legacy.length > 0) {
+          beforeRoles.push(legacy === "user" ? "customer" : legacy);
+        }
+        if (targetData.isAdmin === true && !beforeRoles.includes("admin")) {
+          beforeRoles.push("admin");
+        }
+        if (targetData.isProvider === true && !beforeRoles.includes("provider")) {
+          beforeRoles.push("provider");
+        }
+        if (targetData.isCustomer === true && !beforeRoles.includes("customer")) {
+          beforeRoles.push("customer");
+        }
+        if (beforeRoles.length === 0) beforeRoles.push("customer");
+      }
+
+      // Apply diff. We deliberately do NOT auto-add 'customer' as a
+      // baseline — making every account multi-role would incorrectly
+      // trigger the role switcher for users who only ever wear one hat
+      // (e.g. a pure admin or pure support agent). To grant a user
+      // additional roles, the admin must add them explicitly.
+      const set = new Set(beforeRoles);
+      if (legacyMode) {
+        // Full replacement — keep only the new role.
+        set.clear();
+        set.add(newRole === "user" ? "customer" : newRole);
+      } else {
+        for (const r of rolesToRemove) set.delete(r);
+        for (const r of rolesToAdd) set.add(r);
+        if (set.size === 0) set.add("customer"); // never empty
+      }
+      afterRoles = Array.from(set);
+
+      // Resolve the new activeRole. Priority order when not supplied.
+      const priorityPick = (arr) => {
+        for (const p of ["admin", "support_agent", "provider", "customer"]) {
+          if (arr.includes(p)) return p;
+        }
+        return "customer";
+      };
+      let nextActive = activeRole;
+      if (!nextActive || !afterRoles.includes(nextActive)) {
+        const prevActive = typeof targetData.activeRole === "string"
+          ? targetData.activeRole : "";
+        nextActive = afterRoles.includes(prevActive)
+          ? prevActive
+          : priorityPick(afterRoles);
+      }
+
+      // Shadow writes for backwards-compat callers that still read `role`
+      // and `isAdmin` directly.
+      const legacyRole = priorityPick(afterRoles);
+
       await targetRef.update({
-        role: newRole,
-        isAdmin: newRole === "admin",
+        roles: afterRoles,
+        activeRole: nextActive,
+        role: legacyRole,
+        isAdmin: afterRoles.includes("admin"),
         roleUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
         roleUpdatedBy: callerUid,
       });
 
-      // Audit log entry — written to BOTH logs so admin sees role changes
-      // and the support audit log keeps a permanent trail.
       const auditPayload = {
         targetUserId,
         targetName,
         action: "set_role",
-        beforeRole,
-        afterRole: newRole,
+        beforeRoles,
+        afterRoles,
+        activeRole: nextActive,
+        // Keep string-shape fields for legacy audit viewers.
+        beforeRole: priorityPick(beforeRoles),
+        afterRole: legacyRole,
         adminUid: callerUid,
         adminName: request.auth.token?.name || request.auth.token?.email || "מנהל",
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -8431,16 +8553,131 @@ exports.setUserRole = onCall(
 
     console.log(
       `[setUserRole] ✅ admin=${callerUid} → user=${targetUserId} ` +
-      `${beforeRole} → ${newRole}`,
+      `[${beforeRoles.join(",")}] → [${afterRoles.join(",")}]`,
     );
 
     return {
       success: true,
       targetUserId,
       targetName,
-      beforeRole,
-      afterRole: newRole,
+      beforeRoles,
+      afterRoles,
+      // Legacy fields preserved for clients that haven't upgraded yet.
+      beforeRole: beforeRoles[0] || "customer",
+      afterRole: afterRoles[0] || "customer",
     };
+  }
+);
+
+// ── migrateUserRoles ───────────────────────────────────────────────────────
+// Admin-only one-shot migration. Scans every users/{uid} doc and, for any
+// user without a `roles` array, writes one derived from the legacy fields
+// (role / isAdmin / isProvider / isCustomer). Idempotent — re-running is
+// safe and only touches users who haven't been migrated.
+//
+// Body: { dryRun?: boolean }  (default false)
+// Returns: { scanned, migrated, skipped, errors }
+exports.migrateUserRoles = onCall(
+  { maxInstances: 1, timeoutSeconds: 540 },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+    if (!(await isAdminCaller(request))) {
+      throw new HttpsError("permission-denied", "Admin only.");
+    }
+
+    const dryRun = request.data?.dryRun === true;
+    const db = admin.firestore();
+    const snap = await db.collection("users").get();
+
+    let scanned = 0;
+    let migrated = 0;
+    let skipped = 0;
+    const errors = [];
+
+    const chunkSize = 400; // Firestore batched-write limit is 500.
+    let batch = db.batch();
+    let batched = 0;
+
+    const priorityPick = (arr) => {
+      for (const p of ["admin", "support_agent", "provider", "customer"]) {
+        if (arr.includes(p)) return p;
+      }
+      return "customer";
+    };
+
+    for (const doc of snap.docs) {
+      scanned++;
+      try {
+        const d = doc.data() || {};
+        if (Array.isArray(d.roles) && d.roles.length > 0) {
+          skipped++;
+          continue;
+        }
+
+        const resolved = new Set();
+        const legacy = typeof d.role === "string" ? d.role : "";
+        if (legacy) resolved.add(legacy === "user" ? "customer" : legacy);
+        if (d.isAdmin === true) resolved.add("admin");
+        if (d.isProvider === true) resolved.add("provider");
+        if (d.isCustomer === true) resolved.add("customer");
+        if (resolved.size === 0) resolved.add("customer");
+
+        const rolesArr = Array.from(resolved);
+        const activeRole = typeof d.activeRole === "string"
+            && resolved.has(d.activeRole)
+          ? d.activeRole
+          : priorityPick(rolesArr);
+
+        if (dryRun) {
+          migrated++;
+          continue;
+        }
+
+        batch.update(doc.ref, {
+          roles: rolesArr,
+          activeRole,
+          rolesMigratedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        batched++;
+        migrated++;
+
+        if (batched >= chunkSize) {
+          await batch.commit();
+          batch = db.batch();
+          batched = 0;
+        }
+      } catch (e) {
+        errors.push({ uid: doc.id, error: String(e.message || e) });
+      }
+    }
+
+    if (batched > 0) await batch.commit();
+
+    try {
+      await db.collection("admin_audit_log").add({
+        action: "migrate_user_roles",
+        dryRun,
+        scanned,
+        migrated,
+        skipped,
+        errorCount: errors.length,
+        errorSamples: errors.slice(0, 10),
+        adminUid: request.auth.uid,
+        adminName: request.auth.token?.name || request.auth.token?.email || "מנהל",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (_) {
+      // Audit log best-effort; don't fail the whole migration on logging.
+    }
+
+    console.log(
+      `[migrateUserRoles] dryRun=${dryRun} scanned=${scanned} ` +
+      `migrated=${migrated} skipped=${skipped} errors=${errors.length}`,
+    );
+
+    return { scanned, migrated, skipped, errors: errors.length, dryRun };
   }
 );
 
@@ -9258,3 +9495,2277 @@ exports.expireOpenTasks = onSchedule(
     console.log(`[expireOpenTasks] expired ${snap.size} tasks`);
   },
 );
+// Phase 3 CF additions (appended to index.js).
+// See section "PHASE 3 — PROACTIVE TICKETS + SMART ROUTING".
+
+const ROUTING_CONFIG_DEFAULTS = Object.freeze({
+  enableCategoryMatch: true,
+  enableLanguageMatch: true,
+  enableLoadBalancing: true,
+  enableVipRouting: true,
+  vipTrustThreshold: 90,
+  defaultMaxConcurrent: 5,
+  enableProviderNoConfirm: true,
+  providerNoConfirmMinutes: 30,
+  enableProviderLate: true,
+  providerLateMinutes: 15,
+  enableProviderCancelled: true,
+  enablePaymentFailed: true,
+  paymentFailedMinutes: 60,
+});
+
+async function _loadRoutingConfig() {
+  try {
+    const snap = await admin
+      .firestore()
+      .doc("platform_settings/routing_config")
+      .get();
+    const data = snap.exists ? snap.data() : {};
+    return Object.assign({}, ROUTING_CONFIG_DEFAULTS, data);
+  } catch (e) {
+    console.warn("[routing] config load failed, using defaults:", e.message);
+    return ROUTING_CONFIG_DEFAULTS;
+  }
+}
+
+async function _pickAgentForTicket(ticketId, ticketData, config) {
+  const db = admin.firestore();
+
+  let customer = {};
+  const userId = ticketData.userId;
+  if (userId) {
+    try {
+      const cSnap = await db.collection("users").doc(userId).get();
+      customer = cSnap.exists ? cSnap.data() : {};
+    } catch (_) {}
+  }
+  const customerTrust = Number(customer.trustScore || 0);
+  const customerLang =
+    customer.preferredLanguage || customer.language || "he";
+  const vip =
+    config.enableVipRouting && customerTrust >= config.vipTrustThreshold;
+
+  let candidates = [];
+  try {
+    const agentsSnap = await db
+      .collection("users")
+      .where("role", "==", "support_agent")
+      .limit(100)
+      .get();
+    candidates = agentsSnap.docs.map(function (d) {
+      return { uid: d.id, data: d.data() || {} };
+    });
+  } catch (e) {
+    console.warn("[routing] agents query failed:", e.message);
+    return { assignedTo: null, reason: "agents_query_failed" };
+  }
+
+  if (candidates.length === 0) {
+    return { assignedTo: null, reason: "no_agents" };
+  }
+
+  const loads = {};
+  if (config.enableLoadBalancing) {
+    try {
+      const openSnap = await db
+        .collection("support_tickets")
+        .where("status", "in", ["open", "in_progress"])
+        .limit(500)
+        .get();
+      for (const d of openSnap.docs) {
+        const a = d.data().assignedTo;
+        if (a) loads[a] = (loads[a] || 0) + 1;
+      }
+    } catch (_) {}
+  }
+
+  const category = (ticketData.category || "").toString().toLowerCase();
+  const scored = candidates.map(function (c) {
+    const profile = c.data.agentProfile || {};
+    const tier = profile.tier || "agent";
+    const specialties = Array.isArray(profile.specialties)
+      ? profile.specialties.map(function (s) {
+          return String(s).toLowerCase();
+        })
+      : [];
+    const languages = Array.isArray(profile.languages)
+      ? profile.languages.map(function (l) {
+          return String(l).toLowerCase();
+        })
+      : [];
+    const maxConcurrent = Number(
+      profile.maxConcurrentTickets || config.defaultMaxConcurrent,
+    );
+    const openLoad = loads[c.uid] || 0;
+    const isOnline = profile.isOnline === true;
+
+    let score = 0;
+    const reasons = [];
+
+    if (vip && (tier === "senior_agent" || tier === "team_lead")) {
+      score += 1000;
+      reasons.push("vip");
+    }
+    if (
+      config.enableCategoryMatch &&
+      category &&
+      specialties.indexOf(category) !== -1
+    ) {
+      score += 100;
+      reasons.push("category");
+    }
+    if (config.enableLanguageMatch && languages.indexOf(customerLang) !== -1) {
+      score += 40;
+      reasons.push("language");
+    }
+    if (isOnline) {
+      score += 25;
+      reasons.push("online");
+    }
+    if (config.enableLoadBalancing) {
+      score -= openLoad * 5;
+    }
+    const overCap = openLoad >= maxConcurrent;
+    return {
+      uid: c.uid,
+      name: c.data.name || c.data.email || c.uid,
+      score: score,
+      overCap: overCap,
+      isOnline: isOnline,
+      load: openLoad,
+      reasons: reasons,
+    };
+  });
+
+  let pool = scored.filter(function (s) {
+    return !s.overCap;
+  });
+  if (pool.length === 0) pool = scored;
+
+  const online = pool.filter(function (s) {
+    return s.isOnline;
+  });
+  if (online.length > 0) pool = online;
+
+  pool.sort(function (a, b) {
+    return b.score - a.score;
+  });
+  const winner = pool[0];
+  if (!winner) return { assignedTo: null, reason: "no_match" };
+
+  return {
+    assignedTo: winner.uid,
+    assignedToName: winner.name,
+    reason: winner.reasons.join("+") || "fallback",
+    score: winner.score,
+  };
+}
+
+exports.onTicketCreatedAutoRoute = onDocumentCreated(
+  "support_tickets/{ticketId}",
+  async (event) => {
+    const data = (event.data && event.data.data()) || {};
+    const ticketId = event.params.ticketId;
+    if (data.assignedTo) return;
+    const config = await _loadRoutingConfig();
+    const pick = await _pickAgentForTicket(ticketId, data, config);
+    if (!pick.assignedTo) {
+      console.log(
+        "[routeTicket] " + ticketId + " -> unassigned (" + pick.reason + ")",
+      );
+      return;
+    }
+    try {
+      await admin
+        .firestore()
+        .doc("support_tickets/" + ticketId)
+        .update({
+          assignedTo: pick.assignedTo,
+          assignedToName: pick.assignedToName,
+          routedAt: admin.firestore.FieldValue.serverTimestamp(),
+          routingReason: pick.reason,
+          routingScore: typeof pick.score === "number" ? pick.score : null,
+        });
+      console.log(
+        "[routeTicket] " +
+          ticketId +
+          " -> " +
+          pick.assignedTo +
+          " (" +
+          pick.reason +
+          ")",
+      );
+    } catch (e) {
+      console.error("[routeTicket] update failed:", e.message);
+    }
+  },
+);
+
+exports.routeTicket = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Authentication required.");
+  }
+  const ticketId = request.data && request.data.ticketId;
+  if (!ticketId || typeof ticketId !== "string") {
+    throw new HttpsError("invalid-argument", "ticketId required.");
+  }
+  const callerSnap = await admin
+    .firestore()
+    .doc("users/" + request.auth.uid)
+    .get();
+  const c = callerSnap.data() || {};
+  const roles = Array.isArray(c.roles) ? c.roles : [];
+  const isStaff =
+    c.isAdmin === true ||
+    c.role === "admin" ||
+    c.role === "support_agent" ||
+    roles.indexOf("admin") !== -1 ||
+    roles.indexOf("support_agent") !== -1;
+  if (!isStaff) {
+    throw new HttpsError("permission-denied", "Staff only.");
+  }
+
+  const ref = admin.firestore().doc("support_tickets/" + ticketId);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new HttpsError("not-found", "Ticket " + ticketId + " not found.");
+  }
+  const config = await _loadRoutingConfig();
+  const pick = await _pickAgentForTicket(ticketId, snap.data(), config);
+  await ref.update({
+    assignedTo: pick.assignedTo || null,
+    assignedToName: pick.assignedToName || null,
+    routedAt: admin.firestore.FieldValue.serverTimestamp(),
+    routingReason: pick.reason,
+    routingScore: typeof pick.score === "number" ? pick.score : null,
+  });
+  return {
+    success: true,
+    assignedTo: pick.assignedTo || null,
+    reason: pick.reason,
+  };
+});
+
+exports.proactiveSlaMonitor = onSchedule(
+  {
+    schedule: "every 5 minutes",
+    timeoutSeconds: 300,
+    memory: "512MiB",
+  },
+  async () => {
+    const config = await _loadRoutingConfig();
+    if (!config.enableProviderNoConfirm) {
+      console.log("[proactive] provider-no-confirm disabled via config");
+      return;
+    }
+    const db = admin.firestore();
+    const now = Date.now();
+    const windowMs = (config.providerNoConfirmMinutes || 30) * 60 * 1000;
+    const cutoff = admin.firestore.Timestamp.fromMillis(now - windowMs);
+
+    let jobs;
+    try {
+      jobs = await db
+        .collection("jobs")
+        .where("status", "==", "paid_escrow")
+        .where("createdAt", "<=", cutoff)
+        .limit(100)
+        .get();
+    } catch (e) {
+      console.error("[proactive] jobs query failed:", e.message);
+      return;
+    }
+
+    let created = 0;
+    let skipped = 0;
+
+    for (const d of jobs.docs) {
+      const j = d.data() || {};
+      if (
+        j.expertOnWay === true ||
+        j.workStartedAt != null ||
+        j.providerFirstMessageAt != null
+      ) {
+        skipped++;
+        continue;
+      }
+      const existing = await db
+        .collection("support_tickets")
+        .where("jobId", "==", d.id)
+        .where("trigger", "==", "provider_no_confirm")
+        .limit(1)
+        .get();
+      if (!existing.empty) {
+        skipped++;
+        continue;
+      }
+
+      const ticketRef = db.collection("support_tickets").doc();
+      const batch = db.batch();
+      batch.set(ticketRef, {
+        type: "proactive",
+        trigger: "provider_no_confirm",
+        autoActions: ["notified_customer"],
+        userId: j.customerId,
+        userName: j.customerName || "",
+        providerId: j.expertId,
+        providerName: j.expertName || "",
+        jobId: d.id,
+        category: j.category || "other",
+        subject:
+          "נותן השירות לא אישר את ההזמנה (" +
+          config.providerNoConfirmMinutes +
+          " דקות)",
+        status: "open",
+        priority: "high",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      const msgRef = ticketRef.collection("messages").doc();
+      batch.set(msgRef, {
+        senderId: "system",
+        senderName: "מערכת",
+        isAdmin: true,
+        isInternal: false,
+        channel: "customer",
+        message:
+          "שמנו לב שנותן השירות עוד לא אישר את ההזמנה שלך. " +
+          "סוכן תמיכה ייצור איתך קשר בהקדם כדי לעזור.",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      if (j.customerId) {
+        const notifRef = db.collection("notifications").doc();
+        batch.set(notifRef, {
+          userId: j.customerId,
+          type: "proactive_support",
+          title: "פתחנו בירור על ההזמנה שלך",
+          body:
+            "נותן השירות עוד לא אישר - סוכן תמיכה מטפל בזה ויחזור אליך בקרוב.",
+          isRead: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      try {
+        await batch.commit();
+        created++;
+      } catch (e) {
+        console.error("[proactive] commit failed for job", d.id, e.message);
+      }
+    }
+    console.log(
+      "[proactive] provider_no_confirm scanned=" +
+        jobs.size +
+        " created=" +
+        created +
+        " skipped=" +
+        skipped,
+    );
+  },
+);
+
+exports.onJobPaymentFailedProactive = onDocumentUpdated(
+  "jobs/{jobId}",
+  async (event) => {
+    const before = (event.data && event.data.before && event.data.before.data()) || {};
+    const after = (event.data && event.data.after && event.data.after.data()) || {};
+    if (before.status === after.status) return;
+    if (after.status !== "payment_failed") return;
+
+    const config = await _loadRoutingConfig();
+    if (!config.enablePaymentFailed) return;
+
+    const db = admin.firestore();
+    const jobId = event.params.jobId;
+
+    const existing = await db
+      .collection("support_tickets")
+      .where("jobId", "==", jobId)
+      .where("trigger", "==", "payment_failed")
+      .limit(1)
+      .get();
+    if (!existing.empty) return;
+
+    await db.collection("support_tickets").add({
+      type: "proactive",
+      trigger: "payment_failed",
+      autoActions: ["notified_customer"],
+      userId: after.customerId,
+      userName: after.customerName || "",
+      providerId: after.expertId,
+      providerName: after.expertName || "",
+      jobId: jobId,
+      category: after.category || "payments",
+      subject: "תשלום נכשל - נדרש מעקב",
+      status: "open",
+      priority: "urgent",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    console.log("[proactive] payment_failed ticket created for job " + jobId);
+  },
+);
+// Phase 4 — SLA Escalation + KPI aggregation (appended to index.js).
+
+const ESCALATION_DEFAULTS = Object.freeze({
+  enableStage1: true,
+  stage1Minutes: 3,
+  enableStage2: true,
+  stage2Minutes: 7,
+  enableStage3: true,
+  stage3Minutes: 15,
+});
+
+async function _loadEscalationConfig() {
+  try {
+    const snap = await admin
+      .firestore()
+      .doc("platform_settings/escalation_config")
+      .get();
+    const data = snap.exists ? snap.data() : {};
+    return Object.assign({}, ESCALATION_DEFAULTS, data);
+  } catch (e) {
+    console.warn("[escalation] config load failed:", e.message);
+    return ESCALATION_DEFAULTS;
+  }
+}
+
+// ── checkSLA ────────────────────────────────────────────────────────────────
+// Runs every minute. Finds open/in_progress tickets past each escalation
+// threshold that haven't received an agent reply, and advances them through
+// the 3-stage pipeline:
+//   stage 1 (3 min)  -> notify assigned agent
+//   stage 2 (7 min)  -> reassign to a senior agent
+//   stage 3 (15 min) -> notify admin + mark slaFailed
+//
+// Idempotent via `slaStage` on the ticket doc — each stage only fires once.
+exports.checkSLA = onSchedule(
+  {
+    schedule: "every 1 minutes",
+    timeoutSeconds: 300,
+    memory: "256MiB",
+  },
+  async () => {
+    const config = await _loadEscalationConfig();
+    const db = admin.firestore();
+    const now = Date.now();
+
+    // Tickets that could potentially need escalation.
+    let snap;
+    try {
+      snap = await db
+        .collection("support_tickets")
+        .where("status", "in", ["open", "in_progress"])
+        .limit(500)
+        .get();
+    } catch (e) {
+      console.error("[checkSLA] query failed:", e.message);
+      return;
+    }
+
+    let s1 = 0;
+    let s2 = 0;
+    let s3 = 0;
+
+    for (const doc of snap.docs) {
+      const t = doc.data() || {};
+      // SLA clock: agent hasn't replied since ticket opened.
+      if (t.lastAgentMessageAt) continue;
+      const created = t.createdAt;
+      if (!created || typeof created.toMillis !== "function") continue;
+      const ageMin = (now - created.toMillis()) / 60000;
+
+      const currentStage = Number(t.slaStage || 0);
+
+      // Stage 3 — alert admin and mark SLA failed
+      if (
+        config.enableStage3 &&
+        ageMin >= config.stage3Minutes &&
+        currentStage < 3
+      ) {
+        try {
+          await doc.ref.update({
+            slaStage: 3,
+            slaFailed: true,
+            priority: "urgent",
+            escalatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          // Notify all admins.
+          const admins = await db
+            .collection("users")
+            .where("isAdmin", "==", true)
+            .limit(20)
+            .get();
+          const batch = db.batch();
+          for (const a of admins.docs) {
+            const nref = db.collection("notifications").doc();
+            batch.set(nref, {
+              userId: a.id,
+              type: "sla_breach_critical",
+              title: "🚨 SLA הופר",
+              body:
+                "פנייה " +
+                doc.id +
+                " ללא מענה מעל " +
+                config.stage3Minutes +
+                " דקות",
+              ticketId: doc.id,
+              isRead: false,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+          try {
+            await batch.commit();
+          } catch (_) {}
+          s3++;
+        } catch (e) {
+          console.warn("[checkSLA] stage3 failed for", doc.id, e.message);
+        }
+        continue; // already at top stage
+      }
+
+      // Stage 2 — reassign to a senior agent
+      if (
+        config.enableStage2 &&
+        ageMin >= config.stage2Minutes &&
+        currentStage < 2
+      ) {
+        try {
+          // Find an online senior/team_lead with spare capacity.
+          const seniorsSnap = await db
+            .collection("users")
+            .where("role", "==", "support_agent")
+            .limit(100)
+            .get();
+          const seniors = [];
+          for (const a of seniorsSnap.docs) {
+            const d = a.data() || {};
+            const tier = (d.agentProfile && d.agentProfile.tier) || "agent";
+            if (tier === "senior_agent" || tier === "team_lead") {
+              seniors.push({ uid: a.id, data: d });
+            }
+          }
+          let newAssignee = null;
+          if (seniors.length > 0) {
+            // Pick online first.
+            const online = seniors.filter(
+              (s) => s.data.agentProfile && s.data.agentProfile.isOnline === true,
+            );
+            newAssignee = online[0] || seniors[0];
+          }
+
+          const updates = {
+            slaStage: 2,
+            priority: "high",
+            escalatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
+          if (newAssignee) {
+            updates.assignedTo = newAssignee.uid;
+            updates.assignedToName =
+              newAssignee.data.name ||
+              newAssignee.data.email ||
+              newAssignee.uid;
+            updates.routingReason = "sla_escalation";
+
+            // Notify the new assignee.
+            await db.collection("notifications").add({
+              userId: newAssignee.uid,
+              type: "sla_escalated_to_you",
+              title: "🔥 פנייה הוקצתה לך (הסלמת SLA)",
+              body: "פנייה " + doc.id + " — " + (t.subject || ""),
+              ticketId: doc.id,
+              isRead: false,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+          await doc.ref.update(updates);
+          s2++;
+        } catch (e) {
+          console.warn("[checkSLA] stage2 failed for", doc.id, e.message);
+        }
+        continue;
+      }
+
+      // Stage 1 — alert the currently assigned agent
+      if (
+        config.enableStage1 &&
+        ageMin >= config.stage1Minutes &&
+        currentStage < 1
+      ) {
+        try {
+          await doc.ref.update({
+            slaStage: 1,
+            priority: "high",
+          });
+          if (t.assignedTo) {
+            await db.collection("notifications").add({
+              userId: t.assignedTo,
+              type: "sla_alert_agent",
+              title: "⏰ תזכורת SLA",
+              body:
+                "פנייה " +
+                doc.id +
+                " ממתינה " +
+                Math.round(ageMin) +
+                " דקות — ענה בהקדם",
+              ticketId: doc.id,
+              isRead: false,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+          s1++;
+        } catch (e) {
+          console.warn("[checkSLA] stage1 failed for", doc.id, e.message);
+        }
+      }
+    }
+
+    if (s1 + s2 + s3 > 0) {
+      console.log(
+        "[checkSLA] stage1=" + s1 + " stage2=" + s2 + " stage3=" + s3,
+      );
+    }
+  },
+);
+
+// ── aggregateKPI ────────────────────────────────────────────────────────────
+// Runs daily at 00:05 UTC. Scans yesterday's ticket activity and writes a
+// per-agent rollup to agent_kpi/{YYYY-MM-DD}_{agentUid} with:
+//   ticketsClosed, avgResponseSeconds, csatAvg, firstContactResolution,
+//   botHandoffs.
+//
+// Also writes an aggregate team doc at agent_kpi/{YYYY-MM-DD}_team.
+exports.aggregateKPI = onSchedule(
+  {
+    schedule: "5 0 * * *", // 00:05 every day
+    timeZone: "Asia/Jerusalem",
+    timeoutSeconds: 540,
+    memory: "512MiB",
+  },
+  async () => {
+    const db = admin.firestore();
+
+    // Compute yesterday in local (Jerusalem) calendar terms — store as YYYY-MM-DD
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dateKey =
+      yesterday.getUTCFullYear() +
+      "-" +
+      String(yesterday.getUTCMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(yesterday.getUTCDate()).padStart(2, "0");
+
+    const start = new Date(yesterday);
+    start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(yesterday);
+    end.setUTCHours(23, 59, 59, 999);
+    const startTs = admin.firestore.Timestamp.fromDate(start);
+    const endTs = admin.firestore.Timestamp.fromDate(end);
+
+    // Closed tickets in the window.
+    let closedSnap;
+    try {
+      closedSnap = await db
+        .collection("support_tickets")
+        .where("closedAt", ">=", startTs)
+        .where("closedAt", "<=", endTs)
+        .limit(1000)
+        .get();
+    } catch (e) {
+      console.error("[aggregateKPI] closedAt query failed:", e.message);
+      return;
+    }
+
+    const perAgent = {}; // agentUid -> {closed, csatSum, csatCount, respSum, respCount, botHandoffs, reassigned}
+
+    for (const d of closedSnap.docs) {
+      const t = d.data() || {};
+      const agent = t.closedBy || t.assignedTo;
+      if (!agent) continue;
+      const bucket = perAgent[agent] || {
+        ticketsClosed: 0,
+        csatSum: 0,
+        csatCount: 0,
+        respSum: 0,
+        respCount: 0,
+        botHandoffs: 0,
+        reassigned: 0,
+      };
+      bucket.ticketsClosed++;
+      const csat = Number(t.csatRating || 0);
+      if (csat > 0) {
+        bucket.csatSum += csat;
+        bucket.csatCount++;
+      }
+      // Response time: createdAt -> lastAgentMessageAt (approx).
+      const created = t.createdAt;
+      const firstReply = t.lastAgentMessageAt;
+      if (created && firstReply) {
+        const sec =
+          (firstReply.toMillis() - created.toMillis()) / 1000;
+        if (sec > 0 && sec < 3600 * 48) {
+          bucket.respSum += sec;
+          bucket.respCount++;
+        }
+      }
+      if (t.type === "bot_escalation") bucket.botHandoffs++;
+      if ((t.slaStage || 0) >= 2) bucket.reassigned++;
+      perAgent[agent] = bucket;
+    }
+
+    const batch = db.batch();
+    let teamClosed = 0;
+    let teamCsatSum = 0;
+    let teamCsatCount = 0;
+    let teamRespSum = 0;
+    let teamRespCount = 0;
+    let teamBot = 0;
+    let teamReassigned = 0;
+
+    for (const agentUid of Object.keys(perAgent)) {
+      const b = perAgent[agentUid];
+      const avgResp = b.respCount > 0 ? b.respSum / b.respCount : null;
+      const csatAvg = b.csatCount > 0 ? b.csatSum / b.csatCount : null;
+      const fcr =
+        b.ticketsClosed > 0
+          ? (b.ticketsClosed - b.reassigned) / b.ticketsClosed
+          : null;
+      const ref = db.doc("agent_kpi/" + dateKey + "_" + agentUid);
+      batch.set(ref, {
+        agentUid,
+        date: dateKey,
+        ticketsClosed: b.ticketsClosed,
+        avgResponseSeconds: avgResp,
+        csatAvg,
+        csatSampleSize: b.csatCount,
+        firstContactResolution: fcr,
+        botHandoffs: b.botHandoffs,
+        reassigned: b.reassigned,
+        computedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      teamClosed += b.ticketsClosed;
+      teamCsatSum += b.csatSum;
+      teamCsatCount += b.csatCount;
+      teamRespSum += b.respSum;
+      teamRespCount += b.respCount;
+      teamBot += b.botHandoffs;
+      teamReassigned += b.reassigned;
+    }
+
+    const teamRef = db.doc("agent_kpi/" + dateKey + "_team");
+    batch.set(teamRef, {
+      date: dateKey,
+      team: true,
+      ticketsClosed: teamClosed,
+      avgResponseSeconds:
+        teamRespCount > 0 ? teamRespSum / teamRespCount : null,
+      csatAvg: teamCsatCount > 0 ? teamCsatSum / teamCsatCount : null,
+      csatSampleSize: teamCsatCount,
+      firstContactResolution:
+        teamClosed > 0 ? (teamClosed - teamReassigned) / teamClosed : null,
+      botHandoffs: teamBot,
+      reassigned: teamReassigned,
+      computedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    try {
+      await batch.commit();
+    } catch (e) {
+      console.error("[aggregateKPI] commit failed:", e.message);
+      return;
+    }
+    console.log(
+      "[aggregateKPI] " +
+        dateKey +
+        " agents=" +
+        Object.keys(perAgent).length +
+        " closed=" +
+        teamClosed,
+    );
+  },
+);
+// Phase 5 — Self-Service Bot + Trust Score (appended to index.js).
+
+// ── handleBotConversation ───────────────────────────────────────────────────
+// Customer-facing bot. The Flutter support entry-point calls this CF with
+// the conversation history. The bot decides whether to:
+//   • answer directly (auto-resolve)
+//   • ask a clarifying question
+//   • escalate to a human agent (returns escalate=true + opens a real ticket)
+//
+// Uses Gemini 2.5 Flash Lite per spec (NOT Anthropic).
+// Body:
+//   { conversation: [{role:'user'|'bot', text:'...'}, ...],
+//     userId, language? }
+// Returns:
+//   { reply: string, suggestions?: [string],
+//     escalate: bool, ticketId?: string, autoResolved?: bool }
+exports.handleBotConversation = onCall(
+  {
+    secrets: [GEMINI_API_KEY],
+    timeoutSeconds: 60,
+    memory: "256MiB",
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+    const callerUid = request.auth.uid;
+    const data = request.data || {};
+    const conversation = Array.isArray(data.conversation)
+      ? data.conversation
+      : [];
+    const language = (data.language || "he").toString();
+    const targetUserId = data.userId || callerUid;
+
+    const geminiKey =
+      GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
+    if (!geminiKey) {
+      // Hard fallback: just escalate when AI is unavailable.
+      return {
+        reply:
+          language === "he"
+            ? "אני מעביר אותך לסוכן אנושי שיענה במהירות."
+            : "I'm connecting you to a human agent.",
+        escalate: true,
+      };
+    }
+
+    // System prompt — keep tight to control tokens. Hebrew-first.
+    const systemPrompt =
+      language === "he"
+        ? "אתה בוט תמיכה של AnySkill — שוק שירותים בישראל. תפקידך לעזור ללקוחות לפתור בעיות פשוטות ולהעביר לסוכן אנושי כל בעיה מורכבת. " +
+          "הצג תשובות קצרות וברורות בעברית. אם השאלה דורשת גישה לחשבון/כסף/בעיה עם נותן שירות — החזר escalate=true. " +
+          "החזר אך ורק JSON תקין במבנה: " +
+          '{"reply": "...", "suggestions": ["...", "..."], "escalate": true|false, "autoResolved": true|false, "intent": "order_status|password|cancel|provider_no_show|payment|other"}'
+        : "You are a support bot for AnySkill — an Israeli services marketplace. Help customers solve simple issues, escalate complex ones (account, money, provider problems) to a human. " +
+          "Reply in English. Return JSON only: " +
+          '{"reply": "...", "suggestions": ["...", "..."], "escalate": true|false, "autoResolved": true|false, "intent": "order_status|password|cancel|provider_no_show|payment|other"}';
+
+    // Build Gemini contents from conversation history.
+    const contents = conversation.map(function (m) {
+      return {
+        role: m.role === "bot" ? "model" : "user",
+        parts: [{ text: String(m.text || "") }],
+      };
+    });
+
+    let result;
+    try {
+      const url =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" +
+        geminiKey;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: contents,
+          generationConfig: {
+            temperature: 0.4,
+            maxOutputTokens: 600,
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+      if (!resp.ok) {
+        throw new Error("Gemini HTTP " + resp.status);
+      }
+      const json = await resp.json();
+      const text =
+        (json.candidates &&
+          json.candidates[0] &&
+          json.candidates[0].content &&
+          json.candidates[0].content.parts &&
+          json.candidates[0].content.parts[0] &&
+          json.candidates[0].content.parts[0].text) ||
+        "";
+      result = JSON.parse(text);
+    } catch (e) {
+      console.warn("[bot] Gemini failed:", e.message, "— escalating");
+      result = {
+        reply:
+          language === "he"
+            ? "אני מעביר אותך לסוכן אנושי שיענה במהירות."
+            : "I'm connecting you to a human agent.",
+        escalate: true,
+      };
+    }
+
+    // If escalating, create a real support ticket so an agent picks it up.
+    let ticketId;
+    if (result.escalate === true) {
+      try {
+        const userSnap = await admin
+          .firestore()
+          .collection("users")
+          .doc(targetUserId)
+          .get();
+        const u = userSnap.data() || {};
+        const intent = result.intent || "other";
+
+        // Reconstruct a synopsis of the bot conversation as the first message.
+        const synopsis = conversation
+          .map(function (m) {
+            return (
+              (m.role === "user" ? "Customer" : "Bot") + ": " + (m.text || "")
+            );
+          })
+          .join("\n");
+
+        const ticketRef = await admin.firestore()
+          .collection("support_tickets")
+          .add({
+            type: "bot_escalation",
+            trigger: "bot_handoff",
+            botIntent: intent,
+            botSteps: conversation.length,
+            userId: targetUserId,
+            userName: u.name || u.email || "",
+            category: intent,
+            subject:
+              language === "he"
+                ? "פנייה מהבוט: " + intent
+                : "From bot: " + intent,
+            status: "open",
+            priority: "normal",
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        ticketId = ticketRef.id;
+
+        // Seed first internal note so the assigned agent sees the bot trail.
+        await admin.firestore()
+          .collection("support_tickets")
+          .doc(ticketId)
+          .collection("messages")
+          .add({
+            senderId: "bot",
+            senderName: "Bot",
+            isAdmin: true,
+            isInternal: true,
+            channel: "internal",
+            message: "🤖 שיחה עם הבוט:\n\n" + synopsis,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+      } catch (e) {
+        console.error("[bot] ticket creation failed:", e.message);
+      }
+    }
+
+    // Best-effort daily analytics roll-up.
+    try {
+      const today = new Date();
+      const dateKey =
+        today.getUTCFullYear() +
+        "-" +
+        String(today.getUTCMonth() + 1).padStart(2, "0") +
+        "-" +
+        String(today.getUTCDate()).padStart(2, "0");
+      const ref = admin.firestore().doc("bot_analytics/" + dateKey);
+      const incs = {
+        date: dateKey,
+        sessions: admin.firestore.FieldValue.increment(1),
+      };
+      if (result.escalate === true) {
+        incs.handoffs = admin.firestore.FieldValue.increment(1);
+      } else if (result.autoResolved === true) {
+        incs.autoResolved = admin.firestore.FieldValue.increment(1);
+      }
+      await ref.set(incs, { merge: true });
+    } catch (_) {}
+
+    return {
+      reply: result.reply || "",
+      suggestions: Array.isArray(result.suggestions) ? result.suggestions : [],
+      escalate: result.escalate === true,
+      autoResolved: result.autoResolved === true,
+      intent: result.intent || "other",
+      ticketId: ticketId,
+    };
+  },
+);
+
+// ── recalculateTrustScore ───────────────────────────────────────────────────
+// Recomputes a user's trust score 0-100 based on the spec weights:
+//   account age (10%), completed orders (20%), avg rating (25%),
+//   cancellation rate (15%), support complaints (15%),
+//   identity verified (10%), no failed payments (5%).
+//
+// Callable from the client (admin only) or invoked internally by the
+// trigger CFs below. Writes users/{uid}.trustScore + .trustScoreUpdatedAt.
+async function _computeTrustScore(uid) {
+  const db = admin.firestore();
+  const uSnap = await db.collection("users").doc(uid).get();
+  if (!uSnap.exists) return null;
+  const u = uSnap.data() || {};
+
+  // Account age — months since createdAt (or fallback to 12 months).
+  const createdAt = u.createdAt;
+  const months =
+    createdAt && typeof createdAt.toMillis === "function"
+      ? Math.max(
+          0,
+          (Date.now() - createdAt.toMillis()) / (1000 * 60 * 60 * 24 * 30),
+        )
+      : 12;
+  const ageScore = Math.min(months, 12); // up to +12
+
+  // Completed orders — orderCount or fallback 0.
+  const orders = Number(u.orderCount || 0);
+  const ordersScore = Math.min(orders * 0.5, 20); // up to +20
+
+  // Avg rating — 0..5 → 0..25.
+  const rating = Number(u.rating || 0);
+  const ratingScore = Math.min(rating * 5, 25); // 5 stars * 5 = 25
+
+  // Cancellation count.
+  let cancellations = Number(u.cancellationCount || 0);
+  if (cancellations === 0) {
+    try {
+      const csnap = await db
+        .collection("jobs")
+        .where("expertId", "==", uid)
+        .where("cancelledBy", "==", "expert")
+        .limit(50)
+        .get();
+      cancellations = csnap.size;
+    } catch (_) {}
+  }
+  const cancelPenalty = Math.min(cancellations * 2, 15); // capped
+
+  // Support complaints — open tickets where this uid is providerId,
+  // marked as a complaint via priority=urgent.
+  let complaints = 0;
+  try {
+    const tsnap = await db
+      .collection("support_tickets")
+      .where("providerId", "==", uid)
+      .where("priority", "==", "urgent")
+      .limit(50)
+      .get();
+    complaints = tsnap.size;
+  } catch (_) {}
+  const complaintsPenalty = Math.min(complaints * 5, 15); // capped
+
+  // Identity verified.
+  const verifiedBonus = u.isVerified === true ? 10 : 0;
+
+  // Payment history — no failed payments bonus.
+  const paymentBonus = u.hasFailedPayments === true ? 0 : 5;
+
+  // Sum and clamp.
+  const score = Math.max(
+    0,
+    Math.min(
+      100,
+      Math.round(
+        ageScore +
+          ordersScore +
+          ratingScore -
+          cancelPenalty -
+          complaintsPenalty +
+          verifiedBonus +
+          paymentBonus,
+      ),
+    ),
+  );
+
+  await db.collection("users").doc(uid).update({
+    trustScore: score,
+    trustScoreUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return score;
+}
+
+exports.recalculateTrustScore = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Authentication required.");
+  }
+  if (!(await isAdminCaller(request))) {
+    throw new HttpsError("permission-denied", "Admin only.");
+  }
+  const targetUserId = request.data && request.data.targetUserId;
+  if (!targetUserId || typeof targetUserId !== "string") {
+    throw new HttpsError("invalid-argument", "targetUserId required.");
+  }
+  const score = await _computeTrustScore(targetUserId);
+  return { success: true, trustScore: score };
+});
+
+// Triggers — recompute on activity that changes the score.
+exports.onJobCompletedTrust = onDocumentUpdated(
+  "jobs/{jobId}",
+  async (event) => {
+    const before = (event.data && event.data.before && event.data.before.data()) || {};
+    const after = (event.data && event.data.after && event.data.after.data()) || {};
+    if (before.status === after.status) return;
+    if (after.status !== "completed") return;
+    // Recompute for both customer and provider.
+    if (after.customerId) {
+      try {
+        await _computeTrustScore(after.customerId);
+      } catch (_) {}
+    }
+    if (after.expertId) {
+      try {
+        await _computeTrustScore(after.expertId);
+      } catch (_) {}
+    }
+  },
+);
+
+exports.onReviewSubmittedTrust = onDocumentCreated(
+  "reviews/{reviewId}",
+  async (event) => {
+    const r = (event.data && event.data.data()) || {};
+    const target = r.revieweeId;
+    if (!target) return;
+    try {
+      await _computeTrustScore(target);
+    } catch (_) {}
+  },
+);
+
+exports.onTicketResolvedTrust = onDocumentUpdated(
+  "support_tickets/{ticketId}",
+  async (event) => {
+    const before = (event.data && event.data.before && event.data.before.data()) || {};
+    const after = (event.data && event.data.after && event.data.after.data()) || {};
+    if (before.status === after.status) return;
+    if (after.status !== "resolved" && after.status !== "closed") return;
+    // Recompute for the customer, and the provider if attached.
+    if (after.userId) {
+      try {
+        await _computeTrustScore(after.userId);
+      } catch (_) {}
+    }
+    if (after.providerId) {
+      try {
+        await _computeTrustScore(after.providerId);
+      } catch (_) {}
+    }
+  },
+);
+
+
+// ==========================================================================
+// VAULT DASHBOARD - Cloud Functions (v14.x)
+// ==========================================================================
+
+// -- Vault period helpers --------------------------------------------------
+function _vaultPeriodStart(period, now) {
+  switch (period) {
+    case "day":
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    case "week": {
+      const day = now.getDay();
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate() - day);
+    }
+    case "month":
+      return new Date(now.getFullYear(), now.getMonth(), 1);
+    case "year":
+      return new Date(now.getFullYear(), 0, 1);
+    default:
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+}
+
+function _vaultPrevPeriodStart(period, now) {
+  switch (period) {
+    case "day":
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    case "week": {
+      const day = now.getDay();
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate() - day - 7);
+    }
+    case "month":
+      return new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    case "year":
+      return new Date(now.getFullYear() - 1, 0, 1);
+    default:
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  }
+}
+
+// -- updateVaultAnalytics - hourly aggregation -----------------------------
+exports.updateVaultAnalytics = onSchedule(
+  { schedule: "every 1 hours", timeZone: "Asia/Jerusalem" },
+  async () => {
+    const db = admin.firestore();
+    const periods = ["day", "week", "month", "year"];
+    const now = new Date();
+
+    for (const period of periods) {
+      try {
+        const start = _vaultPeriodStart(period, now);
+        const prevStart = _vaultPrevPeriodStart(period, now);
+
+        const earningsSnap = await db
+          .collection("platform_earnings")
+          .where("timestamp", ">=", admin.firestore.Timestamp.fromDate(start))
+          .limit(500)
+          .get();
+
+        const prevEarningsSnap = await db
+          .collection("platform_earnings")
+          .where("timestamp", ">=", admin.firestore.Timestamp.fromDate(prevStart))
+          .where("timestamp", "<", admin.firestore.Timestamp.fromDate(start))
+          .limit(500)
+          .get();
+
+        const revenue = earningsSnap.docs.reduce(
+          (s, d) => s + (Number(d.data().amount) || 0), 0
+        );
+        const prevRevenue = prevEarningsSnap.docs.reduce(
+          (s, d) => s + (Number(d.data().amount) || 0), 0
+        );
+        const txCount = earningsSnap.docs.length;
+        const prevTxCount = prevEarningsSnap.docs.length;
+        const avgCommission = txCount > 0 ? revenue / txCount : 0;
+
+        const completedSnap = await db
+          .collection("jobs")
+          .where("status", "==", "completed")
+          .where("completedAt", ">=", admin.firestore.Timestamp.fromDate(start))
+          .limit(500)
+          .get();
+
+        const providerIds = new Set();
+        earningsSnap.docs.forEach((d) => {
+          if (d.data().sourceExpertId) providerIds.add(d.data().sourceExpertId);
+        });
+
+        const revByCategory = {};
+        earningsSnap.docs.forEach((d) => {
+          const cat = d.data().category || d.data().serviceType || "other";
+          revByCategory[cat] = (revByCategory[cat] || 0) + (Number(d.data().amount) || 0);
+        });
+
+        const dailyRevenue = {};
+        earningsSnap.docs.forEach((d) => {
+          const ts = d.data().timestamp;
+          if (!ts) return;
+          const dt = ts.toDate();
+          const key = dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0") + "-" + String(dt.getDate()).padStart(2, "0");
+          if (!dailyRevenue[key]) dailyRevenue[key] = { date: key, revenue: 0, transactions: 0 };
+          dailyRevenue[key].revenue += Number(d.data().amount) || 0;
+          dailyRevenue[key].transactions += 1;
+        });
+
+        const hourlyActivity = new Array(24).fill(0);
+        earningsSnap.docs.forEach((d) => {
+          const ts = d.data().timestamp;
+          if (ts) hourlyActivity[ts.toDate().getHours()]++;
+        });
+
+        const cancelledSnap = await db
+          .collection("jobs")
+          .where("status", "in", ["cancelled", "cancelled_with_penalty"])
+          .where("createdAt", ">=", admin.firestore.Timestamp.fromDate(start))
+          .limit(200)
+          .get();
+
+        const totalJobs = completedSnap.docs.length + cancelledSnap.docs.length;
+        const completionRate = totalJobs > 0 ? completedSnap.docs.length / totalJobs * 100 : 100;
+        const revenueGrowth = prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue * 100) : (revenue > 0 ? 100 : 0);
+
+        const growthScore = Math.min(100, Math.max(0, (revenueGrowth + 100) / 3));
+        const retentionScore = Math.min(100, Math.max(0, completionRate));
+        const diversityScore = Math.min(100, providerIds.size / 50 * 100);
+        const healthTotal = growthScore * 0.3 + retentionScore * 0.3 + 80 * 0.2 + diversityScore * 0.2;
+
+        const dailyArr = Object.values(dailyRevenue).sort((a, b) => a.date.localeCompare(b.date));
+        let forecastLow = 0, forecastHigh = 0, confidence = 0;
+        if (dailyArr.length >= 3) {
+          const vals = dailyArr.map((d) => d.revenue);
+          const avgDaily = vals.reduce((s, v) => s + v, 0) / vals.length;
+          const daysRemaining = period === "month" ? 30 - dailyArr.length : 7;
+          forecastLow = Math.round((revenue + avgDaily * daysRemaining) * 0.85);
+          forecastHigh = Math.round((revenue + avgDaily * daysRemaining) * 1.15);
+          confidence = Math.min(90, Math.round(dailyArr.length / 14 * 100));
+        }
+
+        await db.collection("vault_analytics").doc(period).set({
+          period,
+          revenue: roundNIS(revenue),
+          transaction_count: txCount,
+          avg_commission: roundNIS(avgCommission),
+          active_providers: providerIds.size,
+          completed_jobs: completedSnap.docs.length,
+          cancelled_jobs: cancelledSnap.docs.length,
+          revenue_change_percent: roundNIS(revenueGrowth),
+          previous_period: {
+            revenue: roundNIS(prevRevenue),
+            transaction_count: prevTxCount,
+          },
+          revenue_by_category: revByCategory,
+          daily_revenue: Object.values(dailyRevenue),
+          hourly_activity: hourlyActivity,
+          health_score: {
+            total: Math.round(healthTotal),
+            growth: Math.round(growthScore),
+            retention: Math.round(retentionScore),
+            settlement: 80,
+            diversity: Math.round(diversityScore),
+          },
+          forecast: {
+            monthly_low: forecastLow,
+            monthly_high: forecastHigh,
+            confidence_percent: confidence,
+          },
+          last_updated: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        console.log("Vault analytics updated: " + period);
+      } catch (err) {
+        console.error("Vault analytics error (" + period + "):", err);
+      }
+    }
+  }
+);
+
+// -- generateVaultAlerts - hourly smart alerts -----------------------------
+exports.generateVaultAlerts = onSchedule(
+  { schedule: "every 1 hours", timeZone: "Asia/Jerusalem" },
+  async () => {
+    const db = admin.firestore();
+    try {
+      const alerts = [];
+
+      const cutoff48h = new Date(Date.now() - 48 * 60 * 60 * 1000);
+      const stuckSnap = await db
+        .collection("jobs")
+        .where("status", "==", "paid_escrow")
+        .where("createdAt", "<", admin.firestore.Timestamp.fromDate(cutoff48h))
+        .limit(10)
+        .get();
+
+      for (const doc of stuckSnap.docs) {
+        const existing = await db
+          .collection("vault_alerts")
+          .where("related_id", "==", doc.id)
+          .where("type", "==", "warning")
+          .limit(1)
+          .get();
+        if (existing.empty) {
+          alerts.push({
+            type: "warning",
+            severity: "warning",
+            title: "עסקה תקועה",
+            message: "הזמנה " + doc.id.substring(0, 8) + " באסקרו יותר מ-48 שעות",
+            related_id: doc.id,
+          });
+        }
+      }
+
+      const monthDoc = await db.collection("vault_analytics").doc("month").get();
+      if (monthDoc.exists) {
+        const rev = monthDoc.data().revenue || 0;
+        for (const m of [100, 500, 1000, 5000, 10000]) {
+          if (rev >= m) {
+            const mTitle = "אבן דרך: ₪" + m;
+            const existing = await db
+              .collection("vault_alerts")
+              .where("type", "==", "achievement")
+              .where("title", "==", mTitle)
+              .limit(1)
+              .get();
+            if (existing.empty) {
+              alerts.push({
+                type: "achievement",
+                severity: "info",
+                title: mTitle,
+                message: "הכנסות החודש עברו את ₪" + m + "!",
+              });
+            }
+          }
+        }
+
+        const monthData = monthDoc.data();
+        const completed = monthData.completed_jobs || 0;
+        const cancelled = monthData.cancelled_jobs || 0;
+        if (completed + cancelled > 5 && cancelled / (completed + cancelled) > 0.2) {
+          alerts.push({
+            type: "risk",
+            severity: "critical",
+            title: "שיעור ביטולים גבוה",
+            message: Math.round(cancelled / (completed + cancelled) * 100) + "% ביטולים החודש",
+          });
+        }
+      }
+
+      if (alerts.length > 0) {
+        const batch = db.batch();
+        for (const alert of alerts) {
+          const ref = db.collection("vault_alerts").doc();
+          batch.set(ref, {
+            ...alert,
+            created_at: admin.firestore.FieldValue.serverTimestamp(),
+            read: false,
+          });
+        }
+        await batch.commit();
+        console.log("Generated " + alerts.length + " vault alerts");
+      }
+    } catch (err) {
+      console.error("Vault alerts error:", err);
+    }
+  }
+);
+
+// -- updateVaultBalance - trigger on transaction writes --------------------
+exports.updateVaultBalance = onDocumentWritten(
+  "transactions/{transactionId}",
+  async () => {
+    const db = admin.firestore();
+    try {
+      const settingsDoc = await db
+        .collection("admin").doc("admin")
+        .collection("settings").doc("settings")
+        .get();
+
+      const totalPlatformBalance = settingsDoc.exists
+        ? (Number(settingsDoc.data().totalPlatformBalance) || 0)
+        : 0;
+
+      const pendingSnap = await db
+        .collection("jobs")
+        .where("status", "==", "paid_escrow")
+        .limit(200)
+        .get();
+      const pendingAmount = pendingSnap.docs.reduce(
+        (s, d) => s + (Number(d.data().commission) || 0), 0
+      );
+
+      const withdrawnSnap = await db
+        .collection("withdrawals")
+        .where("status", "==", "completed")
+        .limit(500)
+        .get();
+      const totalWithdrawn = withdrawnSnap.docs.reduce(
+        (s, d) => s + (Number(d.data().amount) || 0), 0
+      );
+
+      await db.collection("vault_balance").doc("main").set({
+        available_balance: roundNIS(totalPlatformBalance - totalWithdrawn),
+        pending_balance: roundNIS(pendingAmount),
+        total_withdrawn: roundNIS(totalWithdrawn),
+        total_platform_balance: roundNIS(totalPlatformBalance),
+        last_updated: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("Vault balance update error:", err);
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MONETIZATION v15.x — Layered commission (custom > category > global)
+// ═══════════════════════════════════════════════════════════════════════════
+// Single source of truth for "what commission should we charge on this
+// job". Used by:
+//   • getEffectiveCommission  (callable) — UI preview + simulator.
+//   • processPaymentRelease   (internal) — authoritative fee at payout.
+//   • EscrowService.payQuote  (internal) — authoritative fee at booking.
+//
+// Return shape: { percentage: 0-100 scale, source: 'custom'|'category'|'global', metadata }
+//
+// NOTE: `feePercentage` in `admin/admin/settings/settings` is stored as a
+// 0-1 fraction (0.10 = 10%). All other tables use the 0-100 UI scale.
+// This helper always returns 0-100.
+
+async function _getEffectiveCommission(userId, categoryId) {
+  const db = admin.firestore();
+
+  // Layer 3 — user-level override
+  if (userId) {
+    try {
+      const userSnap = await db.collection("users").doc(userId).get();
+      if (userSnap.exists) {
+        const custom = userSnap.data().customCommission;
+        const active = userSnap.data().customCommissionActive === true;
+        if (active && custom && typeof custom.percentage === "number") {
+          const expiresAt = custom.expiresAt;
+          const alive = !expiresAt
+            || (expiresAt.toMillis ? expiresAt.toMillis() > Date.now() : true);
+          if (alive) {
+            return {
+              percentage: Number(custom.percentage),
+              source: "custom",
+              setAt: custom.setAt || null,
+              reason: custom.reason || null,
+            };
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[getEffectiveCommission] user read failed:", err.message);
+      // Fall through to category / global — never hard-fail a payment path.
+    }
+  }
+
+  // Layer 2 — category-level override
+  if (categoryId) {
+    try {
+      const catSnap = await db
+        .collection("category_commissions").doc(categoryId).get();
+      if (catSnap.exists && typeof catSnap.data().percentage === "number") {
+        return {
+          percentage: Number(catSnap.data().percentage),
+          source: "category",
+          categoryId,
+        };
+      }
+    } catch (err) {
+      console.error("[getEffectiveCommission] category read failed:", err.message);
+    }
+  }
+
+  // Layer 1 — global default (stored as fraction — convert to percent)
+  try {
+    const settingsSnap = await db
+      .collection("admin").doc("admin")
+      .collection("settings").doc("settings").get();
+    const fraction = Number(settingsSnap.data()?.feePercentage ?? 0.10);
+    return { percentage: fraction * 100, source: "global" };
+  } catch (_) {
+    return { percentage: 10, source: "global" };
+  }
+}
+
+// Exposed for tests + in case another module loads this file directly.
+exports._getEffectiveCommissionInternal = _getEffectiveCommission;
+
+exports.getEffectiveCommission = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Authentication required.");
+  }
+  const { userId, categoryId } = request.data || {};
+  if (!userId || typeof userId !== "string") {
+    throw new HttpsError("invalid-argument", "userId is required.");
+  }
+  // Only admins may preview another user's effective commission; a
+  // non-admin may query their own.
+  if (userId !== request.auth.uid) {
+    const callerSnap = await admin.firestore()
+      .collection("users").doc(request.auth.uid).get();
+    if (!callerSnap.exists || callerSnap.data().isAdmin !== true) {
+      throw new HttpsError("permission-denied",
+        "You may only query your own effective commission.");
+    }
+  }
+  return _getEffectiveCommission(userId, categoryId || null);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MONETIZATION v15.x — detectMonetizationAnomalies (hourly)
+// ═══════════════════════════════════════════════════════════════════════════
+// Scans the last 28 days of `platform_earnings` + the `users` collection and
+// writes fresh alerts into `monetization_alerts/{alertId}`.
+//
+// Three signal types:
+//   • anomaly          — provider GMV in last 7 days ≤ 70% of avg(prior 3 weeks)
+//   • churn_risk       — VIP inactive 10+ days  /  regular provider inactive 14+
+//   • growth_opportunity — category last 7d ≥ 120% of avg(prior 3 weeks)
+//
+// Idempotent: skips entities that already have an OPEN alert of the same
+// type + entityId (open == resolved != true, detected in last 24 h).
+
+exports.detectMonetizationAnomalies = onSchedule(
+  { schedule: "every 60 minutes", region: "us-central1", timeoutSeconds: 300 },
+  async () => {
+    const db = admin.firestore();
+    const now = new Date();
+    const d28 = new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000);
+    const d7  = new Date(now.getTime() -  7 * 24 * 60 * 60 * 1000);
+    const dayMs = 24 * 60 * 60 * 1000;
+
+    // ── Load last 28 d of platform_earnings ────────────────────────────
+    const feeSnap = await db
+      .collection("platform_earnings")
+      .where("timestamp", ">=", admin.firestore.Timestamp.fromDate(d28))
+      .limit(5000)
+      .get();
+
+    // Group by provider + by category
+    const byProvider = new Map();  // uid → { last7: n, prior3w: n }
+    const byCategory = new Map();  // name → { last7: n, prior3w: n }
+
+    for (const doc of feeSnap.docs) {
+      const d = doc.data();
+      const ts = d.timestamp?.toDate?.();
+      if (!ts) continue;
+      const amount = Number(d.sourceAmount || d.amount || 0);
+      if (amount <= 0) continue;
+      const inLast7 = ts >= d7;
+      const pid = String(d.sourceExpertId || "");
+      const cat = String(d.category || "");
+
+      if (pid) {
+        const rec = byProvider.get(pid) || { last7: 0, prior3w: 0 };
+        if (inLast7) rec.last7 += amount;
+        else rec.prior3w += amount;
+        byProvider.set(pid, rec);
+      }
+      if (cat) {
+        const rec = byCategory.get(cat) || { last7: 0, prior3w: 0 };
+        if (inLast7) rec.last7 += amount;
+        else rec.prior3w += amount;
+        byCategory.set(cat, rec);
+      }
+    }
+
+    const alerts = [];
+
+    // ── Signal 1: provider GMV drop ≥ 30% ──────────────────────────────
+    // Require a minimum baseline (₪500 over prior 3 weeks) to avoid noise.
+    for (const [uid, rec] of byProvider.entries()) {
+      if (rec.prior3w < 500) continue;
+      const weeklyAvg = rec.prior3w / 3;
+      const dropPct = weeklyAvg > 0 ? (1 - rec.last7 / weeklyAvg) * 100 : 0;
+      if (dropPct >= 30) {
+        alerts.push({
+          type: "anomaly",
+          severity: dropPct >= 50 ? "high" : "medium",
+          entityType: "user",
+          entityId: uid,
+          message:
+            `GMV ירד ${dropPct.toFixed(0)}% ב-7 ימים (₪${rec.last7.toFixed(0)} מול ממוצע שבועי ₪${weeklyAvg.toFixed(0)})`,
+          suggestedAction: "review_provider",
+        });
+      }
+    }
+
+    // ── Signal 2: churn risk by inactivity ─────────────────────────────
+    const providersSnap = await db
+      .collection("users")
+      .where("isProvider", "==", true)
+      .limit(500)
+      .get();
+
+    for (const doc of providersSnap.docs) {
+      const u = doc.data();
+      const last = u.lastActiveAt?.toDate?.() || u.lastOnlineAt?.toDate?.();
+      if (!last) continue; // no data, no signal
+      const daysSince = Math.floor((now - last) / dayMs);
+      const isVip = u.isPromoted === true;
+      const threshold = isVip ? 10 : 14;
+      if (daysSince >= threshold) {
+        alerts.push({
+          type: "churn_risk",
+          severity: isVip ? "high" : "medium",
+          entityType: "user",
+          entityId: doc.id,
+          message:
+            `${u.name || "ספק"} לא התחבר ${daysSince} ימים${isVip ? " (VIP)" : ""}`,
+          suggestedAction: "send_reengagement",
+        });
+      }
+    }
+
+    // ── Signal 3: category growth opportunity ≥ 20% ────────────────────
+    for (const [cat, rec] of byCategory.entries()) {
+      if (rec.prior3w < 1000) continue;
+      const weeklyAvg = rec.prior3w / 3;
+      const growthPct = weeklyAvg > 0 ? (rec.last7 / weeklyAvg - 1) * 100 : 0;
+      if (growthPct >= 20) {
+        alerts.push({
+          type: "growth_opportunity",
+          severity: growthPct >= 40 ? "high" : "low",
+          entityType: "category",
+          entityId: cat,
+          message:
+            `קטגוריית ${cat} עלתה ${growthPct.toFixed(0)}% ב-7 ימים (₪${rec.last7.toFixed(0)} מול ממוצע ₪${weeklyAvg.toFixed(0)})`,
+          suggestedAction: "expand_category",
+        });
+      }
+    }
+
+    // ── Idempotency: dedupe against already-open alerts (last 24 h) ────
+    const openCutoff = new Date(now.getTime() - dayMs);
+    const openSnap = await db
+      .collection("monetization_alerts")
+      .where("resolved", "==", false)
+      .where("detectedAt", ">=", admin.firestore.Timestamp.fromDate(openCutoff))
+      .limit(500)
+      .get();
+
+    const openKeys = new Set(
+      openSnap.docs.map((d) => {
+        const v = d.data();
+        return `${v.type}:${v.entityType}:${v.entityId}`;
+      })
+    );
+
+    let written = 0;
+    const batch = db.batch();
+    for (const a of alerts) {
+      const key = `${a.type}:${a.entityType}:${a.entityId}`;
+      if (openKeys.has(key)) continue;
+      const ref = db.collection("monetization_alerts").doc();
+      batch.set(ref, {
+        ...a,
+        detectedAt: admin.firestore.FieldValue.serverTimestamp(),
+        resolved: false,
+      });
+      written++;
+      openKeys.add(key);
+      if (written % 400 === 0) {
+        await batch.commit();
+      }
+    }
+    if (written % 400 !== 0) await batch.commit();
+
+    console.log(
+      `[detectMonetizationAnomalies] scanned providers=${byProvider.size}, ` +
+      `categories=${byCategory.size}, candidates=${alerts.length}, wrote=${written}`
+    );
+
+    return { written, candidates: alerts.length };
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MONETIZATION v15.x — adminReleaseEscrow (admin-only force-release)
+// ═══════════════════════════════════════════════════════════════════════════
+// Admin counterpart to `processPaymentRelease`. The customer-facing
+// variant only accepts `expert_completed` jobs and the caller must be
+// the customer. Admins need to force-release `paid_escrow` jobs too
+// (resolved support tickets, skipped customer confirmations, etc.).
+//
+// Uses the commission + net split ALREADY WRITTEN on the job at booking
+// time (`job.commission`, `job.netAmountForExpert`) — so the layered
+// commission computed inside `escrow_service.dart` is preserved.
+
+exports.adminReleaseEscrow = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Authentication required.");
+  }
+  if (!(await isAdminCaller(request))) {
+    throw new HttpsError("permission-denied", "Admin access required.");
+  }
+  const { jobId, note } = request.data || {};
+  if (!jobId || typeof jobId !== "string") {
+    throw new HttpsError("invalid-argument", "jobId is required.");
+  }
+
+  const db = admin.firestore();
+  const jobRef = db.collection("jobs").doc(jobId);
+
+  let payoutAmount = 0;
+  let commissionAmount = 0;
+  let providerUid = "";
+  let customerUid = "";
+
+  await db.runTransaction(async (tx) => {
+    const jobSnap = await tx.get(jobRef);
+    if (!jobSnap.exists) {
+      throw new HttpsError("not-found", "Job not found.");
+    }
+    const job = jobSnap.data();
+
+    // Allow paid_escrow OR expert_completed. Anything else is a no-op.
+    if (job.status !== "paid_escrow" && job.status !== "expert_completed") {
+      throw new HttpsError(
+        "failed-precondition",
+        `Job status is '${job.status}', expected 'paid_escrow' or 'expert_completed'.`
+      );
+    }
+
+    providerUid = String(job.expertId || "");
+    customerUid = String(job.customerId || "");
+    payoutAmount = Number(job.netAmountForExpert || 0);
+    commissionAmount = Number(job.commission || 0);
+
+    if (!providerUid || payoutAmount <= 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Job missing expertId or netAmountForExpert — cannot release."
+      );
+    }
+
+    const providerRef = db.collection("users").doc(providerUid);
+
+    // Move money: provider pending → provider balance.
+    tx.update(providerRef, {
+      balance: admin.firestore.FieldValue.increment(payoutAmount),
+      pendingBalance:
+        admin.firestore.FieldValue.increment(-payoutAmount),
+      orderCount: admin.firestore.FieldValue.increment(1),
+    });
+
+    // Mark the platform_earnings record as released (best-effort — we
+    // don't enforce it exists since legacy rows may not).
+    // No query inside tx, so we write a fresh one for this release.
+    tx.set(db.collection("platform_earnings").doc(), {
+      jobId,
+      amount: commissionAmount,
+      sourceExpertId: providerUid,
+      type: "admin_release",
+      status: "released",
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    tx.set(db.collection("transactions").doc(), {
+      senderId: customerUid || "platform",
+      receiverId: providerUid,
+      amount: payoutAmount,
+      type: "admin_release",
+      jobId,
+      payoutStatus: "completed",
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    tx.update(jobRef, {
+      status: "completed",
+      completedAt: admin.firestore.FieldValue.serverTimestamp(),
+      resolvedBy: "admin",
+      resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      resolutionType: "admin_release",
+      adminNote: note || "",
+    });
+  });
+
+  // Audit + activity log (best-effort, outside tx)
+  try {
+    await db.collection("activity_log").add({
+      action: "admin_release_escrow",
+      category: "monetization",
+      type: "monetization_admin_release_escrow",
+      adminUid: request.auth.uid,
+      userId: request.auth.uid,
+      targetUid: providerUid,
+      detail: `שחרור escrow ${jobId} · ₪${payoutAmount.toFixed(0)} לספק`,
+      title: `שחרור escrow ע"י אדמין`,
+      payload: {
+        jobId,
+        payoutAmount,
+        commissionAmount,
+        note: note || "",
+      },
+      priority: "high",
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      expireAt: admin.firestore.Timestamp.fromDate(
+        new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      ),
+    });
+  } catch (_) {}
+
+  // Notify provider
+  try {
+    await db.collection("notifications").add({
+      userId: providerUid,
+      title: "תשלום שוחרר",
+      body: `קיבלת ₪${payoutAmount.toFixed(0)} ליתרה שלך (שוחרר ע"י האדמין).`,
+      type: "payment_released",
+      isRead: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (_) {}
+
+  return {
+    ok: true,
+    jobId,
+    payoutAmount,
+    commissionAmount,
+  };
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MONETIZATION v15.x — generateMonetizationInsight (every 6 hours)
+// ═══════════════════════════════════════════════════════════════════════════
+// Gemini 2.5 Flash Lite scans platform metrics and writes a single
+// strategic recommendation to `ai_insights/monetization`. The admin tab
+// reads that doc and lets the admin apply the recommendation with one
+// click (via the `actionType` + `actionParams` envelope).
+//
+// Why Gemini (not Claude): spec is explicit — see
+// docs/ui-specs/monetization/PROMPT_FOR_CLAUDE_CODE.md § 🔒 חובה.
+
+exports.generateMonetizationInsight = onSchedule(
+  {
+    schedule: "every 6 hours",
+    region: "us-central1",
+    timeoutSeconds: 120,
+    secrets: [GEMINI_API_KEY],
+  },
+  async () => {
+    const db = admin.firestore();
+    const now = new Date();
+    const d30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const d7  = new Date(now.getTime() -  7 * 24 * 60 * 60 * 1000);
+
+    // ── Metrics fan-out (parallel) ─────────────────────────────────────
+    const [feeSnap, alertsSnap, providersSnap, catCommSnap, settingsSnap] =
+      await Promise.all([
+        db.collection("platform_earnings")
+          .where("timestamp", ">=", admin.firestore.Timestamp.fromDate(d30))
+          .limit(3000)
+          .get(),
+        db.collection("monetization_alerts")
+          .where("resolved", "==", false)
+          .limit(200)
+          .get(),
+        db.collection("users")
+          .where("isProvider", "==", true)
+          .limit(500)
+          .get(),
+        db.collection("category_commissions").get(),
+        db.collection("admin").doc("admin")
+          .collection("settings").doc("settings").get(),
+      ]);
+
+    // ── Reduce: GMV + fee per category ─────────────────────────────────
+    const categoryMetrics = new Map();
+    let totalFee30d = 0;
+    let totalGmv30d = 0;
+    let fee7d = 0;
+    let gmv7d = 0;
+    for (const doc of feeSnap.docs) {
+      const d = doc.data();
+      const ts = d.timestamp?.toDate?.();
+      if (!ts) continue;
+      const fee = Number(d.platformFee || d.amount || 0);
+      const gmv = Number(d.sourceAmount || d.amount || 0);
+      const cat = String(d.category || "—");
+      totalFee30d += fee;
+      totalGmv30d += gmv;
+      if (ts >= d7) { fee7d += fee; gmv7d += gmv; }
+      const rec = categoryMetrics.get(cat) || {
+        fee: 0, gmv: 0, fee7d: 0, gmv7d: 0, txCount: 0,
+      };
+      rec.fee += fee;
+      rec.gmv += gmv;
+      rec.txCount += 1;
+      if (ts >= d7) { rec.fee7d += fee; rec.gmv7d += gmv; }
+      categoryMetrics.set(cat, rec);
+    }
+
+    // ── Provider activity ──────────────────────────────────────────────
+    let activeProviders = 0;
+    let dormantProviders = 0;
+    for (const doc of providersSnap.docs) {
+      const u = doc.data();
+      const last = u.lastActiveAt?.toDate?.() || u.lastOnlineAt?.toDate?.();
+      if (!last) continue;
+      const days = (now - last) / (24 * 60 * 60 * 1000);
+      if (days < 7) activeProviders++;
+      else if (days > 14) dormantProviders++;
+    }
+
+    // ── Alert summary ──────────────────────────────────────────────────
+    const alertCounts = { anomaly: 0, churn_risk: 0, growth_opportunity: 0 };
+    for (const doc of alertsSnap.docs) {
+      const t = String(doc.data().type || "");
+      if (t in alertCounts) alertCounts[t]++;
+    }
+
+    // ── Commission overview ────────────────────────────────────────────
+    const globalFraction =
+      Number(settingsSnap.data()?.feePercentage ?? 0.10);
+    const globalPct = globalFraction * 100;
+    const categoryOverrides = {};
+    catCommSnap.forEach((d) => {
+      const pct = d.data()?.percentage;
+      if (typeof pct === "number") categoryOverrides[d.id] = pct;
+    });
+    const weightedFeePct =
+      totalGmv30d > 0 ? (totalFee30d / totalGmv30d) * 100 : globalPct;
+
+    // ── Assemble Gemini prompt ─────────────────────────────────────────
+    const categoryBreakdown = [];
+    for (const [cat, m] of categoryMetrics.entries()) {
+      categoryBreakdown.push({
+        category: cat,
+        gmv30d: Math.round(m.gmv),
+        fee30d: Math.round(m.fee),
+        gmv7d: Math.round(m.gmv7d),
+        txCount30d: m.txCount,
+        override: categoryOverrides[cat] ?? null,
+      });
+    }
+    // Sort by 30-day GMV — so the model sees the biggest categories first.
+    categoryBreakdown.sort((a, b) => b.gmv30d - a.gmv30d);
+
+    const metricsJson = {
+      now: now.toISOString(),
+      global: {
+        commissionPct: globalPct,
+        weightedActualPct: Number(weightedFeePct.toFixed(2)),
+        totalFee30d: Math.round(totalFee30d),
+        totalGmv30d: Math.round(totalGmv30d),
+        fee7d: Math.round(fee7d),
+        gmv7d: Math.round(gmv7d),
+      },
+      providers: {
+        total: providersSnap.size,
+        active7d: activeProviders,
+        dormant14d: dormantProviders,
+      },
+      alerts: alertCounts,
+      categories: categoryBreakdown.slice(0, 10),
+    };
+
+    const systemPrompt =
+      "אתה מנהל מוניטיזציה של AnySkill — מרקטפלייס שירותים ישראלי. " +
+      "קיבלת תמונת מצב של הפלטפורמה (30 ימים אחרונים). " +
+      "החזר המלצה אסטרטגית אחת בלבד, בעברית, על הפעולה הטובה ביותר שאפשר לבצע עכשיו. " +
+      "עדיפות: שימור ספקים בסיכון churn > הגדלת GMV בקטגוריות צומחות > אופטימיזציה של עמלות. " +
+      "החזר אך ורק JSON תקין בסכמה:\n" +
+      '{"title":"כותרת קצרה","recommendation":"משפט פעולה קונקרטי",' +
+      '"expectedImpact":"השפעה מספרית צפויה (כולל ₪)","actionType":"adjust_category_commission|promote_provider|reduce_provider_commission|none",' +
+      '"actionParams":{"...":"..."}}\n\n' +
+      "דוגמאות ל-actionParams לפי actionType:\n" +
+      '• adjust_category_commission → {"categoryName":"שיפוצים","newPct":8}\n' +
+      '• reduce_provider_commission → {"userId":"abc","newPct":7,"reason":"שימור"}\n' +
+      '• promote_provider → {"userId":"abc"}\n' +
+      '• none → {} (אם אין פעולה מובהקת)';
+
+    let result;
+    try {
+      const geminiKey =
+        GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
+      if (!geminiKey) throw new Error("GEMINI_API_KEY not configured");
+      const url =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" +
+        geminiKey;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{
+            role: "user",
+            parts: [{
+              text: "תמונת מצב נוכחית:\n" +
+                JSON.stringify(metricsJson, null, 2),
+            }],
+          }],
+          generationConfig: {
+            temperature: 0.4,
+            maxOutputTokens: 800,
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+      if (!resp.ok) {
+        throw new Error("Gemini HTTP " + resp.status);
+      }
+      const json = await resp.json();
+      const text = json?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      result = JSON.parse(text);
+    } catch (e) {
+      console.error("[generateMonetizationInsight] Gemini failed:", e.message);
+      return { ok: false, error: e.message };
+    }
+
+    // Sanity-check the response shape.
+    const safe = {
+      title: String(result.title || "תובנת AI CEO"),
+      recommendation: String(result.recommendation || ""),
+      expectedImpact: String(result.expectedImpact || ""),
+      actionType: String(result.actionType || "none"),
+      actionParams: typeof result.actionParams === "object"
+        ? result.actionParams
+        : {},
+      model: "gemini-2.5-flash-lite",
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      applied: false,
+      // Preserve any dismissedBy/At already set — we merge rather than
+      // overwrite, so the admin's dismiss state carries across runs only
+      // until a NEW insight is generated, at which point the dismiss is
+      // cleared by the delete below.
+    };
+
+    // Clear prior dismiss flags so the fresh banner shows.
+    await db.collection("ai_insights").doc("monetization").set({
+      ...safe,
+      dismissedBy: admin.firestore.FieldValue.delete(),
+      dismissedAt: admin.firestore.FieldValue.delete(),
+    }, { merge: true });
+
+    console.log(
+      `[generateMonetizationInsight] wrote insight: ${safe.actionType} — ${safe.recommendation.substring(0, 80)}`
+    );
+    return { ok: true, actionType: safe.actionType };
+  }
+);
+
+// ==========================================================================
+// REVIEW REMINDER EMAIL - Airbnb-style daily reminder (v14.x)
+// ==========================================================================
+// Sends a daily email to customers + providers who have a completed job
+// within the last 7 days but haven't yet submitted their review.
+// Once the 7-day window closes, reviews auto-publish (lazy publish in
+// ReviewService) and reminders stop.
+//
+// Idempotency: one reminder per user per job per day (tracked in
+// review_reminders_sent collection with doc ID = jobId_userId_YYYYMMDD).
+
+exports.sendReviewReminders = onSchedule(
+  { schedule: "0 10 * * *", timeZone: "Asia/Jerusalem" },
+  async () => {
+    const db = admin.firestore();
+    try {
+      const now = new Date();
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      // Only remind after 24h grace period (give them time to review first)
+      const snap = await db
+        .collection("jobs")
+        .where("status", "==", "completed")
+        .where("completedAt", ">=", admin.firestore.Timestamp.fromDate(sevenDaysAgo))
+        .where("completedAt", "<=", admin.firestore.Timestamp.fromDate(oneDayAgo))
+        .limit(500)
+        .get();
+
+      if (snap.empty) {
+        console.log("sendReviewReminders: no pending jobs");
+        return null;
+      }
+
+      const todayKey = now.getFullYear() + "-" +
+        String(now.getMonth() + 1).padStart(2, "0") + "-" +
+        String(now.getDate()).padStart(2, "0");
+
+      let sent = 0;
+      let skipped = 0;
+
+      for (const doc of snap.docs) {
+        const job = doc.data();
+        const jobId = doc.id;
+        const clientReviewDone = job.clientReviewDone === true;
+        const providerReviewDone = job.providerReviewDone === true;
+
+        // Client needs to review the provider?
+        if (!clientReviewDone && job.customerId) {
+          const result = await _sendReviewReminderEmail({
+            db, jobId, job, todayKey,
+            userId: job.customerId,
+            otherPartyName: job.expertName || "נותן השירות",
+            isClientReview: true,
+          });
+          if (result === "sent") sent++; else skipped++;
+        }
+
+        // Provider needs to review the client?
+        if (!providerReviewDone && job.expertId) {
+          const result = await _sendReviewReminderEmail({
+            db, jobId, job, todayKey,
+            userId: job.expertId,
+            otherPartyName: job.customerName || "הלקוח",
+            isClientReview: false,
+          });
+          if (result === "sent") sent++; else skipped++;
+        }
+      }
+
+      console.log(`sendReviewReminders: sent=${sent}, skipped=${skipped}, jobs=${snap.docs.length}`);
+      return null;
+    } catch (err) {
+      console.error("sendReviewReminders error:", err);
+      return null;
+    }
+  }
+);
+
+async function _sendReviewReminderEmail({
+  db, jobId, job, todayKey, userId, otherPartyName, isClientReview,
+}) {
+  // Idempotency key: jobId_userId_YYYYMMDD
+  const reminderId = jobId + "_" + userId + "_" + todayKey;
+  const reminderRef = db.collection("review_reminders_sent").doc(reminderId);
+  const existing = await reminderRef.get();
+  if (existing.exists) return "already_sent";
+
+  // Resolve recipient email + opt-out
+  const userSnap = await db.collection("users").doc(userId).get();
+  if (!userSnap.exists) return "no_user";
+  const userData = userSnap.data();
+  const email = userData.email;
+  if (!email) return "no_email";
+  if (userData.receiveEmailReceipts === false) return "opted_out";
+
+  const userName = userData.name || "";
+  const recipientGreeting = userName ? ("היי " + userName) : "היי";
+
+  // Compute days remaining in 7-day window
+  const completedAt = job.completedAt && job.completedAt.toDate
+    ? job.completedAt.toDate()
+    : new Date();
+  const daysElapsed = Math.floor((Date.now() - completedAt.getTime()) / (24 * 60 * 60 * 1000));
+  const daysRemaining = Math.max(1, 7 - daysElapsed);
+
+  // HTML escape
+  const esc = (s) => (s || "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+
+  const reviewUrl = "https://anyskill-6fdf3.web.app/#/review?jobId=" +
+    encodeURIComponent(jobId) + "&isClientReview=" + (isClientReview ? "true" : "false");
+
+  const html = `
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head><meta charset="UTF-8">
+<style>
+  body { font-family: Arial, sans-serif; background: #f5f7fa; margin: 0; padding: 20px; direction: rtl; }
+  .card { background: #fff; border-radius: 16px; max-width: 520px; margin: 0 auto; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,.08); }
+  .header { background: linear-gradient(135deg,#6366F1,#8B5CF6); color: #fff; padding: 28px; text-align: center; }
+  .header h1 { margin: 0; font-size: 24px; font-weight: 900; }
+  .header .emoji { font-size: 44px; margin-bottom: 10px; }
+  .body { padding: 28px; color: #1F2937; }
+  .body p { line-height: 1.6; font-size: 15px; margin: 0 0 14px; }
+  .highlight { background: #FEF3C7; border-right: 4px solid #F59E0B; padding: 14px 18px; border-radius: 10px; margin: 16px 0; }
+  .btn { display: block; background: #6366F1; color: #fff !important; padding: 14px 24px; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 15px; text-align: center; margin: 24px auto 8px; max-width: 280px; }
+  .days { color: #EF4444; font-weight: bold; }
+  .footer { text-align: center; padding: 16px; background: #f9fafb; color: #bbb; font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <div class="emoji">⭐</div>
+    <h1>איך הייתה החוויה שלך?</h1>
+  </div>
+  <div class="body">
+    <p>${esc(recipientGreeting)},</p>
+    <p>עדיין לא הגבת על חוות הדעת של <strong>${esc(otherPartyName)}</strong>.</p>
+    <p>שיתוף החוויה שלך עוזר לקהילה של AnySkill לקבל החלטות טובות יותר — וזה לוקח פחות מדקה.</p>
+    <div class="highlight">
+      <strong>⏰ נותרו <span class="days">${daysRemaining} ימים</span></strong><br>
+      <span style="font-size: 13px; color: #6B7280;">אחרי 7 ימים החלון נסגר וחוות הדעת תתפרסם אוטומטית.</span>
+    </div>
+    <a href="${reviewUrl}" class="btn">כתוב חוות דעת עכשיו</a>
+    <p style="font-size: 12px; color: #9CA3AF; text-align: center; margin-top: 20px;">
+      לא רוצה לקבל תזכורות? ניתן לבטל בדף הפרופיל.
+    </p>
+  </div>
+  <div class="footer">AnySkill &bull; מסמך נשלח אוטומטית</div>
+</div>
+</body></html>`;
+
+  const subject = "⭐ היי — עדיין לא הגבת על " + otherPartyName;
+
+  // Queue the email + mark as sent atomically
+  const batch = db.batch();
+  batch.set(db.collection("mail").doc(), {
+    to: [email],
+    message: { subject, html },
+  });
+  batch.set(reminderRef, {
+    jobId,
+    userId,
+    sentAt: admin.firestore.FieldValue.serverTimestamp(),
+    dayKey: todayKey,
+    isClientReview,
+    expireAt: admin.firestore.Timestamp.fromDate(
+      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    ),
+  });
+  await batch.commit();
+  return "sent";
+}
