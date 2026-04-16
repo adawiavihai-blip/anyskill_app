@@ -9153,12 +9153,45 @@ exports.backfillPhonesToAuth = onCall(
 // any). Used by otp_screen to detect "new Auth uid but legacy user doc
 // exists" — a sign the backfill hasn't run yet for this user.
 //
-// Auth not required — this is a pre-signup lookup. Returns nothing
-// sensitive (just a uid string) so it's safe to leave open; but we limit
-// to one result and require an exact phone match.
+// Auth not required — pre-signup lookup. Rate-limited per IP to prevent
+// phone-number enumeration attacks. After the limit is hit, returns
+// honeypot "not found" responses so the attacker cannot distinguish
+// rate-limited from genuine misses.
+const _phoneLookupBuckets = new Map(); // ip → {count, resetAt}
+const _PHONE_LOOKUP_MAX = 10;          // max requests per window
+const _PHONE_LOOKUP_WINDOW_MS = 60_000; // 1 minute
+
 exports.lookupLegacyUidByPhone = onCall(
   { region: "us-central1" },
   async (request) => {
+    // ── IP-based rate limit ──
+    const ip = request.rawRequest?.ip || request.rawRequest?.headers?.["x-forwarded-for"] || "unknown";
+    const now = Date.now();
+    let bucket = _phoneLookupBuckets.get(ip);
+    if (!bucket || now > bucket.resetAt) {
+      bucket = { count: 0, resetAt: now + _PHONE_LOOKUP_WINDOW_MS };
+      _phoneLookupBuckets.set(ip, bucket);
+    }
+    bucket.count++;
+
+    if (bucket.count > _PHONE_LOOKUP_MAX) {
+      // Honeypot: return fake "not found" instead of 429, so attacker
+      // cannot tell they've been blocked.
+      const db = admin.firestore();
+      try {
+        db.collection("activity_log").add({
+          type: "rate_limit_phone_lookup",
+          ip,
+          count: bucket.count,
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          expireAt: admin.firestore.Timestamp.fromDate(
+            new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+          ),
+        });
+      } catch (_) { /* best-effort logging */ }
+      return { found: false };
+    }
+
     const phone = _normalizeE164(request.data?.phone);
     if (!phone || phone.length < 10) {
       throw new HttpsError("invalid-argument", "Invalid phone.");
