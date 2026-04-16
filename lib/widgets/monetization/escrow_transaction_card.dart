@@ -43,7 +43,7 @@ class EscrowTransactionCard extends StatelessWidget {
 
   String get _createdAtLabel {
     final ts = data['createdAt'];
-    if (ts is Timestamp) return DateFormat('dd/MM HH:mm').format(ts.toDate());
+    if (ts is Timestamp) return DateFormat('dd/MM HH:mm', 'he').format(ts.toDate());
     return '—';
   }
 

@@ -201,8 +201,8 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
           .limit(500)
           .get();
 
-      final fmt      = DateFormat('dd/MM/yyyy HH:mm');
-      final now      = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
+      final fmt      = DateFormat('dd/MM/yyyy HH:mm', 'he');
+      final now      = DateFormat('dd/MM/yyyy HH:mm', 'he').format(DateTime.now());
       final sb       = StringBuffer();
       sb.write('\uFEFF');  // UTF-8 BOM for Excel Hebrew
       sb.writeln('AnySkill — Financial Intelligence Report');
@@ -229,7 +229,7 @@ class _SystemWalletScreenState extends State<SystemWalletScreen> {
 
       triggerCsvDownload(
         sb.toString(),
-        'anyskill_intelligence_${DateFormat('yyyyMMdd').format(DateTime.now())}.csv',
+        'anyskill_intelligence_${DateFormat('yyyyMMdd', 'he').format(DateTime.now())}.csv',
       );
 
       if (mounted) _snack('דוח יוצא — ${snapshot.docs.length} רשומות', _kGreen);
@@ -881,7 +881,7 @@ class _TxCard extends StatelessWidget {
             style: const TextStyle(color: Colors.white,
                 fontWeight: FontWeight.w600, fontSize: 13)),
         subtitle: Text(
-          DateFormat('dd/MM/yy · HH:mm').format(date),
+          DateFormat('dd/MM/yy · HH:mm', 'he').format(date),
           textAlign: TextAlign.right,
           style: const TextStyle(color: Colors.white38, fontSize: 11),
         ),

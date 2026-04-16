@@ -145,7 +145,7 @@ class CustomerProfileSheet extends StatelessWidget {
                           d['reviewerName'] as String? ?? 'מומחה';
                       final ts = d['createdAt'] as Timestamp?;
                       final dateStr = ts != null
-                          ? DateFormat('dd/MM/yy').format(ts.toDate())
+                          ? DateFormat('dd/MM/yy', 'he').format(ts.toDate())
                           : '';
 
                       return Padding(

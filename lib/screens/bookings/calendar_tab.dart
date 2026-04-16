@@ -1305,7 +1305,7 @@ class _CalendarTabState extends State<CalendarTab> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          DateFormat('dd/MM').format(d),
+                          DateFormat('dd/MM', 'he').format(d),
                           style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,

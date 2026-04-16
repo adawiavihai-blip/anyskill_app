@@ -486,7 +486,8 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
               try {
                 await FirebaseFunctions.instance
                     .httpsCallable('deleteUser')
-                    .call({'uid': uid});
+                    .call({'uid': uid})
+                    .timeout(const Duration(seconds: 30));
                 messenger.showSnackBar(SnackBar(
                     backgroundColor: Colors.green,
                     content: Text('$name נמחק בהצלחה')));

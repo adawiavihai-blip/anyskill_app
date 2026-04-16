@@ -1775,7 +1775,8 @@ class _EmailCollectionScreenState extends State<_EmailCollectionScreen> {
     try {
       await FirebaseFunctions.instance
           .httpsCallable('sendEmailVerificationCode')
-          .call({'email': email});
+          .call({'email': email})
+          .timeout(const Duration(seconds: 30));
       _sentEmail = email;
       if (mounted) setState(() => _codeSent = true);
     } on FirebaseFunctionsException catch (e) {
@@ -1797,7 +1798,8 @@ class _EmailCollectionScreenState extends State<_EmailCollectionScreen> {
     try {
       await FirebaseFunctions.instance
           .httpsCallable('verifyEmailCode')
-          .call({'code': code});
+          .call({'code': code})
+          .timeout(const Duration(seconds: 30));
       // Success — the CF wrote users/{uid}.email + emailVerifiedAt already.
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

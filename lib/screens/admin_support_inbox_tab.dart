@@ -158,7 +158,7 @@ class _TicketCardState extends State<_TicketCard> {
       } else if (diff.inHours < 24) {
         ageLabel = 'לפני ${diff.inHours} שעות';
       } else {
-        ageLabel = DateFormat('dd/MM HH:mm').format(createdAt.toDate());
+        ageLabel = DateFormat('dd/MM HH:mm', 'he').format(createdAt.toDate());
       }
     }
 

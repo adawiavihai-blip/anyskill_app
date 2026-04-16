@@ -41,7 +41,7 @@ class AdminWithdrawalsTab extends StatelessWidget {
             final amount = (w['amount'] ?? 0.0).toDouble();
             DateTime? requestedAt = (w['requestedAt'] as Timestamp?)?.toDate();
             final formattedDate = requestedAt != null
-                ? DateFormat('dd/MM HH:mm').format(requestedAt)
+                ? DateFormat('dd/MM HH:mm', 'he').format(requestedAt)
                 : '—';
 
             return Card(

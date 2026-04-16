@@ -56,7 +56,7 @@ class AdminPrivateFeedbackTab extends StatelessWidget {
             final isPublished    = d['isPublished'] as bool? ?? true;
             final ts             = d['createdAt'] ?? d['timestamp'];
             final timeStr = ts is Timestamp
-                ? DateFormat('dd/MM/yy HH:mm').format(ts.toDate())
+                ? DateFormat('dd/MM/yy HH:mm', 'he').format(ts.toDate())
                 : '—';
             final isClientReview = d['isClientReview'] as bool? ?? true;
 

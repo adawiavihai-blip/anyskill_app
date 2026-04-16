@@ -682,7 +682,7 @@ class _FinanceScreenState extends State<FinanceScreen>
               emoji: '📅',
               label: 'תאריך העברה',
               value: _nextPayoutDate != null
-                  ? DateFormat('dd/MM').format(_nextPayoutDate!)
+                  ? DateFormat('dd/MM', 'he').format(_nextPayoutDate!)
                   : '—',
               valueColor: Colors.white,
             ),
@@ -806,7 +806,7 @@ class _FinanceScreenState extends State<FinanceScreen>
                         return Padding(
                           padding: const EdgeInsets.only(top: 6),
                           child: Text(
-                            DateFormat('E').format(date).substring(0, 2),
+                            DateFormat('E', 'he').format(date).substring(0, 2),
                             style: const TextStyle(
                                 fontSize: 10, color: Colors.grey),
                           ),
@@ -984,7 +984,7 @@ class _FinanceScreenState extends State<FinanceScreen>
         ),
         subtitle: Text(
           date != null
-              ? DateFormat('dd/MM/yyyy HH:mm').format(date)
+              ? DateFormat('dd/MM/yyyy HH:mm', 'he').format(date)
               : l10n.financeProcessing,
           style: TextStyle(fontSize: 12, color: Colors.grey[500]),
         ),

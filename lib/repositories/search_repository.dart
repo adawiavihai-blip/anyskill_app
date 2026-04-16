@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/service_provider.dart';
 
@@ -49,34 +50,39 @@ class SearchRepository {
     DocumentSnapshot? startAfter,
     int pageSize = _pageSize,
   }) async {
-    Query<Map<String, dynamic>> q = _db
-        .collection('users')
-        .where('isProvider', isEqualTo: true)
-        .where('serviceType', isEqualTo: categoryName);
+    try {
+      Query<Map<String, dynamic>> q = _db
+          .collection('users')
+          .where('isProvider', isEqualTo: true)
+          .where('serviceType', isEqualTo: categoryName);
 
-    if (startAfter != null) {
-      q = q.startAfterDocument(startAfter);
+      if (startAfter != null) {
+        q = q.startAfterDocument(startAfter);
+      }
+
+      // Fetch one extra to detect if more pages exist
+      q = q.limit(pageSize + 1);
+
+      final snap = await q.get();
+
+      final hasMore = snap.docs.length > pageSize;
+      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
+
+      // Client-side filter: remove hidden, banned, demo, unverified
+      final providers = docs
+          .map(ServiceProvider.fromFirestore)
+          .where((p) => p.isSearchVisible)
+          .toList();
+
+      return SearchPage(
+        providers: providers,
+        cursor:    docs.isNotEmpty ? docs.last : null,
+        hasMore:   hasMore,
+      );
+    } catch (e) {
+      debugPrint('[SearchRepository] searchByCategory error: $e');
+      return SearchPage.empty;
     }
-
-    // Fetch one extra to detect if more pages exist
-    q = q.limit(pageSize + 1);
-
-    final snap = await q.get();
-
-    final hasMore = snap.docs.length > pageSize;
-    final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
-
-    // Client-side filter: remove hidden, banned, demo, unverified
-    final providers = docs
-        .map(ServiceProvider.fromFirestore)
-        .where((p) => p.isSearchVisible)
-        .toList();
-
-    return SearchPage(
-      providers: providers,
-      cursor:    docs.isNotEmpty ? docs.last : null,
-      hasMore:   hasMore,
-    );
   }
 
   // ── Text search (name/bio matching) ───────────────────────────────────
@@ -93,39 +99,44 @@ class SearchRepository {
   }) async {
     if (query.trim().isEmpty) return SearchPage.empty;
 
-    final q = query.trim();
-    // Unicode trick: append a high character to create an upper bound
-    // for prefix matching. Works for Hebrew, Arabic, and Latin.
-    final end = '$q\uf8ff';
+    try {
+      final q = query.trim();
+      // Unicode trick: append a high character to create an upper bound
+      // for prefix matching. Works for Hebrew, Arabic, and Latin.
+      final end = '$q\uf8ff';
 
-    Query<Map<String, dynamic>> ref = _db
-        .collection('users')
-        .where('isProvider', isEqualTo: true)
-        .orderBy('name')
-        .startAt([q])
-        .endAt([end]);
+      Query<Map<String, dynamic>> ref = _db
+          .collection('users')
+          .where('isProvider', isEqualTo: true)
+          .orderBy('name')
+          .startAt([q])
+          .endAt([end]);
 
-    if (startAfter != null) {
-      ref = ref.startAfterDocument(startAfter);
+      if (startAfter != null) {
+        ref = ref.startAfterDocument(startAfter);
+      }
+
+      ref = ref.limit(pageSize + 1);
+
+      final snap = await ref.get();
+
+      final hasMore = snap.docs.length > pageSize;
+      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
+
+      final providers = docs
+          .map(ServiceProvider.fromFirestore)
+          .where((p) => p.isSearchVisible)
+          .toList();
+
+      return SearchPage(
+        providers: providers,
+        cursor:    docs.isNotEmpty ? docs.last : null,
+        hasMore:   hasMore,
+      );
+    } catch (e) {
+      debugPrint('[SearchRepository] searchByName error: $e');
+      return SearchPage.empty;
     }
-
-    ref = ref.limit(pageSize + 1);
-
-    final snap = await ref.get();
-
-    final hasMore = snap.docs.length > pageSize;
-    final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
-
-    final providers = docs
-        .map(ServiceProvider.fromFirestore)
-        .where((p) => p.isSearchVisible)
-        .toList();
-
-    return SearchPage(
-      providers: providers,
-      cursor:    docs.isNotEmpty ? docs.last : null,
-      hasMore:   hasMore,
-    );
   }
 
   // ── Nearby providers (geo-filtered) ───────────────────────────────────
@@ -142,40 +153,45 @@ class SearchRepository {
     String? categoryName,
     int pageSize = _pageSize,
   }) async {
-    // Rough bounding box (1 degree ≈ 111 km)
-    final delta = radiusKm / 111.0;
-    final minLat = lat - delta;
-    final maxLat = lat + delta;
+    try {
+      // Rough bounding box (1 degree ≈ 111 km)
+      final delta = radiusKm / 111.0;
+      final minLat = lat - delta;
+      final maxLat = lat + delta;
 
-    Query<Map<String, dynamic>> q = _db
-        .collection('users')
-        .where('isProvider', isEqualTo: true)
-        .where('latitude', isGreaterThanOrEqualTo: minLat)
-        .where('latitude', isLessThanOrEqualTo: maxLat)
-        .limit(pageSize);
+      Query<Map<String, dynamic>> q = _db
+          .collection('users')
+          .where('isProvider', isEqualTo: true)
+          .where('latitude', isGreaterThanOrEqualTo: minLat)
+          .where('latitude', isLessThanOrEqualTo: maxLat)
+          .limit(pageSize);
 
-    if (categoryName != null && categoryName.isNotEmpty) {
-      q = q.where('serviceType', isEqualTo: categoryName);
+      if (categoryName != null && categoryName.isNotEmpty) {
+        q = q.where('serviceType', isEqualTo: categoryName);
+      }
+
+      final snap = await q.get();
+
+      final providers = snap.docs
+          .map(ServiceProvider.fromFirestore)
+          .where((p) {
+            if (!p.isSearchVisible) return false;
+            if (!p.hasLocation) return false;
+            // Client-side distance filter (rough, not Haversine — good enough for filtering)
+            final dLng = (p.longitude! - lng).abs();
+            return dLng <= delta; // longitude check (latitude already filtered by query)
+          })
+          .toList();
+
+      return SearchPage(
+        providers: providers,
+        cursor:    snap.docs.isNotEmpty ? snap.docs.last : null,
+        hasMore:   snap.docs.length >= pageSize,
+      );
+    } catch (e) {
+      debugPrint('[SearchRepository] searchNearby error: $e');
+      return SearchPage.empty;
     }
-
-    final snap = await q.get();
-
-    final providers = snap.docs
-        .map(ServiceProvider.fromFirestore)
-        .where((p) {
-          if (!p.isSearchVisible) return false;
-          if (!p.hasLocation) return false;
-          // Client-side distance filter (rough, not Haversine — good enough for filtering)
-          final dLng = (p.longitude! - lng).abs();
-          return dLng <= delta; // longitude check (latitude already filtered by query)
-        })
-        .toList();
-
-    return SearchPage(
-      providers: providers,
-      cursor:    snap.docs.isNotEmpty ? snap.docs.last : null,
-      hasMore:   snap.docs.length >= pageSize,
-    );
   }
 
   // ── Online providers (real-time) ──────────────────────────────────────

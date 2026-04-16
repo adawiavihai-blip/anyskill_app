@@ -37,7 +37,7 @@ class _AdminUserDetailScreenState
   static const _kDark = Color(0xFF1A1A2E);
   static const _kMuted = Color(0xFF6B7280);
 
-  final _fmt = DateFormat('dd/MM/yyyy HH:mm');
+  final _fmt = DateFormat('dd/MM/yyyy HH:mm', 'he');
 
   // ── Safe image provider (same logic as profile_screen) ─────────────────
 

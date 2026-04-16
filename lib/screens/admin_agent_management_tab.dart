@@ -364,7 +364,7 @@ class _AgentCard extends StatelessWidget {
     final img = data['profileImage'] as String? ?? '';
     final roleUpdatedAt = data['roleUpdatedAt'] as Timestamp?;
     final since = roleUpdatedAt != null
-        ? DateFormat('dd/MM/yyyy').format(roleUpdatedAt.toDate())
+        ? DateFormat('dd/MM/yyyy', 'he').format(roleUpdatedAt.toDate())
         : '—';
     final ap = (data['agentProfile'] is Map)
         ? (data['agentProfile'] as Map)
@@ -1545,7 +1545,7 @@ class _AuditLogRow extends StatelessWidget {
                     ),
                     if (ts != null)
                       Text(
-                        DateFormat('dd/MM HH:mm').format(ts),
+                        DateFormat('dd/MM HH:mm', 'he').format(ts),
                         style: TextStyle(
                           fontSize: 10,
                           color: Colors.grey[500],

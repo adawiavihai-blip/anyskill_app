@@ -344,7 +344,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     String timeStr = "";
     if (lastTime != null) {
       DateTime dt = lastTime.toDate();
-      timeStr = (DateTime.now().difference(dt).inDays == 0) ? DateFormat('HH:mm').format(dt) : DateFormat('dd/MM').format(dt);
+      timeStr = (DateTime.now().difference(dt).inDays == 0) ? DateFormat('HH:mm', 'he').format(dt) : DateFormat('dd/MM', 'he').format(dt);
     }
 
     return GestureDetector(

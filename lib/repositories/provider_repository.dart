@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/service_provider.dart';
 
@@ -38,42 +39,57 @@ class ProviderRepository {
     DocumentSnapshot? startAfter,
     int limit = 15,
   }) async {
-    Query<Map<String, dynamic>> q = _db
-        .collection('users')
-        .where('isProvider', isEqualTo: true)
-        .where('serviceType', isEqualTo: categoryName);
+    try {
+      Query<Map<String, dynamic>> q = _db
+          .collection('users')
+          .where('isProvider', isEqualTo: true)
+          .where('serviceType', isEqualTo: categoryName);
 
-    if (startAfter != null) q = q.startAfterDocument(startAfter);
-    q = q.limit(limit);
+      if (startAfter != null) q = q.startAfterDocument(startAfter);
+      q = q.limit(limit);
 
-    final snap = await q.get();
-    return snap.docs
-        .map(ServiceProvider.fromFirestore)
-        .where((p) => p.isSearchVisible)
-        .toList();
+      final snap = await q.get();
+      return snap.docs
+          .map(ServiceProvider.fromFirestore)
+          .where((p) => p.isSearchVisible)
+          .toList();
+    } catch (e) {
+      debugPrint('[ProviderRepository] searchByCategory error: $e');
+      return [];
+    }
   }
 
   /// Fetch all pending expert applications (admin).
   Future<List<ServiceProvider>> getPendingExperts() async {
-    final snap = await _db
-        .collection('users')
-        .where('isPendingExpert', isEqualTo: true)
-        .limit(100)
-        .get();
-    return snap.docs.map(ServiceProvider.fromFirestore).toList();
+    try {
+      final snap = await _db
+          .collection('users')
+          .where('isPendingExpert', isEqualTo: true)
+          .limit(100)
+          .get();
+      return snap.docs.map(ServiceProvider.fromFirestore).toList();
+    } catch (e) {
+      debugPrint('[ProviderRepository] getPendingExperts error: $e');
+      return [];
+    }
   }
 
   /// Fetch providers with unreviewed verification videos (admin).
   Future<List<ServiceProvider>> getUnreviewedVideos() async {
-    final snap = await _db
-        .collection('users')
-        .where('isProvider', isEqualTo: true)
-        .limit(200)
-        .get();
-    return snap.docs
-        .map(ServiceProvider.fromFirestore)
-        .where((p) => p.hasUnreviewedVideo)
-        .toList();
+    try {
+      final snap = await _db
+          .collection('users')
+          .where('isProvider', isEqualTo: true)
+          .limit(200)
+          .get();
+      return snap.docs
+          .map(ServiceProvider.fromFirestore)
+          .where((p) => p.hasUnreviewedVideo)
+          .toList();
+    } catch (e) {
+      debugPrint('[ProviderRepository] getUnreviewedVideos error: $e');
+      return [];
+    }
   }
 
   // ── Write: Profile ────────────────────────────────────────────────────

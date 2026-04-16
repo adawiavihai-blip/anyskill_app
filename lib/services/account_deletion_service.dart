@@ -162,7 +162,8 @@ class AccountDeletionService {
     try {
       await FirebaseFunctions.instance
           .httpsCallable('deleteUserAccount')
-          .call({'uid': uid});
+          .call({'uid': uid})
+          .timeout(const Duration(seconds: 30));
     } catch (e) {
       // CF failure is non-fatal: client cleanup in step 1 already ran,
       // and Auth deletion in step 3 still proceeds.

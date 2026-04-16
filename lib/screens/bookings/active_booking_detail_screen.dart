@@ -120,7 +120,7 @@ class _ActiveBookingDetailScreenState
       apptDate = (job['appointmentDate'] as Timestamp).toDate();
     }
     final apptStr  = apptDate != null
-        ? DateFormat('dd/MM/yy').format(apptDate)
+        ? DateFormat('dd/MM/yy', 'he').format(apptDate)
         : '—';
     final apptTime = job['appointmentTime'] as String? ?? '—';
     final durationStr =

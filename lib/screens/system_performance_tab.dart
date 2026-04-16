@@ -267,7 +267,7 @@ class _SystemPerformanceTabState extends State<SystemPerformanceTab>
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'עודכן: ${DateFormat('HH:mm:ss').format(_lastRefresh)}  •  מתרענן כל 30 שניות',
+                      'עודכן: ${DateFormat('HH:mm:ss', 'he').format(_lastRefresh)}  •  מתרענן כל 30 שניות',
                       style: const TextStyle(
                           fontSize: 10, color: Color(0xFF94A3B8)),
                     ),
@@ -722,7 +722,7 @@ class _SystemPerformanceTabState extends State<SystemPerformanceTab>
                   final d       = doc.data() as Map<String, dynamic>;
                   final ts      = d['timestamp'] as Timestamp?;
                   final timeStr = ts != null
-                      ? DateFormat('dd/MM HH:mm:ss').format(ts.toDate())
+                      ? DateFormat('dd/MM HH:mm:ss', 'he').format(ts.toDate())
                       : '';
                   final type    = d['type']    as String? ?? 'flutter';
                   final message = d['message'] as String? ?? 'שגיאה לא ידועה';

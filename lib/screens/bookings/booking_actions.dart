@@ -529,7 +529,7 @@ class BookingActions {
               _detailRow(
                   Icons.calendar_today,
                   'תאריך',
-                  DateFormat('dd/MM/yyyy').format(
+                  DateFormat('dd/MM/yyyy', 'he').format(
                       (job['appointmentDate'] as Timestamp).toDate())),
             if ((job['appointmentTime'] ?? '').toString().isNotEmpty)
               _detailRow(

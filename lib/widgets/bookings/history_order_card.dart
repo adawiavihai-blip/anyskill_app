@@ -52,10 +52,10 @@ class HistoryOrderCard extends StatelessWidget {
     // Best date to display: appointment > completed > created
     final displayDate = appointmentDate ?? completedDate ?? createdDate;
     final dateStr = displayDate != null
-        ? DateFormat('dd/MM/yyyy').format(displayDate)
+        ? DateFormat('dd/MM/yyyy', 'he').format(displayDate)
         : '';
     final timeStr = appointmentTime ??
-        (displayDate != null ? DateFormat('HH:mm').format(displayDate) : '');
+        (displayDate != null ? DateFormat('HH:mm', 'he').format(displayDate) : '');
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),

@@ -54,8 +54,8 @@ class TransactionHistoryCard extends StatelessWidget {
 
     final ts   = data['timestamp'] as Timestamp?;
     final date = ts?.toDate();
-    final dateStr = date != null ? DateFormat('dd/MM/yyyy').format(date) : '';
-    final timeStr = date != null ? DateFormat('HH:mm').format(date)     : '';
+    final dateStr = date != null ? DateFormat('dd/MM/yyyy', 'he').format(date) : '';
+    final timeStr = date != null ? DateFormat('HH:mm', 'he').format(date)     : '';
 
     final (typeLabel, typeIcon, badgeBg, badgeFg) = _typeConfig[type]
         ?? ('תנועה', Icons.swap_horiz_rounded, const Color(0xFFF8FAFC), const Color(0xFF94A3B8));

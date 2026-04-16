@@ -146,7 +146,7 @@ class _CustomerBookingCardState extends State<CustomerBookingCard>
       apptDate = (job['appointmentDate'] as Timestamp).toDate();
     }
     final apptStr  = apptDate != null
-        ? DateFormat('dd/MM/yy').format(apptDate)
+        ? DateFormat('dd/MM/yy', 'he').format(apptDate)
         : 'טרם נקבע';
     final apptTime   = job['appointmentTime'] as String? ?? '';
     final chatRoomId = job['chatRoomId']      as String? ?? '';

@@ -183,10 +183,10 @@ class _ExpertJobCardState extends State<ExpertJobCard>
       apptDate = (job['appointmentDate'] as Timestamp).toDate();
     }
     final apptStr  = apptDate != null
-        ? DateFormat('dd/MM/yy').format(apptDate)
+        ? DateFormat('dd/MM/yy', 'he').format(apptDate)
         : (() {
             if (job['createdAt'] is Timestamp) {
-              return DateFormat('dd/MM/yy')
+              return DateFormat('dd/MM/yy', 'he')
                   .format((job['createdAt'] as Timestamp).toDate());
             }
             return 'תאריך לא ידוע';
@@ -744,7 +744,7 @@ class _ExpertJobCardState extends State<ExpertJobCard>
       apptDate = (job['appointmentDate'] as Timestamp).toDate();
     }
     final dateStr = apptDate != null
-        ? DateFormat('dd/MM/yy').format(apptDate)
+        ? DateFormat('dd/MM/yy', 'he').format(apptDate)
         : '';
     return Container(
       margin: const EdgeInsets.only(bottom: 12),

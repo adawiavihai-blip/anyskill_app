@@ -93,7 +93,7 @@ class _AdminChatViewScreenState extends State<AdminChatViewScreen> {
   // ── Format timestamp ───────────────────────────────────────────────────────
   static String _formatTs(Timestamp? ts) {
     if (ts == null) return '';
-    return DateFormat('dd/MM HH:mm').format(ts.toDate());
+    return DateFormat('dd/MM HH:mm', 'he').format(ts.toDate());
   }
 
   @override

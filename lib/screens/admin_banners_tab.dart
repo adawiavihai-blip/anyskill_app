@@ -521,8 +521,8 @@ class _BannerPreviewCard extends StatelessWidget {
                   const SizedBox(width: 4),
                   Text(
                     isExpired
-                        ? 'פג תוקף ${DateFormat('dd/MM/yy').format(expiresAt)}'
-                        : 'תוקף עד ${DateFormat('dd/MM/yy').format(expiresAt)}',
+                        ? 'פג תוקף ${DateFormat('dd/MM/yy', 'he').format(expiresAt)}'
+                        : 'תוקף עד ${DateFormat('dd/MM/yy', 'he').format(expiresAt)}',
                     style: TextStyle(
                       fontSize: 11,
                       color: isExpired ? Colors.red : Colors.grey,
@@ -1030,7 +1030,7 @@ class _BannerEditDialogState extends State<_BannerEditDialog> {
                         Expanded(
                           child: Text(
                             _expiresAt != null
-                                ? 'תוקף: ${DateFormat('dd/MM/yyyy').format(_expiresAt!)}'
+                                ? 'תוקף: ${DateFormat('dd/MM/yyyy', 'he').format(_expiresAt!)}'
                                 : 'ללא תאריך תפוגה',
                             style: TextStyle(
                                 fontSize: 13, color: Colors.grey.shade600),

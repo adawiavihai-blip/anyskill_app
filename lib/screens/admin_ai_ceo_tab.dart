@@ -368,7 +368,7 @@ class _AdminAiCeoTabState extends State<AdminAiCeoTab> {
             icon: Icons.wb_sunny_rounded,
             iconColor: _kAmber,
             title: 'סיכום בוקר',
-            subtitle: DateFormat('dd/MM/yyyy HH:mm').format(insight.generatedAt),
+            subtitle: DateFormat('dd/MM/yyyy HH:mm', 'he').format(insight.generatedAt),
             actionIcon: Icons.copy_rounded,
             onAction: () => _copyToClipboard(insight.morningBrief),
             child: SelectableText(
@@ -529,8 +529,8 @@ class _AdminAiCeoTabState extends State<AdminAiCeoTab> {
                 Expanded(
                   child: Text(
                     insight.usedModel.isEmpty
-                        ? 'נוצר ב-${DateFormat('HH:mm').format(insight.generatedAt)}'
-                        : 'מודל: ${insight.usedModel}  •  ${DateFormat('HH:mm').format(insight.generatedAt)}',
+                        ? 'נוצר ב-${DateFormat('HH:mm', 'he').format(insight.generatedAt)}'
+                        : 'מודל: ${insight.usedModel}  •  ${DateFormat('HH:mm', 'he').format(insight.generatedAt)}',
                     style: const TextStyle(
                       color: _kTextMuted,
                       fontSize: 11,
@@ -995,7 +995,7 @@ class _AdminAiCeoTabState extends State<AdminAiCeoTab> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'עודכן ${DateFormat('HH:mm').format(insight.generatedAt)}  •  40+ מדדים',
+                  'עודכן ${DateFormat('HH:mm', 'he').format(insight.generatedAt)}  •  40+ מדדים',
                   style: const TextStyle(color: _kTextMuted, fontSize: 12),
                 ),
               ],

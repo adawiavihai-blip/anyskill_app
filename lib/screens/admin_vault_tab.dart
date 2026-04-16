@@ -62,7 +62,7 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
 
   void _updateClock() {
     if (!mounted) return;
-    setState(() => _clock = DateFormat('HH:mm:ss').format(DateTime.now()));
+    setState(() => _clock = DateFormat('HH:mm:ss', 'he').format(DateTime.now()));
   }
 
   void _setupStreams() {
@@ -1727,7 +1727,7 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
     if (diff.inMinutes < 1) return 'עכשיו';
     if (diff.inMinutes < 60) return 'לפני ${diff.inMinutes}ד׳';
     if (diff.inHours < 24) return 'לפני ${diff.inHours}ש׳';
-    return DateFormat('dd/MM').format(d);
+    return DateFormat('dd/MM', 'he').format(d);
   }
 
   void _showSnack(String msg) {

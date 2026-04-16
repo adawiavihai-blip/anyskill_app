@@ -1082,7 +1082,7 @@ class _DemoBookingsListTab extends StatelessWidget {
                       _detailRow(
                         icon: Icons.access_time_rounded,
                         label: 'ניסיון הזמנה',
-                        value: DateFormat('dd/MM/yyyy HH:mm').format(ts),
+                        value: DateFormat('dd/MM/yyyy HH:mm', 'he').format(ts),
                       ),
                     const SizedBox(height: 10),
                     // Actions

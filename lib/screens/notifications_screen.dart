@@ -615,7 +615,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     if (diff.inMinutes < 1) return l10n.timeNow;
     if (diff.inMinutes < 60) return l10n.timeMinutesAgo(diff.inMinutes);
     if (diff.inHours < 24) return l10n.timeHoursAgo(diff.inHours);
-    return DateFormat('dd/MM HH:mm').format(dt);
+    return DateFormat('dd/MM HH:mm', 'he').format(dt);
   }
 
   Widget _buildEmpty() {

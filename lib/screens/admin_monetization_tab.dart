@@ -1993,7 +1993,7 @@ class _AdminMonetizationTabState extends State<AdminMonetizationTab> {
         final d = doc.data();
         final ts = (d['timestamp'] as Timestamp?)?.toDate();
         final dateStr =
-            ts != null ? DateFormat('dd/MM/yyyy HH:mm').format(ts) : '';
+            ts != null ? DateFormat('dd/MM/yyyy HH:mm', 'he').format(ts) : '';
         final amount = (d['amount'] as num? ?? 0).toStringAsFixed(2);
         String esc(dynamic v) =>
             '"${(v ?? '').toString().replaceAll('"', '""')}"';
@@ -2007,7 +2007,7 @@ class _AdminMonetizationTabState extends State<AdminMonetizationTab> {
         ].join(','));
       }
       final name =
-          'anyskill_transactions_${DateFormat('yyyyMMdd').format(DateTime.now())}.csv';
+          'anyskill_transactions_${DateFormat('yyyyMMdd', 'he').format(DateTime.now())}.csv';
       triggerCsvDownload(buf.toString(), name);
       if (!mounted) return;
       messenger.showSnackBar(

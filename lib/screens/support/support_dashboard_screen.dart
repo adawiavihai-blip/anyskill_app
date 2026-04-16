@@ -1322,7 +1322,7 @@ class _Customer360PaneState extends State<Customer360Pane> {
                     ),
                     if (ts != null)
                       Text(
-                        DateFormat('HH:mm').format(ts),
+                        DateFormat('HH:mm', 'he').format(ts),
                         style: const TextStyle(
                           fontSize: 10,
                           color: Color(0xFFD97706),
@@ -1369,7 +1369,7 @@ class _Customer360PaneState extends State<Customer360Pane> {
                           if (ts != null) ...[
                             const SizedBox(height: 4),
                             Text(
-                              DateFormat('HH:mm').format(ts),
+                              DateFormat('HH:mm', 'he').format(ts),
                               style: TextStyle(
                                 fontSize: 10,
                                 color: isAgent
@@ -2145,13 +2145,13 @@ class _ActionCenterPaneState extends State<ActionCenterPane> {
           if (created != null)
             _statRow(
               'נוצרה',
-              DateFormat('dd/MM/yy HH:mm').format(created),
+              DateFormat('dd/MM/yy HH:mm', 'he').format(created),
               Icons.event_note_outlined,
             ),
           if (scheduled != null)
             _statRow(
               'מועד שירות',
-              DateFormat('dd/MM/yy HH:mm').format(scheduled),
+              DateFormat('dd/MM/yy HH:mm', 'he').format(scheduled),
               Icons.schedule_rounded,
             ),
           if (address.isNotEmpty)
@@ -2597,7 +2597,7 @@ class _ActionCenterPaneState extends State<ActionCenterPane> {
     final status = job['status'] as String? ?? '';
     final createdAt = (job['createdAt'] as Timestamp?)?.toDate();
     final dateStr = createdAt != null
-        ? DateFormat('dd/MM').format(createdAt)
+        ? DateFormat('dd/MM', 'he').format(createdAt)
         : '—';
 
     return Padding(

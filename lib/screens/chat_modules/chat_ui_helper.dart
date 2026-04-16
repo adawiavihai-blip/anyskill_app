@@ -371,7 +371,7 @@ class _Timestamp extends StatelessWidget {
     }
     if (date == null) return const SizedBox.shrink();
     return Text(
-      DateFormat('HH:mm').format(date),
+      DateFormat('HH:mm', 'he').format(date),
       style: TextStyle(
         fontSize: 10,
         color: isMe

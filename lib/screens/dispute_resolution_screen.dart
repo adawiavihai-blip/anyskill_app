@@ -271,7 +271,7 @@ class _DisputeCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
-                        DateFormat('dd/MM HH:mm').format(ts),
+                        DateFormat('dd/MM HH:mm', 'he').format(ts),
                         style: TextStyle(
                             color: _kRed.withValues(alpha: 0.85),
                             fontSize: 12,
@@ -850,7 +850,7 @@ class _ReasonCard extends StatelessWidget {
                 const SizedBox(width: 6),
                 if (openedAt != null)
                   Text(
-                    AppLocalizations.of(context).disputeOpenedAt(DateFormat('dd/MM/yyyy HH:mm').format(openedAt!)),
+                    AppLocalizations.of(context).disputeOpenedAt(DateFormat('dd/MM/yyyy HH:mm', 'he').format(openedAt!)),
                     style: TextStyle(
                         fontSize: 11,
                         color: Colors.orange[700]),
@@ -1009,7 +1009,7 @@ class _ChatMsgRow extends StatelessWidget {
                     ),
                     if (ts != null)
                       Text(
-                        DateFormat('HH:mm').format(ts!),
+                        DateFormat('HH:mm', 'he').format(ts!),
                         style: TextStyle(
                             fontSize: 10, color: Colors.grey[400]),
                       ),

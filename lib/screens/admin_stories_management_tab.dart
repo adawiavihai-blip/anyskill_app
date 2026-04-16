@@ -49,7 +49,7 @@ class AdminStoriesManagementTab extends StatelessWidget {
             final videoUrl     = d['videoUrl']?.toString()       ?? '';
             final ts           = d['timestamp'];
             final timeStr      = ts is Timestamp
-                ? DateFormat('dd/MM HH:mm').format(ts.toDate())
+                ? DateFormat('dd/MM HH:mm', 'he').format(ts.toDate())
                 : '—';
             return Container(
               decoration: BoxDecoration(

@@ -1624,7 +1624,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     final name       = r['reviewerName'] as String? ?? l10n.expertDefaultReviewer;
     final comment    = (r['comment'] ?? r['publicComment'] ?? '').toString().trim();
     final ts         = (r['timestamp'] ?? r['createdAt']) as Timestamp?;
-    final date       = ts != null ? DateFormat('MMM yyyy').format(ts.toDate()) : '';
+    final date       = ts != null ? DateFormat('MMM yyyy', 'he').format(ts.toDate()) : '';
     final response   = r['providerResponse'] as String?;
     final reviewerImage = r['reviewerImage'] as String?;
     final reviewerId = r['reviewerId'] as String?;

@@ -120,7 +120,8 @@ class _OtpScreenState extends State<OtpScreen> {
         try {
           final lookup = await FirebaseFunctions.instance
               .httpsCallable('lookupLegacyUidByPhone')
-              .call({'phone': user.phoneNumber ?? widget.phoneDisplay});
+              .call({'phone': user.phoneNumber ?? widget.phoneDisplay})
+              .timeout(const Duration(seconds: 30));
           final data = Map<String, dynamic>.from(lookup.data as Map);
           final foundUid = data['uid'] as String?;
           if (data['found'] == true && foundUid != null && foundUid != user.uid) {
