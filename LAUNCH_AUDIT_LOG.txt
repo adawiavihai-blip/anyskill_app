@@ -7,3 +7,14 @@
 [2026-04-17] Agent 3 (1.3 + 1.4): No external payment provider (expected, Stripe removed). Amount validation + currency lock + escrow machine solid. No max booking cap. No idempotency on payQuote/release. i18n 1504 keys × 4 locales 100% sync. 11 DateFormat missing 'he' locale.
 [2026-04-17] Agent 4 (1.7 + 1.8 + 1.9 + 1.10): Onboarding 11 fields + live selfie solid. No founding-provider badge (expected). Account deletion IS true deletion (Israeli law compliant). No FCM push on vault_alerts. vault_alerts collection missing Firestore rule.
 [2026-04-17] Phase 1 COMPLETE. LAUNCH_AUDIT_REPORT.md + LAUNCH_AUDIT_QUESTIONS.md written. 3 critical, 8 high, 7 medium, 8 founder decisions. STOPPING before Phase 2 per audit prompt rule.
+[2026-04-17] Phase 2 START — founder decisions received. Executing in order: Q8→Q7→H items→M items→Q5→Q6→Q3.
+[2026-04-17] Q8 DONE — lookupLegacyUidByPhone rate limit + honeypot (commit 8f911f0)
+[2026-04-17] Q7 DONE — pendingBalance increments moved to 3 CFs: createEscrowPayment, createTaskEscrow, addTipToJob. Rules block client increments. (commit 01423c3)
+[2026-04-17] H1+H7+H8+M2 DONE — timeouts on 5 auth CFs, 'he' locale on 53 DateFormat calls, try/catch on 6 repo methods, no bare print() found (commit 387853c)
+[2026-04-17] H2+H3+H4+H5+H6 DONE — ₪5k booking cap, idempotent escrow, FCM push on vault_alerts, 3 vault Firestore rules, 10/hour broadcast velocity (commit c678e9b)
+[2026-04-17] M3 DONE — auth_screen.dart renamed to .old (commit 19c8dad)
+[2026-04-17] Q5 VERIFIED — cancel + refund already fully implemented in booking_actions.dart. No code change needed.
+[2026-04-17] Q6 DONE — flutter_secure_storage 9→10, sentry_flutter 8→9, @anthropic-ai/sdk 0.54→0.90 (commit 626e704)
+[2026-04-17] Q3 DONE — App Check activated in monitoring mode with PlayIntegrity/AppAttest/reCAPTCHA (commit 65bde81)
+[2026-04-17] flutter analyze: 0 errors, 0 warnings, 13 info (all pre-existing Riverpod deprecations + async context)
+[2026-04-17] Phase 2 COMPLETE. 7 commits total. No deploy executed per user instruction.
