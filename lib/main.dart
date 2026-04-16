@@ -314,6 +314,8 @@ void main() async {
   // switch to enforcement via Firebase Console toggle.
   try {
     await FirebaseAppCheck.instance.activate(
+      // TODO: Replace with production reCAPTCHA Enterprise key before web App Check enforcement.
+      // Currently in monitoring mode only. Instructions in LAUNCH_AUDIT_LOG.txt.
       providerWeb: ReCaptchaEnterpriseProvider('__RECAPTCHA_SITE_KEY__'),
       providerAndroid: const AndroidPlayIntegrityProvider(),
       providerApple: const AppleAppAttestProvider(),
