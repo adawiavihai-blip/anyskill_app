@@ -15,6 +15,7 @@
 library;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
@@ -392,71 +393,27 @@ class AnytaskService {
 
   /// Customer confirms the task is done. Releases escrow to provider.
   /// Transitions: proof_submitted → completed.
+  /// v15.x audit: balance mutations via `releaseTaskPayment` CF.
   static Future<String?> confirmCompletion(String taskId, String creatorId) async {
     try {
+      // Pre-read for local validation + post-CF side effects
       final docRef = _db.collection('anytasks').doc(taskId);
       final snap   = await docRef.get();
       if (!snap.exists) return 'המשימה לא נמצאה';
 
       final data   = snap.data() ?? {};
-      final status = data['status'] as String? ?? '';
       final docCreatorId = data['creatorId'] as String? ?? '';
       final providerId   = data['providerId'] as String? ?? '';
-      final commission    = (data['commission'] as num? ?? 0).toDouble();
       final netToProvider = (data['netToProvider'] as num? ?? 0).toDouble();
       final title         = data['title'] as String? ?? '';
 
       if (creatorId != docCreatorId) return 'רק מפרסם המשימה יכול לאשר';
-      if (status != AnyTaskStatus.proofSubmitted) return 'המשימה לא בסטטוס מתאים לאישור';
 
-      // ── Release escrow via batch ──────────────────────────────────────
-      final batch = _db.batch();
-
-      // Mark task as completed
-      batch.update(docRef, {
-        'status':             AnyTaskStatus.completed,
-        'confirmedByCreator': true,
-        'completedAt':        FieldValue.serverTimestamp(),
-        'updatedAt':          FieldValue.serverTimestamp(),
-      });
-
-      // Credit provider balance
-      batch.update(_db.collection('users').doc(providerId), {
-        'balance':        FieldValue.increment(netToProvider),
-        'pendingBalance': FieldValue.increment(-netToProvider),
-      });
-
-      // Platform commission
-      batch.set(_db.collection('platform_earnings').doc(), {
-        'taskId':         taskId,
-        'amount':         commission,
-        'sourceExpertId': providerId,
-        'timestamp':      FieldValue.serverTimestamp(),
-        'status':         'settled',
-        'source':         'anytask',
-      });
-
-      // Transaction record
-      batch.set(_db.collection('transactions').doc(), {
-        'senderId':     'escrow',
-        'senderName':   'AnyTasks Escrow',
-        'receiverId':   providerId,
-        'receiverName': data['providerName'] ?? '',
-        'amount':       netToProvider,
-        'type':         'anytask_escrow_release',
-        'taskId':       taskId,
-        'payoutStatus': 'completed',
-        'timestamp':    FieldValue.serverTimestamp(),
-      });
-
-      // Admin system balance
-      batch.set(
-        _db.collection('admin').doc('admin').collection('settings').doc('settings'),
-        {'totalPlatformBalance': FieldValue.increment(commission)},
-        SetOptions(merge: true),
-      );
-
-      await batch.commit();
+      // Atomic balance transfer via CF (pendingBalance → balance)
+      await FirebaseFunctions.instance
+          .httpsCallable('releaseTaskPayment')
+          .call({'taskId': taskId})
+          .timeout(const Duration(seconds: 30));
 
       // ── Score recovery for provider ───────────────────────────────────
       await AnytaskCancellationService.recoverScore(providerId);

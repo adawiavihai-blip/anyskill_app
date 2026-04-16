@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'booking_shared_widgets.dart';
@@ -102,27 +103,15 @@ class _CustomerBookingCardState extends State<CustomerBookingCard>
     );
     if (confirm != true || !context.mounted) return;
 
-    final db  = FirebaseFirestore.instance;
-    final bat = db.batch();
-    bat.set(db.collection('transactions').doc(), {
-      'type':         'tip',
-      'senderId':     widget.currentUserId,
-      'receiverId':   expertId,
-      'senderName':   widget.job['customerName'] ?? 'לקוח',
-      'receiverName': expertName,
-      'amount':       tipAmount,
-      'jobId':        widget.jobId,
-      'payoutStatus': 'pending',
-      'timestamp':    FieldValue.serverTimestamp(),
-    });
-    bat.update(db.collection('users').doc(expertId), {
-      'pendingBalance': FieldValue.increment(tipAmount),
-    });
-    bat.update(db.collection('users').doc(widget.currentUserId), {
-      'balance': FieldValue.increment(-tipAmount),
-    });
     try {
-      await bat.commit();
+      await FirebaseFunctions.instance
+          .httpsCallable('addTipToJob')
+          .call({
+        'jobId': widget.jobId,
+        'expertId': expertId,
+        'expertName': expertName,
+        'tipAmount': tipAmount,
+      }).timeout(const Duration(seconds: 30));
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           backgroundColor: const Color(0xFF6366F1),

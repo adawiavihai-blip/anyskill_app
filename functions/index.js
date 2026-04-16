@@ -9207,6 +9207,310 @@ exports.lookupLegacyUidByPhone = onCall(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// Escrow Payment — Server-Side (Q7 audit fix)
+// Moves pendingBalance writes out of the client to prevent cross-user
+// manipulation. Mirrors the logic previously in escrow_service.dart.
+// ═══════════════════════════════════════════════════════════════════
+
+exports.createEscrowPayment = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Must be signed in.");
+    }
+    const uid = request.auth.uid;
+    const {
+      quoteId, chatMessageId, chatRoomId,
+      providerId, providerName, clientName,
+      amount, description,
+    } = request.data || {};
+
+    if (!quoteId || !providerId || !amount || !chatRoomId) {
+      throw new HttpsError("invalid-argument", "Missing required fields.");
+    }
+    if (uid === providerId) {
+      throw new HttpsError("permission-denied", "לא ניתן להזמין שירות מעצמך");
+    }
+    if (typeof amount !== "number" || amount <= 0) {
+      throw new HttpsError("invalid-argument", "Amount must be positive.");
+    }
+    if (amount > 50000) {
+      throw new HttpsError("invalid-argument", "Amount exceeds maximum (₪50,000).");
+    }
+
+    const db = admin.firestore();
+    const adminSettingsRef = db.collection("admin").doc("admin")
+      .collection("settings").doc("settings");
+
+    let createdJobId = null;
+
+    await db.runTransaction(async (tx) => {
+      const clientDoc = await tx.get(db.collection("users").doc(uid));
+      const adminDoc = await tx.get(adminSettingsRef);
+      const quoteDoc = await tx.get(db.collection("quotes").doc(quoteId));
+      const providerDoc = await tx.get(db.collection("users").doc(providerId));
+
+      const currentStatus = (quoteDoc.data() || {}).status || "";
+      if (currentStatus === "paid") return; // idempotent
+
+      const clientBalance = Number((clientDoc.data() || {}).balance || 0);
+      if (clientBalance < amount) {
+        throw new HttpsError("failed-precondition",
+          `אין מספיק יתרה בארנק. נדרשת יתרה של ₪${Math.round(amount)}.`);
+      }
+
+      // Layered commission: custom > category > global
+      let feePct = Number((adminDoc.data() || {}).feePercentage || 0.1);
+      let feeSource = "global";
+
+      const providerData = providerDoc.data() || {};
+      const providerCategory = (providerData.serviceType || "").toString();
+
+      if (providerCategory) {
+        const catDoc = await tx.get(
+          db.collection("category_commissions").doc(providerCategory)
+        );
+        if (catDoc.exists) {
+          const catPct = catDoc.data()?.percentage;
+          if (catPct != null) { feePct = Number(catPct) / 100; feeSource = "category"; }
+        }
+      }
+
+      const customActive = providerData.customCommissionActive === true;
+      const custom = providerData.customCommission;
+      if (customActive && custom && typeof custom === "object") {
+        const pct = custom.percentage;
+        const expiresAt = custom.expiresAt;
+        const live = !expiresAt || (expiresAt.toDate ? expiresAt.toDate() > new Date() : true);
+        if (pct != null && live) { feePct = Number(pct) / 100; feeSource = "custom"; }
+      }
+
+      const roundNIS = (n) => Math.round(n * 100) / 100;
+      const commission = roundNIS(amount * feePct);
+      const netToProvider = roundNIS(amount - commission);
+
+      const jobRef = db.collection("jobs").doc();
+      createdJobId = jobRef.id;
+
+      tx.set(jobRef, {
+        expertId: providerId,
+        expertName: providerName,
+        customerId: uid,
+        customerName: clientName,
+        totalAmount: amount,
+        netAmountForExpert: netToProvider,
+        commission,
+        commissionFeePct: feePct * 100,
+        commissionSource: feeSource,
+        description: description || "",
+        status: "paid_escrow",
+        source: "quote",
+        quoteId,
+        chatRoomId,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        clientReviewDone: false,
+        providerReviewDone: false,
+      });
+
+      tx.update(db.collection("users").doc(uid), {
+        balance: admin.firestore.FieldValue.increment(-amount),
+      });
+      tx.update(db.collection("users").doc(providerId), {
+        pendingBalance: admin.firestore.FieldValue.increment(netToProvider),
+      });
+      tx.set(db.collection("platform_earnings").doc(), {
+        jobId: jobRef.id,
+        amount: commission,
+        sourceExpertId: providerId,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        status: "pending_escrow",
+      });
+      tx.set(db.collection("transactions").doc(), {
+        senderId: uid,
+        senderName: clientName,
+        receiverId: providerId,
+        receiverName: providerName,
+        amount,
+        type: "quote_payment",
+        jobId: jobRef.id,
+        quoteId,
+        payoutStatus: "pending",
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      tx.update(db.collection("quotes").doc(quoteId), {
+        status: "paid",
+        jobId: jobRef.id,
+        paidAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      if (chatMessageId) {
+        tx.update(
+          db.collection("chats").doc(chatRoomId)
+            .collection("messages").doc(chatMessageId),
+          { quoteStatus: "paid", jobId: jobRef.id },
+        );
+      }
+
+      tx.set(adminSettingsRef,
+        { totalPlatformBalance: admin.firestore.FieldValue.increment(commission) },
+        { merge: true },
+      );
+    });
+
+    // System chat message (outside tx, best-effort)
+    if (createdJobId) {
+      try {
+        await db.collection("chats").doc(chatRoomId)
+          .collection("messages").add({
+            senderId: "system",
+            message: `✅ ₪${Math.round(amount)} נעולים באסקרו. העבודה יכולה להתחיל!`,
+            type: "system_alert",
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          });
+      } catch (_) { /* non-critical */ }
+    }
+
+    return { success: true, jobId: createdJobId };
+  },
+);
+
+exports.createTaskEscrow = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Must be signed in.");
+    }
+    const uid = request.auth.uid;
+    const {
+      taskId, responseId, providerId, providerName,
+      clientName, agreedPriceNis, taskTitle,
+    } = request.data || {};
+
+    if (!taskId || !providerId || !agreedPriceNis) {
+      throw new HttpsError("invalid-argument", "Missing required fields.");
+    }
+    if (uid === providerId) {
+      throw new HttpsError("permission-denied", "לא ניתן להזמין שירות מעצמך");
+    }
+    if (typeof agreedPriceNis !== "number" || agreedPriceNis < 10) {
+      throw new HttpsError("invalid-argument", "המחיר חייב להיות לפחות ₪10");
+    }
+
+    const db = admin.firestore();
+    const adminSettingsRef = db.collection("admin").doc("admin")
+      .collection("settings").doc("settings");
+    const taskRef = db.collection("any_tasks").doc(taskId);
+    const responseRef = responseId ? taskRef.collection("responses").doc(responseId) : null;
+
+    await db.runTransaction(async (tx) => {
+      const taskSnap = await tx.get(taskRef);
+      const clientSnap = await tx.get(db.collection("users").doc(uid));
+      const adminSnap = await tx.get(adminSettingsRef);
+
+      if (!taskSnap.exists) throw new HttpsError("not-found", "המשימה לא נמצאה");
+      if (taskSnap.data().status !== "open") {
+        throw new HttpsError("failed-precondition", "המשימה כבר שויכה לנותן שירות אחר");
+      }
+
+      const balance = Number((clientSnap.data() || {}).balance || 0);
+      if (balance < agreedPriceNis) {
+        throw new HttpsError("failed-precondition",
+          `אין מספיק יתרה בארנק. נדרשת יתרה של ₪${agreedPriceNis}`);
+      }
+
+      const feePct = Number((adminSnap.data() || {}).feePercentage || 0.1);
+      const commission = Math.round(agreedPriceNis * feePct);
+      const netToProvider = agreedPriceNis - commission;
+
+      tx.update(taskRef, {
+        selectedProviderId: providerId,
+        selectedProviderName: providerName,
+        agreedPriceNis,
+        platformFeeNis: commission,
+        providerPayoutNis: netToProvider,
+        status: "in_progress",
+        acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      if (responseRef) {
+        const rSnap = await tx.get(responseRef);
+        if (rSnap.exists) tx.update(responseRef, { status: "chosen" });
+      }
+
+      tx.update(db.collection("users").doc(uid), {
+        balance: admin.firestore.FieldValue.increment(-agreedPriceNis),
+      });
+      tx.update(db.collection("users").doc(providerId), {
+        pendingBalance: admin.firestore.FieldValue.increment(netToProvider),
+      });
+      tx.set(db.collection("platform_earnings").doc(), {
+        taskId,
+        amount: commission,
+        sourceExpertId: providerId,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        status: "pending_escrow",
+        source: "any_tasks",
+      });
+      tx.set(db.collection("transactions").doc(), {
+        senderId: uid,
+        senderName: clientName || "",
+        receiverId: providerId,
+        receiverName: providerName,
+        amount: agreedPriceNis,
+        type: "any_task_escrow",
+        taskId,
+        taskTitle: taskTitle || "",
+        payoutStatus: "pending",
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      tx.set(adminSettingsRef,
+        { totalPlatformBalance: admin.firestore.FieldValue.increment(commission) },
+        { merge: true },
+      );
+    });
+
+    return { success: true };
+  },
+);
+
+exports.addTipToJob = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Must be signed in.");
+    }
+    const uid = request.auth.uid;
+    const { jobId, expertId, tipAmount, expertName } = request.data || {};
+    if (!jobId || !expertId || typeof tipAmount !== "number" || tipAmount <= 0) {
+      throw new HttpsError("invalid-argument", "Missing or invalid fields.");
+    }
+
+    const db = admin.firestore();
+    const batch = db.batch();
+
+    batch.set(db.collection("transactions").doc(), {
+      senderId: uid,
+      receiverId: expertId,
+      receiverName: expertName || "",
+      amount: tipAmount,
+      type: "tip",
+      jobId,
+      payoutStatus: "pending",
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    batch.update(db.collection("users").doc(expertId), {
+      pendingBalance: admin.firestore.FieldValue.increment(tipAmount),
+    });
+    batch.update(db.collection("users").doc(uid), {
+      balance: admin.firestore.FieldValue.increment(-tipAmount),
+    });
+    await batch.commit();
+
+    return { success: true };
+  },
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // AnyTasks v14.0.0 — Payment Release + Dispute
 // ═══════════════════════════════════════════════════════════════════
 

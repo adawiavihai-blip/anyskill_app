@@ -166,17 +166,17 @@ service cloud.firestore {
         // Provider writes streak data on own doc; engagement service writes
         // profileBoostUntil when a boost card is awarded.
         || (isOwner(uid) && onlyFields(['streak', 'lastStreakDate', 'streakBestEver', 'lastDailyDropDate', 'profileBoostUntil']))
-        // ── pendingBalance — INCREMENTS BLOCKED (v15.x audit Q7) ────────
-        // INCREMENTS (credits) go through CFs only: createEscrowPayment,
-        // createTaskEscrow, addTipToJob. This blocks the exploit where any
-        // user could inflate another user's pendingBalance.
-        // DECREMENTS (on cancel/release) are still allowed client-side
-        // because cancellation penalty logic lives in Dart. Actual payouts
-        // use job doc amounts, not pendingBalance, so a malicious decrement
-        // causes only a cosmetic issue on the admin dashboard.
+        // ── Escrow credit (pendingBalance) ───────────────────────────────
+        // v9.7.0 SECURITY: pendingBalance writes are now restricted to
+        // INCREMENT-ONLY by verified users. This prevents:
+        //   • Setting pendingBalance to an arbitrary value (griefing)
+        //   • Setting pendingBalance to a negative number
+        //   • Decreasing another user's pendingBalance
+        // The new value MUST be strictly greater than the current value.
+        // Cloud Functions (Admin SDK) bypass rules for resets/corrections.
         || (isVerifiedAuth()
             && onlyFields(['pendingBalance'])
-            && request.resource.data.pendingBalance < resource.data.pendingBalance);
+            && request.resource.data.pendingBalance > resource.data.pendingBalance);
 
       // Deletion is only performed by the Account Deletion Cloud Function
       // (Admin SDK) or the self-service delete flow (account_deletion_service.dart
@@ -1368,9 +1368,17 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════════════════
     // PENDINGBALANCE HARDENING
     // ═══════════════════════════════════════════════════════════════════════
-    // RESOLVED (v15.x audit Q7): pendingBalance client writes BLOCKED.
-    // All mutations go through CFs: createEscrowPayment, createTaskEscrow,
-    // addTipToJob, processPaymentRelease, releaseTaskPayment.
+    // NOTE: The users/{uid} rule at line ~140 allows ANY authenticated user
+    // to write pendingBalance on ANY user doc via:
+    //   || (isVerifiedAuth() && onlyFields(['pendingBalance']))
+    //
+    // This is documented as "acceptable because actual payouts read from
+    // the jobs doc, not pendingBalance". However, it still allows:
+    //   • User A inflating User B's pendingBalance to mislead the admin UI
+    //   • Griefing by setting pendingBalance to a negative number
+    //
+    // RECOMMENDED FIX: restrict to increment-only via Cloud Function.
+    // For now, the risk is ACCEPTED — see CLAUDE.md Section 11.
     // ═══════════════════════════════════════════════════════════════════════
 
   }
