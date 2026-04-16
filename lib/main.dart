@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -308,8 +309,19 @@ void main() async {
     }
   }
 
-  // ── Step 4: App Check — DISABLED ───────────────────────────────────────
-  debugPrint('ℹ️ App Check: DISABLED (social auth compatibility)');
+  // ── Step 4: App Check — MONITORING MODE (Q3 audit fix) ─────────────────
+  // Enabled in monitoring mode first. After 2 days of traffic validation,
+  // switch to enforcement via Firebase Console toggle.
+  try {
+    await FirebaseAppCheck.instance.activate(
+      providerWeb: ReCaptchaEnterpriseProvider('__RECAPTCHA_SITE_KEY__'),
+      providerAndroid: const AndroidPlayIntegrityProvider(),
+      providerApple: const AppleAppAttestProvider(),
+    );
+    debugPrint('✅ App Check: activated (monitoring mode — enforce via Console)');
+  } catch (e) {
+    debugPrint('⚠️ App Check init failed (continuing without): $e');
+  }
 
   // ── Step 5: Payment provider init ──────────────────────────────────────
   // Stripe Connect was removed in v11.9.x pending Israeli payment provider
