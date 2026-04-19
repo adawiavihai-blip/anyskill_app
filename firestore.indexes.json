@@ -9,6 +9,34 @@
       ]
     },
     {
+      "_comment": "Categories v3 §5 — admin activity log feed (newest first per admin)",
+      "collectionGroup": "admin_activity_log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "admin_uid",  "order": "ASCENDING"  },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "Categories v3 §5 — activity log filtered by target type (panel filter)",
+      "collectionGroup": "admin_activity_log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "target_type", "order": "ASCENDING"  },
+        { "fieldPath": "created_at",  "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "Categories v3 §5 — admin saved views ordered by default-first then time",
+      "collectionGroup": "admin_saved_views",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "admin_uid",  "order": "ASCENDING"  },
+        { "fieldPath": "is_default", "order": "DESCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
       "_comment": "AnyTasks v14.0.0 — provider feed of open tasks (no category filter)",
       "collectionGroup": "any_tasks",
       "queryScope": "COLLECTION",

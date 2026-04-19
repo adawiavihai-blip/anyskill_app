@@ -12141,3 +12141,451 @@ async function _sendReviewReminderEmail({
   await batch.commit();
   return "sent";
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CATEGORIES V3 (Section 45) — analytics + activity log + undo + backfill
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Architecture summary (CLAUDE.md §45):
+//   - updateCategoryAnalytics  → scheduled every 15 min, writes
+//                                 categories/{id}.analytics
+//   - logAdminAction           → callable, every admin write goes through here
+//   - undoAdminAction          → callable, restores payload_before snapshot
+//   - backfillCategoriesV3     → callable (admin), one-shot field initializer
+//
+// Per Q4-B+C decision: views_30d / clicks_30d / ctr_30d stay NULL (no
+// tracking infra yet). orders_30d / revenue_30d / sparkline_30d / coverage /
+// active_providers / health_score are real, sourced from jobs + users.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Helper: clamp a number into [min, max] ────────────────────────────────
+function _catClamp(n, lo, hi) {
+  if (n < lo) return lo;
+  if (n > hi) return hi;
+  return n;
+}
+
+// ── Helper: chunk an array into pieces of size n (Firestore IN cap = 30) ──
+function _catChunk(arr, n) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+}
+
+// ── Helper: spec §4 health-score formula ──────────────────────────────────
+function _catComputeHealthScore({
+  activeProviders,
+  orders30d,
+  hasMainImage,
+  subImagesFilledPct,
+  avgRating,
+  growth30d,
+  coverageCities,
+}) {
+  const activeProvidersScore = Math.min(100, activeProviders * 10);
+  const targetOrders = 200;
+  const ordersScore = Math.min(100, (orders30d / targetOrders) * 100);
+  const imageScore = (hasMainImage ? 60 : 0) + (subImagesFilledPct * 0.4);
+  const ratingScore = (avgRating / 5) * 100;
+  const growthScore = _catClamp(50 + growth30d * 2, 0, 100);
+  const coverageScore = Math.min(100, coverageCities * 8);
+  return Math.round(
+    activeProvidersScore * 0.25 +
+    ordersScore * 0.25 +
+    imageScore * 0.10 +
+    ratingScore * 0.15 +
+    growthScore * 0.15 +
+    coverageScore * 0.10,
+  );
+}
+
+// ── Helper: aggregate one category. Returns the analytics map ─────────────
+async function _catAggregateOne(db, categoryDoc) {
+  const data = categoryDoc.data() || {};
+  const name = data.name || categoryDoc.id;
+  const hasMainImage = !!(data.imageUrl || data.iconUrl);
+
+  // Window
+  const now = new Date();
+  const start30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const start60 = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+
+  // Active providers (cap 100 — soft-launch reality §"Real scale")
+  const providersSnap = await db
+    .collection("users")
+    .where("isProvider", "==", true)
+    .where("serviceType", "==", name)
+    .limit(100)
+    .get();
+  const providerUids = providersSnap.docs.map((d) => d.id);
+  const activeProviders = providerUids.length;
+
+  // Distinct cities — defensive on missing field
+  const cities = new Set();
+  let ratingSum = 0;
+  let ratingCount = 0;
+  for (const p of providersSnap.docs) {
+    const pd = p.data() || {};
+    const city = (pd.city || pd.location || "").trim();
+    if (city) cities.add(city);
+    const r = Number(pd.rating || 0);
+    if (r > 0) {
+      ratingSum += r;
+      ratingCount += 1;
+    }
+  }
+  const coverageCities = cities.size;
+  const avgRating = ratingCount > 0 ? ratingSum / ratingCount : 0;
+
+  // Orders + revenue: chunked IN-query against jobs.expertId
+  let orders30d = 0;
+  let revenue30d = 0;
+  let orders60d = 0;
+  const dailyMap = new Map(); // 'YYYY-MM-DD' → count
+  if (providerUids.length > 0) {
+    const chunks = _catChunk(providerUids, 30);
+    for (const chunk of chunks) {
+      const jobsSnap = await db
+        .collection("jobs")
+        .where("expertId", "in", chunk)
+        .where("status", "in", ["completed", "expert_completed", "paid_escrow"])
+        .where("createdAt", ">=", admin.firestore.Timestamp.fromDate(start60))
+        .limit(500)
+        .get();
+      for (const j of jobsSnap.docs) {
+        const jd = j.data() || {};
+        const created = jd.createdAt && jd.createdAt.toDate
+          ? jd.createdAt.toDate()
+          : null;
+        if (!created) continue;
+        const inLast30 = created >= start30;
+        if (inLast30) {
+          orders30d += 1;
+          revenue30d += Number(jd.totalAmount || 0);
+          // Sparkline bucket
+          const key = created.toISOString().slice(0, 10);
+          dailyMap.set(key, (dailyMap.get(key) || 0) + 1);
+        } else {
+          // Between 30-60 days ago for growth calc
+          orders60d += 1;
+        }
+      }
+    }
+  }
+
+  // Build sparkline_30d as 30 ascending daily counts (oldest → newest)
+  const sparkline30d = [];
+  for (let i = 29; i >= 0; i--) {
+    const day = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+    const key = day.toISOString().slice(0, 10);
+    sparkline30d.push(dailyMap.get(key) || 0);
+  }
+
+  // Growth %: orders_30d vs prior 30 days. Defensive on /0.
+  const growth30d = orders60d > 0
+    ? ((orders30d - orders60d) / orders60d) * 100
+    : (orders30d > 0 ? 100 : 0);
+
+  // Sub-image fill rate (best-effort — read sub-categories via `parentId`)
+  let subImagesFilledPct = 0;
+  try {
+    const subSnap = await db
+      .collection("categories")
+      .where("parentId", "==", categoryDoc.id)
+      .limit(50)
+      .get();
+    if (!subSnap.empty) {
+      const filled = subSnap.docs.filter((s) => {
+        const sd = s.data() || {};
+        return !!(sd.imageUrl || sd.iconUrl);
+      }).length;
+      subImagesFilledPct = (filled / subSnap.size) * 100;
+    }
+  } catch (e) {
+    // Ignore — sub-cat aggregation is non-critical for the score
+  }
+
+  const healthScore = _catComputeHealthScore({
+    activeProviders,
+    orders30d,
+    hasMainImage,
+    subImagesFilledPct,
+    avgRating,
+    growth30d,
+    coverageCities,
+  });
+
+  return {
+    // NOTE: views_30d / clicks_30d / ctr_30d intentionally omitted (Q4-B+C).
+    // The Flutter UI renders "—" placeholders when these fields are absent.
+    orders_30d: orders30d,
+    revenue_30d: Number(revenue30d.toFixed(2)),
+    growth_30d: Number(growth30d.toFixed(2)),
+    sparkline_30d: sparkline30d,
+    coverage_cities: coverageCities,
+    active_providers: activeProviders,
+    health_score: healthScore,
+    last_updated: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+// 1) Scheduled aggregator. Runs every 15 min for ALL root categories.
+exports.updateCategoryAnalytics = onSchedule(
+  {
+    schedule: "every 15 minutes",
+    timeZone: "Asia/Jerusalem",
+    region: "us-central1",
+    memory: "512MiB",
+    timeoutSeconds: 300,
+  },
+  async () => {
+    const db = admin.firestore();
+    // Process root categories only (parentId == '')
+    const catSnap = await db
+      .collection("categories")
+      .where("parentId", "==", "")
+      .limit(50)
+      .get();
+
+    let updated = 0;
+    let errors = 0;
+    const errorSamples = [];
+
+    for (const c of catSnap.docs) {
+      try {
+        const analytics = await _catAggregateOne(db, c);
+        await db.collection("categories").doc(c.id).set(
+          { analytics: analytics },
+          { merge: true },
+        );
+        updated += 1;
+      } catch (e) {
+        errors += 1;
+        if (errorSamples.length < 3) {
+          errorSamples.push(`${c.id}: ${e.message}`);
+        }
+      }
+    }
+
+    console.log(
+      `[updateCategoryAnalytics] scanned=${catSnap.size} updated=${updated} errors=${errors}`,
+      errorSamples.length > 0 ? errorSamples : "",
+    );
+    return null;
+  },
+);
+
+// 2) Manual one-shot aggregator. Called from the admin tab's refresh button.
+exports.refreshCategoryAnalyticsNow = onCall(
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 300 },
+  async (request) => {
+    if (!(await isAdminCaller(request))) {
+      throw new HttpsError("permission-denied", "Admin only.");
+    }
+    const db = admin.firestore();
+    const catSnap = await db
+      .collection("categories")
+      .where("parentId", "==", "")
+      .limit(50)
+      .get();
+    let updated = 0;
+    for (const c of catSnap.docs) {
+      try {
+        const a = await _catAggregateOne(db, c);
+        await db.collection("categories").doc(c.id).set(
+          { analytics: a }, { merge: true },
+        );
+        updated += 1;
+      } catch (e) {
+        console.error(`[refreshCategoryAnalyticsNow] ${c.id}: ${e.message}`);
+      }
+    }
+    return { ok: true, scanned: catSnap.size, updated: updated };
+  },
+);
+
+// 3) logAdminAction — every admin mutation in v3 goes through here. Server
+//    stamps admin_uid + admin_name + created_at so the audit trail is
+//    tamper-resistant.
+exports.logAdminAction = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!(await isAdminCaller(request))) {
+      throw new HttpsError("permission-denied", "Admin only.");
+    }
+    const db = admin.firestore();
+    const data = request.data || {};
+    const required = [
+      "action_type", "target_type", "target_id", "target_name",
+    ];
+    for (const f of required) {
+      if (typeof data[f] !== "string") {
+        throw new HttpsError(
+          "invalid-argument", `Missing string field: ${f}`,
+        );
+      }
+    }
+
+    // Look up admin display name (best-effort; fall back to email)
+    const uid = request.auth.uid;
+    let adminName = "אדמין";
+    try {
+      const userSnap = await db.collection("users").doc(uid).get();
+      const ud = userSnap.exists ? (userSnap.data() || {}) : {};
+      adminName = ud.name || ud.displayName || ud.email || "אדמין";
+    } catch (e) {
+      // Non-critical — keep default
+    }
+
+    const ref = await db.collection("admin_activity_log").add({
+      admin_uid: uid,
+      admin_name: adminName,
+      action_type: data.action_type,
+      target_type: data.target_type,
+      target_id: data.target_id,
+      target_name: data.target_name,
+      payload_before: data.payload_before || {},
+      payload_after: data.payload_after || {},
+      is_reversible: data.is_reversible !== false,
+      reversed_at: null,
+      reversed_by: null,
+      created_at: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { ok: true, log_id: ref.id };
+  },
+);
+
+// 4) undoAdminAction — restores payload_before to the target doc, marks the
+//    original log entry as reversed, writes a new "undo" log linked to it.
+//    Idempotent: re-undoing an already-reversed entry returns success no-op.
+exports.undoAdminAction = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!(await isAdminCaller(request))) {
+      throw new HttpsError("permission-denied", "Admin only.");
+    }
+    const db = admin.firestore();
+    const logId = (request.data && request.data.log_id) || "";
+    if (!logId) {
+      throw new HttpsError("invalid-argument", "log_id required");
+    }
+
+    const logRef = db.collection("admin_activity_log").doc(logId);
+    const logSnap = await logRef.get();
+    if (!logSnap.exists) {
+      throw new HttpsError("not-found", "Log entry not found");
+    }
+    const log = logSnap.data();
+    if (log.reversed_at) {
+      return { ok: true, already_reversed: true };
+    }
+    if (log.is_reversible === false) {
+      throw new HttpsError(
+        "failed-precondition", "Action is not reversible",
+      );
+    }
+
+    // Restore target doc per target_type
+    let restoreCollection = null;
+    if (log.target_type === "category") restoreCollection = "categories";
+    else if (log.target_type === "banner") restoreCollection = "promoted_banners";
+    if (!restoreCollection) {
+      throw new HttpsError(
+        "failed-precondition",
+        `Cannot undo target_type=${log.target_type}`,
+      );
+    }
+
+    const targetRef = db.collection(restoreCollection).doc(log.target_id);
+
+    if (log.action_type === "create") {
+      // Undo of create = delete the doc
+      await targetRef.delete();
+    } else if (log.action_type === "delete") {
+      // Undo of delete = re-create with payload_before
+      await targetRef.set(log.payload_before || {});
+    } else if (log.action_type === "reorder") {
+      // Reorder undo: payload_after.order is the post-state list.
+      // payload_before is intentionally empty for reorders (whole-list write
+      // is too heavy to snapshot). Refuse undo with a friendly message.
+      throw new HttpsError(
+        "failed-precondition",
+        "ביטול סדר מחדש לא נתמך — סדר/י ידנית מחדש",
+      );
+    } else {
+      // create / update / hide / pin etc.: restore the payload_before subset
+      const restorePatch = log.payload_before || {};
+      // Clear the post-state image-update marker so the restore is visible
+      await targetRef.set(restorePatch, { merge: true });
+    }
+
+    // Mark original entry as reversed + write the undo log entry
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    await logRef.update({
+      reversed_at: now,
+      reversed_by: request.auth.uid,
+    });
+    const undoRef = await db.collection("admin_activity_log").add({
+      admin_uid: request.auth.uid,
+      admin_name: log.admin_name || "אדמין",
+      action_type: "undo",
+      target_type: log.target_type,
+      target_id: log.target_id,
+      target_name: log.target_name,
+      payload_before: log.payload_after || {},
+      payload_after: log.payload_before || {},
+      is_reversible: false,
+      reversed_at: null,
+      reversed_by: null,
+      original_log_id: logId,
+      created_at: now,
+    });
+
+    return { ok: true, undo_log_id: undoRef.id };
+  },
+);
+
+// 5) backfillCategoriesV3 — one-shot field initializer. Idempotent: skips
+//    docs that already have admin_meta set. Run once after Phase A deploy.
+exports.backfillCategoriesV3 = onCall(
+  { region: "us-central1", timeoutSeconds: 300 },
+  async (request) => {
+    if (!(await isAdminCaller(request))) {
+      throw new HttpsError("permission-denied", "Admin only.");
+    }
+    const db = admin.firestore();
+    const snap = await db.collection("categories").limit(500).get();
+    let scanned = 0;
+    let initialized = 0;
+    let skipped = 0;
+    const batch = db.batch();
+
+    for (const doc of snap.docs) {
+      scanned += 1;
+      const data = doc.data() || {};
+      if (data.admin_meta && typeof data.admin_meta === "object") {
+        skipped += 1;
+        continue;
+      }
+      // Initialize admin_meta + custom_tags ONLY. analytics is owned by the
+      // scheduled CF and will fill in within 15 min.
+      batch.set(doc.ref, {
+        admin_meta: {
+          is_pinned: false,
+          is_hidden: false,
+          last_edited_by: null,
+          last_edited_at: null,
+          last_edited_action: "backfill",
+          notes: "",
+        },
+        custom_tags: data.custom_tags || [],
+      }, { merge: true });
+      initialized += 1;
+    }
+
+    if (initialized > 0) {
+      await batch.commit();
+    }
+    return { ok: true, scanned: scanned, initialized: initialized, skipped: skipped };
+  },
+);

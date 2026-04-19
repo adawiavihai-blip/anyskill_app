@@ -1382,6 +1382,39 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // CATEGORIES V3 (Section 45)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Admin activity log — append-only audit trail. CF (logAdminAction) writes
+    // via Admin SDK; clients can only READ. Per-admin uid scoping in queries.
+    match /admin_activity_log/{logId} {
+      allow read:   if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // Admin saved views — per-admin filter / sort presets for the v3 tab.
+    // Each admin owns their own docs; admins cannot see other admins' views.
+    match /admin_saved_views/{viewId} {
+      allow read:   if isAdmin()
+                    && resource.data.admin_uid == request.auth.uid;
+      allow create: if isAdmin()
+                    && request.resource.data.admin_uid == request.auth.uid;
+      allow update, delete: if isAdmin()
+                            && resource.data.admin_uid == request.auth.uid;
+    }
+
+    // Promoted banners — shadow registry for AnyTasks + נתינה מהלב + future
+    // custom banners. Per Q5-A this is a READ-ONLY mirror in Phase A-B; the
+    // home_tab still renders banners from hardcoded values. Customer (auth)
+    // reads are allowed so a future migration to live rendering doesn't need
+    // a rules change.
+    match /promoted_banners/{bannerId} {
+      allow read:           if isVerifiedAuth();
+      allow create, update: if isAdmin();
+      allow delete:         if isAdmin();
+    }
+
 
     // ═══════════════════════════════════════════════════════════════════════
     // PENDINGBALANCE HARDENING
