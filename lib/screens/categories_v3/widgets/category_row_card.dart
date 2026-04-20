@@ -79,7 +79,7 @@ class CategoryRowCard extends StatelessWidget {
     // it's the most actionable signal. Edit pencil also stays.
     // Defensive: MediaQuery may not be ready on the very first frame in some
     // tab-switch races; default to non-compact (full layout) when unsure.
-    double viewportWidth = 1024;
+    double viewportWidth = 1024.0;
     try {
       viewportWidth = MediaQuery.sizeOf(context).width;
     } catch (_) {
@@ -221,7 +221,11 @@ class CategoryRowCard extends StatelessWidget {
                   compact: true,
                   builder: () => HealthScoreBar(
                     score: healthScore,
-                    barWidth: isCompact ? 36 : 50,
+                    // .0 required — Flutter Web (dart2js) does NOT auto-coerce
+                    // `int` → `double` at runtime. `isCompact ? 36 : 50` returns
+                    // int, and HealthScoreBar.barWidth is double — mismatch =
+                    // TypeError: "type 'int' is not a subtype of 'double'".
+                    barWidth: isCompact ? 36.0 : 50.0,
                   ),
                 ),
               ],

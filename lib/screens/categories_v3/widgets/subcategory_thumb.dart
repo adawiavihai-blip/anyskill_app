@@ -171,7 +171,7 @@ class _DashedBorderPainter extends CustomPainter {
     const dashWidth = 5.0;
     const dashSpace = 4.0;
     for (final metric in path.computeMetrics()) {
-      double dist = 0;
+      double dist = 0.0;
       while (dist < metric.length) {
         dashPath.addPath(
           metric.extractPath(dist, dist + dashWidth),

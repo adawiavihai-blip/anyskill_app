@@ -18,9 +18,12 @@ class ConversionFunnelInline extends StatelessWidget {
     final views = analytics?.views30d;
     final clicks = analytics?.clicks30d;
     final orders = analytics?.orders30d ?? 0;
-    final revenue = analytics?.revenue30d ?? 0;
+    // IMPORTANT: `.0` required on double defaults — dart2js on Flutter Web
+    // does not coerce `int 0` into `double` at runtime. `?? 0` would throw
+    // `type 'int' is not a subtype of 'double'` when analytics is null.
+    final revenue = analytics?.revenue30d ?? 0.0;
     final providers = analytics?.activeProviders ?? 0;
-    final growth = analytics?.growth30d ?? 0;
+    final growth = analytics?.growth30d ?? 0.0;
 
     final parts = <_FunnelPart>[
       _FunnelPart(

@@ -10,7 +10,10 @@ class HealthScoreBar extends StatelessWidget {
   const HealthScoreBar({
     super.key,
     required this.score,
-    this.barWidth = 50,
+    // IMPORTANT: .0 required — dart2js on Flutter Web throws
+    // `type 'int' is not a subtype of 'double'` if this default is a
+    // plain `50`.
+    this.barWidth = 50.0,
   });
 
   final int score;
@@ -43,7 +46,7 @@ class HealthScoreBar extends StatelessWidget {
           const SizedBox(width: 6),
           Container(
             width: barWidth,
-            height: 4,
+            height: 4.0,
             decoration: BoxDecoration(
               color: const Color(0xFFE5E7EB),
               borderRadius: BorderRadius.circular(2),
@@ -53,7 +56,7 @@ class HealthScoreBar extends StatelessWidget {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 250),
                 width: barWidth * fillPct,
-                height: 4,
+                height: 4.0,
                 decoration: BoxDecoration(
                   color: color,
                   borderRadius: BorderRadius.circular(2),

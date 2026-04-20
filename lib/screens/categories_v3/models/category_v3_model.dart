@@ -132,9 +132,11 @@ class CategoryAnalytics {
     this.views30d,
     this.clicks30d,
     this.orders30d = 0,
-    this.revenue30d = 0,
+    // .0 required on double fields — dart2js treats `int` defaults passed
+    // where `double` is expected as a runtime type error on Flutter Web.
+    this.revenue30d = 0.0,
     this.ctr30d,
-    this.growth30d = 0,
+    this.growth30d = 0.0,
     this.sparkline30d = const <int>[],
     this.coverageCities = 0,
     this.activeProviders = 0,
@@ -162,9 +164,15 @@ class CategoryAnalytics {
       views30d: (m['views_30d'] as num?)?.toInt(),
       clicks30d: (m['clicks_30d'] as num?)?.toInt(),
       orders30d: (m['orders_30d'] as num?)?.toInt() ?? 0,
-      revenue30d: (m['revenue_30d'] as num?)?.toDouble() ?? 0,
+      // IMPORTANT: `.0` required on double defaults — dart2js on Flutter Web
+      // does not auto-coerce `int 0` into `double` when assigning to a
+      // `double` field via `??`. Plain `?? 0` compiles fine but throws
+      // `type 'int' is not a subtype of 'double'` on render when the
+      // analytics field is null (which it is for a freshly-backfilled doc
+      // before the scheduled CF runs).
+      revenue30d: (m['revenue_30d'] as num?)?.toDouble() ?? 0.0,
       ctr30d: (m['ctr_30d'] as num?)?.toDouble(),
-      growth30d: (m['growth_30d'] as num?)?.toDouble() ?? 0,
+      growth30d: (m['growth_30d'] as num?)?.toDouble() ?? 0.0,
       sparkline30d: m['sparkline_30d'] is List
           ? (m['sparkline_30d'] as List)
               .whereType<num>()

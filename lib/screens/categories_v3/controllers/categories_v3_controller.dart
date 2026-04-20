@@ -268,11 +268,13 @@ List<CategoryV3Model> _applyScreenStateToList(
       list.sort((a, b) =>
           (b.analytics?.orders30d ?? 0).compareTo(a.analytics?.orders30d ?? 0));
     case CategorySort.revenueDesc:
-      list.sort((a, b) => (b.analytics?.revenue30d ?? 0)
-          .compareTo(a.analytics?.revenue30d ?? 0));
+      // .0 required — dart2js does not auto-coerce `int 0` to `double` in
+      // `double? ?? 0` expressions on Flutter Web, which throws at sort time.
+      list.sort((a, b) => (b.analytics?.revenue30d ?? 0.0)
+          .compareTo(a.analytics?.revenue30d ?? 0.0));
     case CategorySort.growthDesc:
-      list.sort((a, b) => (b.analytics?.growth30d ?? 0)
-          .compareTo(a.analytics?.growth30d ?? 0));
+      list.sort((a, b) => (b.analytics?.growth30d ?? 0.0)
+          .compareTo(a.analytics?.growth30d ?? 0.0));
     case CategorySort.healthAsc:
       list.sort((a, b) => (a.analytics?.healthScore ?? 0)
           .compareTo(b.analytics?.healthScore ?? 0));

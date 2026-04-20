@@ -15,8 +15,12 @@ class SparklineWidget extends StatelessWidget {
     super.key,
     required this.points,
     required this.growthPercent,
-    this.width = 60,
-    this.height = 28,
+    // IMPORTANT: use .0 on all numeric literals — dart2js (Flutter Web)
+    // does NOT auto-coerce `int` to `double` like the Dart VM does.
+    // Plain `60` here would throw at runtime:
+    //   type 'int' is not a subtype of 'double'
+    this.width = 60.0,
+    this.height = 28.0,
   });
 
   /// 30 daily counts (oldest → newest). Caller pads to length 30.
