@@ -23,6 +23,8 @@ import 'admin_insights_tab.dart';
 import 'admin_monetization_tab.dart';
 import 'admin_id_verification_tab.dart';
 import 'admin_categories_management_tab.dart';
+import 'categories_v3/admin_categories_v3_tab.dart';
+import 'categories_v3/feature_flag.dart';
 import 'admin_private_feedback_tab.dart';
 import 'admin_stories_management_tab.dart';
 import 'admin_academy_management_tab.dart';
@@ -413,7 +415,13 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
           Expanded(
             child: TabBarView(
               children: [
-                const AdminCategoriesManagementTab(),
+                // Categories v3 (Section 45) — gated by hard-coded UID flag.
+                // Whitelisted admin → premium v3 workspace.
+                // Everyone else → legacy AdminCategoriesManagementTab.
+                if (CategoriesV3FeatureFlag.isCategoriesV3Enabled)
+                  const AdminCategoriesV3Tab()
+                else
+                  const AdminCategoriesManagementTab(),
                 const AdminBannersTab(),
                 const AdminMonetizationTab(),
                 const AdminBillingTab(),
