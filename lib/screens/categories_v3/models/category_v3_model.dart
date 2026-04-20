@@ -66,9 +66,14 @@ class CategoryV3Model {
       imageUrl: _safeString(data['imageUrl']),
       color: _safeString(data['color']),
       legacyCsm: _safeString(data['csm']),
+      // CRITICAL: always hand UI a non-null CategoryAnalytics so downstream
+      // widgets (Sparkline, HealthScoreBar, ConversionFunnelInline, chips)
+      // can safely read `.views30d`, `.healthScore`, `.sparkline30d` etc.
+      // without tripping the per-widget `analytics != null` gate that used
+      // to hide real Firestore docs (e.g. id=DJ has no analytics field).
       analytics: analyticsRaw is Map
-          ? _safeAnalytics(analyticsRaw)
-          : null,
+          ? (_safeAnalytics(analyticsRaw) ?? CategoryAnalytics.empty())
+          : CategoryAnalytics.empty(),
       adminMeta: adminMetaRaw is Map
           ? _safeAdminMeta(adminMetaRaw)
           : null,
@@ -197,6 +202,23 @@ class CategoryAnalytics {
   /// decide between rendering the chart or a flat-line placeholder.
   bool get hasMeaningfulSparkline =>
       sparkline30d.isNotEmpty && sparkline30d.any((v) => v > 0);
+
+  /// Safe default used when a Firestore doc has no `analytics` field at all.
+  /// Every numeric field is explicitly a valid value of its declared type so
+  /// downstream widgets can render without null/type surprises on web.
+  factory CategoryAnalytics.empty() => CategoryAnalytics(
+        views30d: null,
+        clicks30d: null,
+        orders30d: 0,
+        revenue30d: 0.0,
+        ctr30d: null,
+        growth30d: 0.0,
+        sparkline30d: const <int>[],
+        coverageCities: 0,
+        activeProviders: 0,
+        healthScore: 0,
+        lastUpdated: null,
+      );
 }
 
 enum HealthBand { bad, ok, good }
