@@ -221,6 +221,20 @@ service cloud.firestore {
       allow read, write: if isOwner(uid);
     }
 
+    // ── Workout Plans (Fitness Trainer CSM §44) ─────────────────────────
+    // Personalized 4-week plans written by `generateCustomWorkoutPlan` CF
+    // at `users/{clientId}/workout_plans/{autoId}`. The CF runs as Admin SDK
+    // so bypasses rules on write; here we gate READ to the client (owner)
+    // + the trainer who created the plan + admins.
+    match /users/{uid}/workout_plans/{planId} {
+      allow read: if isOwner(uid)
+                  || isAdmin()
+                  || (isVerifiedAuth()
+                      && resource.data.createdBy == request.auth.uid);
+      // Clients cannot self-mutate plans — must go through CF.
+      allow create, update, delete: if false;
+    }
+
     // ── Legacy per-user notification subcollection ────────────────────────
     match /notifications/{uid}/userNotifications/{notifId} {
       allow read, write: if isOwner(uid);
@@ -516,6 +530,37 @@ service cloud.firestore {
       allow read:           if isAdmin();
       allow create, delete: if false;
       allow update:         if isAdmin();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // APP FEEDBACK & IDEAS (§42) — user-submitted product feedback.
+    //
+    // Separate from support_tickets (those are for bugs/issues). These docs
+    // carry: uid, userRole, userName, userEmail, category, content (≤500ch),
+    // npsScore (1-10), status, priority (AI), topic (AI), createdAt.
+    //
+    // Submitter can create + read their OWN feedback. Admin sees all.
+    // Nobody deletes. Users CANNOT self-update (the AI tags would be
+    // clobbered); status + priority + topic flow through the CF or admin.
+    // ═══════════════════════════════════════════════════════════════════════
+    match /app_feedback/{feedbackId} {
+      allow read: if isAdmin() ||
+                     (isVerifiedAuth() && resource.data.uid == request.auth.uid);
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.content is string
+                    && request.resource.data.content.size() > 0
+                    && request.resource.data.content.size() <= 500
+                    && request.resource.data.npsScore is number
+                    && request.resource.data.npsScore >= 1
+                    && request.resource.data.npsScore <= 10
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.category in
+                        ['app_interface', 'payment_process', 'new_feature_idea', 'other'];
+      // Only admins may update status/notes. AI tags (priority/topic) are
+      // written by the CF using the Admin SDK which bypasses rules anyway.
+      allow update: if isAdmin();
+      allow delete: if false;
     }
 
 
@@ -1205,7 +1250,7 @@ service cloud.firestore {
                            .hasOnly(['title', 'description', 'status',
                                     'cancelledAt', 'proofText',
                                     'locationFrom', 'locationTo', 'imageUrl',
-                                    'clientReviewDone']))
+                                    'deadline', 'clientReviewDone']))
                     || (isVerifiedAuth()
                         && resource.data.selectedProviderId == request.auth.uid
                         && request.resource.data.diff(resource.data).affectedKeys()
@@ -1382,6 +1427,29 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ── Performance Observatory (Milestone 1) ───────────────────────────
+    // `performance_metrics/current` is produced every 5 min by the
+    // updateMetricsSnapshot CF (Admin SDK — bypasses rules). Read-only
+    // from client, admin + support agents only.
+    match /performance_metrics/{docId} {
+      allow read:  if isAdmin() || isSupportAgent();
+      allow write: if false;
+    }
+
+    // Nova AI conversation log — written by askNovaChat CF with a 30-day
+    // TTL field. Admin-only reads (audit trail).
+    match /nova_conversations/{docId} {
+      allow read:   if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // Matching analytics — written by recommendTrainersByGoals CF (Section 44).
+    // Internal telemetry, admin-only reads. CF uses Admin SDK so no client write.
+    match /matching_analytics/{docId} {
+      allow read:   if isAdmin();
+      allow create, update, delete: if false;
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // CATEGORIES V3 (Section 45)
     // ═══════════════════════════════════════════════════════════════════════
@@ -1413,6 +1481,33 @@ service cloud.firestore {
       allow read:           if isVerifiedAuth();
       allow create, update: if isAdmin();
       allow delete:         if isAdmin();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CHAT GUARD (Section 46) — Phase 1: admin dashboard
+    // ═══════════════════════════════════════════════════════════════════════
+    // blocked_words is admin-managed; reads are open to all authenticated
+    // users because Phase 2 detection can run client-side for soft matches
+    // (hard matches + incident logging go through a CF that uses Admin SDK).
+    match /blocked_words/{wordId} {
+      allow read:                   if isAuth() || isAppCheckValid();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Incidents are append-only from server side (CF in Phase 2). Admins
+    // read to populate the dashboard; client writes are blocked so nobody
+    // can forge a fake incident record.
+    match /chat_guard_incidents/{incidentId} {
+      allow read:                   if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // Single settings doc lives at chat_guard_settings/main. Non-admins
+    // may read (so chat code can respect the kill-switch flag without
+    // hitting a CF on every send); only admins write.
+    match /chat_guard_settings/{docId} {
+      allow read:                   if isAuth() || isAppCheckValid();
+      allow create, update, delete: if isAdmin();
     }
 
 
