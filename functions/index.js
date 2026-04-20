@@ -10,8 +10,12 @@ const admin = require("firebase-admin");
 // not the class itself).
 const { default: Anthropic } = require("@anthropic-ai/sdk");
 
-// ── Secrets (set via: firebase functions:secrets:set ANTHROPIC_API_KEY) ────────
+// ── Secrets (set via: firebase functions:secrets:set <NAME>) ───────────────────
+// Declared at module top so every `secrets: [...]` reference below the file
+// resolves at load time (JS `const` is in TDZ before its declaration line —
+// a secret used in one CF declaration MUST be defined before that line).
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
+const GEMINI_API_KEY    = defineSecret("GEMINI_API_KEY");
 
 admin.initializeApp();
 
@@ -2159,6 +2163,117 @@ function buildPendingCategoryEmail({ uid, serviceDescription, suggestedCategoryN
   </div>
 </body></html>`;
 }
+
+// ═══════════════════════════════════════════════════════════════
+// notifyProviderOnApproval — fires when admin approves a provider
+//
+// Triggers on users/{uid} update. Fires ONCE when `isVerified` transitions
+// false → true (the field that `AdminUsersRepository.toggleVerified` flips).
+// Gated to providers only (isProvider == true) so we don't spam customers
+// who happen to get isVerified set for some future reason.
+//
+// Side effects:
+//   1. FCM push to the provider's device (respects fcmToken / deviceToken)
+//   2. In-app notification doc (notifications collection)
+//   3. Idempotency — writes `verifiedAt` timestamp on first success; if
+//      already present we short-circuit, so re-enabling after a toggle
+//      off→on doesn't re-notify.
+//
+// DOES NOT fire on isVerified true → false (un-verify). That's disruptive
+// and usually admin-error territory — not worth pushing.
+// ═══════════════════════════════════════════════════════════════
+exports.notifyProviderOnApproval = onDocumentUpdated(
+    {
+        document:     "users/{uid}",
+        maxInstances: 10,
+        region:       "us-central1",
+    },
+    async (event) => {
+        if (!event.data) return null;
+
+        const before = event.data.before.data() || {};
+        const after  = event.data.after.data()  || {};
+        const uid    = event.params.uid;
+
+        // Must be a false → true transition on isVerified.
+        const wasVerified = before.isVerified === true;
+        const isVerified  = after.isVerified === true;
+        if (wasVerified || !isVerified) return null;
+
+        // Only providers get this notification.
+        if (after.isProvider !== true) return null;
+
+        // Idempotency — verifiedAt already stamped = we already notified.
+        if (after.verifiedAt) {
+            console.log(`[notifyProviderOnApproval] uid=${uid} already has verifiedAt, skip`);
+            return null;
+        }
+
+        const name        = after.name || "שלום";
+        const token       = after.fcmToken || after.deviceToken || null;
+        const serviceType = after.serviceType || "";
+
+        const title = "אושרת בהצלחה! 🎉";
+        const body  = serviceType
+            ? `${name}, הפרופיל שלך בקטגוריית "${serviceType}" אושר. מהרגע הזה לקוחות יכולים להזמין אותך — בהצלחה!`
+            : `${name}, הפרופיל שלך אושר. מהרגע הזה לקוחות יכולים להזמין אותך — בהצלחה!`;
+
+        // 1. FCM push (skipped gracefully if no token).
+        if (token) {
+            try {
+                await admin.messaging().send({
+                    token,
+                    notification: { title, body },
+                    android: {
+                        priority: "high",
+                        notification: { channelId: "anyskill_default" },
+                    },
+                    apns: {
+                        headers: { "apns-priority": "10" },
+                        payload: { aps: { sound: "default", contentAvailable: 1 } },
+                    },
+                    webpush: {
+                        notification: { icon: "/icons/Icon-192.png" },
+                        fcm_options: { link: "https://anyskill-6fdf3.web.app" },
+                    },
+                    data: { type: "provider_approved", uid },
+                });
+                console.log(`[notifyProviderOnApproval] push sent to ${uid}`);
+            } catch (e) {
+                console.error(`[notifyProviderOnApproval] push failed for ${uid}:`, e.message);
+                // Do not throw — in-app notification below is the durable record.
+            }
+        } else {
+            console.warn(`[notifyProviderOnApproval] uid=${uid} has no FCM token, push skipped`);
+        }
+
+        // 2. In-app notification (always written — durable even if push fails).
+        try {
+            await admin.firestore().collection("notifications").add({
+                userId:    uid,
+                title,
+                body,
+                type:      "provider_approved",
+                isRead:    false,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        } catch (e) {
+            console.error(`[notifyProviderOnApproval] in-app notification failed for ${uid}:`, e.message);
+        }
+
+        // 3. Stamp verifiedAt so we never re-notify.
+        try {
+            await admin.firestore().collection("users").doc(uid).update({
+                verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+                isPendingExpert: false,
+            });
+        } catch (e) {
+            console.error(`[notifyProviderOnApproval] verifiedAt stamp failed for ${uid}:`, e.message);
+        }
+
+        return null;
+    }
+);
 
 // ── categorizeprovider — callable from Flutter ────────────────────────────────
 exports.categorizeprovider = onCall(
@@ -4568,7 +4683,7 @@ exports.generateDailyOpportunity = onSchedule(
     schedule:    "0 8 * * *",
     timeZone:    "Asia/Jerusalem",
     region:      "us-central1",
-    secrets:     [ANTHROPIC_API_KEY],
+    secrets:     [GEMINI_API_KEY],
     maxInstances: 1,
   },
   async () => {
@@ -4619,39 +4734,81 @@ exports.generateDailyOpportunity = onSchedule(
       };
       const seasonContext = seasonMap[month] || "עונה שוטפת";
 
-      // ── 4. Call Claude Haiku ────────────────────────────────────────────
-      const apiKey = ANTHROPIC_API_KEY.value() || process.env.ANTHROPIC_API_KEY || "";
+      // ── 4. Call Gemini (§40.1 — migrated from Anthropic Haiku to align
+      //       with Ilon / Monetization / Cleaning / Pest / Delivery CFs) ──
+      const geminiKey = GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
       const prompt =
         `אתה מנהל שיווק של פלטפורמת שירותים ביתיים בישראל.\n` +
         `כתוב הודעת "הזדמנות היום" קצרה ומשכנעת בעברית (עד 80 תווים).\n` +
         `עונה: ${seasonContext}.\n` +
         (marketContext ? `התראות שוק: ${marketContext}.\n` : "") +
         `ההודעה צריכה להניע לקוחות להזמין שירות עכשיו.\n` +
-        `ענה ב-JSON בלבד:\n` +
+        `ענה ב-JSON בלבד (ללא טקסט נוסף, ללא סימני code-fence):\n` +
         `{"headline":"...","emoji":"...","category":"שם קטגוריה"}\n` +
         `קטגוריות: אינסטלציה, חשמלאי, מזגנים, ניקיון, גינון, שיפוצים, צביעה, ריצוף, מנעולן`;
 
       const _dealAiEnabled = await _isAiEnabled(db);
-      if (apiKey && _dealAiEnabled) {
-        try {
-          const anthropic = new Anthropic({ apiKey });
-          const msg = await anthropic.messages.create({
-            model:      "claude-haiku-4-5-20251001",
-            max_tokens: 150,
-            messages:   [{ role: "user", content: prompt }],
-          });
-          _trackApiCost(db, msg.usage?.input_tokens || 0, msg.usage?.output_tokens || 0).catch(() => {});
-          const raw = (msg.content[0]?.text || "{}")
-            .replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
-          const parsed = JSON.parse(raw);
+      if (geminiKey && _dealAiEnabled) {
+        // Same fallback chain the Ilon agent + askCeoAgent use.
+        const GEMINI_MODELS = [
+          "gemini-3.1-flash-lite-preview",
+          "gemini-2.5-flash-lite",
+        ];
+        const body = {
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.8,
+            maxOutputTokens: 256,
+            responseMimeType: "application/json",
+          },
+        };
+
+        let parsed = null;
+        for (const model of GEMINI_MODELS) {
+          try {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+            const resp = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            if (!resp.ok) {
+              const errText = await resp.text();
+              console.error(
+                `generateDailyOpportunity: Gemini ${model} HTTP ${resp.status}:`,
+                errText.substring(0, 200),
+              );
+              if (resp.status === 404) continue; // try next model
+              throw new Error(`HTTP ${resp.status}`);
+            }
+            const json = await resp.json();
+            const text = (json.candidates?.[0]?.content?.parts?.[0]?.text ?? "").trim();
+            const inTok  = json.usageMetadata?.promptTokenCount     || 0;
+            const outTok = json.usageMetadata?.candidatesTokenCount || 0;
+            _trackApiCost(db, inTok, outTok).catch(() => {});
+
+            // responseMimeType: "application/json" returns raw JSON, but strip
+            // defensive code-fences in case a model ignores it.
+            const raw = text.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
+            parsed = JSON.parse(raw);
+            break; // success — exit fallback loop
+          } catch (err) {
+            console.error(
+              `generateDailyOpportunity: Gemini ${model} threw:`,
+              err.message,
+            );
+          }
+        }
+
+        if (parsed) {
           headline = parsed.headline || "";
           emoji    = parsed.emoji    || "✨";
           category = parsed.category || "";
-        } catch (err) {
-          console.error("generateDailyOpportunity: Claude error:", err);
         }
       } else if (!_dealAiEnabled) {
-        console.warn("generateDailyOpportunity: kill-switch active — skipping Claude");
+        console.warn("generateDailyOpportunity: kill-switch active — skipping Gemini");
+      } else {
+        console.warn("generateDailyOpportunity: GEMINI_API_KEY not set — using templates");
       }
 
       // Fallback templates if Claude unavailable or parse fails
@@ -5039,15 +5196,10 @@ exports.adminApproveProvider = onCall(
       approvedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // 2. Push notification
-    batch.set(db.collection("notifications").doc(), {
-      userId:    uid,
-      title:     "מזל טוב! 🎉",
-      body:      "הפרופיל שלך אושר ואתה מופיע עכשיו בחיפוש.",
-      type:      "provider_approved",
-      isRead:    false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    // 2. Notification — handled by the `notifyProviderOnApproval` trigger
+    //    (fires on isVerified false → true). That trigger owns both the
+    //    FCM push and the in-app notification doc, so no write here.
+    //    Previously we wrote a doc directly here; removed to avoid duplication.
 
     // 3. Activity log
     batch.set(db.collection("activity_log").doc(), {
@@ -5224,8 +5376,7 @@ exports.generateServiceSchema = onCall(
 //   - All Anthropic token usage is tracked via _trackApiCost.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ── Secrets ────────────────────────────────────────────────────────────────────
-const GEMINI_API_KEY = defineSecret("GEMINI_API_KEY");
+// GEMINI_API_KEY is declared at the top of this file (module-level hoist).
 
 // ── Deep metrics collector ─────────────────────────────────────────────────────
 // Gathers ~40 signals across every major subsystem. Returns a single JSON
@@ -7794,6 +7945,7 @@ exports.anytaskAutoRelease = onSchedule(
             title:     "💰 תשלום שוחרר אוטומטית!",
             body:      `₪${netToProvider.toFixed(0)} שוחררו לארנק שלך עבור "${data.title || "משימה"}"`,
             type:      "anytask_auto_released",
+            taskId,
             isRead:    false,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
@@ -7802,6 +7954,7 @@ exports.anytaskAutoRelease = onSchedule(
             title:     "⏰ התשלום שוחרר אוטומטית",
             body:      `חלפו 48 שעות — התשלום עבור "${data.title || "משימה"}" שוחרר לנותן השירות.`,
             type:      "anytask_auto_released",
+            taskId,
             isRead:    false,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
@@ -7844,6 +7997,7 @@ exports.anytaskAutoRelease = onSchedule(
             title:     "⏳ נותרו 24 שעות לאישור",
             body:      `יש לך עוד ~24 שעות לאשר או לפתוח מחלוקת על "${title}"`,
             type:      "anytask_reminder_24h",
+            taskId:    doc.id,
             isRead:    false,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
@@ -7858,6 +8012,7 @@ exports.anytaskAutoRelease = onSchedule(
             title:     "🔔 נותרו שעתיים לאישור!",
             body:      `התשלום על "${title}" ישוחרר אוטומטית בעוד כשעתיים`,
             type:      "anytask_reminder_2h",
+            taskId:    doc.id,
             isRead:    false,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
@@ -7936,6 +8091,7 @@ exports.anytaskExpireOpen = onSchedule(
               title:     "⏰ המשימה שלך פגה",
               body:      `"${data.title || "משימה"}" לא נתפסה תוך 7 ימים. ₪${amount.toFixed(0)} הוחזרו לארנק שלך. רוצה לפרסם מחדש?`,
               type:      "anytask_expired",
+              taskId:    doc.id,
               isRead:    false,
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });
@@ -7988,6 +8144,7 @@ exports.anytaskSlaMonitor = onSchedule(
             title:     "⏰ הגב ללקוח כדי לשמור על המשימה",
             body:      `לא נשלחה הודעה ב-"${title}" — הגב תוך שעה וחצי כדי שהמשימה לא תוחזר.`,
             type:      "anytask_sla_reminder",
+            taskId:    doc.id,
             isRead:    false,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
@@ -8028,6 +8185,7 @@ exports.anytaskSlaMonitor = onSchedule(
               title:     "🔄 המשימה הוחזרה בגלל חוסר פעילות",
               body:      `"${title}" הוחזרה לבריכה הפתוחה לאחר שעתיים ללא תגובה.`,
               type:      "anytask_sla_returned",
+              taskId:    doc.id,
               isRead:    false,
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });
@@ -8038,6 +8196,7 @@ exports.anytaskSlaMonitor = onSchedule(
               title:     "🔄 המשימה שלך חזרה לבריכה",
               body:      `"${title}" הוחזרה לנותני שירות אחרים בגלל חוסר תגובה.`,
               type:      "anytask_sla_returned",
+              taskId:    doc.id,
               isRead:    false,
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });
@@ -9800,39 +9959,79 @@ No explanation. Only valid JSON. Tags must be 1-2 Hebrew words each, lowercase-f
  *
  * Runs at 03:30 IST.
  */
+// Runs every 30 min so customer-set deadlines expire within that window.
+// Two buckets are processed:
+//   1. deadline < now          — explicit customer-set product deadline
+//   2. deadline == null        — fallback 30-day safety net on createdAt
+// Soft-flip only — status=='expired', docs stay in Firestore for history.
 exports.expireOpenTasks = onSchedule(
   {
-    schedule: "30 3 * * *",
+    schedule: "every 30 minutes",
     timeZone: "Asia/Jerusalem",
     region:   "us-central1",
     memory:   "256MiB",
   },
   async () => {
     const db = admin.firestore();
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 30);
-    const cutoffTs = admin.firestore.Timestamp.fromDate(cutoff);
+    const now = admin.firestore.Timestamp.now();
 
-    const snap = await db.collection('any_tasks')
+    const cutoff30d = new Date();
+    cutoff30d.setDate(cutoff30d.getDate() - 30);
+    const cutoff30dTs = admin.firestore.Timestamp.fromDate(cutoff30d);
+
+    // Bucket 1: tasks with an explicit deadline that has passed.
+    const byDeadline = await db.collection('any_tasks')
       .where('status', '==', 'open')
-      .where('createdAt', '<', cutoffTs)
-      .limit(500)
+      .where('deadline', '<', now)
+      .limit(400)
       .get();
 
-    if (snap.empty) {
+    // Bucket 2: tasks WITHOUT a deadline that are > 30d old.
+    // Firestore can't combine '<' range with 'missing field' in a single
+    // query — safety-net fallback uses createdAt < 30 days ago. Tasks with
+    // a deadline flow through Bucket 1 instead.
+    const byAge = await db.collection('any_tasks')
+      .where('status', '==', 'open')
+      .where('createdAt', '<', cutoff30dTs)
+      .limit(400)
+      .get();
+
+    const toExpire = new Map();
+    for (const doc of byDeadline.docs) toExpire.set(doc.id, doc);
+    for (const doc of byAge.docs) {
+      // Skip if already queued via deadline bucket (dedupe).
+      if (toExpire.has(doc.id)) continue;
+      // For Bucket 2 — only expire if there's no deadline OR deadline
+      // is already past (Bucket 1 should have caught it, belt-and-suspenders).
+      const d = doc.data();
+      if (d.deadline == null) toExpire.set(doc.id, doc);
+    }
+
+    if (toExpire.size === 0) {
       console.log('[expireOpenTasks] no stale tasks');
       return;
     }
 
     const batch = db.batch();
-    for (const doc of snap.docs) {
+    let countDeadline = 0;
+    let countAge = 0;
+    for (const doc of toExpire.values()) {
+      const reason = (doc.data().deadline &&
+          doc.data().deadline.toMillis() < now.toMillis())
+          ? 'deadline'
+          : 'age';
       batch.update(doc.ref, {
         status: 'expired',
         expiredAt: admin.firestore.FieldValue.serverTimestamp(),
+        expiredReason: reason,
       });
+      reason === 'deadline' ? countDeadline++ : countAge++;
     }
     await batch.commit();
-    console.log(`[expireOpenTasks] expired ${snap.size} tasks`);
+    console.log(
+      `[expireOpenTasks] expired ${toExpire.size} tasks ` +
+      `(${countDeadline} by deadline, ${countAge} by 30d fallback)`
+    );
   },
 );
 // Phase 3 CF additions (appended to index.js).
@@ -12142,6 +12341,1826 @@ async function _sendReviewReminderEmail({
   return "sent";
 }
 
+// ── Pest Control: AI Pest Identification via Gemini Vision ─────────────────
+// Callable — any authenticated user.
+// Input:  { imageBase64: string }
+// Output: { pestType, pestTypeHe, confidence, alternativeMatches,
+//           urgencyLevel, description, treatmentRecommendation }
+exports.identifyPestFromImage = onCall(
+  {
+    secrets: [GEMINI_API_KEY],
+    timeoutSeconds: 30,
+    memory: "512MiB",
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+    const { imageBase64 } = request.data || {};
+    if (!imageBase64 || typeof imageBase64 !== "string") {
+      throw new HttpsError("invalid-argument", "imageBase64 is required.");
+    }
+
+    const geminiKey =
+      GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
+    if (!geminiKey) {
+      throw new HttpsError("internal", "GEMINI_API_KEY not configured.");
+    }
+
+    const prompt = `אתה מומחה זיהוי מזיקים. נתח את התמונה ותן תשובה בפורמט JSON בלבד (ללא markdown):
+{
+  "pestType": "cockroaches|ants|bedbugs|fleas|mosquitoes|flies|spiders|termites|rats|mice|moles|snakes|pigeons|bats|other",
+  "pestTypeHe": "השם בעברית",
+  "confidence": 0.0-1.0,
+  "alternativeMatches": ["array of other possible matches in English"],
+  "urgencyLevel": "low|medium|high|emergency",
+  "description": "תיאור קצר ב-1-2 משפטים בעברית",
+  "treatmentRecommendation": "green|regular_spray|heat_treatment|injection_baits|fumigation_anoxia"
+}
+
+התמקד במזיקים שמצויים בישראל. אם אתה לא בטוח, תן confidence נמוך.`;
+
+    try {
+      const url =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" +
+        geminiKey;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: prompt },
+                {
+                  inlineData: {
+                    mimeType: "image/jpeg",
+                    data: imageBase64,
+                  },
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 500,
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        console.error("[identifyPest] Gemini HTTP", resp.status, errText);
+        throw new HttpsError("internal", "AI identification failed.");
+      }
+
+      const json = await resp.json();
+      const text =
+        (json.candidates &&
+          json.candidates[0] &&
+          json.candidates[0].content &&
+          json.candidates[0].content.parts &&
+          json.candidates[0].content.parts[0] &&
+          json.candidates[0].content.parts[0].text) ||
+        "";
+
+      const result = JSON.parse(text);
+      return {
+        pestType: result.pestType || "other",
+        pestTypeHe: result.pestTypeHe || "לא ידוע",
+        confidence: typeof result.confidence === "number" ? result.confidence : 0.5,
+        alternativeMatches: Array.isArray(result.alternativeMatches) ? result.alternativeMatches : [],
+        urgencyLevel: result.urgencyLevel || "medium",
+        description: result.description || "",
+        treatmentRecommendation: result.treatmentRecommendation || "green",
+      };
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      console.error("[identifyPest] Error:", e.message);
+      throw new HttpsError("internal", "AI identification failed.");
+    }
+  }
+);
+
+// ── Delivery: AI Vehicle Recommendation via Gemini ─────────────────────────
+// Callable — any authenticated user.
+// Input:  { packageType, distanceKm, urgency, weatherConditions? }
+// Output: { recommendedVehicle: 'scooter'|'car', savingsAmount: number,
+//           savingsMinutes: number, reason: string, confidence: 0..1 }
+exports.recommendVehicleForDelivery = onCall(
+  {
+    secrets: [GEMINI_API_KEY],
+    timeoutSeconds: 20,
+    memory: "256MiB",
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+    const {
+      packageType = "small_package",
+      distanceKm = 5,
+      urgency = "regular",
+      weatherConditions = "clear",
+    } = request.data || {};
+
+    const geminiKey =
+      GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
+    if (!geminiKey) {
+      throw new HttpsError("internal", "GEMINI_API_KEY not configured.");
+    }
+
+    const prompt = `אתה מומחה לוגיסטיקה לשליחויות בישראל. המלץ על רכב אופטימלי:
+- סוג חבילה: ${packageType}
+- מרחק: ${distanceKm} ק"מ
+- דחיפות: ${urgency}
+- מזג אויר: ${weatherConditions}
+
+החזר JSON בלבד (ללא markdown):
+{
+  "recommendedVehicle": "scooter" או "car",
+  "savingsAmount": מספר (חיסכון ב-₪ לעומת האופציה השנייה, 5-30),
+  "savingsMinutes": מספר (חיסכון בדקות, 3-15),
+  "reason": "משפט קצר בעברית מדוע זה הבחירה",
+  "confidence": מספר 0.0-1.0
+}
+
+כללים:
+- מסמכים / חבילה קטנה / פרחים / עוגות → עדיף קטנוע (מהיר בפקקים)
+- חבילה גדולה / משקל כבד → עדיף רכב
+- מרחק > 20 ק"מ → עדיף רכב
+- גשם → עדיף רכב`;
+
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.3,
+              responseMimeType: "application/json",
+            },
+          }),
+        }
+      );
+      if (!res.ok) {
+        console.error(
+          "[recommendVehicleForDelivery] Gemini error:",
+          res.status,
+          await res.text()
+        );
+        throw new HttpsError("internal", "Gemini API error.");
+      }
+      const json = await res.json();
+      const text = json?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+      const parsed = JSON.parse(text);
+      return {
+        recommendedVehicle: parsed.recommendedVehicle || "scooter",
+        savingsAmount: Number(parsed.savingsAmount ?? 0),
+        savingsMinutes: Number(parsed.savingsMinutes ?? 0),
+        reason: parsed.reason || "",
+        confidence: Number(parsed.confidence ?? 0.7),
+      };
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      console.error("[recommendVehicleForDelivery] Error:", e.message);
+      throw new HttpsError("internal", "AI recommendation failed.");
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cleaning CSM (Section 34) — Gemini duration calculator for bookings.
+// Input: { cleaningType, bedrooms, bathrooms, squareMeters, hasPets,
+//          selectedTasksCount, addOnsCount }
+// Output: { estimatedMinutes, rangeMin, rangeMax, reasoning }
+// Fails gracefully — the client keeps its local heuristic on any error.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.calculateCleaningDuration = onCall(
+  {
+    secrets: [GEMINI_API_KEY],
+    timeoutSeconds: 20,
+    memory: "256MiB",
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+    const {
+      cleaningType = "regular_home",
+      bedrooms = 2,
+      bathrooms = 1,
+      squareMeters = 80,
+      hasPets = false,
+      selectedTasksCount = 6,
+      addOnsCount = 0,
+    } = request.data || {};
+
+    const geminiKey =
+      GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
+    if (!geminiKey) {
+      throw new HttpsError("internal", "GEMINI_API_KEY not configured.");
+    }
+
+    const prompt = `אתה מומחה לתעשיית הנקיון בישראל. חשב משך נקיון מומלץ:
+- סוג נקיון: ${cleaningType}
+- חדרי שינה: ${bedrooms}
+- חדרי אמבט: ${bathrooms}
+- מ"ר: ${squareMeters}
+- בעלי-חיים: ${hasPets ? "כן" : "לא"}
+- משימות נבחרות: ${selectedTasksCount}
+- תוספות: ${addOnsCount}
+
+החזר JSON בלבד (ללא markdown):
+{
+  "estimatedMinutes": מספר שלם (60-600),
+  "rangeMin": מספר שלם (≤ estimatedMinutes),
+  "rangeMax": מספר שלם (≥ estimatedMinutes),
+  "reasoning": "משפט קצר בעברית"
+}
+
+כללים:
+- נקיון רגיל: ~2 דקות לכל מ"ר
+- Deep / שיפוץ: ×2 מהרגיל
+- Airbnb: ×0.8 (מהיר)
+- משרדים: ×1.5
+- חנויות: ×1.3
+- בעלי חיים: +15-20 דקות
+- לכל משימה נוספת: +3-5 דקות
+- לכל add-on: +10-20 דקות`;
+
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.25,
+              responseMimeType: "application/json",
+            },
+          }),
+        }
+      );
+      if (!res.ok) {
+        console.error(
+          "[calculateCleaningDuration] Gemini error:",
+          res.status,
+          await res.text()
+        );
+        throw new HttpsError("internal", "Gemini API error.");
+      }
+      const json = await res.json();
+      const text = json?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+      const parsed = JSON.parse(text);
+      const clamp = (n, min, max) =>
+        Math.min(Math.max(Number(n) || min, min), max);
+      const est = clamp(parsed.estimatedMinutes, 60, 600);
+      return {
+        estimatedMinutes: est,
+        rangeMin: clamp(parsed.rangeMin ?? est - 20, 60, est),
+        rangeMax: clamp(parsed.rangeMax ?? est + 30, est, 720),
+        reasoning: parsed.reasoning || "",
+      };
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      console.error("[calculateCleaningDuration] Error:", e.message);
+      throw new HttpsError("internal", "Duration estimation failed.");
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════
+// publishStaleReviews — fixes dead ReviewService.lazyPublish (§5.2).
+//
+// Reviews default to isPublished=false until BOTH parties submit (checked
+// in ReviewService._checkAndPublish on write) OR 7 days pass. The 7-day
+// fallback was documented as "called on profile view" but NOT wired in
+// any call site — so one-sided reviews were staying hidden forever and
+// user.rating was never updated from them.
+//
+// This hourly CF scans reviews.isPublished==false AND createdAt <= now-7d,
+// batch-publishes them, and recomputes aggregate rating on the reviewee
+// (user doc + provider_listings doc if listingId is set). Idempotent.
+// ═══════════════════════════════════════════════════════════════
+exports.publishStaleReviews = onSchedule(
+  {
+    schedule: "every 60 minutes",
+    timeZone: "Asia/Jerusalem",
+    region:   "us-central1",
+    memory:   "256MiB",
+  },
+  async () => {
+    const db = admin.firestore();
+    const cutoff = admin.firestore.Timestamp.fromDate(
+      new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    );
+
+    const snap = await db
+      .collection("reviews")
+      .where("isPublished", "==", false)
+      .where("createdAt", "<=", cutoff)
+      .limit(400)
+      .get();
+
+    if (snap.empty) {
+      console.log("[publishStaleReviews] no stale reviews");
+      return;
+    }
+
+    // Collect (revieweeId, isClientReview, listingId) triples to recalc once.
+    const toRecalc = new Map(); // key = `${userId}|${kind}|${listingId||''}`
+    const batch = db.batch();
+    for (const doc of snap.docs) {
+      batch.update(doc.ref, { isPublished: true });
+      const d = doc.data() || {};
+      const revieweeId = d.revieweeId || "";
+      if (!revieweeId) continue;
+      const isClientReview = d.isClientReview === true;
+      const listingId = d.listingId || "";
+      const key = `${revieweeId}|${isClientReview ? "provider" : "customer"}|${listingId}`;
+      toRecalc.set(key, { revieweeId, isClientReview, listingId });
+    }
+
+    await batch.commit();
+    console.log(`[publishStaleReviews] published ${snap.size} stale reviews`);
+
+    // Recompute aggregates — sequential to avoid hot-key contention.
+    let recalced = 0;
+    for (const { revieweeId, isClientReview, listingId } of toRecalc.values()) {
+      try {
+        const q = db.collection("reviews")
+          .where("revieweeId", "==", revieweeId)
+          .where("isClientReview", "==", isClientReview)
+          .where("isPublished", "==", true)
+          .limit(200);
+        const rs = await q.get();
+
+        let total = 0;
+        let count = 0;
+        for (const r of rs.docs) {
+          const rd = r.data() || {};
+          const v = (rd.overallRating ?? rd.rating ?? 0);
+          const n = typeof v === "number" ? v : Number(v) || 0;
+          if (n > 0) { total += n; count += 1; }
+        }
+        if (count === 0) continue;
+        const avg = Math.round((total / count) * 10) / 10;
+
+        if (isClientReview) {
+          // Client reviews the provider → write to user doc + listing doc.
+          await db.collection("users").doc(revieweeId).update({
+            rating: avg,
+            reviewsCount: count,
+          });
+          if (listingId) {
+            try {
+              await db.collection("provider_listings").doc(listingId).update({
+                rating: avg,
+                reviewsCount: count,
+              });
+            } catch (_) { /* listing may not exist — non-fatal */ }
+          }
+        } else {
+          // Provider reviews the customer → write to customerRating fields.
+          await db.collection("users").doc(revieweeId).update({
+            customerRating: avg,
+            customerReviewsCount: count,
+          });
+        }
+        recalced += 1;
+      } catch (e) {
+        console.error(`[publishStaleReviews] recalc failed for ${revieweeId}:`, e.message);
+      }
+    }
+    console.log(`[publishStaleReviews] recalced ${recalced} aggregate(s)`);
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Handyman: AI Photo-to-Quote via Gemini Vision
+// ═══════════════════════════════════════════════════════════════════════════
+// Callable — any authenticated user.
+// Input:  { photoUrls: string[], additionalDescription?: string }
+// Output: {
+//   identifiedProblem, confidence, aiAnalysis, category,
+//   estimatedDurationMinutes, estimatedPrice, estimatedMaterialsCost,
+//   recommendedMaterials: [{name, price, details}],
+//   urgencyLevel
+// }
+//
+// Model: gemini-2.5-flash-lite (matches pest / delivery / cleaning CSMs).
+// NO Claude API (per spec 01_MAIN_PROMPT_HANDYMAN.md §AI Integration).
+//
+// Flow:
+//   1. Fetch each Firebase Storage URL → buffer → base64.
+//   2. Send prompt + inlineData parts to Gemini.
+//   3. Parse JSON reply (responseMimeType enforced to application/json).
+//   4. Return defensive defaults for any missing field.
+exports.diagnoseHandymanProblemFromPhoto = onCall(
+  {
+    secrets: [GEMINI_API_KEY],
+    timeoutSeconds: 30,
+    memory: "512MiB",
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+    const { photoUrls, additionalDescription } = request.data || {};
+    if (!Array.isArray(photoUrls) || photoUrls.length === 0) {
+      throw new HttpsError(
+        "invalid-argument",
+        "photoUrls (non-empty array) is required."
+      );
+    }
+
+    const geminiKey =
+      GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
+    if (!geminiKey) {
+      throw new HttpsError("internal", "GEMINI_API_KEY not configured.");
+    }
+
+    // Fetch photos and convert to base64 inline parts.
+    const imageParts = [];
+    for (const url of photoUrls.slice(0, 3)) {
+      // Cap at 3 photos to keep request size + latency bounded.
+      try {
+        const r = await fetch(url);
+        if (!r.ok) {
+          console.error(
+            "[diagnoseHandymanProblemFromPhoto] fetch failed:",
+            r.status
+          );
+          continue;
+        }
+        const buf = await r.arrayBuffer();
+        const base64 = Buffer.from(buf).toString("base64");
+        imageParts.push({
+          inlineData: { mimeType: "image/jpeg", data: base64 },
+        });
+      } catch (e) {
+        console.error(
+          "[diagnoseHandymanProblemFromPhoto] fetch error:",
+          e.message
+        );
+      }
+    }
+    if (imageParts.length === 0) {
+      throw new HttpsError(
+        "internal",
+        "Could not download any of the provided photos."
+      );
+    }
+
+    const prompt = `אתה מומחה הנדימן רב-תחומי בישראל. נתח את התמונה/ות וזהה את הבעיה.
+
+תיאור נוסף מהלקוח: ${additionalDescription || "אין"}
+
+השב בפורמט JSON בלבד (ללא markdown, ללא הסברים מחוץ ל-JSON):
+{
+  "identifiedProblem": "תיאור קצר בעברית של הבעיה שזיהית",
+  "confidence": 0.0-1.0,
+  "aiAnalysis": "הסבר מפורט של הבעיה והפתרון בעברית (2-3 משפטים)",
+  "category": "plumbing" | "electrical" | "drywall" | "furniture" | "painting" | "doors" | "other",
+  "estimatedDurationMinutes": number (בין 15 ל-300),
+  "estimatedPrice": number (בש\"ח, בין 50 ל-800),
+  "estimatedMaterialsCost": number (בש\"ח, 0 אם אין חומרים),
+  "recommendedMaterials": [
+    { "name": "שם החומר", "price": number, "details": "תיאור קצר אופציונלי" }
+  ],
+  "urgencyLevel": "low" | "medium" | "high"
+}
+
+הנחיות:
+- אם לא זיהית בוודאות — החזר confidence נמוך (<0.6).
+- המחירים צריכים לשקף מחירי שוק ישראליים ריאליים.
+- חומרים: ציין רק חומרים שבאמת נדרשים (ברגים, דוויל, כבלים וכו'). אם אין — החזר [].`;
+
+    try {
+      const url =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" +
+        geminiKey;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }, ...imageParts] }],
+          generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 800,
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        console.error(
+          "[diagnoseHandymanProblemFromPhoto] Gemini HTTP",
+          resp.status,
+          errText
+        );
+        throw new HttpsError("internal", "AI diagnosis failed.");
+      }
+
+      const json = await resp.json();
+      const text =
+        json?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+      const result = JSON.parse(text);
+
+      // Defensive defaults.
+      return {
+        identifiedProblem: result.identifiedProblem || "זוהתה בעיה",
+        confidence:
+          typeof result.confidence === "number" ? result.confidence : 0.5,
+        aiAnalysis: result.aiAnalysis || "",
+        category: result.category || "other",
+        estimatedDurationMinutes:
+          typeof result.estimatedDurationMinutes === "number"
+            ? Math.max(15, Math.min(300, result.estimatedDurationMinutes))
+            : 60,
+        estimatedPrice:
+          typeof result.estimatedPrice === "number"
+            ? Math.max(0, Math.min(800, result.estimatedPrice))
+            : 150,
+        estimatedMaterialsCost:
+          typeof result.estimatedMaterialsCost === "number"
+            ? Math.max(0, result.estimatedMaterialsCost)
+            : 0,
+        recommendedMaterials: Array.isArray(result.recommendedMaterials)
+          ? result.recommendedMaterials
+              .filter(
+                (m) => m && typeof m.name === "string" && typeof m.price === "number"
+              )
+              .slice(0, 10)
+          : [],
+        urgencyLevel: ["low", "medium", "high"].includes(result.urgencyLevel)
+          ? result.urgencyLevel
+          : "medium",
+      };
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      console.error(
+        "[diagnoseHandymanProblemFromPhoto] Error:",
+        e.message
+      );
+      throw new HttpsError("internal", "AI diagnosis failed.");
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// App Feedback & Ideas — Automated labeling via Gemini (§42)
+// ═══════════════════════════════════════════════════════════════════════════
+// Trigger: onDocumentCreated on app_feedback/{feedbackId}
+// Model:   gemini-2.5-flash-lite
+//
+// Adds two AI-generated fields onto each feedback doc:
+//   - priority: 'Low' | 'High'
+//   - topic:    'UX' | 'Pricing' | 'Bug' | 'Feature' | 'Performance' | 'Other'
+//
+// No-op if the content is empty or the Gemini key is missing — defaults
+// are applied so the doc is still analyzable in the weekly digest.
+exports.analyzeFeedbackOnCreate = onDocumentCreated(
+  {
+    document: "app_feedback/{feedbackId}",
+    secrets: [GEMINI_API_KEY],
+    timeoutSeconds: 30,
+    memory: "256MiB",
+    region: "us-central1",
+  },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const data = snap.data() || {};
+    const content = (data.content || "").toString().trim();
+    if (!content) {
+      // Defensive defaults so the doc isn't stuck without tags.
+      await snap.ref.update({
+        priority: "Low",
+        topic: "Other",
+        analyzedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return;
+    }
+
+    const geminiKey =
+      GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
+    if (!geminiKey) {
+      console.warn(
+        "[analyzeFeedbackOnCreate] GEMINI_API_KEY missing — writing defaults"
+      );
+      await snap.ref.update({
+        priority: "Low",
+        topic: "Other",
+        analyzedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return;
+    }
+
+    // Build the analyzer prompt. NPS < 7 bumps priority to High by default.
+    const nps = typeof data.npsScore === "number" ? data.npsScore : 10;
+    const role = data.userRole || "customer";
+    const cat = data.category || "other";
+
+    const prompt = `אתה אנליסט מוצר מנוסה ב-AnySkill (אפליקציית שירותים ישראלית).
+נתח את ההצעה/פידבק הבאה וזהה עדיפות ונושא.
+
+מטא-דאטה:
+- תפקיד המשתמש: ${role}
+- קטגוריית דיווח: ${cat}
+- ציון NPS: ${nps}/10
+
+תוכן הפניה:
+"""
+${content.slice(0, 2000)}
+"""
+
+השב בפורמט JSON בלבד (ללא markdown):
+{
+  "priority": "Low" | "High",
+  "topic": "UX" | "Pricing" | "Bug" | "Feature" | "Performance" | "Other"
+}
+
+הנחיות:
+- "High" — כאשר יש חסימה פונקציונלית, דיווח על תקלה, אובדן כסף/לקוח, NPS ≤ 6, או בקשה חוזרת של פיצ'ר קריטי.
+- "Low" — כאשר מדובר בשיפור נחמד-שיהיה, הצעה סגנונית, או אהדה כללית.
+- "topic" — בחר את הנושא היחיד שמתאר הכי טוב את ליבת הפניה.`;
+
+    try {
+      const url =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" +
+        geminiKey;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 128,
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+
+      if (!resp.ok) {
+        console.error(
+          "[analyzeFeedbackOnCreate] Gemini HTTP",
+          resp.status
+        );
+        await snap.ref.update({
+          priority: nps <= 6 ? "High" : "Low",
+          topic: "Other",
+          analyzedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        return;
+      }
+
+      const json = await resp.json();
+      const text =
+        json?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+      const parsed = JSON.parse(text);
+
+      const priority =
+        parsed.priority === "High" || parsed.priority === "Low"
+          ? parsed.priority
+          : nps <= 6
+          ? "High"
+          : "Low";
+      const validTopics = [
+        "UX",
+        "Pricing",
+        "Bug",
+        "Feature",
+        "Performance",
+        "Other",
+      ];
+      const topic = validTopics.includes(parsed.topic)
+        ? parsed.topic
+        : "Other";
+
+      await snap.ref.update({
+        priority,
+        topic,
+        analyzedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      console.error("[analyzeFeedbackOnCreate] Error:", e.message);
+      // Never leave a doc un-tagged — fall back to NPS-based priority.
+      try {
+        await snap.ref.update({
+          priority: nps <= 6 ? "High" : "Low",
+          topic: "Other",
+          analyzedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (_) {}
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// App Feedback — Weekly AI CEO Insight (§42)
+// ═══════════════════════════════════════════════════════════════════════════
+// Runs every Monday 08:00 IST. Scans the past 7 days of app_feedback docs,
+// bundles them into a Gemini prompt, and asks for the top 3 recurring themes
+// + an NPS summary + a top priority recommendation. Writes a single doc to
+// `ai_insights/feedback_weekly` which the Admin/CEO tab can stream.
+exports.generateFeedbackWeeklyInsight = onSchedule(
+  {
+    schedule: "every monday 08:00",
+    timeZone: "Asia/Jerusalem",
+    secrets: [GEMINI_API_KEY],
+    timeoutSeconds: 120,
+    memory: "512MiB",
+    region: "us-central1",
+  },
+  async () => {
+    const db = admin.firestore();
+    const since = admin.firestore.Timestamp.fromMillis(
+      Date.now() - 7 * 24 * 60 * 60 * 1000
+    );
+
+    const snap = await db
+      .collection("app_feedback")
+      .where("createdAt", ">=", since)
+      .orderBy("createdAt", "desc")
+      .limit(500)
+      .get();
+
+    if (snap.empty) {
+      console.log("[generateFeedbackWeeklyInsight] no feedback this week");
+      await db.collection("ai_insights").doc("feedback_weekly").set(
+        {
+          generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          totalCount: 0,
+          model: "gemini-2.5-flash-lite",
+          summary: "לא התקבלו הצעות השבוע.",
+          topThemes: [],
+          npsAverage: null,
+          npsDistribution: { detractors: 0, passives: 0, promoters: 0 },
+          topPriority: null,
+        },
+        { merge: true }
+      );
+      return;
+    }
+
+    // Aggregate NPS + build a compressed list of items for the prompt.
+    let npsSum = 0;
+    let detractors = 0;
+    let passives = 0;
+    let promoters = 0;
+    const byTopic = {};
+    const byPriority = { High: 0, Low: 0 };
+    const items = [];
+    const sampleMaxChars = 220;
+
+    for (const doc of snap.docs) {
+      const d = doc.data() || {};
+      const nps = Number(d.npsScore) || 0;
+      npsSum += nps;
+      if (nps <= 6) detractors += 1;
+      else if (nps <= 8) passives += 1;
+      else promoters += 1;
+
+      const topic = d.topic || "Other";
+      byTopic[topic] = (byTopic[topic] || 0) + 1;
+      const priority = d.priority || "Low";
+      byPriority[priority] = (byPriority[priority] || 0) + 1;
+
+      items.push({
+        role: d.userRole || "customer",
+        cat: d.category || "other",
+        nps,
+        topic,
+        priority,
+        content: (d.content || "").toString().slice(0, sampleMaxChars),
+      });
+    }
+
+    const total = snap.size;
+    const npsAvg = Math.round((npsSum / total) * 10) / 10;
+
+    const geminiKey =
+      GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
+    if (!geminiKey) {
+      console.warn(
+        "[generateFeedbackWeeklyInsight] GEMINI_API_KEY missing — writing stats only"
+      );
+      await db.collection("ai_insights").doc("feedback_weekly").set(
+        {
+          generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          totalCount: total,
+          npsAverage: npsAvg,
+          npsDistribution: { detractors, passives, promoters },
+          byTopic,
+          byPriority,
+          topThemes: [],
+          summary: "AI לא זמין — מוצגות סטטיסטיקות בלבד.",
+          topPriority: null,
+          model: null,
+        },
+        { merge: true }
+      );
+      return;
+    }
+
+    // Cap items at 60 to keep the prompt within budget (~25KB max).
+    const capped = items.slice(0, 60);
+
+    const prompt = `אתה יועץ מוצר בכיר של AnySkill (פלטפורמת שירותים ישראלית).
+סקור את ${total} ההצעות/הפידבקים שהתקבלו השבוע וחלץ תובנות אסטרטגיות.
+
+מטא-דאטה:
+- סה"כ: ${total} פניות
+- NPS ממוצע: ${npsAvg}/10
+- פילוח: ${promoters} מקדמים / ${passives} ניטרלים / ${detractors} מבקרים
+- חלוקה לפי נושא: ${JSON.stringify(byTopic)}
+- חלוקה לפי עדיפות: ${JSON.stringify(byPriority)}
+
+דגימה (עד 60 פניות, role/category/NPS/topic/priority/content):
+${JSON.stringify(capped)}
+
+השב בפורמט JSON בלבד (ללא markdown, הכל בעברית):
+{
+  "summary": "פסקה של 2-3 משפטים עם תמונת מצב כללית (מה הכי בולט השבוע)",
+  "topThemes": [
+    { "title": "כותרת הנושא", "description": "תיאור קצר של מה המשתמשים אומרים", "count": מספר הפניות הרלוונטיות, "exampleQuote": "ציטוט קצר מייצג" },
+    { "title": "...", "description": "...", "count": ..., "exampleQuote": "..." },
+    { "title": "...", "description": "...", "count": ..., "exampleQuote": "..." }
+  ],
+  "topPriority": {
+    "title": "הדבר הכי חשוב לטפל בו השבוע",
+    "reason": "למה",
+    "suggestedAction": "מה לעשות בפועל"
+  }
+}
+
+הנחיות:
+- topThemes: בדיוק 3 נושאים, מסודרים לפי תדירות יורדת.
+- topPriority: הדבר עם ההשפעה הגבוהה ביותר על retention / NPS.
+- אל תמציא נתונים — הסתמך רק על המדגם שסופק.`;
+
+    try {
+      const url =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" +
+        geminiKey;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.4,
+            maxOutputTokens: 1024,
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        console.error(
+          "[generateFeedbackWeeklyInsight] Gemini HTTP",
+          resp.status,
+          errText
+        );
+        throw new Error("Gemini HTTP " + resp.status);
+      }
+      const json = await resp.json();
+      const text =
+        json?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+      const parsed = JSON.parse(text);
+
+      await db.collection("ai_insights").doc("feedback_weekly").set(
+        {
+          generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          totalCount: total,
+          npsAverage: npsAvg,
+          npsDistribution: { detractors, passives, promoters },
+          byTopic,
+          byPriority,
+          summary: parsed.summary || "",
+          topThemes: Array.isArray(parsed.topThemes)
+            ? parsed.topThemes.slice(0, 3)
+            : [],
+          topPriority: parsed.topPriority || null,
+          model: "gemini-2.5-flash-lite",
+        },
+        { merge: true }
+      );
+      console.log(
+        `[generateFeedbackWeeklyInsight] wrote insight for ${total} items`
+      );
+    } catch (e) {
+      console.error("[generateFeedbackWeeklyInsight] Error:", e.message);
+      // Write partial stats so the Admin/CEO tab always has something.
+      await db.collection("ai_insights").doc("feedback_weekly").set(
+        {
+          generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          totalCount: total,
+          npsAverage: npsAvg,
+          npsDistribution: { detractors, passives, promoters },
+          byTopic,
+          byPriority,
+          summary: "שגיאת AI — מוצגות סטטיסטיקות בלבד.",
+          topThemes: [],
+          topPriority: null,
+          model: null,
+        },
+        { merge: true }
+      );
+    }
+  }
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// § Performance Observatory · Milestone 1 (Option A)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// Two functions:
+//   1. updateMetricsSnapshot — scheduled every 5 min, writes
+//      `performance_metrics/current` with aggregated KPIs the tab reads.
+//   2. askNovaChat — callable, Gemini 2.5 Flash Lite conversational AI for
+//      the Observatory. Admin-only. NEVER Claude here.
+//
+// NO new infrastructure. Reads from existing collections only:
+// users, jobs, platform_earnings, error_logs, support_tickets.
+// See: scaling_system/01_OPTION_A_PROMPT.md
+
+const _perfStartOfDayMs = () => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+
+const _perfWeekAgoMs = () => Date.now() - 7 * 24 * 60 * 60 * 1000;
+const _perfMonthAgoMs = () => Date.now() - 30 * 24 * 60 * 60 * 1000;
+const _perfHourAgoMs = () => Date.now() - 60 * 60 * 1000;
+const _perfDayAgoMs = () => Date.now() - 24 * 60 * 60 * 1000;
+
+async function _perfCountQuery(query) {
+  try {
+    const snap = await query.count().get();
+    return snap.data().count || 0;
+  } catch (e) {
+    console.error("[perf] count query failed:", e.message);
+    return 0;
+  }
+}
+
+async function _perfSumField(query, field) {
+  try {
+    const snap = await query.get();
+    let total = 0;
+    snap.forEach((d) => {
+      const v = d.data()[field];
+      if (typeof v === "number") total += v;
+    });
+    return total;
+  } catch (e) {
+    console.error("[perf] sum query failed:", e.message);
+    return 0;
+  }
+}
+
+exports.updateMetricsSnapshot = onSchedule(
+  {
+    schedule: "every 5 minutes",
+    timeZone: "Asia/Jerusalem",
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 120,
+  },
+  async () => {
+    const db = admin.firestore();
+    const now = Date.now();
+    const startOfDay = _perfStartOfDayMs();
+    const weekAgo = _perfWeekAgoMs();
+    const monthAgo = _perfMonthAgoMs();
+    const hourAgo = _perfHourAgoMs();
+    const dayAgo = _perfDayAgoMs();
+
+    // ── Users ──────────────────────────────────────────────────────
+    const tsDayAgo = admin.firestore.Timestamp.fromMillis(dayAgo);
+    const tsMonthAgo = admin.firestore.Timestamp.fromMillis(monthAgo);
+    const tsStartOfDay = admin.firestore.Timestamp.fromMillis(startOfDay);
+    const tsWeekAgo = admin.firestore.Timestamp.fromMillis(weekAgo);
+    const tsHourAgo = admin.firestore.Timestamp.fromMillis(hourAgo);
+
+    const [
+      dau,
+      mau,
+      totalRegistered,
+      newSignupsToday,
+      bookingsToday,
+      bookingsThisWeek,
+      bookingsThisMonth,
+      completedJobs,
+      totalJobs,
+      cancelledJobs,
+      errorsLastHour,
+      errorsLast24h,
+      openDisputes,
+    ] = await Promise.all([
+      // DAU: users with lastActiveAt OR lastLogin in last 24h
+      _perfCountQuery(
+        db.collection("users").where("lastActiveAt", ">", tsDayAgo)
+      ),
+      _perfCountQuery(
+        db.collection("users").where("lastActiveAt", ">", tsMonthAgo)
+      ),
+      _perfCountQuery(db.collection("users")),
+      _perfCountQuery(
+        db.collection("users").where("createdAt", ">", tsStartOfDay)
+      ),
+      _perfCountQuery(
+        db.collection("jobs").where("createdAt", ">", tsStartOfDay)
+      ),
+      _perfCountQuery(
+        db.collection("jobs").where("createdAt", ">", tsWeekAgo)
+      ),
+      _perfCountQuery(
+        db.collection("jobs").where("createdAt", ">", tsMonthAgo)
+      ),
+      _perfCountQuery(
+        db.collection("jobs").where("status", "==", "completed")
+      ),
+      _perfCountQuery(db.collection("jobs")),
+      _perfCountQuery(
+        db.collection("jobs").where("status", "==", "cancelled")
+      ),
+      _perfCountQuery(
+        db.collection("error_logs").where("timestamp", ">", tsHourAgo)
+      ),
+      _perfCountQuery(
+        db.collection("error_logs").where("timestamp", ">", tsDayAgo)
+      ),
+      _perfCountQuery(
+        db.collection("jobs").where("status", "==", "disputed")
+      ),
+    ]);
+
+    // ── Revenue (platform_earnings) ───────────────────────────────
+    const revenueToday = await _perfSumField(
+      db.collection("platform_earnings").where("timestamp", ">", tsStartOfDay),
+      "amount"
+    );
+    const revenueThisWeek = await _perfSumField(
+      db.collection("platform_earnings").where("timestamp", ">", tsWeekAgo),
+      "amount"
+    );
+    const revenueThisMonth = await _perfSumField(
+      db.collection("platform_earnings").where("timestamp", ">", tsMonthAgo),
+      "amount"
+    );
+
+    // ── Derived ────────────────────────────────────────────────────
+    const happinessScore =
+      totalJobs > 0
+        ? Math.round((completedJobs / totalJobs) * 100)
+        : 100;
+
+    let churnRiskCount = 0;
+    try {
+      const sevenDaysAgo = admin.firestore.Timestamp.fromMillis(
+        now - 7 * 24 * 60 * 60 * 1000
+      );
+      churnRiskCount = await _perfCountQuery(
+        db
+          .collection("users")
+          .where("lastActiveAt", "<", sevenDaysAgo)
+          .where("lastActiveAt", ">", tsMonthAgo)
+      );
+    } catch (_) {
+      // Composite index may be missing — non-fatal.
+      churnRiskCount = 0;
+    }
+
+    const errorRatePercent =
+      totalJobs > 0
+        ? Math.min(100, (errorsLast24h / Math.max(totalJobs, 1)) * 100)
+        : 0;
+
+    // ── Write snapshot ─────────────────────────────────────────────
+    await db.collection("performance_metrics").doc("current").set(
+      {
+        daily_active_users: dau,
+        monthly_active_users: mau,
+        total_registered: totalRegistered,
+        new_signups_today: newSignupsToday,
+        bookings_today: bookingsToday,
+        bookings_this_week: bookingsThisWeek,
+        bookings_this_month: bookingsThisMonth,
+        revenue_today: revenueToday,
+        revenue_this_week: revenueThisWeek,
+        revenue_this_month: revenueThisMonth,
+        completed_jobs: completedJobs,
+        total_jobs: totalJobs,
+        cancelled_jobs: cancelledJobs,
+        errors_last_hour: errorsLastHour,
+        errors_last_24h: errorsLast24h,
+        open_disputes: openDisputes,
+        happiness_score: happinessScore,
+        churn_risk_count: churnRiskCount,
+        error_rate_percent: parseFloat(errorRatePercent.toFixed(2)),
+        uptime_percent: 99.9,
+        // Telemetry fields (cost/latency/reads/writes) are NOT written here.
+        // They land in Milestone 3 (BigQuery pipeline). Until then the client
+        // shows 0/— and GoldenSignals labels them "Milestone 3 required".
+        last_updated: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    console.log(
+      `[updateMetricsSnapshot] DAU=${dau} bookings=${bookingsToday} rev=₪${revenueToday.toFixed(0)} happy=${happinessScore}`
+    );
+    return null;
+  }
+);
+
+exports.askNovaChat = onCall(
+  {
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 30,
+    secrets: [GEMINI_API_KEY],
+  },
+  async (req) => {
+    if (!req.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Nova requires authentication."
+      );
+    }
+
+    // Admin-only — check Firestore user doc.
+    const uid = req.auth.uid;
+    const userSnap = await admin.firestore().collection("users").doc(uid).get();
+    const userData = userSnap.data() || {};
+    const isAdmin = userData.isAdmin === true;
+    const isStaff = isAdmin || userData.role === "support_agent";
+    if (!isStaff) {
+      throw new HttpsError(
+        "permission-denied",
+        "Nova is available to admins and support agents only."
+      );
+    }
+
+    const question = String(req.data?.question || "").trim();
+    const context = String(req.data?.context || "").trim();
+    if (question.length === 0) {
+      throw new HttpsError("invalid-argument", "question is required");
+    }
+    if (question.length > 1000) {
+      throw new HttpsError(
+        "invalid-argument",
+        "question must be under 1000 chars"
+      );
+    }
+
+    const geminiKey =
+      GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
+    if (!geminiKey) {
+      console.warn("[askNovaChat] GEMINI_API_KEY not set");
+      return {
+        text:
+          "שירות Nova לא מוגדר כרגע (חסר מפתח Gemini). " +
+          "פנה למפתח המערכת להשלמת הקונפיגורציה.",
+        model: null,
+      };
+    }
+
+    const systemPrompt = `אתה Nova — עוזרת AI של דשבורד Performance Observatory באפליקציית AnySkill.
+ענה תמיד בעברית, בקצרה (2-4 משפטים), בטון חברי ומקצועי.
+אל תמציא נתונים — ענה רק על בסיס הנתונים שניתנו.
+אם המשתמש שואל משהו שלא קשור למטריקות — עדיין ענה קצרצר ובידידותי והפנה אותו חזרה לנתונים.
+אם יש טריגר לשדרוג Milestone — הזכר אותו.
+
+נתונים חיים כרגע:
+${context || "(ממתין לסנאפשוט ראשון)"}
+`;
+
+    const body = {
+      contents: [
+        {
+          parts: [
+            {
+              text:
+                systemPrompt +
+                "\n\n--- שאלת המשתמש ---\n" +
+                question +
+                "\n\n--- תשובה ---",
+            },
+          ],
+        },
+      ],
+      generationConfig: { temperature: 0.5, maxOutputTokens: 512 },
+    };
+
+    const models = ["gemini-2.5-flash-lite"];
+    for (const model of models) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!resp.ok) {
+          const errText = await resp.text();
+          console.error(
+            `[askNovaChat] ${model} HTTP ${resp.status}:`,
+            errText.substring(0, 200)
+          );
+          if (resp.status === 404) continue;
+          continue;
+        }
+        const json = await resp.json();
+        const text = (
+          json.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
+        ).trim();
+        if (!text) continue;
+
+        // Best-effort logging for auditability — fire and forget.
+        admin
+          .firestore()
+          .collection("nova_conversations")
+          .add({
+            uid,
+            question,
+            answer: text,
+            model,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            expireAt: admin.firestore.Timestamp.fromMillis(
+              Date.now() + 30 * 24 * 60 * 60 * 1000
+            ),
+          })
+          .catch(() => {});
+
+        return { text, model };
+      } catch (e) {
+        console.error(`[askNovaChat] ${model} threw:`, e.message);
+      }
+    }
+
+    return {
+      text:
+        "מצטערת, לא הצלחתי להתחבר ל-Gemini כרגע. נסי שוב בעוד רגע.",
+      model: null,
+    };
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FITNESS TRAINER CSM (§44) — 3 Gemini 2.5 Flash Lite Cloud Functions
+// Per CLAUDE.md §44 + docs/ui-specs/Fitness Trainer/04_BACKEND_CODE.md.
+//
+//   1. recommendTrainersByGoals — AI match score from 5-question quiz
+//   2. optimizeTrainerProfile   — profile score 0-100 + 5 AI suggestions
+//   3. generateCustomWorkoutPlan — 4-week personalized workout plan
+//
+// AI = Gemini 2.5 Flash Lite (NEVER Claude — matches §32/33/34/41 rule).
+// REST fetch pattern (not @google/generative-ai SDK) — matches existing CFs.
+// `_stripCodeFences` + `isAdminCaller` helpers already defined above in this file.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function _fitnessCallGemini({ prompt, temperature, maxTokens }) {
+  const geminiKey = GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
+  if (!geminiKey) {
+    throw new Error("GEMINI_API_KEY not set");
+  }
+  const GEMINI_MODELS = [
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-flash-lite",
+  ];
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature,
+      maxOutputTokens: maxTokens || 1024,
+      responseMimeType: "application/json",
+    },
+  };
+  let lastErr = null;
+  for (const model of GEMINI_MODELS) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.error(
+            `[fitness] Gemini ${model} ${resp.status}:`,
+            errText.substring(0, 200),
+        );
+        if (resp.status === 404) {
+          lastErr = new Error(`${model} HTTP 404`);
+          continue;
+        }
+        throw new Error(`${model} HTTP ${resp.status}`);
+      }
+      const json = await resp.json();
+      const rawText = json.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+      return {
+        raw: _stripCodeFences(rawText),
+        model,
+        inputTokens: json.usageMetadata?.promptTokenCount || 0,
+        outputTokens: json.usageMetadata?.candidatesTokenCount || 0,
+      };
+    } catch (e) {
+      lastErr = e;
+      console.error(`[fitness] Gemini ${model} threw:`, e.message);
+    }
+  }
+  throw lastErr || new Error("All Gemini fitness models failed");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 1. recommendTrainersByGoals — match score from the 5-question quiz
+// ═══════════════════════════════════════════════════════════════════════════
+
+exports.recommendTrainersByGoals = onCall(
+    {
+      secrets: [GEMINI_API_KEY],
+      region: "us-central1",
+      memory: "512MiB",
+      timeoutSeconds: 60,
+      maxInstances: 10,
+    },
+    async (request) => {
+      if (!request.auth) {
+        throw new HttpsError("unauthenticated", "יש להתחבר כדי לקבל המלצות");
+      }
+      const data = request.data || {};
+      const { goal, experience, frequency, location, style, trainerId } = data;
+
+      const goalMap = {
+        build_muscle: "בניית שריר ומסה",
+        lose_weight: "הרזיה ושריפת שומן",
+        endurance: "שיפור סיבולת",
+        flexibility: "גמישות והרגעה",
+        event_prep: "הכנה לאירוע ספורטיבי",
+      };
+      const styleMap = {
+        motivator: "מאמן מוטיבטור (אנרגטי, צועק, לוחץ)",
+        calm: "מאמן רגוע (סבלני, מסביר לאט)",
+        data: "מאמן מבוסס דאטה (מספרים, סטטיסטיקות)",
+        friendly: "מאמן חברותי (כמו חבר, מצחיק)",
+      };
+
+      // ── Optional: load the specific trainer profile ───────────────────
+      let trainerInfo = "";
+      if (trainerId) {
+        try {
+          const trainerDoc = await admin.firestore()
+              .collection("users")
+              .doc(trainerId)
+              .get();
+          if (trainerDoc.exists) {
+            const trainerData = trainerDoc.data();
+            const fp = trainerData.fitnessTrainerProfile || {};
+            const specs = (fp.selectedSpecialties || []).join(", ");
+            const pkgCount = (fp.packages || []).length;
+            const certCount = (fp.certifications || []).length;
+            const locs = (fp.locations || [])
+                .map((l) => l.type || "")
+                .join(", ");
+            trainerInfo = "\n\nפרטי המאמן/ת:\n" +
+                `- שם: ${trainerData.name || "לא זמין"}\n` +
+                `- התמחויות: ${specs || "לא הוגדרו"}\n` +
+                `- חבילות: ${pkgCount}\n` +
+                `- תעודות: ${certCount}\n` +
+                `- מיקומי שירות: ${locs || "לא הוגדרו"}\n` +
+                `- דירוג: ${trainerData.rating || "אין"} ` +
+                `(${trainerData.reviewsCount || 0} ביקורות)`;
+          }
+        } catch (e) {
+          console.error("[recommendTrainersByGoals] load trainer failed:", e.message);
+        }
+      }
+
+      const prompt = "אתה יועץ כושר מומחה בישראל. " +
+          "עליך להעריך התאמה בין לקוח למאמן כושר.\n\n" +
+          "פרטי הלקוח:\n" +
+          `- מטרה: ${goalMap[goal] || goal || "לא צוין"}\n` +
+          `- רמת ניסיון: ${experience || "לא צוין"}\n` +
+          `- תדירות: ${frequency || "לא צוין"} פעמים בשבוע\n` +
+          `- מיקום מועדף: ${location || "לא צוין"}\n` +
+          `- סגנון מועדף: ${styleMap[style] || style || "לא צוין"}` +
+          trainerInfo +
+          "\n\nהמשימה שלך:\n" +
+          "1. חשב ציון התאמה 0-100 (60-80 טוב, 80-95 מצוין, 95+ מושלם)\n" +
+          "2. תן בדיוק 4 סיבות בעברית (קצרות, עם אימוג'י)\n" +
+          "3. כל סיבה חייבת להיות ספציפית ומוטיבציונית\n\n" +
+          "החזר JSON תקין בלבד:\n" +
+          '{"matchScore": 94, "reasons": ["🎯 ...", "🏠 ...", "💪 ...", "💝 ..."]}';
+
+      try {
+        const { raw } = await _fitnessCallGemini({
+          prompt,
+          temperature: 0.3,
+          maxTokens: 1024,
+        });
+        const parsed = JSON.parse(raw);
+        const matchScore = Math.max(
+            50, Math.min(100, parseInt(parsed.matchScore, 10) || 85),
+        );
+        let reasons = Array.isArray(parsed.reasons) ?
+          parsed.reasons.slice(0, 4).map(String) :
+          [];
+        while (reasons.length < 4) {
+          reasons.push(
+              ["🎯 מתאים למטרות שלך", "📍 באזור שלך", "⭐ דירוג גבוה", "✓ מאמן מאומת"][reasons.length],
+          );
+        }
+
+        // Log analytics (best-effort, 90d TTL per §19 pattern)
+        admin.firestore()
+            .collection("matching_analytics")
+            .add({
+              userId: request.auth.uid,
+              criteria: { goal, experience, frequency, location, style },
+              trainerId: trainerId || null,
+              matchScore,
+              success: true,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              expireAt: admin.firestore.Timestamp.fromDate(
+                  new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+              ),
+            })
+            .catch((e) =>
+              console.warn("[recommendTrainersByGoals] analytics fail:", e.message),
+            );
+
+        return { matchScore, reasons, success: true };
+      } catch (err) {
+        console.error("[recommendTrainersByGoals] Error:", err.message);
+        let base = 70;
+        if (goal && experience && frequency && location && style) base += 15;
+        const fallbackScore = Math.min(100, base + Math.floor(Math.random() * 15));
+        const goalReasons = {
+          build_muscle: "💪 מתמחה בבניית שריר",
+          lose_weight: "🔥 מומחה להרזיה",
+          endurance: "🏃 מאמן סיבולת",
+          flexibility: "🧘 מתמחה בגמישות",
+          event_prep: "🏆 הכנה לאירועים",
+        };
+        const locReasons = {
+          home: "🏠 מגיע עד הבית",
+          park: "🌳 אימונים בפארק",
+          gym: "🏋️ אימוני חדר כושר",
+        };
+        return {
+          matchScore: fallbackScore,
+          reasons: [
+            goalReasons[goal] || "🎯 מתאים למטרות שלך",
+            locReasons[location] || "📍 באזור שלך",
+            "⭐ דירוג גבוה מלקוחות",
+            "✓ מאמן מאומת",
+          ],
+          success: false,
+          fallback: true,
+        };
+      }
+    },
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2. optimizeTrainerProfile — compute profile score + 5 AI suggestions
+// ═══════════════════════════════════════════════════════════════════════════
+
+function _fitnessComputeProfileScore(fp, user) {
+  let score = 0;
+  const specialties = fp.selectedSpecialties || [];
+  if (specialties.length >= 3) score += 15;
+  else if (specialties.length >= 1) score += 8;
+
+  const certs = (fp.certifications || []).filter((c) => c.isVerified);
+  score += Math.min(15, certs.length * 5);
+
+  if ((fp.packages || []).length >= 2) score += 10;
+
+  const locs = (fp.locations || []).length;
+  score += Math.min(10, locs * 4);
+
+  score += Math.min(15, (fp.successStories || []).length * 5);
+
+  const activeOffers = (fp.offers || []).filter((o) => {
+    if (o.isActive === false) return false;
+    if (!o.expiresAt) return true;
+    const ts = o.expiresAt._seconds ? o.expiresAt._seconds * 1000 : o.expiresAt;
+    return new Date(ts) > new Date();
+  });
+  if (activeOffers.length >= 1) score += 10;
+
+  const aboutMe = (user.aboutMe || "").length;
+  if (aboutMe >= 200) score += 10;
+  else if (aboutMe >= 100) score += 5;
+
+  const gallery = (user.gallery || []).length;
+  score += Math.min(10, gallery * 2);
+
+  if ((user.rating || 0) >= 4.5) score += 5;
+
+  return Math.min(100, score);
+}
+
+exports.optimizeTrainerProfile = onCall(
+    {
+      secrets: [GEMINI_API_KEY],
+      region: "us-central1",
+      memory: "512MiB",
+      timeoutSeconds: 60,
+      maxInstances: 5,
+    },
+    async (request) => {
+      if (!request.auth) {
+        throw new HttpsError("unauthenticated", "יש להתחבר");
+      }
+      const trainerId = request.data?.trainerId || request.auth.uid;
+      const isSelf = trainerId === request.auth.uid;
+      if (!isSelf && !(await isAdminCaller(request))) {
+        throw new HttpsError(
+            "permission-denied",
+            "ניתן לאתחל פרופיל רק של המשתמש הנוכחי או אדמין",
+        );
+      }
+
+      const db = admin.firestore();
+      const trainerDoc = await db.collection("users").doc(trainerId).get();
+      if (!trainerDoc.exists) {
+        throw new HttpsError("not-found", "המאמן/ת לא נמצא/ה");
+      }
+      const user = trainerDoc.data() || {};
+      const fp = user.fitnessTrainerProfile || {};
+
+      const score = _fitnessComputeProfileScore(fp, user);
+
+      function fallbackSuggestions() {
+        const out = [];
+        if (!fp.successStories || fp.successStories.length < 1) {
+          out.push({
+            icon: "📸",
+            title: "הוסיפי תמונות לפני/אחרי",
+            description: "3 תמונות = +15% בקליקים",
+            impact: "+15%",
+            action: "הוסיפי עכשיו",
+            priority: "high",
+          });
+        }
+        const activeOffers = (fp.offers || []).filter((o) => o.isActive !== false);
+        if (activeOffers.length < 1) {
+          out.push({
+            icon: "🎁",
+            title: "הפעילי אימון ראשון בחינם",
+            description: "מגדיל פניות פי 3 בממוצע",
+            impact: "+25%",
+            action: "הפעילי",
+            priority: "high",
+          });
+        }
+        if ((user.aboutMe || "").length < 200) {
+          out.push({
+            icon: "📝",
+            title: "הסיפור שלך קצר מדי",
+            description: "הוסיפי 100+ מילים לאודות",
+            impact: "+10%",
+            action: "ערכי",
+            priority: "medium",
+          });
+        }
+        if ((fp.selectedSpecialties || []).length < 3) {
+          out.push({
+            icon: "🎯",
+            title: "הוסיפי עוד התמחויות",
+            description: "מינימום 3 התמחויות מומלצות",
+            impact: "+8%",
+            action: "הוסיפי",
+            priority: "medium",
+          });
+        }
+        if ((fp.packages || []).length < 3) {
+          out.push({
+            icon: "💰",
+            title: "הוסיפי חבילה נוספת",
+            description: "3 חבילות = יותר אופציות ללקוחות",
+            impact: "+5%",
+            action: "הוסיפי",
+            priority: "low",
+          });
+        }
+        return out.slice(0, 5);
+      }
+
+      const verifiedCount = (fp.certifications || []).filter((c) => c.isVerified).length;
+      const activeOffersCount = (fp.offers || []).filter((o) => o.isActive !== false).length;
+      const prompt = "אתה יועץ עסקי למאמני כושר בישראל. " +
+          "עליך לתת 5 הצעות לשיפור הפרופיל.\n\n" +
+          "נתוני המאמן/ת הנוכחיים:\n" +
+          `- ציון נוכחי: ${score}/100\n` +
+          `- שם: ${user.name || "לא זמין"}\n` +
+          `- מספר התמחויות: ${(fp.selectedSpecialties || []).length}\n` +
+          `- מספר תעודות: ${(fp.certifications || []).length} (מאומתות: ${verifiedCount})\n` +
+          `- מספר חבילות: ${(fp.packages || []).length}\n` +
+          `- מספר מיקומי שירות: ${(fp.locations || []).length}\n` +
+          `- מספר סיפורי הצלחה: ${(fp.successStories || []).length}\n` +
+          `- מבצעים פעילים: ${activeOffersCount}\n` +
+          `- אורך הסיפור האישי: ${(user.aboutMe || "").length} תווים\n` +
+          `- גלריה: ${(user.gallery || []).length} תמונות\n` +
+          `- דירוג: ${user.rating || "אין"} (${user.reviewsCount || 0} ביקורות)\n\n` +
+          "המשימה שלך:\n" +
+          "תן בדיוק 5 הצעות מדורגות לפי impact:\n" +
+          "- priority=high — שיפורים שיעלו conversion ב-15%+\n" +
+          "- priority=medium — שיפורים של 5-15%\n" +
+          "- priority=low — שיפורים של 0-5%\n\n" +
+          "לכל הצעה: icon (אימוג'י), title (עד 6 מילים), " +
+          "description (עד 15 מילים), impact (+X%), action (עד 4 מילים), priority.\n\n" +
+          "החזר JSON תקין בלבד:\n" +
+          '{"suggestions": [{"icon":"📸","title":"...","description":"...","impact":"+15%","action":"...","priority":"high"}]}';
+
+      let suggestions;
+      let aiSucceeded = false;
+      try {
+        const { raw } = await _fitnessCallGemini({
+          prompt,
+          temperature: 0.4,
+          maxTokens: 2048,
+        });
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed.suggestions) && parsed.suggestions.length > 0) {
+          suggestions = parsed.suggestions.slice(0, 5).map((s) => ({
+            icon: String(s.icon || "💡"),
+            title: String(s.title || ""),
+            description: String(s.description || ""),
+            impact: String(s.impact || ""),
+            action: String(s.action || "עשי עכשיו"),
+            priority: ["high", "medium", "low"].includes(s.priority) ?
+              s.priority :
+              "medium",
+          }));
+          aiSucceeded = true;
+        } else {
+          suggestions = fallbackSuggestions();
+        }
+      } catch (err) {
+        console.error("[optimizeTrainerProfile] Gemini failed:", err.message);
+        suggestions = fallbackSuggestions();
+      }
+
+      try {
+        await db.collection("users").doc(trainerId).update({
+          "fitnessTrainerProfile.profileScore": score,
+          "fitnessTrainerProfile.aiSuggestions": suggestions,
+          "fitnessTrainerProfile.lastOptimized":
+              admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (e) {
+        console.error("[optimizeTrainerProfile] cache write failed:", e.message);
+      }
+
+      return { score, suggestions, fallback: !aiSucceeded };
+    },
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3. generateCustomWorkoutPlan — 4-week personalized workout plan (Hebrew)
+//    Writes: users/{clientId}/workout_plans/{autoId}
+// ═══════════════════════════════════════════════════════════════════════════
+
+exports.generateCustomWorkoutPlan = onCall(
+    {
+      secrets: [GEMINI_API_KEY],
+      region: "us-central1",
+      memory: "512MiB",
+      timeoutSeconds: 90,
+      maxInstances: 5,
+    },
+    async (request) => {
+      if (!request.auth) {
+        throw new HttpsError("unauthenticated", "יש להתחבר");
+      }
+      const data = request.data || {};
+      const {
+        clientId,
+        goal,
+        experience,
+        frequency,
+        durationWeeks = 4,
+        equipmentAvailable = ["none"],
+        injuriesOrLimitations = [],
+        currentWeight = null,
+        targetWeight = null,
+      } = data;
+
+      // Authorization: when persisting a plan to a specific clientId, the caller
+      // must be the client themselves OR a verified provider the client has booked
+      // OR an admin. Without this, any authenticated user could spam workout plans
+      // into anyone's subcollection.
+      if (clientId && clientId !== request.auth.uid) {
+        const isAdmin = await isAdminCaller(request);
+        if (!isAdmin) {
+          // Allow if caller has at least one job linking them as expert to this client
+          const linkSnap = await admin.firestore()
+              .collection("jobs")
+              .where("expertId", "==", request.auth.uid)
+              .where("customerId", "==", clientId)
+              .limit(1)
+              .get();
+          if (linkSnap.empty) {
+            throw new HttpsError(
+                "permission-denied",
+                "ניתן ליצור תכנית אימון רק עבור עצמך או לקוח קיים",
+            );
+          }
+        }
+      }
+
+      const weeks = Math.max(1, Math.min(12, parseInt(durationWeeks, 10) || 4));
+      const equipmentStr = Array.isArray(equipmentAvailable) ?
+        equipmentAvailable.join(", ") :
+        String(equipmentAvailable);
+      const limitsStr = Array.isArray(injuriesOrLimitations) &&
+          injuriesOrLimitations.length > 0 ?
+        injuriesOrLimitations.join(", ") :
+        "אין";
+
+      const prompt = "אתה מאמן כושר מקצועי. צור תכנית אימון מותאמת אישית בעברית.\n\n" +
+          "פרטי הלקוח/ה:\n" +
+          `- מטרה: ${goal || "לא צוין"}\n` +
+          `- רמת ניסיון: ${experience || "לא צוין"}\n` +
+          `- תדירות שבועית: ${frequency || "לא צוין"}\n` +
+          `- משך התכנית: ${weeks} שבועות\n` +
+          `- ציוד זמין: ${equipmentStr}\n` +
+          `- מגבלות/פציעות: ${limitsStr}\n` +
+          (currentWeight ? `- משקל נוכחי: ${currentWeight} ק"ג\n` : "") +
+          (targetWeight ? `- משקל יעד: ${targetWeight} ק"ג\n` : "") +
+          "\nצור תכנית מובנית עם:\n" +
+          "1. סקירה כללית (2-3 משפטים)\n" +
+          "2. לוח זמנים שבועי (ימים + חלקי גוף)\n" +
+          "3. תרגילים ספציפיים (סטים × חזרות × מנוחה)\n" +
+          "4. התקדמות שבועית\n" +
+          "5. המלצות התאוששות\n" +
+          "6. טיפים תזונתיים\n\n" +
+          "החזר JSON תקין בלבד עם המבנה הבא:\n" +
+          '{"planOverview":"...","weeklySchedule":[{"week":1,"title":"...","days":[{"day":"ראשון","focus":"...","duration":"...","exercises":[{"name":"...","sets":3,"reps":"8-12","restSeconds":60,"notes":"..."}]}]}],"progressionStrategy":"...","recoveryTips":["..."],"nutritionGuidelines":["..."]}';
+
+      let plan;
+      try {
+        const { raw } = await _fitnessCallGemini({
+          prompt,
+          temperature: 0.5,
+          maxTokens: 4096,
+        });
+        plan = JSON.parse(raw);
+        if (!plan.planOverview || !Array.isArray(plan.weeklySchedule)) {
+          throw new Error("Gemini returned malformed plan JSON");
+        }
+      } catch (err) {
+        console.error("[generateCustomWorkoutPlan] Error:", err.message);
+        throw new HttpsError(
+            "internal",
+            "שגיאה ביצירת תכנית האימון: " + err.message,
+        );
+      }
+
+      if (clientId) {
+        try {
+          await admin.firestore()
+              .collection("users")
+              .doc(clientId)
+              .collection("workout_plans")
+              .add({
+                ...plan,
+                createdBy: request.auth.uid,
+                clientId,
+                goal: goal || null,
+                experience: experience || null,
+                frequency: frequency || null,
+                durationWeeks: weeks,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                isActive: true,
+              });
+        } catch (e) {
+          console.error("[generateCustomWorkoutPlan] persist failed:", e.message);
+        }
+      }
+
+      return plan;
+    },
+);
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CATEGORIES V3 (Section 45) — analytics + activity log + undo + backfill
 // ═══════════════════════════════════════════════════════════════════════════
@@ -12587,5 +14606,147 @@ exports.backfillCategoriesV3 = onCall(
       await batch.commit();
     }
     return { ok: true, scanned: scanned, initialized: initialized, skipped: skipped };
+  },
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Chat Guard — Phase 2 (callable CF)
+// ═══════════════════════════════════════════════════════════════════════════
+// Checks one chat message against the admin-configured word list + built-in
+// detection layers (phone, links, semantic patterns) and returns a decision.
+// Phase 3 will wire this into the chat send path.
+//
+// Auth: any signed-in user (they're about to send a chat message).
+// Kill-switch: respects `chat_guard_settings/main.enabled`. When false,
+//              returns `allowed` immediately with zero Firestore reads.
+//
+// Side effects (only when `detected === true`):
+//   1. Writes `chat_guard_incidents/{id}` with the full context
+//   2. Increments `blocked_words/{wordId}.hits` for every keyword match
+//
+// Phase 3's client code will pattern-match on `action`:
+//   allowed / warned / rewritten / blocked / suspended
+// ═══════════════════════════════════════════════════════════════════════════
+
+const { checkMessage: _chatGuardCheck } = require("./chat_guard/detection");
+const { calculateUserRiskScore: _chatGuardRisk } = require("./chat_guard/risk_scorer");
+
+exports.checkChatMessage = onCall(
+  { region: "us-central1", memory: "256MiB", timeoutSeconds: 20 },
+  async (request) => {
+    if (!request.auth || !request.auth.uid) {
+      throw new HttpsError("unauthenticated", "נדרשת התחברות");
+    }
+    const uid = request.auth.uid;
+    const { message, chatId, receiverId } = request.data || {};
+    if (!message || typeof message !== "string") {
+      throw new HttpsError("invalid-argument", "message חסר או לא מחרוזת");
+    }
+
+    const db = admin.firestore();
+
+    // ── 1. Kill-switch check (single-doc read) ───────────────────────────
+    let settings = {};
+    try {
+      const sDoc = await db.collection("chat_guard_settings").doc("main").get();
+      settings = sDoc.exists ? (sDoc.data() || {}) : {};
+    } catch (e) {
+      console.warn(`[chat-guard] settings read failed: ${e.message}`);
+    }
+    if (settings.enabled !== true) {
+      return {
+        detected: false,
+        action: "allowed",
+        severity: null,
+        score: 0,
+        matches: [],
+        rewrite: null,
+        reason: null,
+        skipped: true, // tells the client the guard is disabled
+      };
+    }
+
+    // ── 2. Load active words (capped) ────────────────────────────────────
+    let words = [];
+    try {
+      const snap = await db
+        .collection("blocked_words")
+        .where("isActive", "==", true)
+        .limit(500)
+        .get();
+      words = snap.docs.map((d) => ({ id: d.id, ...(d.data() || {}) }));
+    } catch (e) {
+      console.warn(`[chat-guard] words read failed: ${e.message}`);
+    }
+
+    // ── 3. User risk score (best-effort) ─────────────────────────────────
+    let userRiskScore = 0;
+    try {
+      userRiskScore = await _chatGuardRisk(uid, db);
+    } catch (e) {
+      console.warn(`[chat-guard] risk score failed: ${e.message}`);
+    }
+
+    // ── 4. Run detection engine ──────────────────────────────────────────
+    const result = _chatGuardCheck(message, {
+      words,
+      settings,
+      userRiskScore,
+    });
+
+    // ── 5. Side effects if matched ───────────────────────────────────────
+    if (result.detected) {
+      const incidentPayload = {
+        userId: uid,
+        userName: request.auth.token.name || request.auth.token.email || uid,
+        chatId: chatId || null,
+        chatPartnerId: receiverId || null,
+        message: String(message).slice(0, 2000), // bound
+        matchedWords: result.matches.map((m) => m.word).filter(Boolean),
+        severity: result.severity,
+        action: result.action,
+        detectionMethods: [
+          ...new Set(result.matches.map((m) => m.matchType).filter(Boolean)),
+        ],
+        riskScore: result.score,
+        userRiskScore,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        reviewed: false,
+      };
+      try {
+        await db.collection("chat_guard_incidents").add(incidentPayload);
+      } catch (e) {
+        console.warn(`[chat-guard] incident write failed: ${e.message}`);
+      }
+
+      // Bump hits counter on every keyword match (best-effort batch).
+      try {
+        const batch = db.batch();
+        const seen = new Set();
+        for (const m of result.matches) {
+          if (m.wordId && !seen.has(m.wordId)) {
+            seen.add(m.wordId);
+            batch.update(db.collection("blocked_words").doc(m.wordId), {
+              hits: admin.firestore.FieldValue.increment(1),
+            });
+          }
+        }
+        if (seen.size > 0) await batch.commit();
+      } catch (e) {
+        console.warn(`[chat-guard] hits bump failed: ${e.message}`);
+      }
+    }
+
+    return {
+      detected: result.detected,
+      action: result.action,
+      severity: result.severity,
+      score: result.score,
+      matches: result.matches,
+      rewrite: result.rewrite,
+      reason: result.reason,
+      skipped: false,
+    };
   },
 );
