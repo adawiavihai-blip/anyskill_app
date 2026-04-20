@@ -19,6 +19,7 @@ import 'widgets/banner_row_card.dart';
 import 'widgets/bulk_actions_bar.dart';
 import 'widgets/category_row_card.dart';
 import 'widgets/command_palette_overlay.dart';
+import 'widgets/diagnostic_panel.dart';
 import 'widgets/empty_state_widget.dart';
 import 'widgets/keyboard_shortcuts_hint.dart';
 import 'widgets/kpi_metrics_row.dart';
@@ -349,6 +350,7 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
                       onAdd: () => AddCategoryDialog.show(context),
                     ),
                     const SizedBox(height: 16),
+                    const DiagnosticPanel(),
                     KpiMetricsRow(kpis: kpis),
                     const SizedBox(height: 16),
                     const ToolbarBar(),
