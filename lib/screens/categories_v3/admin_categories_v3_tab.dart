@@ -573,72 +573,66 @@ class _CategoriesList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return asyncCategories.when(
-      loading: () => const CategoryListShimmer(),
-      error: (e, _) => EmptyStateWidget(
+    // ── Phase E-fix: PRIORITIZE `filtered` DATA OVER AsyncValue STATE ────
+    // Previously this method wrapped everything in `asyncCategories.when(
+    // loading: ..., data: ...)`. If the AsyncValue briefly flipped back to
+    // `loading` after a notifyListeners cascade (e.g. from selection.prune),
+    // we'd render a shimmer even when the `filtered` list already had items.
+    // On Flutter Web that combined with a ShaderMask bug in LoadingShimmer
+    // to produce a permanent solid-grey block.
+    //
+    // New rule: always prefer rendering `filtered` if it has any root items.
+    // The shimmer is ONLY for the genuine "no data yet + still loading" path.
+    final root = filtered.where((c) => c.isRoot).toList();
+
+    if (root.isEmpty && asyncCategories.hasError) {
+      return EmptyStateWidget(
         icon: Icons.error_outline_rounded,
         title: 'שגיאה בטעינת קטגוריות',
-        subtitle: e.toString(),
+        subtitle: asyncCategories.error.toString(),
         tone: EmptyTone.danger,
-      ),
-      data: (_) {
-        final root = filtered.where((c) => c.isRoot).toList();
-        if (root.isEmpty) {
-          return const EmptyStateWidget(
-            icon: Icons.category_outlined,
-            title: 'אין קטגוריות תואמות',
-            subtitle:
-                'נקה את החיפוש או הסר פילטרים. אם אין קטגוריות בכלל, הרץ את ה-backfill.',
-            tone: EmptyTone.neutral,
-          );
-        }
+      );
+    }
 
-        if (reorderable) {
-          return ReorderableListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            buildDefaultDragHandles: false,
-            itemCount: root.length,
-            onReorder: (oldIndex, newIndex) {
-              final ids = root.map((c) => c.id).toList();
-              if (newIndex > oldIndex) newIndex -= 1;
-              final moved = ids.removeAt(oldIndex);
-              ids.insert(newIndex, moved);
-              onReorderRoot(ids);
-            },
-            itemBuilder: (context, index) => _RootItem(
-              key: ValueKey('cat-${root[index].id}'),
-              category: root[index],
-              filtered: filtered,
-              index: index,
-              expandedId: expandedId,
-              focusedId: focusedId,
-              dragEnabled: true,
-              onToggleExpand: onToggleExpand,
-              onConfirmDelete: onConfirmDelete,
-              onEdit: onEdit,
-            ),
-          );
-        }
+    if (root.isEmpty && asyncCategories.isLoading) {
+      return const CategoryListShimmer();
+    }
 
-        final children = <Widget>[];
-        for (var i = 0; i < root.length; i++) {
-          children.add(_RootItem(
-            key: ValueKey('cat-${root[i].id}'),
-            category: root[i],
-            filtered: filtered,
-            index: i,
-            expandedId: expandedId,
-            focusedId: focusedId,
-            dragEnabled: false,
-            onToggleExpand: onToggleExpand,
-            onConfirmDelete: onConfirmDelete,
-            onEdit: onEdit,
-          ));
-        }
-        return Column(children: children);
-      },
-    );
+    if (root.isEmpty) {
+      return const EmptyStateWidget(
+        icon: Icons.category_outlined,
+        title: 'אין קטגוריות תואמות',
+        subtitle:
+            'נקה את החיפוש או הסר פילטרים. אם אין קטגוריות בכלל, הרץ את ה-backfill.',
+        tone: EmptyTone.neutral,
+      );
+    }
+
+    // ── Phase E-fix: ALWAYS use a Column for the list ────────────────────
+    // `ReorderableListView.builder` with `shrinkWrap: true` + `NeverScrollable`
+    // inside a scrollable parent ListView is fragile on Flutter Web — the
+    // constraints race can leave the list with 0 height. We drop it and use
+    // a plain Column; drag-reorder is deferred to Phase F until we can
+    // migrate the whole main tab to `CustomScrollView + SliverReorderableList`.
+    // The drag handle icon is kept for visual parity; it just doesn't trigger
+    // reorder for now. Users can still rely on the "sort by" dropdown in the
+    // toolbar for non-manual ordering.
+    final children = <Widget>[];
+    for (var i = 0; i < root.length; i++) {
+      children.add(_RootItem(
+        key: ValueKey('cat-${root[i].id}'),
+        category: root[i],
+        filtered: filtered,
+        index: i,
+        expandedId: expandedId,
+        focusedId: focusedId,
+        dragEnabled: false, // reorder temporarily disabled — see note above
+        onToggleExpand: onToggleExpand,
+        onConfirmDelete: onConfirmDelete,
+        onEdit: onEdit,
+      ));
+    }
+    return Column(children: children);
   }
 }
 
