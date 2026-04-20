@@ -54,6 +54,12 @@ class CategoryRowCard extends StatelessWidget {
     final growth = analytics?.growth30d ?? 0;
     final lastEdited = category.adminMeta?.lastEditedAt;
 
+    // Mobile-responsive: hide sparkline + coverage on screens < 480px so the
+    // row doesn't overflow at iPhone-min width (360px). Health bar stays —
+    // it's the most actionable signal. Edit pencil also stays.
+    final viewportWidth = MediaQuery.sizeOf(context).width;
+    final isCompact = viewportWidth < 480;
+
     final borderColor = selected
         ? const Color(0xFF6366F1)
         : focused
@@ -147,8 +153,8 @@ class CategoryRowCard extends StatelessWidget {
                 ),
               ),
 
-              // Sparkline
-              if (analytics != null) ...[
+              // Sparkline (hidden on compact)
+              if (analytics != null && !isCompact) ...[
                 const SizedBox(width: 8),
                 SparklineWidget(
                   points: _padTo30(sparkline),
@@ -156,16 +162,19 @@ class CategoryRowCard extends StatelessWidget {
                 ),
               ],
 
-              // Coverage chip
-              if (analytics != null) ...[
+              // Coverage chip (hidden on compact)
+              if (analytics != null && !isCompact) ...[
                 const SizedBox(width: 8),
                 CoverageChip(cities: coverage),
               ],
 
-              // Health bar
+              // Health bar — always shown (most actionable signal)
               if (analytics != null) ...[
                 const SizedBox(width: 10),
-                HealthScoreBar(score: analytics.healthScore),
+                HealthScoreBar(
+                  score: analytics.healthScore,
+                  barWidth: isCompact ? 36 : 50,
+                ),
               ],
 
               // Inline edit + actions menu

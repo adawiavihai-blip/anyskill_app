@@ -4684,4 +4684,140 @@ After first deploy: the scheduled CFs run hourly / every 6h. To populate immedia
 
 ---
 
-*Last updated: 2026-04-17 | Version: 15.x (Monetization redesign)*
+## 45. Categories v3 — Premium Admin Workspace (v15.x, 2026-04-20)
+
+> Full redesign of the admin "קטגוריות" tab into a Linear/Airbnb/Notion-grade
+> management workspace. Built in 5 phases (A→E), each phase committed
+> independently behind a hard-coded UID feature flag so the legacy tab keeps
+> working for non-whitelisted admins until rollout completes.
+
+### Architecture decisions (recorded for future maintainers)
+
+| Decision | Choice | Why |
+|----------|--------|-----|
+| Folder layout | `lib/screens/categories_v3/` sub-tree | Co-locates 14 model/service/controller files + 17 widgets + 4 dialogs without polluting the flat `lib/screens/admin_*.dart` namespace |
+| State management | Riverpod 2.x with `riverpod_annotation` (new `Ref` API) | Matches existing admin providers; zero deprecated `*Ref` types in new code |
+| Feature flag | Hard-coded UID whitelist in `feature_flag.dart` | Soft-launch reality (~5 users) — Remote Config is overkill. Replace with Firestore-backed flag (`system_settings/feature_flags`) when widening. **DO NOT** install `firebase_remote_config` package. |
+| Dark mode | Light-only (matches Vault + Monetization admin tabs) | Categories tab follows the established admin convention. |
+| Analytics source | Real `jobs` + `users` aggregation; views/clicks placeholder ("—") | Q4-B+C decision — no `category_impressions` / `category_clicks` collections exist. Build tracking infra in a future PR when DAU justifies the write cost. |
+| Banner integration | Read-only mirror in `promoted_banners` | Q5-A — `home_tab.dart` keeps rendering AnyTasks + נתינה מהלב hardcoded. Migrating to live rendering is a separate PR. |
+| Icons | Material only | Rejected `lucide_icons` for consistency with the other 87 screens |
+| Old tab | `AdminCategoriesManagementTab` kept fully functional | Renders for any admin NOT in the whitelist. |
+
+### Firestore schema additions (additive only — `categories` collection)
+
+```
+categories/{id}
+  // ── existing fields (unchanged) ─────────────────────────
+  name, iconUrl, parentId, order, clickCount, imageUrl?, color?, csm?
+  // ── v3 additions ────────────────────────────────────────
+  analytics: {
+    views_30d?: number              // null until tracking ships
+    clicks_30d?: number             // null until tracking ships
+    orders_30d: number              // sourced from jobs
+    revenue_30d: number             // sourced from jobs.totalAmount
+    growth_30d: number              // % vs prior 30d
+    sparkline_30d: int[30]          // daily order counts (oldest → newest)
+    coverage_cities: number         // distinct cities from active providers
+    active_providers: number
+    health_score: number            // 0-100 per spec §4 formula
+    last_updated: Timestamp
+  }
+  admin_meta: {
+    is_pinned: bool                 // shows as "מקודמת" chip
+    is_hidden: bool                 // hides from customer home
+    last_edited_by: string          // admin uid
+    last_edited_at: Timestamp
+    last_edited_action: string      // 'created' | 'reordered' | 'pinned' | etc.
+    notes: string                   // free-form admin note
+  }
+  csm_module: string | null         // 'cleaning' | 'massage' | 'delivery' | 'handyman' | 'pest_control' | 'fitness_trainer'
+  custom_tags: string[]             // ['🔥 חם', '🚀 צמיחה']
+```
+
+### New collections
+
+| Collection | Purpose | Rule |
+|-----------|---------|------|
+| `admin_activity_log/{logId}` | Append-only audit trail. Every admin mutation goes through `logAdminAction` CF. Used by Activity Log panel + Undo. | admin read; CF-only write |
+| `admin_saved_views/{viewId}` | Per-admin filter/sort/view-mode presets. | per-admin scoped |
+| `promoted_banners/{bannerId}` | Read-only mirror of AnyTasks + נתינה מהלב + future banners. | auth read; admin write |
+
+### Cloud Functions added (5 total)
+
+| CF | Trigger | Purpose |
+|----|---------|---------|
+| `updateCategoryAnalytics` | `onSchedule("every 15 minutes")` | Aggregates jobs + users into `categories/{id}.analytics`. Cap 50 categories per run. |
+| `refreshCategoryAnalyticsNow` | `onCall` (admin-only) | Manual trigger from the "כלי-עוצמה" footer's Refresh button |
+| `logAdminAction` | `onCall` (admin-only) | Server-stamps every admin write to `admin_activity_log`. Tamper-resistant. |
+| `undoAdminAction` | `onCall` (admin-only) | Restores `payload_before` snapshot. Idempotent. Reorder undo intentionally refused. |
+| `backfillCategoriesV3` | `onCall` (admin-only) | One-shot field initializer. Idempotent. Run ONCE after deploy. |
+
+### Composite indexes added
+
+```
+admin_activity_log: (admin_uid ASC, created_at DESC)        # per-admin feed
+admin_activity_log: (target_type ASC, created_at DESC)      # panel filter
+admin_saved_views: (admin_uid ASC, is_default DESC, created_at DESC)
+```
+
+### Phased rollout (5 commits)
+
+| Phase | Commit | Contents |
+|-------|--------|----------|
+| **A — Foundation** | `ffe68d1` | 14 files + 3 indexes + 3 rule blocks + 5 CFs. Backfill verified: 77 categories initialized. Zero UI change. |
+| **B — Core UI** | `4918d5f` | 8 widgets + main tab entry behind feature flag. |
+| **C — Advanced UI** | `fdb7ec3` | 6 widgets (Sparkline CustomPainter, Health bar, Coverage, Funnel, BulkBar, ShortcutsHint) + Drag-and-drop + 10 keyboard shortcuts |
+| **D — Power Features** | `3f16e52` | 7 files: ActivityLogPanel (slide-in + undo), CommandPaletteOverlay (⌘K), PowerToolsFooter, ConfirmDestructive + SavedView + Edit (5 tabs) + Add (3-step wizard) dialogs |
+| **E — Polish & QA** | (this commit) | Animated LoadingShimmer, mobile-responsive 480px, SharedPreferences persistence, this §45, `docs/categories_v3_CHANGES.md` |
+
+### Keyboard shortcuts (web only; mobile auto-hides hint strip)
+
+| Key | Action |
+|-----|--------|
+| `↑↓` | Navigate between root categories (purple focus border) |
+| `Space` | Toggle selection of focused row |
+| `E` | Open EditCategoryDialog for focused row |
+| `H` | Toggle hide for focused row |
+| `P` | Toggle pin for focused row |
+| `Del` / `Backspace` | Open ConfirmDestructiveDialog (type-to-delete) |
+| `⌘K` / `Ctrl+K` | Open CommandPaletteOverlay |
+| `⌘Z` / `Ctrl+Z` | Undo last reversible action by current admin |
+| `Esc` | Close palette → close activity panel → clear selection + focus |
+| `/` | Snackbar prompts user to click search field |
+
+### Rules for future code
+
+- **Never reintroduce email/password admin login or hardcoded UID checks elsewhere.** The whitelist in `feature_flag.dart` is the only place. When migrating to the Firestore flag, replace the file's body — don't sprinkle UID checks across screens.
+- **Every admin mutation MUST go through `logAdminAction` CF.** Direct Firestore writes bypass the audit trail and break Undo.
+- **Health score formula** lives in BOTH client + server. When tweaking weights, update BOTH together.
+- **Sparkline data** is a `List<int>` of 30 daily counts (oldest → newest). Padding to length-30 is the caller's responsibility.
+- **Reorder writes are debounced 500ms** to avoid storming Firestore on multiple drags.
+- **Shortcuts hint dismissal** persists via `SharedPreferences['categories_v3.shortcuts_dismissed']`.
+- **No `firebase_remote_config` package.** Swap `feature_flag.dart` for a Firestore stream when widening.
+- **Mobile breakpoint is 480px** (set in `CategoryRowCard.build`). Below this, sparkline + coverage auto-hide, health bar shrinks 50→36px.
+- **`promoted_banners` is read-only mirror** until a separate PR migrates `home_tab.dart` rendering.
+
+### Deploy checklist (run once after first merge)
+
+```bash
+firebase deploy --only firestore:indexes
+firebase deploy --only firestore:rules
+firebase deploy --only "functions:updateCategoryAnalytics,functions:refreshCategoryAnalyticsNow,functions:logAdminAction,functions:undoAdminAction,functions:backfillCategoriesV3"
+
+# Then ONCE: invoke backfillCategoriesV3 from Firebase Console → Functions → Force run → {}
+```
+
+### Files
+
+**Created (28 files in `lib/screens/categories_v3/`):** see `docs/categories_v3_CHANGES.md` for the full list with line counts.
+
+**Modified:**
+- `lib/screens/admin_screen.dart` — 2 imports + `if/else` conditional in TabBarView
+- `firestore.indexes.json` — +3 composite indexes
+- `firestore.rules` — +3 rule blocks
+- `functions/index.js` — +5 CFs + 4 helpers
+
+---
+
+*Last updated: 2026-04-20 | Version: 15.x (Monetization + **Categories v3 Premium Workspace §45**)*

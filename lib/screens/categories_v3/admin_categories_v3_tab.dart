@@ -22,6 +22,7 @@ import 'widgets/command_palette_overlay.dart';
 import 'widgets/empty_state_widget.dart';
 import 'widgets/keyboard_shortcuts_hint.dart';
 import 'widgets/kpi_metrics_row.dart';
+import 'widgets/loading_shimmer.dart';
 import 'widgets/power_tools_footer.dart';
 import 'widgets/subcategory_grid.dart';
 import 'widgets/toolbar_bar.dart';
@@ -573,7 +574,7 @@ class _CategoriesList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return asyncCategories.when(
-      loading: () => const _LoadingShimmer(),
+      loading: () => const CategoryListShimmer(),
       error: (e, _) => EmptyStateWidget(
         icon: Icons.error_outline_rounded,
         title: 'שגיאה בטעינת קטגוריות',
@@ -717,24 +718,3 @@ class _RootItem extends ConsumerWidget {
   }
 }
 
-class _LoadingShimmer extends StatelessWidget {
-  const _LoadingShimmer();
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: List.generate(
-        5,
-        (_) => Container(
-          height: 64,
-          margin: const EdgeInsetsDirectional.only(bottom: 8),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.black.withValues(alpha: 0.05)),
-          ),
-        ),
-      ),
-    );
-  }
-}

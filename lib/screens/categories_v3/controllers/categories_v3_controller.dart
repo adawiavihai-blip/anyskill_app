@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/activity_log_entry.dart';
 import '../models/category_v3_model.dart';
@@ -13,6 +14,11 @@ import '../services/saved_views_service.dart';
 import 'selection_controller.dart';
 
 part 'categories_v3_controller.g.dart';
+
+/// SharedPreferences key for the dismissed-state of the keyboard shortcuts
+/// strip. Survives app reload + tab switch; resets only when the user clears
+/// the browser/app storage.
+const String _kShortcutsDismissedKey = 'categories_v3.shortcuts_dismissed';
 
 // ── Service providers (singletons — survive tab switches) ───────────────────
 
@@ -121,7 +127,25 @@ const Object _sentinel = Object();
 @Riverpod(keepAlive: true)
 class CategoriesV3Controller extends _$CategoriesV3Controller {
   @override
-  CategoriesScreenState build() => const CategoriesScreenState();
+  CategoriesScreenState build() {
+    // Load persisted shortcuts-dismissed flag on first build (fire-and-forget).
+    _loadShortcutsDismissed();
+    return const CategoriesScreenState();
+  }
+
+  Future<void> _loadShortcutsDismissed() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final dismissed = prefs.getBool(_kShortcutsDismissedKey) ?? false;
+      if (dismissed && !state.shortcutsHintDismissed) {
+        state = state.copyWith(shortcutsHintDismissed: true);
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[CategoriesV3] shortcuts dismissal load failed: $e');
+      }
+    }
+  }
 
   // Search
   void setSearch(String q) =>
@@ -147,8 +171,17 @@ class CategoriesV3Controller extends _$CategoriesV3Controller {
     state = state.copyWith(expandedCategoryId: newId);
   }
 
-  void dismissShortcutsHint() =>
-      state = state.copyWith(shortcutsHintDismissed: true);
+  void dismissShortcutsHint() {
+    state = state.copyWith(shortcutsHintDismissed: true);
+    // Persist (fire-and-forget — UX should never block on this).
+    SharedPreferences.getInstance().then((p) {
+      p.setBool(_kShortcutsDismissedKey, true);
+    }).catchError((Object e) {
+      if (kDebugMode) {
+        debugPrint('[CategoriesV3] shortcuts dismissal save failed: $e');
+      }
+    });
+  }
 
   /// Loads a saved view's filter / sort / view-mode into the screen state.
   void applySavedView(SavedView view) {
