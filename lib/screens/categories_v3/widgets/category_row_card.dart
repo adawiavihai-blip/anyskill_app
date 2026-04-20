@@ -5,6 +5,7 @@ import 'category_status_chips.dart';
 import 'conversion_funnel_inline.dart';
 import 'coverage_chip.dart';
 import 'health_score_bar.dart';
+import 'safe_widget_builder.dart';
 import 'sparkline_widget.dart';
 
 /// Single category row card — Phase C version per spec §7.3.
@@ -48,17 +49,37 @@ class CategoryRowCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Whole-row safety net: if anything below throws (numeric overflow,
+    // null deref via cast, layout error from a deep child), render the
+    // amber fallback row instead of letting Flutter substitute the default
+    // grey ErrorWidget — which on Web release builds shows as a blank grey
+    // box with no actionable info.
+    return SafeWidgetBuilder(
+      label: 'CategoryRow ${category.id}',
+      builder: () => _buildRow(context),
+    );
+  }
+
+  Widget _buildRow(BuildContext context) {
     final analytics = category.analytics;
     final coverage = analytics?.coverageCities ?? 0;
     final sparkline = analytics?.sparkline30d ?? const <int>[];
-    final growth = analytics?.growth30d ?? 0;
+    final growth = analytics?.growth30d ?? 0.0;
+    final healthScore = analytics?.healthScore ?? 0;
     final lastEdited = category.adminMeta?.lastEditedAt;
 
     // Mobile-responsive: hide sparkline + coverage on screens < 480px so the
     // row doesn't overflow at iPhone-min width (360px). Health bar stays —
     // it's the most actionable signal. Edit pencil also stays.
-    final viewportWidth = MediaQuery.sizeOf(context).width;
-    final isCompact = viewportWidth < 480;
+    // Defensive: MediaQuery may not be ready on the very first frame in some
+    // tab-switch races; default to non-compact (full layout) when unsure.
+    double viewportWidth = 1024;
+    try {
+      viewportWidth = MediaQuery.sizeOf(context).width;
+    } catch (_) {
+      // Keep the default of 1024 — desktop layout.
+    }
+    final isCompact = viewportWidth > 0 && viewportWidth < 480;
 
     final borderColor = selected
         ? const Color(0xFF6366F1)
@@ -138,7 +159,12 @@ class CategoryRowCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 4),
-                    ConversionFunnelInline(analytics: analytics),
+                    SafeWidgetBuilder(
+                      label: 'funnel ${category.id}',
+                      compact: true,
+                      builder: () =>
+                          ConversionFunnelInline(analytics: analytics),
+                    ),
                     if (lastEdited != null) ...[
                       const SizedBox(height: 2),
                       Text(
@@ -156,24 +182,36 @@ class CategoryRowCard extends StatelessWidget {
               // Sparkline (hidden on compact)
               if (analytics != null && !isCompact) ...[
                 const SizedBox(width: 8),
-                SparklineWidget(
-                  points: _padTo30(sparkline),
-                  growthPercent: growth,
+                SafeWidgetBuilder(
+                  label: 'sparkline ${category.id}',
+                  compact: true,
+                  builder: () => SparklineWidget(
+                    points: _padTo30(sparkline),
+                    growthPercent: growth,
+                  ),
                 ),
               ],
 
               // Coverage chip (hidden on compact)
               if (analytics != null && !isCompact) ...[
                 const SizedBox(width: 8),
-                CoverageChip(cities: coverage),
+                SafeWidgetBuilder(
+                  label: 'coverage ${category.id}',
+                  compact: true,
+                  builder: () => CoverageChip(cities: coverage),
+                ),
               ],
 
               // Health bar — always shown (most actionable signal)
               if (analytics != null) ...[
                 const SizedBox(width: 10),
-                HealthScoreBar(
-                  score: analytics.healthScore,
-                  barWidth: isCompact ? 36 : 50,
+                SafeWidgetBuilder(
+                  label: 'health ${category.id}',
+                  compact: true,
+                  builder: () => HealthScoreBar(
+                    score: healthScore,
+                    barWidth: isCompact ? 36 : 50,
+                  ),
                 ),
               ],
 

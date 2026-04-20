@@ -30,21 +30,25 @@ class SparklineWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isFlat = points.every((p) => p == 0);
+    // Defensive: empty points → flat hairline placeholder.
+    final safePoints = points.isEmpty ? const <int>[0] : points;
+    final isFlat = safePoints.every((p) => p == 0);
+    // growthPercent might be NaN/Infinity from a /0 upstream; treat as 0.
+    final safeGrowth = growthPercent.isFinite ? growthPercent : 0.0;
     final color = isFlat
         ? const Color(0xFF9CA3AF)
-        : (growthPercent >= 0
+        : (safeGrowth >= 0
             ? const Color(0xFF10B981)
             : const Color(0xFFEF4444));
     return RepaintBoundary(
       child: Tooltip(
-        message: _tooltipText(),
+        message: _tooltipText(safePoints, safeGrowth),
         child: SizedBox(
           width: width,
           height: height,
           child: CustomPaint(
             painter: _SparklinePainter(
-              points: points,
+              points: safePoints,
               color: color,
               isFlat: isFlat,
             ),
@@ -54,10 +58,14 @@ class SparklineWidget extends StatelessWidget {
     );
   }
 
-  String _tooltipText() {
-    final total = points.fold<int>(0, (s, v) => s + v);
-    final sign = growthPercent >= 0 ? '+' : '';
-    return '$total בשבוע (30 ימים) · $sign${growthPercent.toStringAsFixed(0)}%';
+  String _tooltipText(List<int> pts, double g) {
+    try {
+      final total = pts.fold<int>(0, (s, v) => s + v);
+      final sign = g >= 0 ? '+' : '';
+      return '$total בשבוע (30 ימים) · $sign${g.toStringAsFixed(0)}%';
+    } catch (_) {
+      return 'אין נתונים';
+    }
   }
 }
 
@@ -74,6 +82,27 @@ class _SparklinePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // Defense layer #1: never paint into a zero-sized canvas — the smooth
+    // path math involves division by size.width which would NaN out.
+    if (size.width <= 0 || size.height <= 0) return;
+
+    // Defense layer #2: catch any unexpected math/range error from the
+    // smooth-path computation. A failed paint surfaces as a paint error
+    // in Flutter's renderer, which on web shows as a blank/grey frame.
+    try {
+      _paintInner(canvas, size);
+    } catch (e) {
+      // Last-resort fallback: a single grey hairline across the middle.
+      final paint = Paint()
+        ..color = const Color(0xFF9CA3AF).withValues(alpha: 0.4)
+        ..strokeWidth = 1.0
+        ..style = PaintingStyle.stroke;
+      final y = size.height / 2;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    }
+  }
+
+  void _paintInner(Canvas canvas, Size size) {
     if (points.isEmpty) return;
 
     if (isFlat) {
@@ -87,9 +116,14 @@ class _SparklinePainter extends CustomPainter {
       return;
     }
 
-    final maxVal =
-        points.reduce((a, b) => a > b ? a : b).toDouble().clamp(1, double.infinity);
-    final stepX = size.width / (points.length - 1).clamp(1, points.length);
+    // maxVal: protect against negative-only inputs (clamp to 1 minimum).
+    final reducedMax = points.reduce((a, b) => a > b ? a : b).toDouble();
+    final maxVal = reducedMax > 1 ? reducedMax : 1.0;
+
+    // stepX: protect against single-point input (would be infinite).
+    final divisor = points.length > 1 ? (points.length - 1) : 1;
+    final stepX = size.width / divisor;
+
     final pts = <Offset>[
       for (var i = 0; i < points.length; i++)
         Offset(
@@ -97,6 +131,8 @@ class _SparklinePainter extends CustomPainter {
           size.height - (points[i] / maxVal) * (size.height - 4) - 2,
         ),
     ];
+
+    if (pts.isEmpty) return;
 
     // Build a smooth path via Catmull-Rom → cubic Bezier conversion
     final path = Path()..moveTo(pts.first.dx, pts.first.dy);

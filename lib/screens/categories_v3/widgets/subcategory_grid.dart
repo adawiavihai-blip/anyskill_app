@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/category_v3_model.dart';
+import 'safe_widget_builder.dart';
 import 'subcategory_thumb.dart';
 
 /// Inline expanded panel showing a category's sub-categories. Per spec §7.4
@@ -51,11 +52,17 @@ class SubcategoryGrid extends StatelessWidget {
                     return AddSubcategoryThumb(onTap: onAdd!);
                   }
                   final sub = subcategories[i];
-                  return SubcategoryThumb(
-                    sub: sub,
-                    onTap: onTapSub == null ? null : () => onTapSub!(sub),
-                    onEdit:
-                        onEditSub == null ? null : () => onEditSub!(sub),
+                  // Per-thumb safety net — a single bad sub-cat shouldn't
+                  // hide the whole grid.
+                  return SafeWidgetBuilder(
+                    label: 'subThumb ${sub.id}',
+                    compact: true,
+                    builder: () => SubcategoryThumb(
+                      sub: sub,
+                      onTap: onTapSub == null ? null : () => onTapSub!(sub),
+                      onEdit:
+                          onEditSub == null ? null : () => onEditSub!(sub),
+                    ),
                   );
                 },
               );
