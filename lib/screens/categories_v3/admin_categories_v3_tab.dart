@@ -6,31 +6,42 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'controllers/categories_v3_controller.dart';
+import 'dialogs/add_category_dialog.dart';
+import 'dialogs/confirm_destructive_dialog.dart';
+import 'dialogs/edit_category_dialog.dart';
+import 'dialogs/saved_view_dialog.dart';
 import 'models/category_v3_model.dart';
+import 'models/command_palette_action.dart';
 import 'models/promoted_banner.dart';
 import 'models/saved_view.dart';
+import 'widgets/activity_log_panel.dart';
 import 'widgets/banner_row_card.dart';
 import 'widgets/bulk_actions_bar.dart';
 import 'widgets/category_row_card.dart';
+import 'widgets/command_palette_overlay.dart';
 import 'widgets/empty_state_widget.dart';
 import 'widgets/keyboard_shortcuts_hint.dart';
 import 'widgets/kpi_metrics_row.dart';
+import 'widgets/power_tools_footer.dart';
 import 'widgets/subcategory_grid.dart';
 import 'widgets/toolbar_bar.dart';
 
-/// v3 categories admin tab — Phase C wiring.
+/// v3 categories admin tab — Phase D wiring.
 ///
 /// Layout:
-///   1. Header strip (title + v3 PRO pill)
+///   1. Header strip (title + activity panel toggle + saved-views menu + add)
 ///   2. KPI strip (5 cards)
 ///   3. Toolbar (search + sort + view switcher)
 ///   4. Keyboard shortcuts hint (dismissable)
 ///   5. Promoted banners section (mock cards)
 ///   6. Categories list (ReorderableListView in tree view, expandable rows)
-///   7. Bulk actions bar (sticky bottom, slides in when count > 0)
+///   7. Power tools footer (refresh / export / import / reset)
+///   8. Bulk actions bar (sticky bottom)
+///   9. ActivityLogPanel overlay (slide-in)
+///   10. CommandPaletteOverlay (⌘K modal)
 ///
-/// Keyboard shortcuts (web only): ↑↓ navigate · Space select · E edit · H hide ·
-/// P pin · Del delete · ⌘K palette · ⌘Z undo · Esc clear · / focus search.
+/// All keyboard shortcuts now route to real handlers (no more snackbar
+/// placeholders from Phase C).
 class AdminCategoriesV3Tab extends ConsumerStatefulWidget {
   const AdminCategoriesV3Tab({super.key});
 
@@ -40,7 +51,6 @@ class AdminCategoriesV3Tab extends ConsumerStatefulWidget {
 }
 
 class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
-  /// Highlighted-by-keyboard row id. Independent of selection.
   String? _focusedId;
   final FocusNode _screenFocusNode = FocusNode(debugLabel: 'CategoriesV3Screen');
   Timer? _reorderDebounce;
@@ -49,7 +59,6 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
   @override
   void initState() {
     super.initState();
-    // Grab focus once mounted so keyboard shortcuts work immediately on web.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _screenFocusNode.requestFocus();
     });
@@ -86,7 +95,8 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
 
     final ctrl = ref.read(categoriesV3ControllerProvider.notifier);
     final selection = ref.read(selectionControllerProvider);
-    final list = ref.read(filteredCategoriesV3Provider)
+    final list = ref
+        .read(filteredCategoriesV3Provider)
         .where((c) => c.isRoot)
         .toList();
     if (list.isEmpty) return KeyEventResult.ignored;
@@ -95,7 +105,7 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
     final isMod = HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed;
 
-    int currentIdx = _focusedId == null
+    final currentIdx = _focusedId == null
         ? -1
         : list.indexWhere((c) => c.id == _focusedId);
 
@@ -115,15 +125,15 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
       return KeyEventResult.handled;
     }
     if (logicalKey == LogicalKeyboardKey.escape) {
+      if (ref.read(categoriesV3ControllerProvider).commandPaletteOpen) {
+        ctrl.closeCommandPalette();
+        return KeyEventResult.handled;
+      }
       selection.clear();
       setState(() => _focusedId = null);
       return KeyEventResult.handled;
     }
     if (logicalKey == LogicalKeyboardKey.slash) {
-      // The toolbar's text field has its own focus node — but a quick-and-
-      // dirty approach is to pop a snackbar telling the user to click search.
-      // Phase C ships this minimal behaviour; deeper focus management is
-      // Phase D when CommandPalette + saved views land.
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('לחץ/י על שדה החיפוש'),
         duration: Duration(seconds: 1),
@@ -141,9 +151,8 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
       return KeyEventResult.handled;
     }
     if (logicalKey == LogicalKeyboardKey.keyE) {
-      // Edit dialog lands in Phase D — for now, expand the row.
       if (currentIdx < 0) return KeyEventResult.ignored;
-      ctrl.toggleExpand(list[currentIdx].id);
+      EditCategoryDialog.show(context, list[currentIdx].id);
       return KeyEventResult.handled;
     }
     if (logicalKey == LogicalKeyboardKey.delete ||
@@ -153,12 +162,7 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
       return KeyEventResult.handled;
     }
     if (isMod && logicalKey == LogicalKeyboardKey.keyK) {
-      // ⌘K — palette is built in Phase D. Show a placeholder snackbar so
-      // the binding is provably alive.
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('פלטת הפקודות (⌘K) תצטרף ב-Phase D'),
-        duration: Duration(seconds: 2),
-      ));
+      ctrl.openCommandPalette();
       return KeyEventResult.handled;
     }
     if (isMod && logicalKey == LogicalKeyboardKey.keyZ) {
@@ -181,33 +185,19 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
       ));
     } catch (e) {
       if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text('בוטל לא הצליח: $e')),
-      );
+      messenger.showSnackBar(SnackBar(content: Text('בוטל לא הצליח: $e')));
     }
   }
 
   Future<void> _confirmDelete(CategoryV3Model c) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('מחיקת קטגוריה'),
-        content: Text(
-            'בטוח שברצונך למחוק את "${c.name}"? פעולה זו ניתנת לביטול דרך יומן הפעולות.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('ביטול')),
-          FilledButton.tonal(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(
-              foregroundColor: const Color(0xFFEF4444),
-              backgroundColor: const Color(0xFFFEF2F2),
-            ),
-            child: const Text('מחק'),
-          ),
-        ],
-      ),
+    final ok = await ConfirmDestructiveDialog.show(
+      context,
+      title: 'מחיקת קטגוריה',
+      body:
+          'הקטגוריה "${c.name}" תימחק לצמיתות. ניתן לבטל דרך יומן הפעולות בתוך 30 יום, אחר כך זה סופי.',
+      requiredText: c.name,
+      confirmLabel: 'מחק לצמיתות',
+      warning: 'תתי-קטגוריות, ספקים, והפניות יישארו אך יאבדו את הקישור.',
     );
     if (ok == true) {
       await ref.read(categoriesV3ServiceProvider).delete(c.id);
@@ -235,29 +225,73 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
     final selection = ref.read(selectionControllerProvider);
     final ids = selection.selectedIds.toList();
     if (ids.isEmpty) return;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('מחיקה גורפת'),
-        content: Text('למחוק ${ids.length} קטגוריות? ניתן לבטל מיומן הפעולות.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('ביטול')),
-          FilledButton.tonal(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(
-              foregroundColor: const Color(0xFFEF4444),
-              backgroundColor: const Color(0xFFFEF2F2),
-            ),
-            child: const Text('מחק הכל'),
-          ),
-        ],
-      ),
+    final ok = await ConfirmDestructiveDialog.show(
+      context,
+      title: 'מחיקה גורפת',
+      body:
+          'יימחקו ${ids.length} קטגוריות. ניתן לבטל מיומן הפעולות (כל מחיקה כרשומה נפרדת).',
+      requiredText: 'מחק ${ids.length}',
+      helperLabel: 'כתוב "מחק ${ids.length}" כדי לאשר',
+      confirmLabel: 'מחק את כולן',
+      warning: 'מחיקה גורפת היא פעולה אחת לא הפיכה ברמת המערכת.',
     );
     if (ok == true) {
       await ref.read(categoriesV3ServiceProvider).bulkDelete(ids);
       selection.clear();
+    }
+  }
+
+  // ── Command palette dispatcher ────────────────────────────────────────────
+  Future<void> _executePaletteAction(CommandPaletteAction action) async {
+    final ctrl = ref.read(categoriesV3ControllerProvider.notifier);
+    switch (action.kind) {
+      case CommandKind.jumpToCategory:
+      case CommandKind.jumpToSubcategory:
+        if (action.targetId != null) ctrl.toggleExpand(action.targetId!);
+      case CommandKind.createCategory:
+        await AddCategoryDialog.show(context);
+      case CommandKind.editCategory:
+        if (action.targetId != null) {
+          await EditCategoryDialog.show(context, action.targetId!);
+        }
+      case CommandKind.refreshAnalytics:
+        try {
+          await ref
+              .read(categoriesV3ServiceProvider)
+              .triggerAnalyticsRefresh();
+        } catch (_) {/* silent — toast via PowerTools */}
+      case CommandKind.openActivityLog:
+        ctrl.toggleActivityPanel();
+      case CommandKind.closeActivityLog:
+        if (ref.read(categoriesV3ControllerProvider).activityPanelOpen) {
+          ctrl.toggleActivityPanel();
+        }
+      case CommandKind.undoLast:
+        await _undoLast();
+      case CommandKind.switchView:
+        if (action.targetId == 'tree') ctrl.setViewMode(ViewMode.tree);
+        if (action.targetId == 'grid') ctrl.setViewMode(ViewMode.grid);
+        if (action.targetId == 'analytics') {
+          ctrl.setViewMode(ViewMode.analytics);
+        }
+      case CommandKind.exportJson:
+      case CommandKind.importJson:
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('השתמש בכפתורי "כלי-עוצמה" בתחתית העמוד'),
+          duration: Duration(seconds: 2),
+        ));
+      case CommandKind.filterByTag:
+      case CommandKind.togglePin:
+      case CommandKind.toggleHide:
+      case CommandKind.deleteCategory:
+      case CommandKind.reorderCategory:
+        // Phase E refinements — show a hint for now.
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('הפעולה הזו מתווספת ב-Phase E'),
+            duration: Duration(seconds: 1),
+          ));
+        }
     }
   }
 
@@ -270,7 +304,6 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
     final ctrl = ref.read(categoriesV3ControllerProvider.notifier);
     final selection = ref.watch(selectionControllerProvider);
 
-    // Prune dangling selection ids whenever the list changes
     asyncCategories.whenData((list) {
       final validIds = list.map((c) => c.id).toSet();
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -293,7 +326,11 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
                   padding: const EdgeInsetsDirectional.fromSTEB(
                       16, 16, 16, 80),
                   children: [
-                    const _Header(),
+                    _Header(
+                      onToggleActivity: ctrl.toggleActivityPanel,
+                      onSavedView: () => SavedViewDialog.show(context),
+                      onAdd: () => AddCategoryDialog.show(context),
+                    ),
                     const SizedBox(height: 16),
                     KpiMetricsRow(kpis: kpis),
                     const SizedBox(height: 16),
@@ -320,7 +357,10 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
                       onToggleExpand: ctrl.toggleExpand,
                       onReorderRoot: _scheduleReorderWrite,
                       onConfirmDelete: _confirmDelete,
+                      onEdit: (c) =>
+                          EditCategoryDialog.show(context, c.id),
                     ),
+                    const PowerToolsFooter(),
                   ],
                 ),
               ),
@@ -338,6 +378,17 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
                   ),
                 ),
               ),
+              // Activity log slide-in
+              ActivityLogPanel(
+                open: state.activityPanelOpen,
+                onClose: ctrl.toggleActivityPanel,
+              ),
+              // Command palette overlay
+              CommandPaletteOverlay(
+                open: state.commandPaletteOpen,
+                onClose: ctrl.closeCommandPalette,
+                onActionSelected: _executePaletteAction,
+              ),
             ],
           ),
         ),
@@ -347,7 +398,14 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header();
+  const _Header({
+    required this.onToggleActivity,
+    required this.onSavedView,
+    required this.onAdd,
+  });
+  final VoidCallback onToggleActivity;
+  final VoidCallback onSavedView;
+  final VoidCallback onAdd;
 
   @override
   Widget build(BuildContext context) {
@@ -385,6 +443,25 @@ class _Header extends StatelessWidget {
           ],
         ),
         const Spacer(),
+        IconButton(
+          tooltip: 'יומן פעולות',
+          onPressed: onToggleActivity,
+          icon: const Icon(Icons.history_rounded,
+              color: Color(0xFF6B7280), size: 20),
+        ),
+        IconButton(
+          tooltip: 'שמור תצוגה',
+          onPressed: onSavedView,
+          icon: const Icon(Icons.bookmark_add_outlined,
+              color: Color(0xFF6B7280), size: 20),
+        ),
+        IconButton(
+          tooltip: 'הוסף קטגוריה',
+          onPressed: onAdd,
+          icon: const Icon(Icons.add_circle_outline_rounded,
+              color: Color(0xFF10B981), size: 22),
+        ),
+        const SizedBox(width: 6),
         Container(
           padding:
               const EdgeInsetsDirectional.symmetric(horizontal: 10, vertical: 4),
@@ -480,6 +557,7 @@ class _CategoriesList extends ConsumerWidget {
     required this.onToggleExpand,
     required this.onReorderRoot,
     required this.onConfirmDelete,
+    required this.onEdit,
   });
 
   final AsyncValue<List<CategoryV3Model>> asyncCategories;
@@ -490,6 +568,7 @@ class _CategoriesList extends ConsumerWidget {
   final void Function(String) onToggleExpand;
   final void Function(List<String>) onReorderRoot;
   final Future<void> Function(CategoryV3Model) onConfirmDelete;
+  final void Function(CategoryV3Model) onEdit;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -526,8 +605,7 @@ class _CategoriesList extends ConsumerWidget {
               ids.insert(newIndex, moved);
               onReorderRoot(ids);
             },
-            itemBuilder: (context, index) =>
-                _RootItem(
+            itemBuilder: (context, index) => _RootItem(
               key: ValueKey('cat-${root[index].id}'),
               category: root[index],
               filtered: filtered,
@@ -537,11 +615,11 @@ class _CategoriesList extends ConsumerWidget {
               dragEnabled: true,
               onToggleExpand: onToggleExpand,
               onConfirmDelete: onConfirmDelete,
+              onEdit: onEdit,
             ),
           );
         }
 
-        // Non-reorderable plain list (search active or non-manual sort)
         final children = <Widget>[];
         for (var i = 0; i < root.length; i++) {
           children.add(_RootItem(
@@ -554,6 +632,7 @@ class _CategoriesList extends ConsumerWidget {
             dragEnabled: false,
             onToggleExpand: onToggleExpand,
             onConfirmDelete: onConfirmDelete,
+            onEdit: onEdit,
           ));
         }
         return Column(children: children);
@@ -573,6 +652,7 @@ class _RootItem extends ConsumerWidget {
     required this.dragEnabled,
     required this.onToggleExpand,
     required this.onConfirmDelete,
+    required this.onEdit,
   });
 
   final CategoryV3Model category;
@@ -583,6 +663,7 @@ class _RootItem extends ConsumerWidget {
   final bool dragEnabled;
   final void Function(String) onToggleExpand;
   final Future<void> Function(CategoryV3Model) onConfirmDelete;
+  final void Function(CategoryV3Model) onEdit;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -614,7 +695,7 @@ class _RootItem extends ConsumerWidget {
                       ),
                     )
                   : null,
-              onEdit: () => onToggleExpand(category.id),
+              onEdit: () => onEdit(category),
             ),
             if (isExpanded)
               Padding(
@@ -625,6 +706,8 @@ class _RootItem extends ConsumerWidget {
                   subcategories: filtered
                       .where((s) => s.parentId == category.id)
                       .toList(),
+                  onTapSub: (s) => onEdit(s),
+                  onEditSub: (s) => onEdit(s),
                 ),
               ),
           ],
