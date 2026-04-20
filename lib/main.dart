@@ -418,65 +418,66 @@ void main() async {
 
   // CRITICAL (categories-v3 grey-block fix, Apr 2026): override Flutter's
   // default ErrorWidget so a failing widget build renders as an orange tile
-  // with the exception text — NEVER as the default solid-grey ErrorWidget
-  // (which is what the user has been staring at). This is a GLOBAL override,
-  // applies to every widget in the app. Safe because it only kicks in on
-  // build-time exceptions, which were already bugs.
+  // instead of the default solid-grey ErrorWidget. This override MUST be
+  // DEAD SIMPLE — if ErrorWidget.builder itself ever throws, Flutter enters
+  // an infinite stack-overflow loop (because the replacement widget fails
+  // to build → calls ErrorWidget.builder again → fails again → etc).
+  //
+  // Rules for this builder:
+  //   1. No Column/Row/Flex — can cascade layout errors.
+  //   2. No Material, Icon, or custom fonts — any dependency can fail.
+  //   3. All numeric literals use `.0` — int→double coercion is the bug
+  //      we're surfacing; don't trip it inside the error UI.
+  //   4. Explicit `textDirection` — we're outside MaterialApp's Directionality.
+  //   5. Wrap in try/catch as a last-resort — if even this fails we return
+  //      `const SizedBox.shrink()` to at least break the crash loop.
   ErrorWidget.builder = (FlutterErrorDetails details) {
-    // Always log — even in release — so the problem widget shows up in the
-    // browser console instead of being invisible.
-    // ignore: avoid_print
-    print('═══ [ErrorWidget] ${details.exception.runtimeType} ═══');
-    // ignore: avoid_print
-    print('  exception: ${details.exception}');
-    // ignore: avoid_print
-    print('  library: ${details.library}');
-    final stack = details.stack?.toString() ?? '';
-    final firstFrames =
-        stack.split('\n').take(8).join('\n');
-    // ignore: avoid_print
-    print('  stack (first 8 frames):\n$firstFrames');
-
-    final exStr = details.exception.toString();
-    final shown = exStr.length > 120 ? '${exStr.substring(0, 120)}…' : exStr;
-    return Material(
-      color: const Color(0xFFFFF7ED),
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.error_outline_rounded,
-                    size: 14, color: Color(0xFFC2410C)),
-                const SizedBox(width: 4),
-                Text(
-                  '⚠ widget crash',
-                  style: TextStyle(
-                    color: const Color(0xFFC2410C).withValues(alpha: 0.95),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 2),
-            Text(
-              shown,
-              style: const TextStyle(
-                fontSize: 10,
-                fontFamily: 'monospace',
-                color: Color(0xFF7C2D12),
-              ),
-              maxLines: 4,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
+    try {
+      // ignore: avoid_print
+      print('⚠ [ErrorWidget] ${details.exception}');
+      final ex = details.exception.toString();
+      return Container(
+        color: const Color(0xFFEA580C),
+        padding: const EdgeInsets.all(4.0),
+        alignment: Alignment.center,
+        child: Text(
+          '⚠ $ex',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 10.0,
+          ),
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          textDirection: TextDirection.ltr,
         ),
-      ),
-    );
+      );
+    } catch (_) {
+      // Absolute last resort — empty box beats infinite loop.
+      return const SizedBox.shrink();
+    }
+  };
+
+  // Global FlutterError handler — log every widget error to console so we
+  // can read the exact source line (even minified). Separate from
+  // ErrorWidget.builder (which controls what RENDERS) — this controls
+  // what gets LOGGED.
+  FlutterError.onError = (FlutterErrorDetails details) {
+    try {
+      // ignore: avoid_print
+      print('╔═══ FLUTTER ERROR ═══');
+      // ignore: avoid_print
+      print('║ exception: ${details.exception}');
+      // ignore: avoid_print
+      print('║ library: ${details.library}');
+      // ignore: avoid_print
+      print('║ context: ${details.context}');
+      final stk = details.stack?.toString() ?? '';
+      final snippet = stk.length > 800 ? stk.substring(0, 800) : stk;
+      // ignore: avoid_print
+      print('║ stack:\n$snippet');
+      // ignore: avoid_print
+      print('╚═════════════════════');
+    } catch (_) {/* never let the error-logger itself throw */}
   };
 
   runApp(ProviderScope(child: _ErrorBoundary(child: const AnySkillApp())));

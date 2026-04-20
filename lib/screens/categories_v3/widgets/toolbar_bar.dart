@@ -103,7 +103,8 @@ class _ToolbarBarState extends ConsumerState<ToolbarBar> {
 
         // Sort
         SizedBox(
-          width: compact ? 130 : 180,
+          // `.0` — dart2js won't coerce a ternary of int literals to double.
+          width: compact ? 130.0 : 180.0,
           child: _PillDropdown<CategorySort>(
             value: state.sortBy,
             items: CategorySort.values

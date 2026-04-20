@@ -35,7 +35,10 @@ class BulkActionsBar extends ConsumerWidget {
           offset: visible ? Offset.zero : const Offset(0, 1.2),
           child: AnimatedOpacity(
             duration: const Duration(milliseconds: 150),
-            opacity: visible ? 1 : 0,
+            // `.0` required — dart2js on web doesn't coerce a ternary of
+            // int literals to double at runtime. `visible ? 1 : 0` throws
+            // `type 'int' is not a subtype of 'double'`.
+            opacity: visible ? 1.0 : 0.0,
             child: IgnorePointer(
               ignoring: !visible,
               child: Container(
