@@ -53,14 +53,23 @@ final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 // ── Pending notification intent ───────────────────────────────────────────────
 // Set when the user taps a notification. HomeScreen reads this in initState
 // and calls setState(() => _selectedIndex = PendingNotification.tabIndex!).
+// HomeScreen's initState also invokes `NotificationRouter.route(context, data)`
+// with [payload] so FCM taps deep-link the same way as bell-icon inbox taps.
 class PendingNotification {
   static int? tabIndex; // tab to activate in HomeScreen
   static String? chatRoomId; // optional: open a specific chat room
+  /// Full FCM data payload (type + ids). HomeScreen passes this to
+  /// [NotificationRouter.route] so chat/ticket/anytask/etc. all deep-link
+  /// the same way the in-app inbox does.
+  static Map<String, dynamic>? payload;
 
   static void fromMessage(RemoteMessage message) {
     final type = message.data['type'] as String?;
     chatRoomId = message.data['chatRoomId'] as String?
               ?? message.data['roomId'] as String?;
+    // Copy the raw FCM data into a plain Map so the router can read it
+    // with the same field-extraction rules as the Firestore-based inbox.
+    payload = Map<String, dynamic>.from(message.data);
     switch (type) {
       case 'chat':
         tabIndex = 2; // Messages tab
@@ -86,6 +95,9 @@ class PendingNotification {
       case 'request_declined':
         tabIndex = 0; // Home — customer sees it as a notification
         break;
+      case 'provider_approved':
+        tabIndex = 0; // Home — approval kicks the provider back to the main feed
+        break;
       case 'anytask_claimed':
       case 'anytask_proof_submitted':
       case 'anytask_auto_released':
@@ -107,6 +119,7 @@ class PendingNotification {
   static void clear() {
     tabIndex = null;
     chatRoomId = null;
+    payload = null;
   }
 }
 
@@ -312,15 +325,32 @@ void main() async {
   // ── Step 4: App Check — MONITORING MODE (Q3 audit fix) ─────────────────
   // Enabled in monitoring mode first. After 2 days of traffic validation,
   // switch to enforcement via Firebase Console toggle.
+  //
+  // IMPORTANT: When the reCAPTCHA site key is the literal placeholder
+  // (`__RECAPTCHA_SITE_KEY__`), we SKIP `activate()` on web entirely.
+  // Reason: calling activate() with a bogus key makes the Firebase Auth
+  // SDK attempt to fetch an App Check token during signInWithCredential,
+  // which then POSTs to the reCAPTCHA Enterprise endpoint with `k=<placeholder>`
+  // → HTTP 400 → Auth fails → the user can't log in.
+  // Mobile paths (Play Integrity / App Attest) are unaffected.
+  const webSiteKey = '__RECAPTCHA_SITE_KEY__';
+  // ignore: unnecessary_string_escapes, prefer_const_declarations
+  final bool hasRealSiteKey = !webSiteKey.contains('__RECAPTCHA');
   try {
-    await FirebaseAppCheck.instance.activate(
-      // TODO: Replace with production reCAPTCHA Enterprise key before web App Check enforcement.
-      // Currently in monitoring mode only. Instructions in LAUNCH_AUDIT_LOG.txt.
-      providerWeb: ReCaptchaEnterpriseProvider('__RECAPTCHA_SITE_KEY__'),
-      providerAndroid: const AndroidPlayIntegrityProvider(),
-      providerApple: const AppleAppAttestProvider(),
-    );
-    debugPrint('✅ App Check: activated (monitoring mode — enforce via Console)');
+    if (kIsWeb && !hasRealSiteKey) {
+      debugPrint(
+          'ℹ️ App Check: SKIPPED on web — placeholder site key. Auth calls '
+          'will proceed without App Check headers. To enable, paste the real '
+          'reCAPTCHA Enterprise site key at lib/main.dart step 4.');
+    } else {
+      await FirebaseAppCheck.instance.activate(
+        providerWeb: ReCaptchaEnterpriseProvider(webSiteKey),
+        providerAndroid: const AndroidPlayIntegrityProvider(),
+        providerApple: const AppleAppAttestProvider(),
+      );
+      debugPrint(
+          '✅ App Check: activated (monitoring mode — enforce via Console)');
+    }
   } catch (e) {
     debugPrint('⚠️ App Check init failed (continuing without): $e');
   }
@@ -412,6 +442,10 @@ class _ErrorBoundary extends StatefulWidget {
 class _ErrorBoundaryState extends State<_ErrorBoundary> {
   bool _hasError = false;
   int _errorCount = 0;
+  // Capture the latest fatal error so the crash screen can display it.
+  // Helps debugging on production builds where DevTools may not be handy.
+  String _lastErrorSummary = '';
+  String _lastErrorStack = '';
 
   /// Only show the crash screen for truly fatal errors that break rendering.
   /// Network errors (Firestore 500, timeout), CSP blocks, and non-fatal
@@ -426,6 +460,8 @@ class _ErrorBoundaryState extends State<_ErrorBoundary> {
       'firebase',
       'network',
       'timeout',
+      'timeoutexception',          // explicit — some Dart runtimes minify
+      'future not completed',       // the actual TimeoutException message
       'permission',
       'csp',
       'content security policy',
@@ -436,6 +472,14 @@ class _ErrorBoundaryState extends State<_ErrorBoundary> {
       'unexpected state',    // Firestore AsyncQueue — non-fatal
       'async',
       'stream',
+      'unhandled exception',        // Dart web zone uncaught wrapper
+      'uncaught',                   // JS-layer uncaught that bubbled up
+      'google_sign_in',             // plugin's deprecation + popup races
+      'popup',                      // popup_closed_by_user etc.
+      'appcheck',                   // App Check token fetch failures
+      'recaptcha',
+      'cross-origin-opener-policy', // COOP on signInWithPopup
+      'cross_origin',
     ];
     for (final p in nonFatalPatterns) {
       if (msg.contains(p)) return false;
@@ -454,9 +498,17 @@ class _ErrorBoundaryState extends State<_ErrorBoundary> {
       // Only show crash screen for genuinely fatal rendering errors
       if (mounted && !_hasError && _isFatalError(details)) {
         _errorCount++;
-        // Allow up to 3 non-consecutive errors before showing crash screen.
-        // This prevents a single transient build error from killing the app.
-        if (_errorCount >= 3) {
+        // Allow up to 10 non-consecutive errors before showing crash screen.
+        if (_errorCount >= 10) {
+          // Capture the error text for the crash screen BEFORE setState.
+          final ex = details.exception;
+          final st = details.stack?.toString() ?? '';
+          _lastErrorSummary = '${ex.runtimeType}: $ex';
+          // Trim stack to first ~20 frames — enough to diagnose, not enough
+          // to overwhelm a mobile screen.
+          final lines = st.split('\n');
+          _lastErrorStack =
+              lines.take(20).join('\n') + (lines.length > 20 ? '\n…' : '');
           setState(() => _hasError = true);
         } else {
           debugPrint('[ErrorBoundary] Non-fatal error #$_errorCount suppressed');
@@ -472,33 +524,66 @@ class _ErrorBoundaryState extends State<_ErrorBoundary> {
         debugShowCheckedModeBanner: false,
         home: Scaffold(
           backgroundColor: Colors.white,
-          body: Center(
+          body: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.all(32),
+              padding: const EdgeInsets.all(24),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(Icons.warning_amber_rounded,
-                      size: 64, color: Color(0xFFF59E0B)),
                   const SizedBox(height: 16),
+                  const Icon(Icons.warning_amber_rounded,
+                      size: 56, color: Color(0xFFF59E0B)),
+                  const SizedBox(height: 12),
                   const Text('משהו השתבש',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  const Text('האפליקציה נתקלה בשגיאה. לחץ כדי להתחיל מחדש.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 14, color: Color(0xFF6B7280))),
-                  const SizedBox(height: 24),
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  const Text(
+                      'האפליקציה נתקלה בשגיאה. פרטים למטה — העתק אותם אם יש צורך בדיווח.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                  const SizedBox(height: 16),
+                  // Selectable error details — user can copy for debugging.
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF2F2),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFECACA)),
+                      ),
+                      child: SingleChildScrollView(
+                        child: SelectableText(
+                          _lastErrorSummary.isEmpty
+                              ? '(אין פרטי שגיאה זמינים)'
+                              : '$_lastErrorSummary\n\n──── stack ────\n$_lastErrorStack',
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                            color: Color(0xFF7F1D1D),
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF6366F1),
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
                     ),
                     icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-                    label: const Text('התחל מחדש', style: TextStyle(color: Colors.white)),
+                    label: const Text('התחל מחדש',
+                        style: TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.w700)),
                     onPressed: () => setState(() {
                       _hasError = false;
                       _errorCount = 0;
+                      _lastErrorSummary = '';
+                      _lastErrorStack = '';
                     }),
                   ),
                 ],

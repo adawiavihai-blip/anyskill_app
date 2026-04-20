@@ -61,6 +61,12 @@ class CategoryRowCard extends StatelessWidget {
   }
 
   Widget _buildRow(BuildContext context) {
+    // Diagnostic: which row started building.
+    // ignore: avoid_print
+    print('[V3-trace] CategoryRowCard.build cat=${category.id} '
+        'name="${category.name}" hasAnalytics=${category.analytics != null} '
+        'hasAdminMeta=${category.adminMeta != null}');
+
     final analytics = category.analytics;
     final coverage = analytics?.coverageCities ?? 0;
     final sparkline = analytics?.sparkline30d ?? const <int>[];
@@ -154,7 +160,12 @@ class CategoryRowCard extends StatelessWidget {
                         const SizedBox(width: 8),
                         Flexible(
                           flex: 3,
-                          child: CategoryStatusChips(category: category),
+                          child: SafeWidgetBuilder(
+                            label: 'chips ${category.id}',
+                            compact: true,
+                            builder: () =>
+                                CategoryStatusChips(category: category),
+                          ),
                         ),
                       ],
                     ),

@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+// ignore_for_file: avoid_print
 import 'package:flutter/material.dart';
 
 /// Catches synchronous exceptions thrown inside a widget's build closure and
@@ -41,18 +41,25 @@ class SafeWidgetBuilder extends StatelessWidget {
     try {
       return builder();
     } catch (e, st) {
-      if (kDebugMode) {
-        // ignore: avoid_print
-        print('[SafeWidgetBuilder] $label failed: $e\n$st');
-      }
-      return _FallbackBanner(label: label, compact: compact);
+      // ALWAYS print (also in release) — we're diagnosing a production bug.
+      print('═══ [SafeWidgetBuilder FAIL] ══════════════════════════════════');
+      print('  label: $label');
+      print('  exception: ${e.runtimeType}: $e');
+      print('  stack:\n$st');
+      print('═════════════════════════════════════════════════════════════');
+      return _FallbackBanner(label: label, error: '$e', compact: compact);
     }
   }
 }
 
 class _FallbackBanner extends StatelessWidget {
-  const _FallbackBanner({required this.label, required this.compact});
+  const _FallbackBanner({
+    required this.label,
+    required this.error,
+    required this.compact,
+  });
   final String label;
+  final String error;
   final bool compact;
 
   @override
@@ -88,24 +95,25 @@ class _FallbackBanner extends StatelessWidget {
       );
     }
 
+    // Full-width banner — show the actual error text so the user can see
+    // what failed without opening DevTools. Selectable so they can copy-paste.
     return Container(
-      height: 60,
       margin: const EdgeInsetsDirectional.only(bottom: 8),
       padding:
-          const EdgeInsetsDirectional.symmetric(horizontal: 14, vertical: 12),
+          const EdgeInsetsDirectional.all(12),
       decoration: BoxDecoration(
         color: amberBg,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: amberBorder),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(Icons.warning_amber_rounded, size: 18, color: amber),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
@@ -116,12 +124,14 @@ class _FallbackBanner extends StatelessWidget {
                     color: amber,
                   ),
                 ),
-                Text(
-                  label,
+                const SizedBox(height: 4),
+                SelectableText(
+                  '$label\n$error',
                   style: TextStyle(
                     fontSize: 11,
-                    color: amber.withValues(alpha: 0.75),
+                    color: amber.withValues(alpha: 0.85),
                     fontFamily: 'monospace',
+                    height: 1.4,
                   ),
                 ),
               ],
