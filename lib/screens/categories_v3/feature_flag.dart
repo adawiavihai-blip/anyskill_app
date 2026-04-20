@@ -14,7 +14,9 @@ class CategoriesV3FeatureFlag {
 
   /// Whitelist of admin uids that may see the v3 tab. Currently a single uid
   /// (Avihai). Add more here when widening — or migrate to Firestore.
-  static const Set<String> _whitelistedUids = {};
+  static const Set<String> _whitelistedUids = <String>{
+    'mZuhdMgtgjPPCYzWjXA3KNvr41F2', // Avihai (project owner)
+  };
 
   /// `true` if the currently signed-in user should see the v3 tab.
   /// Defaults to `false` when nobody is signed in (defensive).
