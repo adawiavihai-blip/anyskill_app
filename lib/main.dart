@@ -544,6 +544,13 @@ class _ErrorBoundaryState extends State<_ErrorBoundary> {
       'recaptcha',
       'cross-origin-opener-policy', // COOP on signInWithPopup
       'cross_origin',
+      // Widget-render TypeErrors (int→double on dart2js web). We already
+      // handle these visually via ErrorWidget.builder → orange tile with
+      // the exception text. Letting them trip the 10-error threshold
+      // would hide the actual location behind the crash screen. Logging
+      // still happens via FlutterError.onError.
+      'typeerror',
+      'is not a subtype of',
     ];
     for (final p in nonFatalPatterns) {
       if (msg.contains(p)) return false;

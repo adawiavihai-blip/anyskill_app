@@ -299,6 +299,38 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
 
   @override
   Widget build(BuildContext context) {
+    // Top-level try/catch so a widget-build failure anywhere inside the tab
+    // becomes a RED banner with the exception text instead of a grey block
+    // or crash screen. Per user request after the 3-bug ternary fix session.
+    try {
+      return _buildInner(context);
+    } catch (e, s) {
+      // ignore: avoid_print
+      print('╔═══ CATEGORIES TAB BUILD FAILURE ═══');
+      // ignore: avoid_print
+      print('║ error: $e');
+      // ignore: avoid_print
+      print('║ stack: $s');
+      // ignore: avoid_print
+      print('╚════════════════════════════════════');
+      return Container(
+        color: const Color(0xFFFEE2E2),
+        padding: const EdgeInsets.all(16.0),
+        alignment: Alignment.topRight,
+        child: SelectableText(
+          'Tab build failed:\n$e\n\n$s',
+          style: const TextStyle(
+            fontSize: 11.0,
+            fontFamily: 'monospace',
+            color: Color(0xFF991B1B),
+          ),
+          textDirection: TextDirection.ltr,
+        ),
+      );
+    }
+  }
+
+  Widget _buildInner(BuildContext context) {
     final asyncCategories = ref.watch(categoriesV3StreamProvider);
     final filtered = ref.watch(filteredCategoriesV3Provider);
     final kpis = ref.watch(categoriesKpisProvider);

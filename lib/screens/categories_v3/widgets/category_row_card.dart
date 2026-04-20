@@ -243,7 +243,13 @@ class CategoryRowCard extends StatelessWidget {
               const SizedBox(width: 2),
               // Expand chevron
               AnimatedRotation(
-                turns: expanded ? 0.5 : 0,
+                // CRITICAL mixed-type ternary fix: `0.5 : 0` makes the
+                // expression type `num`, which dart2js refuses to assign
+                // to the `double turns` field. This runs on EVERY category
+                // row → 10 render failures per frame → ErrorBoundary trips
+                // at its 10-error threshold and the user sees the crash
+                // screen "משהו השתבש". Changed to `0.5 : 0.0`.
+                turns: expanded ? 0.5 : 0.0,
                 duration: const Duration(milliseconds: 150),
                 child: const Icon(
                   Icons.keyboard_arrow_down_rounded,

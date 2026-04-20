@@ -43,7 +43,9 @@ class _ActivityLogPanelState extends ConsumerState<ActivityLogPanel> {
           // Scrim
           AnimatedOpacity(
             duration: const Duration(milliseconds: 180),
-            opacity: widget.open ? 0.35 : 0,
+            // `.0` — one branch double, one branch int makes the ternary
+            // resolve to `num` which dart2js refuses to coerce to double.
+            opacity: widget.open ? 0.35 : 0.0,
             child: GestureDetector(
               onTap: widget.onClose,
               child: Container(color: Colors.black),
@@ -58,7 +60,9 @@ class _ActivityLogPanelState extends ConsumerState<ActivityLogPanel> {
             curve: Curves.easeOutCubic,
             top: 0,
             bottom: 0,
-            start: widget.open ? 0 : -width,
+            // Mixed int/double ternary — `0` becomes `0.0` so both sides
+            // are double and the expression's static type is double, not num.
+            start: widget.open ? 0.0 : -width,
             width: width,
             child: Material(
               elevation: 12,
