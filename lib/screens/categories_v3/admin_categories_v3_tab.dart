@@ -305,10 +305,26 @@ class _AdminCategoriesV3TabState extends ConsumerState<AdminCategoriesV3Tab> {
     final ctrl = ref.read(categoriesV3ControllerProvider.notifier);
     final selection = ref.watch(selectionControllerProvider);
 
+    // Selection sync — wrapped in BOTH a post-frame callback AND a microtask
+    // so the eventual `selection.prune()` (which fires notifyListeners) cannot
+    // mutate the SelectionController during a parent build cycle. The previous
+    // postFrameCallback alone could still race with active AnimatedBuilder
+    // listeners and produce uncaught "setState() during build" errors that
+    // ErrorBoundary then surfaced as a grey placeholder.
     asyncCategories.whenData((list) {
       final validIds = list.map((c) => c.id).toSet();
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) selection.prune(validIds);
+        if (!mounted) return;
+        Future<void>.microtask(() {
+          if (!mounted) return;
+          try {
+            selection.prune(validIds);
+          } catch (e) {
+            // Defensive — must never fail rendering.
+            // ignore: avoid_print
+            print('[CategoriesV3] selection.prune failed: $e');
+          }
+        });
       });
     });
 

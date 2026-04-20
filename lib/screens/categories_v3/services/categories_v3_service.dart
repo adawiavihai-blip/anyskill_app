@@ -31,19 +31,39 @@ class CategoriesV3Service {
 
   /// Streams ALL categories (root + sub) as v3 models. Capped at 200 to honor
   /// CLAUDE.md §17 Rule 1. Live updates feed the admin tab in real time.
+  ///
+  /// **Per-doc parse protection:** if a single Firestore document has a
+  /// malformed field that throws inside `CategoryV3Model.fromDoc`, we skip
+  /// it and log a warning — instead of letting one bad doc crash the entire
+  /// stream and leave the admin staring at a permanent grey block.
   Stream<List<CategoryV3Model>> watchAll() {
-    return _col.limit(200).snapshots().map(
-          (snap) =>
-              snap.docs.map((d) => CategoryV3Model.fromDoc(d)).toList(),
-        );
+    return _col.limit(200).snapshots().map((snap) {
+      final out = <CategoryV3Model>[];
+      for (final d in snap.docs) {
+        try {
+          out.add(CategoryV3Model.fromDoc(d));
+        } catch (e, st) {
+          // ignore: avoid_print
+          print('[CategoriesV3Service] Skipping bad doc ${d.id}: $e\n$st');
+        }
+      }
+      return out;
+    });
   }
 
   /// One-shot read of a single category. Used when we need a fresh snapshot
-  /// for `payload_before` audit.
+  /// for `payload_before` audit. Returns null if the doc is missing OR if
+  /// parsing fails.
   Future<CategoryV3Model?> getOnce(String id) async {
-    final doc = await _col.doc(id).get();
-    if (!doc.exists) return null;
-    return CategoryV3Model.fromDoc(doc);
+    try {
+      final doc = await _col.doc(id).get();
+      if (!doc.exists) return null;
+      return CategoryV3Model.fromDoc(doc);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[CategoriesV3Service] getOnce($id) failed: $e');
+      return null;
+    }
   }
 
   // ── Writes (each goes through activity-log) ───────────────────────────────

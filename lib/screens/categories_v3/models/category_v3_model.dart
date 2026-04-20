@@ -47,30 +47,82 @@ class CategoryV3Model {
 
   factory CategoryV3Model.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? <String, dynamic>{};
+
+    // Defensive parsing: Firestore on Flutter Web returns nested maps as
+    // `Map<Object?, Object?>` (NOT `Map<String, dynamic>`), so the previous
+    // `is Map<String, dynamic>` check always returned false on web → analytics
+    // + admin_meta were silently dropped. Use plain `is Map` here.
+    final analyticsRaw = data['analytics'];
+    final adminMetaRaw = data['admin_meta'];
+    final tagsRaw = data['custom_tags'];
+
     return CategoryV3Model(
       id: doc.id,
-      name: (data['name'] as String?) ?? doc.id,
-      iconUrl: (data['iconUrl'] as String?) ?? '',
-      parentId: (data['parentId'] as String?) ?? '',
-      order: (data['order'] as num?)?.toInt() ?? 999,
-      clickCount: (data['clickCount'] as num?)?.toInt() ?? 0,
-      imageUrl: data['imageUrl'] as String?,
-      color: data['color'] as String?,
-      legacyCsm: data['csm'] as String?,
-      analytics: data['analytics'] is Map<String, dynamic>
-          ? CategoryAnalytics.fromMap(
-              Map<String, dynamic>.from(data['analytics'] as Map))
+      name: _safeString(data['name']) ?? doc.id,
+      iconUrl: _safeString(data['iconUrl']) ?? '',
+      parentId: _safeString(data['parentId']) ?? '',
+      order: _safeInt(data['order']) ?? 999,
+      clickCount: _safeInt(data['clickCount']) ?? 0,
+      imageUrl: _safeString(data['imageUrl']),
+      color: _safeString(data['color']),
+      legacyCsm: _safeString(data['csm']),
+      analytics: analyticsRaw is Map
+          ? _safeAnalytics(analyticsRaw)
           : null,
-      adminMeta: data['admin_meta'] is Map<String, dynamic>
-          ? CategoryAdminMeta.fromMap(
-              Map<String, dynamic>.from(data['admin_meta'] as Map))
+      adminMeta: adminMetaRaw is Map
+          ? _safeAdminMeta(adminMetaRaw)
           : null,
-      csmModule: data['csm_module'] as String?,
-      customTags: data['custom_tags'] is List
-          ? List<String>.from(
-              (data['custom_tags'] as List).whereType<String>())
+      csmModule: _safeString(data['csm_module']),
+      customTags: tagsRaw is List
+          ? List<String>.from(tagsRaw.whereType<String>())
           : const <String>[],
     );
+  }
+
+  // ── Internal safe-parse helpers (never throw) ──────────────────────────
+  // Each one handles a hostile Firestore payload (wrong type, missing field,
+  // web Map<Object?, Object?> nested maps) by returning a sensible default.
+
+  static String? _safeString(dynamic v) {
+    if (v == null) return null;
+    if (v is String) return v;
+    return v.toString();
+  }
+
+  static int? _safeInt(dynamic v) {
+    if (v == null) return null;
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v);
+    return null;
+  }
+
+  static CategoryAnalytics? _safeAnalytics(Map raw) {
+    try {
+      // Convert Map<Object?, Object?> → Map<String, dynamic> safely.
+      final m = <String, dynamic>{};
+      raw.forEach((k, v) {
+        if (k is String) m[k] = v;
+      });
+      return CategoryAnalytics.fromMap(m);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[CategoryV3] analytics parse failed: $e');
+      return null;
+    }
+  }
+
+  static CategoryAdminMeta? _safeAdminMeta(Map raw) {
+    try {
+      final m = <String, dynamic>{};
+      raw.forEach((k, v) {
+        if (k is String) m[k] = v;
+      });
+      return CategoryAdminMeta.fromMap(m);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[CategoryV3] admin_meta parse failed: $e');
+      return null;
+    }
   }
 }
 
