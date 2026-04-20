@@ -12,6 +12,7 @@ import 'chat_modules/chat_logic_module.dart';
 import 'chat_modules/safety_module.dart';
 import '../l10n/app_localizations.dart';
 import '../services/chat_guard_service.dart';
+import '../services/chat_guard_client.dart';
 import '../services/chat_service.dart';
 import '../services/offline_message_queue.dart';
 import 'chat_helpers/chat_app_bar.dart';
@@ -775,7 +776,42 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty) return;
 
-    // ── Chat Guard: mask sensitive data before sending ──────
+    // ── Phase 3 Chat Guard (server-side CF) ──────────────────────────────
+    // Respects the admin kill-switch: when disabled, returns `skipped: true`
+    // instantly and we fall through to the legacy regex masking below.
+    // Failure-open on network error (see ChatGuardClient).
+    final cfResult = await ChatGuardClient.check(
+      message: text,
+      chatId: chatRoomId,
+      receiverId: widget.receiverId,
+    );
+
+    if (!cfResult.skipped) {
+      switch (cfResult.action) {
+        case ChatGuardAction.blocked:
+        case ChatGuardAction.suspended:
+          if (mounted) _showGuardBlockedDialog(cfResult);
+          return; // do NOT send
+        case ChatGuardAction.rewritten:
+          final useRewrite = await _askGuardRewrite(cfResult);
+          if (useRewrite == null) return; // user cancelled
+          final toSend = useRewrite ? (cfResult.rewrite ?? text) : text;
+          _send(toSend, 'text');
+          _finishSend();
+          return;
+        case ChatGuardAction.warned:
+          // Send as-is but show a discreet tip.
+          if (mounted) _showGuardTip(cfResult);
+          _send(text, 'text');
+          _finishSend();
+          return;
+        case ChatGuardAction.allowed:
+          // Clean — fall through to legacy regex mask (defense in depth).
+          break;
+      }
+    }
+
+    // ── Legacy local regex mask (always-on defense-in-depth) ────────────
     final guard = ChatGuardService.check(text);
     if (guard.isFlagged) {
       _bypassAttempts++;
@@ -794,8 +830,172 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _send(text, 'text');
     }
 
+    _finishSend();
+  }
+
+  /// Clears the input + typing indicator + flag state after a send.
+  void _finishSend() {
     _msgCtrl.clear();
     _onTypingChanged('');
     if (mounted) setState(() => _guardFlagged = false);
+  }
+
+  // ── Phase 3 Chat Guard UI helpers ─────────────────────────────────────
+
+  /// Red modal — message fully blocked. User must tap OK to dismiss.
+  void _showGuardBlockedDialog(ChatGuardCheckResult r) {
+    final suspended = r.action == ChatGuardAction.suspended;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.block_rounded,
+                color: suspended
+                    ? const Color(0xFF991B1B)
+                    : const Color(0xFFEF4444),
+                size: 24),
+            const SizedBox(width: 8),
+            Text(suspended ? 'חשבונך מוגבל' : 'ההודעה נחסמה'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              r.reason ?? 'ההודעה מפרה את מדיניות הצ\'אט',
+              style: const TextStyle(fontSize: 14, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFFECACA)),
+              ),
+              child: const Text(
+                'ניתן לבצע תשלומים, תיאום ופרטי קשר אך ורק דרך האפליקציה. '
+                'שיתוף פרטי חוץ פוגע בהגנת העסקה שלך.',
+                style: TextStyle(fontSize: 12, color: Color(0xFF7F1D1D)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('הבנתי'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Bottom sheet offering the rewritten version vs the original.
+  Future<bool?> _askGuardRewrite(ChatGuardCheckResult r) async {
+    final rewrite = r.rewrite;
+    if (rewrite == null || rewrite.isEmpty) return false;
+    return showModalBottomSheet<bool>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.auto_fix_high_rounded,
+                    color: Color(0xFF3B82F6), size: 22),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('נוסח מוצע לשליחה בטוחה',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 15)),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(ctx, null),
+                  icon: const Icon(Icons.close_rounded, size: 20),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            if (r.reason != null && r.reason!.isNotEmpty)
+              Text(r.reason!,
+                  style: const TextStyle(
+                      fontSize: 12.5, color: Color(0xFF6B7280))),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFBFDBFE)),
+              ),
+              child: Text(rewrite,
+                  style: const TextStyle(
+                      fontSize: 14, color: Color(0xFF1E3A8A), height: 1.4)),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: const Text('שלח את המקור'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    icon: const Icon(Icons.send_rounded, size: 16),
+                    label: const Text('שלח מוצע'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF3B82F6),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Amber snackbar — message was sent but contained a borderline pattern.
+  void _showGuardTip(ChatGuardCheckResult r) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Row(
+        children: [
+          const Icon(Icons.info_outline_rounded, color: Colors.white, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              r.reason ?? 'שים לב — ההודעה נשלחה אך זוהה דפוס חשוד',
+              style: const TextStyle(fontSize: 12.5, height: 1.4),
+            ),
+          ),
+        ],
+      ),
+      backgroundColor: const Color(0xFFF59E0B),
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10)),
+      duration: const Duration(seconds: 4),
+    ));
   }
 }
