@@ -1,12 +1,15 @@
-// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../utils/safe_image_provider.dart';
 import '../support_center_screen.dart';
 
-/// Chat screen AppBar with live online status, receiver name, and support button.
+/// Chat screen AppBar with live online status, real synced avatar, and
+/// support button.
 ///
-/// Extracted from chat_screen.dart (Phase 6 refactor).
+/// Avatar handling: routes through [safeImageProvider] so both HTTPS URLs
+/// AND base64 onboarding photos render without crashing (Law 11).
+/// Fallback is a purple gradient circle with the receiver's first letter,
+/// matching the messages-upgrade spec.
 class ChatAppBarWidget extends StatelessWidget implements PreferredSizeWidget {
   final String receiverId;
   final String receiverName;
@@ -32,33 +35,20 @@ class ChatAppBarWidget extends StatelessWidget implements PreferredSizeWidget {
       foregroundColor: Colors.black,
       elevation: 0,
       titleSpacing: 0,
-      title: Row(
-        children: [
-          // Avatar with live online dot
-          StreamBuilder<DocumentSnapshot>(
-            stream: userStream,
-            builder: (_, snap) {
-              final d        = snap.data?.data() as Map<String, dynamic>? ?? {};
-              final isOnline = d['isOnline'] as bool? ?? false;
-              final photo    = d['profileImage'] as String? ?? '';
+      title: StreamBuilder<DocumentSnapshot>(
+        stream: userStream,
+        builder: (_, snap) {
+          final d = snap.data?.data() as Map<String, dynamic>? ?? {};
+          final isOnline = d['isOnline'] as bool? ?? false;
+          final photo = d['profileImage'] as String? ?? '';
+          final lastSeen = d['lastSeen'] as Timestamp?;
+          final subtitle =
+              isOnline ? 'מחובר עכשיו' : _lastSeenLabel(lastSeen);
 
-              return Stack(children: [
-                CircleAvatar(
-                  radius: 19,
-                  backgroundColor: const Color(0xFFEDE9FE),
-                  backgroundImage: photo.isNotEmpty
-                      ? CachedNetworkImageProvider(photo)
-                      : null,
-                  child: photo.isEmpty
-                      ? Text(
-                          receiverName.isNotEmpty ? receiverName[0] : '?',
-                          style: const TextStyle(
-                              color: Color(0xFF6366F1),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16),
-                        )
-                      : null,
-                ),
+          return Row(
+            children: [
+              Stack(children: [
+                _buildAvatar(photo),
                 Positioned(
                   bottom: 0,
                   right: 0,
@@ -66,46 +56,47 @@ class ChatAppBarWidget extends StatelessWidget implements PreferredSizeWidget {
                     width: 11,
                     height: 11,
                     decoration: BoxDecoration(
-                      color: isOnline ? Colors.green : Colors.grey[300],
+                      color: isOnline
+                          ? const Color(0xFF22C55E)
+                          : Colors.grey[300],
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.white, width: 2),
                     ),
                   ),
                 ),
-              ]);
-            },
-          ),
-
-          const SizedBox(width: 10),
-
-          // Name + last-seen subtitle
-          StreamBuilder<DocumentSnapshot>(
-            stream: userStream,
-            builder: (_, snap) {
-              final d        = snap.data?.data() as Map<String, dynamic>? ?? {};
-              final isOnline = d['isOnline']  as bool?      ?? false;
-              final lastSeen = d['lastSeen']  as Timestamp?;
-              final subtitle = isOnline
-                  ? 'מחובר עכשיו'
-                  : _lastSeenLabel(lastSeen);
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(receiverName,
+              ]),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      receiverName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 15)),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
                         fontSize: 11,
-                        color: isOnline ? Colors.green : Colors.grey[400]),
-                  ),
-                ],
-              );
-            },
-          ),
-        ],
+                        color: isOnline
+                            ? const Color(0xFF22C55E)
+                            : Colors.grey[500],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
       ),
       actions: [
         IconButton(
@@ -127,12 +118,47 @@ class ChatAppBarWidget extends StatelessWidget implements PreferredSizeWidget {
     );
   }
 
+  Widget _buildAvatar(String photo) {
+    final provider = safeImageProvider(photo);
+    if (provider != null) {
+      return CircleAvatar(
+        radius: 19,
+        backgroundColor: const Color(0xFFEDE9FE),
+        backgroundImage: provider,
+      );
+    }
+    final letter = receiverName.trim().isNotEmpty
+        ? receiverName.trim()[0].toUpperCase()
+        : '?';
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF818CF8), Color(0xFF4F46E5)],
+        ),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        letter,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: 16,
+        ),
+      ),
+    );
+  }
+
   String _lastSeenLabel(Timestamp? ts) {
     if (ts == null) return 'לא פעיל';
     final diff = DateTime.now().difference(ts.toDate());
-    if (diff.inMinutes < 5)  return 'נראה לאחרונה הרגע';
-    if (diff.inHours  < 1)   return "נראה לפני ${diff.inMinutes} דק'";
-    if (diff.inHours  < 24)  return "נראה לפני ${diff.inHours} שע'";
+    if (diff.inMinutes < 5) return 'נראה לאחרונה הרגע';
+    if (diff.inHours < 1) return "נראה לפני ${diff.inMinutes} דק'";
+    if (diff.inHours < 24) return "נראה לפני ${diff.inHours} שע'";
     return "נראה לפני ${diff.inDays} ימים";
   }
 }

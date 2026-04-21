@@ -1,20 +1,17 @@
 import 'package:flutter/material.dart';
 
-/// Bottom input area: quick action chips + text field + send button.
+/// Bottom input area: text field + send button.
 ///
-/// Extracted from chat_screen.dart (Phase 6 refactor).
+/// Quick-reply chips were removed in v15.x (PR-1 of the messages-upgrade)
+/// in favor of an attachment menu wired in PR-2. The underlying handlers
+/// (`_sendLocation`, `_sendImage`, `_showQuoteDialog`,
+/// `_showRequestPaymentDialog`) still live on `_ChatScreenState` and will
+/// be re-wired through that menu.
 class ChatInputBar extends StatelessWidget {
   final TextEditingController controller;
   final bool isUploading;
   final bool guardFlagged;
-  final bool isProvider;
   final VoidCallback onSend;
-  final VoidCallback onSendLocation;
-  final VoidCallback onSendImage;
-  final VoidCallback onIAmOnTheWay;
-  final VoidCallback onIFinished;
-  final VoidCallback onShowQuoteDialog;
-  final VoidCallback onShowRequestPaymentDialog;
   final ValueChanged<String> onTextChanged;
 
   const ChatInputBar({
@@ -22,84 +19,12 @@ class ChatInputBar extends StatelessWidget {
     required this.controller,
     required this.isUploading,
     required this.guardFlagged,
-    required this.isProvider,
     required this.onSend,
-    required this.onSendLocation,
-    required this.onSendImage,
-    required this.onIAmOnTheWay,
-    required this.onIFinished,
-    required this.onShowQuoteDialog,
-    required this.onShowRequestPaymentDialog,
     required this.onTextChanged,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _buildQuickActions(),
-        _buildInputArea(),
-      ],
-    );
-  }
-
-  Widget _buildQuickActions() {
-    return Container(
-      height: 44,
-      color: Colors.white,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        reverse: true, // RTL: first chip on the right
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        children: [
-          _chip(Icons.location_on_rounded, 'שלח מיקום', onSendLocation,
-              chipColor: Colors.redAccent),
-          if (isProvider)
-            _chip(Icons.receipt_long_rounded, 'הצעת מחיר 💰',
-                onShowQuoteDialog,
-                chipColor: const Color(0xFF6366F1))
-          else
-            _chip(Icons.payments_rounded, 'בקש תשלום',
-                onShowRequestPaymentDialog,
-                chipColor: const Color(0xFFD97706)),
-          _chip(Icons.directions_car_rounded, 'אני בדרך 🚗', onIAmOnTheWay,
-              chipColor: const Color(0xFF16A34A)),
-          _chip(Icons.check_circle_outline_rounded, 'סיימתי ✅', onIFinished,
-              chipColor: const Color(0xFF0EA5E9)),
-          _chip(Icons.image_outlined, 'שלח תמונה', onSendImage,
-              chipColor: const Color(0xFF6366F1)),
-        ],
-      ),
-    );
-  }
-
-  Widget _chip(IconData icon, String label, VoidCallback onTap,
-      {Color chipColor = const Color(0xFF6366F1)}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(right: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-        decoration: BoxDecoration(
-          color: chipColor.withValues(alpha: 0.09),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: chipColor.withValues(alpha: 0.28)),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 14, color: chipColor),
-          const SizedBox(width: 5),
-          Text(label,
-              style: TextStyle(
-                  fontSize: 11,
-                  color: chipColor,
-                  fontWeight: FontWeight.w600)),
-        ]),
-      ),
-    );
-  }
-
-  Widget _buildInputArea() {
     final hasText = controller.text.trim().isNotEmpty;
 
     return Container(
@@ -115,6 +40,7 @@ class ChatInputBar extends StatelessWidget {
         ],
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           if (isUploading) ...[
             const LinearProgressIndicator(color: Color(0xFF6366F1)),
@@ -164,9 +90,8 @@ class ChatInputBar extends StatelessWidget {
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  color: hasText
-                      ? const Color(0xFF6366F1)
-                      : Colors.grey[200],
+                  color:
+                      hasText ? const Color(0xFF6366F1) : Colors.grey[200],
                   shape: BoxShape.circle,
                 ),
                 child: IconButton(
