@@ -4860,6 +4860,69 @@ abstract class AppLocalizations {
   /// Snackbar shown when video attach is tapped (PR-2a placeholder).
   String get chatAttachVideoComingSoon;
 
+  /// Provider price-offer modal — service description placeholder.
+  String get chatQuoteServiceHint;
+
+  /// Provider price-offer modal — gross price field label.
+  String get chatQuoteRegularPrice;
+
+  /// Provider price-offer modal — customer-discount field label.
+  String get chatQuoteDiscount;
+
+  /// Provider price-offer modal — expiry-window section title.
+  String get chatQuoteExpiryTitle;
+
+  /// Provider price-offer modal — 30-minute expiry chip.
+  String get chatQuoteExpiry30m;
+
+  /// Provider price-offer modal — 1-hour expiry chip.
+  String get chatQuoteExpiry1h;
+
+  /// Provider price-offer modal — 6-hour expiry chip.
+  String get chatQuoteExpiry6h;
+
+  /// Provider price-offer modal — 24-hour expiry chip.
+  String get chatQuoteExpiry24h;
+
+  /// Provider price-offer modal — validation error for invalid price/discount.
+  String get chatQuoteValidation;
+
+  /// Provider price-offer modal — primary "send to customer" button.
+  String get chatQuoteSendOffer;
+
+  /// Customer offer card — header title badge.
+  String get chatQuoteCardTitle;
+
+  /// Customer offer card — "regular price" struck-through label.
+  String get chatQuoteCardRegular;
+
+  /// Customer offer card — discount row label.
+  String get chatQuoteCardDiscount;
+
+  /// Customer offer card — total to pay label.
+  String get chatQuoteCardTotal;
+
+  /// Customer offer card — accept button.
+  String get chatQuoteCardAccept;
+
+  /// Customer offer card — decline button.
+  String get chatQuoteCardDecline;
+
+  /// Customer offer card — countdown prefix.
+  String get chatQuoteCardExpiresIn;
+
+  /// Customer offer card — expired badge.
+  String get chatQuoteCardExpired;
+
+  /// Customer offer card — declined badge.
+  String get chatQuoteCardDeclined;
+
+  /// Customer offer card — decline confirmation dialog body.
+  String get chatQuoteDeclineConfirm;
+
+  /// EscrowService.payQuote — error returned when an expired quote is paid.
+  String get chatQuoteExpiredError;
+
   /// No description provided for @chatOnMyWay.
   ///
   /// In he, this message translates to:

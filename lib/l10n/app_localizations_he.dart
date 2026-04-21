@@ -2568,6 +2568,71 @@ class AppLocalizationsHe extends AppLocalizations {
   String get chatAttachVideoComingSoon => 'שליחת וידאו תהיה זמינה בקרוב 🎥';
 
   @override
+  String get chatQuoteServiceHint => 'טיול עם הכלב 30 דק׳';
+
+  @override
+  String get chatQuoteRegularPrice => 'מחיר רגיל (₪)';
+
+  @override
+  String get chatQuoteDiscount => 'הנחה ללקוח (₪)';
+
+  @override
+  String get chatQuoteExpiryTitle => 'זמן תוקף ההצעה';
+
+  @override
+  String get chatQuoteExpiry30m => '30 דק׳';
+
+  @override
+  String get chatQuoteExpiry1h => 'שעה';
+
+  @override
+  String get chatQuoteExpiry6h => '6 שעות';
+
+  @override
+  String get chatQuoteExpiry24h => '24 שעות';
+
+  @override
+  String get chatQuoteValidation =>
+      'יש להזין מחיר חוקי והנחה הקטנה ממנו';
+
+  @override
+  String get chatQuoteSendOffer => 'שלח הצעה ללקוח';
+
+  @override
+  String get chatQuoteCardTitle => 'הצעת מחיר מותאמת';
+
+  @override
+  String get chatQuoteCardRegular => 'מחיר רגיל';
+
+  @override
+  String get chatQuoteCardDiscount => 'הנחה אישית';
+
+  @override
+  String get chatQuoteCardTotal => 'לתשלום';
+
+  @override
+  String get chatQuoteCardAccept => 'אישור ותשלום';
+
+  @override
+  String get chatQuoteCardDecline => 'דחה';
+
+  @override
+  String get chatQuoteCardExpiresIn => 'ההצעה תפוג בעוד';
+
+  @override
+  String get chatQuoteCardExpired => 'ההצעה פגה';
+
+  @override
+  String get chatQuoteCardDeclined => 'ההצעה נדחתה';
+
+  @override
+  String get chatQuoteDeclineConfirm => 'האם לדחות את ההצעה?';
+
+  @override
+  String get chatQuoteExpiredError =>
+      'ההצעה פגה — יש לבקש מהנותן שירות הצעה חדשה';
+
+  @override
   String get chatOnMyWay => 'אני בדרך! 🚗 אגיע בקרוב.';
 
   @override

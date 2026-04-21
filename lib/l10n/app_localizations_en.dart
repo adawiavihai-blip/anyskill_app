@@ -2568,6 +2568,71 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatAttachVideoComingSoon => 'Video sending will be available soon 🎥';
 
   @override
+  String get chatQuoteServiceHint => 'Dog walking, 30 min';
+
+  @override
+  String get chatQuoteRegularPrice => 'Regular price (₪)';
+
+  @override
+  String get chatQuoteDiscount => 'Customer discount (₪)';
+
+  @override
+  String get chatQuoteExpiryTitle => 'Offer validity';
+
+  @override
+  String get chatQuoteExpiry30m => '30 min';
+
+  @override
+  String get chatQuoteExpiry1h => '1 hour';
+
+  @override
+  String get chatQuoteExpiry6h => '6 hours';
+
+  @override
+  String get chatQuoteExpiry24h => '24 hours';
+
+  @override
+  String get chatQuoteValidation =>
+      'Enter a valid price with a discount smaller than it';
+
+  @override
+  String get chatQuoteSendOffer => 'Send offer to customer';
+
+  @override
+  String get chatQuoteCardTitle => 'Custom price offer';
+
+  @override
+  String get chatQuoteCardRegular => 'Regular price';
+
+  @override
+  String get chatQuoteCardDiscount => 'Personal discount';
+
+  @override
+  String get chatQuoteCardTotal => 'To pay';
+
+  @override
+  String get chatQuoteCardAccept => 'Approve & pay';
+
+  @override
+  String get chatQuoteCardDecline => 'Decline';
+
+  @override
+  String get chatQuoteCardExpiresIn => 'Offer expires in';
+
+  @override
+  String get chatQuoteCardExpired => 'Offer expired';
+
+  @override
+  String get chatQuoteCardDeclined => 'Offer declined';
+
+  @override
+  String get chatQuoteDeclineConfirm => 'Decline this offer?';
+
+  @override
+  String get chatQuoteExpiredError =>
+      'Offer expired — please ask the provider for a new one';
+
+  @override
   String get chatOnMyWay => 'I\'m on the way! 🚗 Will arrive soon.';
 
   @override

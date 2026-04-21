@@ -2568,6 +2568,71 @@ class AppLocalizationsAr extends AppLocalizations {
   String get chatAttachVideoComingSoon => 'سيتوفر إرسال الفيديو قريباً 🎥';
 
   @override
+  String get chatQuoteServiceHint => 'تمشية الكلب، 30 دقيقة';
+
+  @override
+  String get chatQuoteRegularPrice => 'السعر العادي (₪)';
+
+  @override
+  String get chatQuoteDiscount => 'خصم للعميل (₪)';
+
+  @override
+  String get chatQuoteExpiryTitle => 'مدة صلاحية العرض';
+
+  @override
+  String get chatQuoteExpiry30m => '30 د';
+
+  @override
+  String get chatQuoteExpiry1h => 'ساعة';
+
+  @override
+  String get chatQuoteExpiry6h => '6 ساعات';
+
+  @override
+  String get chatQuoteExpiry24h => '24 ساعة';
+
+  @override
+  String get chatQuoteValidation =>
+      'أدخل سعراً صحيحاً مع خصم أصغر منه';
+
+  @override
+  String get chatQuoteSendOffer => 'إرسال العرض إلى العميل';
+
+  @override
+  String get chatQuoteCardTitle => 'عرض سعر مخصص';
+
+  @override
+  String get chatQuoteCardRegular => 'السعر العادي';
+
+  @override
+  String get chatQuoteCardDiscount => 'خصم شخصي';
+
+  @override
+  String get chatQuoteCardTotal => 'للدفع';
+
+  @override
+  String get chatQuoteCardAccept => 'موافقة ودفع';
+
+  @override
+  String get chatQuoteCardDecline => 'رفض';
+
+  @override
+  String get chatQuoteCardExpiresIn => 'تنتهي صلاحية العرض في';
+
+  @override
+  String get chatQuoteCardExpired => 'انتهت صلاحية العرض';
+
+  @override
+  String get chatQuoteCardDeclined => 'تم رفض العرض';
+
+  @override
+  String get chatQuoteDeclineConfirm => 'رفض هذا العرض؟';
+
+  @override
+  String get chatQuoteExpiredError =>
+      'انتهت صلاحية العرض — اطلب من المزود عرضاً جديداً';
+
+  @override
   String get chatOnMyWay => 'أنا في الطريق! 🚗 سأصل قريباً.';
 
   @override

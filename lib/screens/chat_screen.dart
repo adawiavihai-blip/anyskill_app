@@ -470,28 +470,50 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   // ── Official Quote — send to Firestore + chat message ─────────────────────
+  // Customer pays `amount = regularPrice - discount` (option A locked
+  // 2026-04-21 in messages-upgrade memory). Platform commission is NEVER
+  // shown to either side; it's deducted from the provider's payout
+  // server-side via `processPaymentRelease` (see CLAUDE.md §4.3).
 
-  Future<void> _sendOfficialQuote(double amount, String description) async {
+  Future<void> _sendOfficialQuote({
+    required double regularPrice,
+    required double discount,
+    required Duration expiry,
+    required String description,
+  }) async {
     if (!await SafetyModule.hasInternet()) {
-      if (mounted) SafetyModule.showError(context, AppLocalizations.of(context).chatNoInternet);
+      if (mounted) {
+        SafetyModule.showError(
+            context, AppLocalizations.of(context).chatNoInternet);
+      }
       return;
     }
-    final db    = FirebaseFirestore.instance;
+
+    final amount = double.parse((regularPrice - discount).toStringAsFixed(2));
+    final expiresAt =
+        Timestamp.fromDate(DateTime.now().toUtc().add(expiry));
+
+    final db = FirebaseFirestore.instance;
     final batch = db.batch();
 
-    // 1. Create quote document
+    // 1. Create quote document with PR-2b fields
     final quoteRef = db.collection('quotes').doc();
     batch.set(quoteRef, {
       'providerId':  currentUserId,
       'clientId':    widget.receiverId,
       'chatRoomId':  chatRoomId,
       'description': description,
+      'regularPrice': regularPrice,
+      'discount':    discount,
       'amount':      amount,
+      'expiresAt':   expiresAt,
       'status':      'pending',
       'createdAt':   FieldValue.serverTimestamp(),
     });
 
-    // 2. Create chat message with quoteId embedded
+    // 2. Create chat message with quoteId embedded — denormalize the new
+    // fields onto the message so the card renders without an extra
+    // Firestore read per message.
     final msgRef = db
         .collection('chats')
         .doc(chatRoomId)
@@ -499,20 +521,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         .doc();
     final senderName = await _currentUserName();
     batch.set(msgRef, {
-      'senderId':    currentUserId,
-      'senderName':  senderName,
-      'receiverId':  widget.receiverId,
-      'message':     description,
-      'amount':      amount,
-      'quoteId':     quoteRef.id,
-      'messageId':   msgRef.id,
-      'quoteStatus': 'pending',
-      'type':        'official_quote',
-      'isRead':      false,
-      'timestamp':   FieldValue.serverTimestamp(),
+      'senderId':     currentUserId,
+      'senderName':   senderName,
+      'receiverId':   widget.receiverId,
+      'message':      description,
+      'amount':       amount,
+      'regularPrice': regularPrice,
+      'discount':     discount,
+      'expiresAt':    expiresAt,
+      'quoteId':      quoteRef.id,
+      'messageId':    msgRef.id,
+      'quoteStatus':  'pending',
+      'type':         'official_quote',
+      'isRead':       false,
+      'timestamp':    FieldValue.serverTimestamp(),
     });
 
-    // v9.5.9: Parent doc is ensured in initState — do NOT write it here.
     try {
       await batch.commit();
       if (mounted) {
@@ -534,173 +558,243 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   // ── Official Quote dialog ──────────────────────────────────────────────────
-  // Provider-side action surfaced via the attach menu (💰 הצעת מחיר).
-  // PR-2b will redesign this modal per spec (gross + discount fields +
-  // 4 expiry chips); for now it's the legacy 2-field dialog.
+  // Provider-side modal opened from the attach menu (💰 הצעת מחיר).
+  // PR-2b — Airbnb-style 3 fields + 4 expiry chips per
+  // docs/ui-specs/messagesS spec. The provider sees ONLY the gross price
+  // and discount they're offering — the platform commission is hidden
+  // (deducted from payout, not from customer's bill — option A locked).
   void _showQuoteDialog() {
-    final amountCtrl = TextEditingController();
-    final descCtrl   = TextEditingController();
+    final descCtrl = TextEditingController();
+    final priceCtrl = TextEditingController();
+    final discountCtrl = TextEditingController(text: '0');
+    Duration selectedExpiry = const Duration(hours: 1);
 
     showDialog(
       context: context,
-      builder: (ctx) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF1A0E3C), Color(0xFF2D1A6B)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+      builder: (ctx) {
+        final l10n = AppLocalizations.of(context);
+        final expiryChips = <(Duration, String)>[
+          (const Duration(minutes: 30), l10n.chatQuoteExpiry30m),
+          (const Duration(hours: 1), l10n.chatQuoteExpiry1h),
+          (const Duration(hours: 6), l10n.chatQuoteExpiry6h),
+          (const Duration(hours: 24), l10n.chatQuoteExpiry24h),
+        ];
+
+        InputDecoration darkInput(String label, {String? hint, String? prefix}) {
+          return InputDecoration(
+            labelText: label,
+            labelStyle: const TextStyle(color: Colors.white54),
+            hintText: hint,
+            hintStyle: TextStyle(
+                color: Colors.white.withValues(alpha: 0.3), fontSize: 13),
+            prefixText: prefix,
+            prefixStyle: const TextStyle(color: Colors.white70),
+            filled: true,
+            fillColor: Colors.white.withValues(alpha: 0.08),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide:
+                  BorderSide(color: Colors.white.withValues(alpha: 0.2)),
             ),
-            borderRadius: BorderRadius.circular(24),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide:
+                  BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(
+                  color: Color(0xFF6366F1), width: 1.5),
+            ),
+          );
+        }
+
+        return Dialog(
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24)),
+          child: StatefulBuilder(
+            builder: (ctx, setLocal) {
+              return Container(
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF1A0E3C), Color(0xFF2D1A6B)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    // ── Header ─────────────────────────────────────────────
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.close_rounded,
+                              color: Colors.white54),
+                          onPressed: () => Navigator.pop(ctx),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                        Row(children: [
+                          const Icon(Icons.receipt_long_rounded,
+                              color: Color(0xFFA5B4FC), size: 20),
+                          const SizedBox(width: 8),
+                          Text(l10n.chatOfficialQuote,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.bold)),
+                        ]),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+
+                    // ── Field 1: service description ───────────────────────
+                    TextField(
+                      controller: descCtrl,
+                      textAlign: TextAlign.right,
+                      maxLines: 2,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      decoration: darkInput(
+                        l10n.chatServiceDescLabel,
+                        hint: l10n.chatQuoteServiceHint,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // ── Field 2: regular (gross) price ─────────────────────
+                    TextField(
+                      controller: priceCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true),
+                      textAlign: TextAlign.right,
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 16),
+                      decoration: darkInput(
+                        l10n.chatQuoteRegularPrice,
+                        prefix: '₪ ',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // ── Field 3: customer discount ─────────────────────────
+                    TextField(
+                      controller: discountCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true),
+                      textAlign: TextAlign.right,
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 16),
+                      decoration: darkInput(
+                        l10n.chatQuoteDiscount,
+                        prefix: '₪ ',
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+
+                    // ── 4 expiry chips ─────────────────────────────────────
+                    Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: Text(
+                        l10n.chatQuoteExpiryTitle,
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.7),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.end,
+                      textDirection: TextDirection.rtl,
+                      children: [
+                        for (final (duration, label) in expiryChips)
+                          _ExpiryChip(
+                            label: label,
+                            selected: selectedExpiry == duration,
+                            onTap: () =>
+                                setLocal(() => selectedExpiry = duration),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Trust note
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Icon(Icons.shield_rounded,
+                            size: 11,
+                            color: Colors.white.withValues(alpha: 0.4)),
+                        const SizedBox(width: 4),
+                        Text(l10n.chatEscrowNote,
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.white.withValues(alpha: 0.4))),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+
+                    // ── Send button ───────────────────────────────────────
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF6366F1),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        icon: const Icon(Icons.send_rounded, size: 16),
+                        label: Text(l10n.chatQuoteSendOffer,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14)),
+                        onPressed: () {
+                          final regularPrice = double.tryParse(
+                                  priceCtrl.text.trim().replaceAll(',', '.')) ??
+                              0;
+                          final discount = double.tryParse(
+                                  discountCtrl.text.trim().replaceAll(',', '.')) ??
+                              0;
+                          if (regularPrice <= 0 ||
+                              discount < 0 ||
+                              discount >= regularPrice) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                              content: Text(l10n.chatQuoteValidation),
+                              backgroundColor: Colors.red,
+                              duration: const Duration(seconds: 3),
+                            ));
+                            return;
+                          }
+                          Navigator.pop(ctx);
+                          _sendOfficialQuote(
+                            regularPrice: regularPrice,
+                            discount: discount,
+                            expiry: selectedExpiry,
+                            description: descCtrl.text.trim().isEmpty
+                                ? l10n.chatQuoteLabel
+                                : descCtrl.text.trim(),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              // Header
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded, color: Colors.white54),
-                    onPressed: () => Navigator.pop(ctx),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                  Row(children: [
-                    const Icon(Icons.receipt_long_rounded,
-                        color: Color(0xFFA5B4FC), size: 20),
-                    const SizedBox(width: 8),
-                    Text(AppLocalizations.of(context).chatOfficialQuote,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold)),
-                  ]),
-                ],
-              ),
-              const SizedBox(height: 20),
-
-              // Amount field
-              TextField(
-                controller: amountCtrl,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                textAlign: TextAlign.right,
-                style: const TextStyle(color: Colors.white, fontSize: 16),
-                decoration: InputDecoration(
-                  labelText: AppLocalizations.of(context).chatAmountLabel,
-                  labelStyle: const TextStyle(color: Colors.white54),
-                  prefixText: '₪ ',
-                  prefixStyle: const TextStyle(color: Colors.white70),
-                  filled: true,
-                  fillColor: Colors.white.withValues(alpha: 0.08),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.2)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.2)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(
-                        color: Color(0xFF6366F1), width: 1.5),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // Description field
-              TextField(
-                controller: descCtrl,
-                textAlign: TextAlign.right,
-                maxLines: 3,
-                style: const TextStyle(color: Colors.white, fontSize: 14),
-                decoration: InputDecoration(
-                  labelText: AppLocalizations.of(context).chatServiceDescLabel,
-                  labelStyle: const TextStyle(color: Colors.white54),
-                  hintText: AppLocalizations.of(context).chatQuoteDescHint,
-                  hintStyle: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.3),
-                      fontSize: 13),
-                  filled: true,
-                  fillColor: Colors.white.withValues(alpha: 0.08),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.2)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.2)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(
-                        color: Color(0xFF6366F1), width: 1.5),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-
-              // Trust note
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Icon(Icons.shield_rounded,
-                      size: 11,
-                      color: Colors.white.withValues(alpha: 0.4)),
-                  const SizedBox(width: 4),
-                  Text(AppLocalizations.of(context).chatEscrowNote,
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.white.withValues(alpha: 0.4))),
-                ],
-              ),
-              const SizedBox(height: 20),
-
-              // Send button
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF6366F1),
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  icon: const Icon(Icons.send_rounded, size: 16),
-                  label: Text(AppLocalizations.of(context).chatSendQuote,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 14)),
-                  onPressed: () {
-                    final amount =
-                        double.tryParse(amountCtrl.text.replaceAll(',', '.')) ??
-                            0;
-                    if (amount <= 0) return;
-                    Navigator.pop(ctx);
-                    _sendOfficialQuote(
-                      amount,
-                      descCtrl.text.trim().isEmpty
-                          ? AppLocalizations.of(context).chatQuoteLabel
-                          : descCtrl.text.trim(),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -1011,5 +1105,58 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           borderRadius: BorderRadius.circular(10)),
       duration: const Duration(seconds: 4),
     ));
+  }
+}
+
+// ── Provider quote-modal expiry chip ───────────────────────────────────────
+// Filled indigo when selected, ghost-outline white when idle. Used inside
+// the Wrap of 4 expiry options in `_showQuoteDialog`.
+class _ExpiryChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ExpiryChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected
+                ? const Color(0xFF6366F1)
+                : Colors.white.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: selected
+                  ? const Color(0xFF818CF8)
+                  : Colors.white.withValues(alpha: 0.18),
+              width: selected ? 1.4 : 1,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected
+                  ? Colors.white
+                  : Colors.white.withValues(alpha: 0.85),
+              fontSize: 13,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

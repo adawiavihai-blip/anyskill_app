@@ -29,6 +29,28 @@ class EscrowService {
       return 'לא ניתן להזמין שירות מעצמך';
     }
 
+    // PR-2b expiry guard — fail-safe in case the customer's UI countdown
+    // raced ahead and they tapped Pay just past expiry. Server-side
+    // enforcement (CF-level) is a follow-up; this client guard is enough
+    // because the card's Pay button is hidden once the timer expires.
+    try {
+      final quoteSnap = await _db.collection('quotes').doc(quoteId).get();
+      final qData = quoteSnap.data() ?? {};
+      final status = qData['status']?.toString() ?? 'pending';
+      if (status == 'declined' || status == 'expired') {
+        return 'ההצעה כבר אינה זמינה';
+      }
+      final expiresAtRaw = qData['expiresAt'];
+      if (expiresAtRaw is Timestamp) {
+        final expiresAt = expiresAtRaw.toDate();
+        if (DateTime.now().isAfter(expiresAt)) {
+          return 'ההצעה פגה — יש לבקש מהנותן שירות הצעה חדשה';
+        }
+      }
+    } catch (e) {
+      debugPrint('[Escrow] expiry pre-check failed: $e');
+    }
+
     // Pet Stay Tracker gate (v13.0.0) — block pet-service quotes
     try {
       final providerSnap =

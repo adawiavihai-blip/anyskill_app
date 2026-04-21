@@ -1,10 +1,12 @@
 // ignore_for_file: use_build_context_synchronously
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../l10n/app_localizations.dart';
 import '../../services/escrow_service.dart';
 import '../../services/offline_message_queue.dart';
 import '../../utils/safe_image_provider.dart';
@@ -670,16 +672,59 @@ class _OfficialQuoteCard extends StatefulWidget {
 
 class _OfficialQuoteCardState extends State<_OfficialQuoteCard> {
   bool _paying = false;
+  bool _declining = false;
+  Timer? _ticker;
+  DateTime _now = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _maybeStartTicker();
+  }
+
+  @override
+  void didUpdateWidget(covariant _OfficialQuoteCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Restart the ticker if the message data changed (e.g. quoteStatus
+    // flipped to paid/rejected — we want to stop ticking).
+    _maybeStartTicker();
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  void _maybeStartTicker() {
+    final status = widget.data['quoteStatus']?.toString() ?? 'pending';
+    final expiresAtRaw = widget.data['expiresAt'];
+    final expiresAt = expiresAtRaw is Timestamp ? expiresAtRaw.toDate() : null;
+
+    final shouldTick =
+        status == 'pending' && expiresAt != null && expiresAt.isAfter(DateTime.now());
+
+    if (!shouldTick) {
+      _ticker?.cancel();
+      _ticker = null;
+      return;
+    }
+    _ticker?.cancel();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() => _now = DateTime.now());
+    });
+  }
 
   Future<void> _pay() async {
     if (_paying) return;
     setState(() => _paying = true);
 
     final messenger = ScaffoldMessenger.of(context);
-    final quoteId      = widget.data['quoteId']?.toString() ?? '';
+    final quoteId = widget.data['quoteId']?.toString() ?? '';
     final chatMessageId = widget.data['messageId']?.toString() ?? '';
-    final amount       = (widget.data['amount'] as num? ?? 0).toDouble();
-    final description  = widget.data['message']?.toString() ?? '';
+    final amount = (widget.data['amount'] as num? ?? 0).toDouble();
+    final description = widget.data['message']?.toString() ?? '';
 
     if (quoteId.isEmpty) {
       setState(() => _paying = false);
@@ -691,14 +736,13 @@ class _OfficialQuoteCardState extends State<_OfficialQuoteCard> {
     }
 
     try {
-      // Fetch the quote document to resolve provider/client identities.
       final db = FirebaseFirestore.instance;
       final quoteSnap = await db.collection('quotes').doc(quoteId).get();
       final qData = quoteSnap.data() ?? {};
       final providerId = qData['providerId']?.toString() ?? '';
-      final clientId   = qData['clientId']?.toString()   ?? widget.currentUserId;
+      final clientId =
+          qData['clientId']?.toString() ?? widget.currentUserId;
 
-      // Resolve display names from user docs (best-effort, fallback to '').
       final results = await Future.wait([
         db.collection('users').doc(providerId).get(),
         db.collection('users').doc(clientId).get(),
@@ -707,20 +751,19 @@ class _OfficialQuoteCardState extends State<_OfficialQuoteCard> {
           (results[0].data() ?? {})['name']?.toString() ?? '';
       final clientName =
           (results[1].data() ?? {})['name']?.toString() ??
-          FirebaseAuth.instance.currentUser?.displayName ?? '';
+              FirebaseAuth.instance.currentUser?.displayName ??
+              '';
 
-      // Phase 2 NOTE: this uses the legacy internal-credits escrow path.
-      // Stripe was removed pending Israeli payment provider integration.
       final error = await EscrowService.payQuote(
-        quoteId:       quoteId,
+        quoteId: quoteId,
         chatMessageId: chatMessageId,
-        chatRoomId:    widget.chatRoomId,
-        providerId:    providerId,
-        providerName:  providerName,
-        clientId:      clientId,
-        clientName:    clientName,
-        amount:        amount,
-        description:   description,
+        chatRoomId: widget.chatRoomId,
+        providerId: providerId,
+        providerName: providerName,
+        clientId: clientId,
+        clientName: clientName,
+        amount: amount,
+        description: description,
       );
 
       if (!mounted) return;
@@ -742,200 +785,474 @@ class _OfficialQuoteCardState extends State<_OfficialQuoteCard> {
     }
   }
 
+  Future<void> _decline() async {
+    if (_declining) return;
+    final l10n = AppLocalizations.of(context);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18)),
+        title: Text(l10n.chatQuoteDeclineConfirm,
+            textAlign: TextAlign.right),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.cancel),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l10n.chatQuoteCardDecline),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _declining = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final db = FirebaseFirestore.instance;
+      final batch = db.batch();
+      final messageId = widget.data['messageId']?.toString() ?? '';
+      final quoteId = widget.data['quoteId']?.toString() ?? '';
+
+      if (messageId.isNotEmpty) {
+        batch.update(
+          db
+              .collection('chats')
+              .doc(widget.chatRoomId)
+              .collection('messages')
+              .doc(messageId),
+          {'quoteStatus': 'rejected'},
+        );
+      }
+      if (quoteId.isNotEmpty) {
+        batch.update(db.collection('quotes').doc(quoteId), {
+          'status': 'declined',
+          'declinedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _declining = false);
+      messenger.showSnackBar(SnackBar(
+        content: Text('$e'),
+        backgroundColor: Colors.red,
+      ));
+    }
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────
+  String _fmtCurrency(double v) =>
+      v % 1 == 0 ? '₪${v.toInt()}' : '₪${v.toStringAsFixed(2)}';
+
+  String _fmtCountdown(Duration d) {
+    if (d.isNegative) return '00:00';
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return h > 0 ? '${h.toString().padLeft(2, '0')}:$m:$s' : '$m:$s';
+  }
+
+  Color _countdownColor(Duration d) {
+    if (d.inMinutes < 1) return const Color(0xFFEF4444);
+    if (d.inMinutes < 5) return const Color(0xFFF59E0B);
+    return const Color(0xFFA5B4FC);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final d           = widget.data;
-    final amount      = (d['amount'] as num? ?? 0).toDouble();
-    final description = d['message']?.toString()       ?? '';
-    final quoteStatus = d['quoteStatus']?.toString()   ?? 'pending';
-    final ts          = d['timestamp'];
+    final l10n = AppLocalizations.of(context);
+    final d = widget.data;
 
-    final amountStr = amount % 1 == 0
-        ? '₪${amount.toInt()}'
-        : '₪${amount.toStringAsFixed(2)}';
+    final amount = (d['amount'] as num? ?? 0).toDouble();
+    final description = d['message']?.toString() ?? '';
+    final quoteStatus = d['quoteStatus']?.toString() ?? 'pending';
+    final ts = d['timestamp'];
 
-    final isPaid      = quoteStatus == 'paid';
-    final isRejected  = quoteStatus == 'rejected';
-    final isPending   = !isPaid && !isRejected;
+    // PR-2b new fields with backwards-compat for legacy quotes (created
+    // before the redesign): if regularPrice is missing, treat the legacy
+    // `amount` as both the regular price AND the final price (no discount).
+    final regularPriceRaw = d['regularPrice'];
+    final discountRaw = d['discount'];
+    final hasNewFields =
+        regularPriceRaw is num && discountRaw is num;
+    final regularPrice =
+        hasNewFields ? regularPriceRaw.toDouble() : amount;
+    final discount =
+        hasNewFields ? discountRaw.toDouble() : 0.0;
+    final hasDiscount = discount > 0;
+
+    final expiresAtRaw = d['expiresAt'];
+    final expiresAt =
+        expiresAtRaw is Timestamp ? expiresAtRaw.toDate() : null;
+    final remaining =
+        expiresAt != null ? expiresAt.difference(_now) : Duration.zero;
+    final isExpiredByTime = expiresAt != null && remaining.isNegative;
+
+    final isPaid = quoteStatus == 'paid';
+    final isRejected = quoteStatus == 'rejected';
+    // PR-2b: pending+timer-expired → render as expired (greyed, no buttons).
+    final isExpired =
+        !isPaid && !isRejected && isExpiredByTime;
+    final isPending = !isPaid && !isRejected && !isExpired;
+
+    // Header badge config
+    final String badgeText;
+    final Color badgeColor;
+    if (isPaid) {
+      badgeText = '✅ שולם לאסקרו';
+      badgeColor = const Color(0xFF22C55E);
+    } else if (isRejected) {
+      badgeText = '❌ ${l10n.chatQuoteCardDeclined}';
+      badgeColor = Colors.redAccent;
+    } else if (isExpired) {
+      badgeText = '⏰ ${l10n.chatQuoteCardExpired}';
+      badgeColor = const Color(0xFF9CA3AF);
+    } else {
+      badgeText = '🏷️ ${l10n.chatQuoteCardTitle}';
+      badgeColor = const Color(0xFFA5B4FC);
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF1A0E3C), Color(0xFF2D1A6B)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(
-            color: isPaid
-                ? const Color(0xFF22C55E).withValues(alpha: 0.5)
-                : const Color(0xFF6366F1).withValues(alpha: 0.4),
-            width: 1.2,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF6366F1).withValues(alpha: 0.25),
-              blurRadius: 20,
-              offset: const Offset(0, 8),
+      child: Opacity(
+        opacity: isExpired ? 0.65 : 1.0,
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1A0E3C), Color(0xFF2D1A6B)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              // ── Header ────────────────────────────────────────────────
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // Status badge
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: isPaid
-                          ? const Color(0xFF22C55E).withValues(alpha: 0.18)
-                          : isRejected
-                              ? Colors.red.withValues(alpha: 0.18)
-                              : const Color(0xFF6366F1).withValues(alpha: 0.18),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: isPaid
-                            ? const Color(0xFF22C55E).withValues(alpha: 0.5)
-                            : isRejected
-                                ? Colors.red.withValues(alpha: 0.4)
-                                : const Color(0xFF6366F1).withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: isPaid
+                  ? const Color(0xFF22C55E).withValues(alpha: 0.5)
+                  : isRejected
+                      ? Colors.redAccent.withValues(alpha: 0.4)
+                      : isExpired
+                          ? Colors.white.withValues(alpha: 0.15)
+                          : const Color(0xFF6366F1).withValues(alpha: 0.4),
+              width: 1.2,
+            ),
+            boxShadow: isExpired
+                ? null
+                : [
+                    BoxShadow(
+                      color: const Color(0xFF6366F1).withValues(alpha: 0.25),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                // ── Header badge ───────────────────────────────────────
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: badgeColor.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: badgeColor.withValues(alpha: 0.5)),
+                      ),
+                      child: Text(
+                        badgeText,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: badgeColor,
+                        ),
                       ),
                     ),
-                    child: Text(
-                      isPaid
-                          ? '✅ שולם לאסקרו'
-                          : isRejected
-                              ? '❌ נדחה'
-                              : '📋 הצעת מחיר רשמית',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: isPaid
-                            ? const Color(0xFF22C55E)
-                            : isRejected
-                                ? Colors.redAccent
-                                : const Color(0xFFA5B4FC),
-                      ),
-                    ),
-                  ),
-                  const Icon(Icons.receipt_long_rounded,
-                      color: Colors.white30, size: 20),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-
-              // ── Amount ────────────────────────────────────────────────
-              Text(
-                amountStr,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 38,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: -1.5,
+                    const Icon(Icons.receipt_long_rounded,
+                        color: Colors.white30, size: 20),
+                  ],
                 ),
-              ),
+                const SizedBox(height: 14),
 
-              // ── Description ───────────────────────────────────────────
-              if (description.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(
-                  description,
-                  textAlign: TextAlign.right,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.65),
-                    fontSize: 13,
-                    height: 1.4,
-                  ),
-                ),
-              ],
-
-              const SizedBox(height: 16),
-              Divider(
-                  color: Colors.white.withValues(alpha: 0.10), height: 1),
-              const SizedBox(height: 16),
-
-              // ── Action area ───────────────────────────────────────────
-              if (isPending && !widget.isMe) ...[
-                // Client: Pay button
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF6366F1),
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    icon: _paying
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white))
-                        : const Icon(Icons.lock_rounded, size: 16),
-                    label: Text(
-                      _paying ? 'מעבד...' : 'אשר ושלם',
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 14),
-                    ),
-                    onPressed: _paying ? null : _pay,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  Icon(Icons.shield_rounded,
-                      size: 11,
-                      color: Colors.white.withValues(alpha: 0.35)),
-                  const SizedBox(width: 4),
-                  Text('הסכום נעול בנאמנות AnySkill עד השלמת העבודה',
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.white.withValues(alpha: 0.35))),
-                ]),
-              ] else if (isPending && widget.isMe) ...[
-                // Provider: waiting state
-                Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                  const Icon(Icons.hourglass_top_rounded,
-                      size: 13, color: Colors.white38),
-                  const SizedBox(width: 5),
+                // ── Description ────────────────────────────────────────
+                if (description.isNotEmpty) ...[
                   Text(
-                    'ממתין לאישור הלקוח',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white.withValues(alpha: 0.5)),
+                    description,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      height: 1.3,
+                    ),
                   ),
-                ]),
-              ] else if (isPaid) ...[
-                Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                  const Icon(Icons.verified_rounded,
-                      size: 14, color: Color(0xFF22C55E)),
-                  const SizedBox(width: 5),
-                  const Text('תשלום נעול באסקרו — העבודה יכולה להתחיל!',
+                  const SizedBox(height: 14),
+                ],
+
+                // ── Pricing block ──────────────────────────────────────
+                if (hasDiscount) ...[
+                  // Regular price (struck through)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        _fmtCurrency(regularPrice),
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.45),
+                          fontSize: 14,
+                          decoration: TextDecoration.lineThrough,
+                          decorationColor:
+                              Colors.white.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      Text(
+                        l10n.chatQuoteCardRegular,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.55),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  // Discount line (green)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '- ${_fmtCurrency(discount)}',
+                        style: const TextStyle(
+                          color: Color(0xFF22C55E),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Text(
+                        '🎁 ${l10n.chatQuoteCardDiscount}',
+                        style: const TextStyle(
+                          color: Color(0xFF22C55E),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Divider(
+                      color: Colors.white.withValues(alpha: 0.10),
+                      height: 1),
+                  const SizedBox(height: 10),
+                ],
+
+                // Total to pay
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      _fmtCurrency(amount),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: -1.2,
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '💜 ${l10n.chatQuoteCardTotal}',
+                        style: const TextStyle(
+                          color: Color(0xFFA5B4FC),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 16),
+                Divider(
+                    color: Colors.white.withValues(alpha: 0.10), height: 1),
+                const SizedBox(height: 16),
+
+                // ── Action area ────────────────────────────────────────
+                if (isPending && !widget.isMe) ...[
+                  // Customer side: Accept (wide) + Decline (compact)
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF6366F1),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          icon: _paying
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white))
+                              : const Icon(Icons.lock_rounded, size: 16),
+                          label: Text(
+                            _paying ? 'מעבד...' : '✓ ${l10n.chatQuoteCardAccept}',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14),
+                          ),
+                          onPressed: (_paying || _declining) ? null : _pay,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 1,
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white70,
+                            side: BorderSide(
+                                color:
+                                    Colors.white.withValues(alpha: 0.25)),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          onPressed:
+                              (_paying || _declining) ? null : _decline,
+                          child: _declining
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white70))
+                              : Text(
+                                  l10n.chatQuoteCardDecline,
+                                  style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (expiresAt != null) ...[
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.timer_outlined,
+                            size: 13,
+                            color: _countdownColor(remaining)),
+                        const SizedBox(width: 5),
+                        Text(
+                          '${l10n.chatQuoteCardExpiresIn} ${_fmtCountdown(remaining)}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: _countdownColor(remaining),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ] else if (isPending && widget.isMe) ...[
+                  // Provider side: waiting state
+                  Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                    const Icon(Icons.hourglass_top_rounded,
+                        size: 13, color: Colors.white38),
+                    const SizedBox(width: 5),
+                    Text(
+                      'ממתין לאישור הלקוח',
                       style: TextStyle(
                           fontSize: 12,
-                          color: Color(0xFF22C55E),
-                          fontWeight: FontWeight.w600)),
-                ]),
-              ],
+                          color: Colors.white.withValues(alpha: 0.5)),
+                    ),
+                  ]),
+                  if (expiresAt != null) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Icon(Icons.timer_outlined,
+                            size: 12,
+                            color: _countdownColor(remaining)),
+                        const SizedBox(width: 4),
+                        Text(
+                          _fmtCountdown(remaining),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: _countdownColor(remaining),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ] else if (isPaid) ...[
+                  Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                    const Icon(Icons.verified_rounded,
+                        size: 14, color: Color(0xFF22C55E)),
+                    const SizedBox(width: 5),
+                    const Text(
+                        'תשלום נעול באסקרו — העבודה יכולה להתחיל!',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF22C55E),
+                            fontWeight: FontWeight.w600)),
+                  ]),
+                ] else if (isRejected) ...[
+                  Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                    const Icon(Icons.cancel_outlined,
+                        size: 14, color: Colors.redAccent),
+                    const SizedBox(width: 5),
+                    Text(
+                      l10n.chatQuoteCardDeclined,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.redAccent,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ]),
+                ] else if (isExpired) ...[
+                  Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                    const Icon(Icons.access_time_rounded,
+                        size: 14, color: Color(0xFF9CA3AF)),
+                    const SizedBox(width: 5),
+                    Text(
+                      l10n.chatQuoteCardExpired,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF9CA3AF),
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ]),
+                ],
 
-              const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: _Timestamp(ts: ts, isMe: true),
-              ),
-            ],
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: _Timestamp(ts: ts, isMe: true),
+                ),
+              ],
+            ),
           ),
         ),
       ),
