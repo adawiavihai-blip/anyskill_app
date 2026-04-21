@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
+import '../../services/chat_theme_controller.dart';
 
 /// Bottom input area: text field + send button + attachment menu.
 ///
@@ -137,11 +138,15 @@ class _ChatInputBarState extends State<ChatInputBar> {
     final hasText = widget.controller.text.trim().isNotEmpty;
     final menuOpen = _menu != null;
     final l10n = AppLocalizations.of(context);
+    // PR-3a: input bar reads the chat-scoped palette via InheritedWidget.
+    // Container bg, text field surface, border, hint, and caret all flip
+    // between light and dark in sync with the main screen's transition.
+    final p = ChatThemeScope.of(context).palette;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 28),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: p.surfaceRaised,
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),
@@ -174,12 +179,12 @@ class _ChatInputBarState extends State<ChatInputBar> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF5F6FA),
+                    color: p.surfaceMuted,
                     borderRadius: BorderRadius.circular(24),
                     border: Border.all(
                       color: widget.guardFlagged
                           ? const Color(0xFFDC2626)
-                          : Colors.grey.shade200,
+                          : p.border,
                       width: widget.guardFlagged ? 1.5 : 1.0,
                     ),
                   ),
@@ -189,11 +194,13 @@ class _ChatInputBarState extends State<ChatInputBar> {
                     keyboardType: TextInputType.multiline,
                     textAlign: TextAlign.right,
                     textDirection: TextDirection.rtl,
+                    style: TextStyle(color: p.textPrimary, fontSize: 14),
+                    cursorColor: p.accent,
                     onChanged: widget.onTextChanged,
                     decoration: InputDecoration(
                       hintText: 'הקלד הודעה...',
                       hintStyle:
-                          TextStyle(color: Colors.grey[400], fontSize: 14),
+                          TextStyle(color: p.textMuted, fontSize: 14),
                       border: InputBorder.none,
                       isDense: true,
                       contentPadding:

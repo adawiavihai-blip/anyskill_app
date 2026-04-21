@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import 'chat_modules/location_module.dart';
 import '../services/cache_service.dart';
+import '../services/chat_theme_controller.dart';
 import 'chat_modules/image_module.dart';
 import 'chat_modules/chat_logic_module.dart';
 import 'chat_modules/safety_module.dart';
@@ -77,6 +78,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // PR-3a: bootstrap chat-local theme controller (persists across
+    // sessions + ticks every minute in auto mode). Safe to call on every
+    // chat screen — the controller is a singleton and no-ops after first
+    // init.
+    unawaited(ChatThemeController.instance.init());
     // v9.6.1: Use centralized deterministic room ID
     chatRoomId = ChatService.getRoomId(currentUserId, widget.receiverId);
     debugPrint('[ChatScreen] Room=$chatRoomId me=$currentUserId other=${widget.receiverId}');
@@ -802,8 +808,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    // PR-3a: chat-screen-LOCAL dark mode. Everything below listens to the
+    // controller via the InheritedWidget [ChatThemeScope], and the 500ms
+    // TweenAnimationBuilder smooths the palette swap so tapping
+    // light/dark/auto doesn't flash.
+    return AnimatedBuilder(
+      animation: ChatThemeController.instance,
+      builder: (ctx, _) {
+        final isDark = ChatThemeController.instance.isDark;
+        return TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: isDark ? 1.0 : 0.0),
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOut,
+          builder: (ctx, t, __) {
+            final palette =
+                ChatPalette.lerp(ChatPalette.light, ChatPalette.dark, t);
+            return ChatThemeScope(
+              palette: palette,
+              isDark: isDark,
+              child: _buildScaffold(palette),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildScaffold(ChatPalette p) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F2F8),
+      backgroundColor: p.background,
       appBar: ChatAppBarWidget(
         receiverId: widget.receiverId,
         receiverName: widget.receiverName,

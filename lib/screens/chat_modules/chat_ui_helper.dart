@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../l10n/app_localizations.dart';
+import '../../services/chat_theme_controller.dart';
 import '../../services/escrow_service.dart';
 import '../../services/offline_message_queue.dart';
 import '../../utils/safe_image_provider.dart';
@@ -60,12 +61,15 @@ class ChatUIHelper {
     }
 
     // ── Bubble container ────────────────────────────────────────────────────
+    // PR-3a: palette-aware. Falls back to light palette when rendered
+    // outside a chat screen (e.g. future admin message preview).
+    final p = ChatThemeScope.of(context).palette;
     final bubble = Container(
       padding: type == 'image'
           ? const EdgeInsets.all(4)
           : const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: isMe ? const Color(0xFF6366F1) : Colors.white,
+        color: isMe ? p.bubbleMe : p.bubbleOther,
         borderRadius: BorderRadius.only(
           topLeft:     const Radius.circular(18),
           topRight:    const Radius.circular(18),
@@ -75,20 +79,20 @@ class ChatUIHelper {
         boxShadow: [
           BoxShadow(
             color: isMe
-                ? const Color(0xFF6366F1).withValues(alpha: 0.22)
+                ? p.bubbleMe.withValues(alpha: 0.22)
                 : Colors.black.withValues(alpha: 0.06),
             blurRadius: 10,
             offset: const Offset(0, 3),
           ),
         ],
-        border: isMe ? null : Border.all(color: Colors.grey.shade100),
+        border: isMe ? null : Border.all(color: p.border),
       ),
       child: Column(
         crossAxisAlignment:
             isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildContent(type, msg, isMe),
+          _buildContent(type, msg, isMe, p),
           const SizedBox(height: 2),
           Row(
             mainAxisSize: MainAxisSize.min,
@@ -191,7 +195,8 @@ class ChatUIHelper {
   }
 
   // ── Content by type ───────────────────────────────────────────────────────
-  static Widget _buildContent(String type, String msg, bool isMe) {
+  static Widget _buildContent(
+      String type, String msg, bool isMe, ChatPalette p) {
     switch (type) {
       case 'image':
         if (msg.isEmpty || !msg.startsWith('http')) {
@@ -258,7 +263,7 @@ class ChatUIHelper {
           msg,
           textAlign: TextAlign.right,
           style: TextStyle(
-            color: isMe ? Colors.white : const Color(0xFF1A1A2E),
+            color: isMe ? p.bubbleMeText : p.bubbleOtherText,
             fontSize: 14,
             height: 1.35,
           ),

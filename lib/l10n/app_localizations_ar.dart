@@ -2633,6 +2633,39 @@ class AppLocalizationsAr extends AppLocalizations {
       'انتهت صلاحية العرض — اطلب من المزود عرضاً جديداً';
 
   @override
+  String get chatSettingsTitle => 'إعدادات المحادثة';
+
+  @override
+  String get chatSettingsTranslationSection => 'الترجمة';
+
+  @override
+  String get chatSettingsAutoTranslate => 'ترجمة تلقائية';
+
+  @override
+  String get chatSettingsComingSoon => 'قريباً';
+
+  @override
+  String get chatSettingsMyLanguage => 'لغتي';
+
+  @override
+  String get chatSettingsAppearanceSection => 'المظهر';
+
+  @override
+  String get chatSettingsThemeLight => 'فاتح';
+
+  @override
+  String get chatSettingsThemeDark => 'داكن';
+
+  @override
+  String get chatSettingsThemeAuto => 'تلقائي';
+
+  @override
+  String get chatSettingsAutoHint => 'داكن بالليل، فاتح بالنهار';
+
+  @override
+  String get chatSettingsSave => 'حفظ وإغلاق';
+
+  @override
   String get chatOnMyWay => 'أنا في الطريق! 🚗 سأصل قريباً.';
 
   @override

@@ -2633,6 +2633,39 @@ class AppLocalizationsEs extends AppLocalizations {
       'Oferta expirada — pide al proveedor una nueva';
 
   @override
+  String get chatSettingsTitle => 'Configuración del chat';
+
+  @override
+  String get chatSettingsTranslationSection => 'Traducción';
+
+  @override
+  String get chatSettingsAutoTranslate => 'Traducción automática';
+
+  @override
+  String get chatSettingsComingSoon => 'Pronto';
+
+  @override
+  String get chatSettingsMyLanguage => 'Mi idioma';
+
+  @override
+  String get chatSettingsAppearanceSection => 'Apariencia';
+
+  @override
+  String get chatSettingsThemeLight => 'Claro';
+
+  @override
+  String get chatSettingsThemeDark => 'Oscuro';
+
+  @override
+  String get chatSettingsThemeAuto => 'Auto';
+
+  @override
+  String get chatSettingsAutoHint => 'Oscuro de noche, claro de día';
+
+  @override
+  String get chatSettingsSave => 'Guardar y cerrar';
+
+  @override
   String get chatOnMyWay => '¡Voy en camino! 🚗 Llegaré pronto.';
 
   @override

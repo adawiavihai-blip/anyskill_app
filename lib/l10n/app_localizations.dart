@@ -4923,6 +4923,39 @@ abstract class AppLocalizations {
   /// EscrowService.payQuote — error returned when an expired quote is paid.
   String get chatQuoteExpiredError;
 
+  /// Chat settings bottom sheet — title (PR-3a).
+  String get chatSettingsTitle;
+
+  /// Chat settings — translation section heading.
+  String get chatSettingsTranslationSection;
+
+  /// Chat settings — auto-translate toggle label.
+  String get chatSettingsAutoTranslate;
+
+  /// Chat settings — "coming soon" badge on disabled controls.
+  String get chatSettingsComingSoon;
+
+  /// Chat settings — "my target language" dropdown label.
+  String get chatSettingsMyLanguage;
+
+  /// Chat settings — appearance section heading.
+  String get chatSettingsAppearanceSection;
+
+  /// Chat settings — light-mode theme option.
+  String get chatSettingsThemeLight;
+
+  /// Chat settings — dark-mode theme option.
+  String get chatSettingsThemeDark;
+
+  /// Chat settings — auto-mode theme option (19:00-07:00 = dark).
+  String get chatSettingsThemeAuto;
+
+  /// Chat settings — explanation under Auto option when selected.
+  String get chatSettingsAutoHint;
+
+  /// Chat settings — primary save-and-close button.
+  String get chatSettingsSave;
+
   /// No description provided for @chatOnMyWay.
   ///
   /// In he, this message translates to:

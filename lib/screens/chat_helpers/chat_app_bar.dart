@@ -1,15 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/chat_theme_controller.dart';
 import '../../utils/safe_image_provider.dart';
-import '../support_center_screen.dart';
+import 'chat_settings_sheet.dart';
 
-/// Chat screen AppBar with live online status, real synced avatar, and
-/// support button.
+/// Chat screen AppBar with live online status, synced avatar, and the
+/// ⋮ settings-menu button (PR-3a).
 ///
-/// Avatar handling: routes through [safeImageProvider] so both HTTPS URLs
-/// AND base64 onboarding photos render without crashing (Law 11).
-/// Fallback is a purple gradient circle with the receiver's first letter,
-/// matching the messages-upgrade spec.
+/// The palette is read from [ChatThemeScope] so the AppBar flips between
+/// light and dark — via a smooth [TweenAnimationBuilder] animation — along
+/// with the rest of the chat body.
+///
+/// The support-center icon that used to live in the actions row was
+/// removed in PR-3a; support is still reachable via the pinned entry at
+/// the top of the Messages tab (Law 22).
 class ChatAppBarWidget extends StatelessWidget implements PreferredSizeWidget {
   final String receiverId;
   final String receiverName;
@@ -25,16 +29,19 @@ class ChatAppBarWidget extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scope = ChatThemeScope.of(context);
+    final p = scope.palette;
     final userStream = FirebaseFirestore.instance
         .collection('users')
         .doc(receiverId)
         .snapshots();
 
     return AppBar(
-      backgroundColor: Colors.white,
-      foregroundColor: Colors.black,
+      backgroundColor: p.surfaceRaised,
+      foregroundColor: p.textPrimary,
       elevation: 0,
       titleSpacing: 0,
+      iconTheme: IconThemeData(color: p.textPrimary),
       title: StreamBuilder<DocumentSnapshot>(
         stream: userStream,
         builder: (_, snap) {
@@ -48,7 +55,7 @@ class ChatAppBarWidget extends StatelessWidget implements PreferredSizeWidget {
           return Row(
             children: [
               Stack(children: [
-                _buildAvatar(photo),
+                _buildAvatar(photo, p),
                 Positioned(
                   bottom: 0,
                   right: 0,
@@ -58,9 +65,10 @@ class ChatAppBarWidget extends StatelessWidget implements PreferredSizeWidget {
                     decoration: BoxDecoration(
                       color: isOnline
                           ? const Color(0xFF22C55E)
-                          : Colors.grey[300],
+                          : p.textMuted,
                       shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
+                      border:
+                          Border.all(color: p.surfaceRaised, width: 2),
                     ),
                   ),
                 ),
@@ -75,9 +83,10 @@ class ChatAppBarWidget extends StatelessWidget implements PreferredSizeWidget {
                       receiverName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 15,
+                        color: p.textPrimary,
                       ),
                     ),
                     Text(
@@ -88,7 +97,7 @@ class ChatAppBarWidget extends StatelessWidget implements PreferredSizeWidget {
                         fontSize: 11,
                         color: isOnline
                             ? const Color(0xFF22C55E)
-                            : Colors.grey[500],
+                            : p.textMuted,
                       ),
                     ),
                   ],
@@ -100,30 +109,25 @@ class ChatAppBarWidget extends StatelessWidget implements PreferredSizeWidget {
       ),
       actions: [
         IconButton(
-          icon: const Icon(Icons.support_agent_rounded,
-              color: Color(0xFF9CA3AF), size: 22),
-          tooltip: 'מרכז התמיכה',
-          onPressed: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const SupportCenterScreen(),
-            ),
-          ),
+          icon: Icon(Icons.more_vert_rounded,
+              color: p.textSecondary, size: 22),
+          tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
+          onPressed: () => showChatSettingsSheet(context),
         ),
       ],
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(1),
-        child: Container(height: 1, color: Colors.grey.shade100),
+        child: Container(height: 1, color: p.border),
       ),
     );
   }
 
-  Widget _buildAvatar(String photo) {
+  Widget _buildAvatar(String photo, ChatPalette p) {
     final provider = safeImageProvider(photo);
     if (provider != null) {
       return CircleAvatar(
         radius: 19,
-        backgroundColor: const Color(0xFFEDE9FE),
+        backgroundColor: p.surfaceMuted,
         backgroundImage: provider,
       );
     }

@@ -2633,6 +2633,39 @@ class AppLocalizationsHe extends AppLocalizations {
       'ההצעה פגה — יש לבקש מהנותן שירות הצעה חדשה';
 
   @override
+  String get chatSettingsTitle => 'הגדרות שיחה';
+
+  @override
+  String get chatSettingsTranslationSection => 'תרגום';
+
+  @override
+  String get chatSettingsAutoTranslate => 'תרגום אוטומטי';
+
+  @override
+  String get chatSettingsComingSoon => 'בקרוב';
+
+  @override
+  String get chatSettingsMyLanguage => 'השפה שלי';
+
+  @override
+  String get chatSettingsAppearanceSection => 'מראה';
+
+  @override
+  String get chatSettingsThemeLight => 'בהיר';
+
+  @override
+  String get chatSettingsThemeDark => 'כהה';
+
+  @override
+  String get chatSettingsThemeAuto => 'אוטומטי';
+
+  @override
+  String get chatSettingsAutoHint => 'כהה בערב, בהיר ביום';
+
+  @override
+  String get chatSettingsSave => 'שמור וסגור';
+
+  @override
   String get chatOnMyWay => 'אני בדרך! 🚗 אגיע בקרוב.';
 
   @override
