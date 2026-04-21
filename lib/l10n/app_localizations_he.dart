@@ -2547,6 +2547,27 @@ class AppLocalizationsHe extends AppLocalizations {
   String get chatQuoteLabel => 'הצעת מחיר';
 
   @override
+  String get chatAttachTooltip => 'הוסף';
+
+  @override
+  String get chatAttachLocation => 'שלח מיקום';
+
+  @override
+  String get chatAttachImage => 'שלח תמונה';
+
+  @override
+  String get chatAttachVideo => 'שלח וידאו';
+
+  @override
+  String get chatAttachOffer => 'הצעת מחיר';
+
+  @override
+  String get chatAttachPaymentRequest => 'בקש תשלום';
+
+  @override
+  String get chatAttachVideoComingSoon => 'שליחת וידאו תהיה זמינה בקרוב 🎥';
+
+  @override
   String get chatOnMyWay => 'אני בדרך! 🚗 אגיע בקרוב.';
 
   @override

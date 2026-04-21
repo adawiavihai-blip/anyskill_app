@@ -1242,6 +1242,13 @@
   "chatEscrowNote": "הסכום ינעל בנאמנות AnySkill עם אישור הלקוח",
   "chatSendQuote": "שלח הצעה",
   "chatQuoteLabel": "הצעת מחיר",
+  "chatAttachTooltip": "הוסף",
+  "chatAttachLocation": "שלח מיקום",
+  "chatAttachImage": "שלח תמונה",
+  "chatAttachVideo": "שלח וידאו",
+  "chatAttachOffer": "הצעת מחיר",
+  "chatAttachPaymentRequest": "בקש תשלום",
+  "chatAttachVideoComingSoon": "שליחת וידאו תהיה זמינה בקרוב 🎥",
   "chatOnMyWay": "אני בדרך! 🚗 אגיע בקרוב.",
   "chatWorkDone": "סיימתי את העבודה! ✅",
 

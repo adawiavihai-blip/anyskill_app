@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'chat_modules/location_module.dart';
 import '../services/cache_service.dart';
+import 'chat_modules/image_module.dart';
 import 'chat_modules/chat_logic_module.dart';
 import 'chat_modules/safety_module.dart';
 import '../l10n/app_localizations.dart';
@@ -46,16 +48,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   late final String chatRoomId;
 
-  // _isUploading: stays as a field (not final) — PR-2 will re-mutate it
-  // from the attachment-menu image upload flow. Marked final for PR-1 to
-  // satisfy the analyzer; revert when wiring the menu.
-  // ignore: prefer_final_fields
   bool   _isUploading        = false;
   bool   _isReceiverTyping   = false;
 
   // ── Avatar URLs (loaded once for message bubble display) ──────────────────
   String _receiverImageUrl     = '';
   String _currentUserImageUrl  = '';
+
+  // ── Provider state (drives the attach-menu offer-item label: provider
+  // sees "הצעת מחיר" + offer dialog, customer sees "בקש תשלום" + payment-
+  // request dialog) ────────────────────────────────────────────────────────
+  bool   _isProvider           = false;
 
   // ── Chat Guard state ──────────────────────────────────────────────────────
   bool      _guardFlagged      = false;   // true while current input is flagged
@@ -120,6 +123,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         if (mounted) {
           setState(() {
             _currentUserImageUrl = d['profileImage'] as String? ?? '';
+            _isProvider          = d['isProvider'] == true;
           });
         }
       } catch (_) {}
@@ -385,9 +389,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   // ── Request payment dialog ─────────────────────────────────────────────────
-  // PR-1 of messages-upgrade removed the quick-reply chip that called this.
-  // PR-2 will re-wire it through the attachment menu — keep the implementation.
-  // ignore: unused_element
+  // Customer-side action surfaced via the attach menu (💰 בקש תשלום).
+  // PR-2b will redesign the payment-request UX; for now this is the legacy
+  // dialog with no breaking changes.
   void _showRequestPaymentDialog() {
     final amountCtrl = TextEditingController();
     final descCtrl   = TextEditingController();
@@ -530,9 +534,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   // ── Official Quote dialog ──────────────────────────────────────────────────
-  // PR-1 of messages-upgrade removed the quick-reply chip that called this.
-  // PR-2 will re-wire it through the attachment menu — keep the implementation.
-  // ignore: unused_element
+  // Provider-side action surfaced via the attach menu (💰 הצעת מחיר).
+  // PR-2b will redesign this modal per spec (gross + discount fields +
+  // 4 expiry chips); for now it's the legacy 2-field dialog.
   void _showQuoteDialog() {
     final amountCtrl = TextEditingController();
     final descCtrl   = TextEditingController();
@@ -747,12 +751,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             controller: _msgCtrl,
             isUploading: _isUploading,
             guardFlagged: _guardFlagged,
+            isProvider: _isProvider,
             onTextChanged: (v) {
               _onTypingChanged(v);
               _checkChatGuard(v);
               setState(() {});
             },
             onSend: _handleSendButton,
+            onSendLocation: () async {
+              final url = await LocationModule.getMapUrl();
+              if (url != null) _send(url, 'location');
+            },
+            onSendImage: () async {
+              setState(() => _isUploading = true);
+              final url = await ImageModule.uploadImage(chatRoomId);
+              if (url != null) _send(url, 'image');
+              if (mounted) setState(() => _isUploading = false);
+            },
+            onSendVideoComingSoon: () {
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(
+                    AppLocalizations.of(context).chatAttachVideoComingSoon),
+                duration: const Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+              ));
+            },
+            onShowOfferDialog: _isProvider
+                ? _showQuoteDialog
+                : _showRequestPaymentDialog,
           ),
         ],
       ),

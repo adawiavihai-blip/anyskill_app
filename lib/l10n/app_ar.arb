@@ -1163,6 +1163,13 @@
   "chatEscrowNote": "سيُحجز المبلغ في ضمان AnySkill بعد موافقة العميل",
   "chatSendQuote": "إرسال العرض",
   "chatQuoteLabel": "عرض سعر",
+  "chatAttachTooltip": "إضافة",
+  "chatAttachLocation": "إرسال الموقع",
+  "chatAttachImage": "إرسال صورة",
+  "chatAttachVideo": "إرسال فيديو",
+  "chatAttachOffer": "عرض سعر",
+  "chatAttachPaymentRequest": "طلب الدفع",
+  "chatAttachVideoComingSoon": "سيتوفر إرسال الفيديو قريباً 🎥",
   "chatOnMyWay": "أنا في الطريق! 🚗 سأصل قريباً.",
   "chatWorkDone": "تم إنجاز العمل! ✅",
 

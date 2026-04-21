@@ -4839,6 +4839,27 @@ abstract class AppLocalizations {
   /// **'הצעת מחיר'**
   String get chatQuoteLabel;
 
+  /// Attach menu — add attachment button tooltip.
+  String get chatAttachTooltip;
+
+  /// Attach menu — send GPS location item.
+  String get chatAttachLocation;
+
+  /// Attach menu — send image item.
+  String get chatAttachImage;
+
+  /// Attach menu — send video item (PR-2a: shows snackbar; full impl deferred).
+  String get chatAttachVideo;
+
+  /// Attach menu — provider sends a price offer.
+  String get chatAttachOffer;
+
+  /// Attach menu — customer requests payment from provider.
+  String get chatAttachPaymentRequest;
+
+  /// Snackbar shown when video attach is tapped (PR-2a placeholder).
+  String get chatAttachVideoComingSoon;
+
   /// No description provided for @chatOnMyWay.
   ///
   /// In he, this message translates to:

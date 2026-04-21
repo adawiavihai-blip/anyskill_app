@@ -1241,6 +1241,13 @@
   "chatEscrowNote": "The amount will be held in AnySkill escrow upon customer approval",
   "chatSendQuote": "Send quote",
   "chatQuoteLabel": "Quote",
+  "chatAttachTooltip": "Add",
+  "chatAttachLocation": "Send location",
+  "chatAttachImage": "Send image",
+  "chatAttachVideo": "Send video",
+  "chatAttachOffer": "Price offer",
+  "chatAttachPaymentRequest": "Request payment",
+  "chatAttachVideoComingSoon": "Video sending will be available soon 🎥",
   "chatOnMyWay": "I'm on the way! 🚗 Will arrive soon.",
   "chatWorkDone": "Work done! ✅",
 

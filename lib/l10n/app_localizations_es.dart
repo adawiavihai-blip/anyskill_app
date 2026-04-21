@@ -2547,6 +2547,27 @@ class AppLocalizationsEs extends AppLocalizations {
   String get chatQuoteLabel => 'Presupuesto';
 
   @override
+  String get chatAttachTooltip => 'Agregar';
+
+  @override
+  String get chatAttachLocation => 'Enviar ubicación';
+
+  @override
+  String get chatAttachImage => 'Enviar imagen';
+
+  @override
+  String get chatAttachVideo => 'Enviar video';
+
+  @override
+  String get chatAttachOffer => 'Oferta de precio';
+
+  @override
+  String get chatAttachPaymentRequest => 'Solicitar pago';
+
+  @override
+  String get chatAttachVideoComingSoon => 'El envío de video estará disponible pronto 🎥';
+
+  @override
   String get chatOnMyWay => '¡Voy en camino! 🚗 Llegaré pronto.';
 
   @override

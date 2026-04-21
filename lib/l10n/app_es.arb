@@ -1163,6 +1163,13 @@
   "chatEscrowNote": "El monto se retendrá en el depósito de AnySkill tras la aprobación del cliente",
   "chatSendQuote": "Enviar presupuesto",
   "chatQuoteLabel": "Presupuesto",
+  "chatAttachTooltip": "Agregar",
+  "chatAttachLocation": "Enviar ubicación",
+  "chatAttachImage": "Enviar imagen",
+  "chatAttachVideo": "Enviar video",
+  "chatAttachOffer": "Oferta de precio",
+  "chatAttachPaymentRequest": "Solicitar pago",
+  "chatAttachVideoComingSoon": "El envío de video estará disponible pronto 🎥",
   "chatOnMyWay": "¡Voy en camino! 🚗 Llegaré pronto.",
   "chatWorkDone": "¡Trabajo terminado! ✅",
 
