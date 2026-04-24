@@ -1118,6 +1118,8 @@
   "@homeGenericError": { "placeholders": { "error": {"type": "String"} } },
   "homeShowAll": "عرض الكل",
   "homeMicroTasks": "مهام صغيرة — اكسب بسرعة",
+  "anyTasksBannerTag": "مهام",
+  "anyTasksBannerDescription": "هل لديك مهمة؟ انشرها مع ميزانيتك — وسيتواصل معك مقدمو الخدمات.",
   "homeCommunityTitle": "العطاء من القلب",
   "homeCommunitySlogan": "مهارة واحدة، قلب واحد",
   "homeDefaultExpert": "المحترف",

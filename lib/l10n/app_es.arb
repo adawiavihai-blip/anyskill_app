@@ -1118,6 +1118,8 @@
   "@homeGenericError": { "placeholders": { "error": {"type": "String"} } },
   "homeShowAll": "Ver todo",
   "homeMicroTasks": "Micro-tareas — gana rápido",
+  "anyTasksBannerTag": "Tareas",
+  "anyTasksBannerDescription": "¿Tienes una tarea? Publícala con tu presupuesto — los profesionales te contactarán.",
   "homeCommunityTitle": "Dar desde el corazón",
   "homeCommunitySlogan": "Una habilidad, un corazón",
   "homeDefaultExpert": "el profesional",

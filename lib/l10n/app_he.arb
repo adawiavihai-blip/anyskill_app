@@ -1197,6 +1197,8 @@
   "@homeGenericError": { "placeholders": { "error": {"type": "String"} } },
   "homeShowAll": "הצג הכל",
   "homeMicroTasks": "משימות מיקרו — הרווח מהיר",
+  "anyTasksBannerTag": "משימות",
+  "anyTasksBannerDescription": "יש לכם משימה? כתבו אותה ואת הסכום — ונותני שירות יפנו אליכם",
   "homeCommunityTitle": "נתינה מהלב",
   "homeCommunitySlogan": "כישרון אחד, לב אחד",
   "homeDefaultExpert": "המומחה",

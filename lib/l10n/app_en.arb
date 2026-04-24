@@ -1196,6 +1196,8 @@
   "@homeGenericError": { "placeholders": { "error": {"type": "String"} } },
   "homeShowAll": "See all",
   "homeMicroTasks": "Micro-tasks — earn quickly",
+  "anyTasksBannerTag": "Tasks",
+  "anyTasksBannerDescription": "Got a task? Post it with your budget — providers will reach out.",
   "homeCommunityTitle": "Giving from the heart",
   "homeCommunitySlogan": "One skill, one heart",
   "homeDefaultExpert": "the expert",

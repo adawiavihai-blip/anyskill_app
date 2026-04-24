@@ -2420,6 +2420,13 @@ class AppLocalizationsEs extends AppLocalizations {
   String get homeMicroTasks => 'Micro-tareas — gana rápido';
 
   @override
+  String get anyTasksBannerTag => 'Tareas';
+
+  @override
+  String get anyTasksBannerDescription =>
+      '¿Tienes una tarea? Publícala con tu presupuesto — los profesionales te contactarán.';
+
+  @override
   String get homeCommunityTitle => 'Dar desde el corazón';
 
   @override

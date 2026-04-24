@@ -2420,6 +2420,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get homeMicroTasks => 'مهام صغيرة — اكسب بسرعة';
 
   @override
+  String get anyTasksBannerTag => 'مهام';
+
+  @override
+  String get anyTasksBannerDescription =>
+      'هل لديك مهمة؟ انشرها مع ميزانيتك — وسيتواصل معك مقدمو الخدمات.';
+
+  @override
   String get homeCommunityTitle => 'العطاء من القلب';
 
   @override

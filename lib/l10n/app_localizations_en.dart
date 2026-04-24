@@ -2420,6 +2420,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get homeMicroTasks => 'Micro-tasks — earn quickly';
 
   @override
+  String get anyTasksBannerTag => 'Tasks';
+
+  @override
+  String get anyTasksBannerDescription =>
+      'Got a task? Post it with your budget — providers will reach out.';
+
+  @override
   String get homeCommunityTitle => 'Giving from the heart';
 
   @override

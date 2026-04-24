@@ -2420,6 +2420,13 @@ class AppLocalizationsHe extends AppLocalizations {
   String get homeMicroTasks => 'משימות מיקרו — הרווח מהיר';
 
   @override
+  String get anyTasksBannerTag => 'משימות';
+
+  @override
+  String get anyTasksBannerDescription =>
+      'יש לכם משימה? כתבו אותה ואת הסכום — ונותני שירות יפנו אליכם';
+
+  @override
   String get homeCommunityTitle => 'נתינה מהלב';
 
   @override

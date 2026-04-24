@@ -1,5 +1,6 @@
 // ignore_for_file: use_build_context_synchronously
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../l10n/app_localizations.dart';
@@ -935,69 +936,15 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       ));
     }
 
-    // ── AnyTasks banner — "משימות מיקרו" gig marketplace entry ──────
+    // ── AnyTasks banner — dark premium "Apple Card" style ──────────
+    // TODO(§35): Route providers to ProviderHubScreen, clients to MyTasksScreen
+    // — currently all users route to MyTasksScreen.
     slivers.add(SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-        child: GestureDetector(
+        child: _AnyTasksBanner(
           onTap: () => Navigator.of(context, rootNavigator: true).push(
               MaterialPageRoute(builder: (_) => const MyTasksScreen())),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF6366F1), Color(0xFF8B5CF6), Color(0xFFA855F7)],
-                begin: Alignment.centerRight,
-                end: Alignment.centerLeft,
-              ),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF6366F1).withValues(alpha: 0.25),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(Icons.rocket_launch_rounded,
-                      color: Colors.white, size: 22),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'AnyTasks',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        AppLocalizations.of(context).homeMicroTasks,
-                        style: const TextStyle(color: Colors.white70, fontSize: 11),
-                      ),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.arrow_forward_ios_rounded,
-                    size: 14, color: Colors.white54),
-              ],
-            ),
-          ),
         ),
       ),
     ));
@@ -1613,6 +1560,187 @@ class _HeartPulseState extends State<_HeartPulse>
         Icons.favorite_rounded,
         color: Color(0xFFD4AF37), // metallic gold heart
         size: 26,
+      ),
+    );
+  }
+}
+
+// ── AnyTasks banner — Apple Card style (dark premium) ───────────────────────
+//
+// Dark gradient + subtle purple radial glow + glass-feel icon tile + 2-line
+// content block + thin RTL-forward arrow. `AnimatedScale(0.98, 150ms)` on
+// tap-down gives the "responsive press" feel. The outer Container clips
+// children to its 18px rounded-rect via `clipBehavior: Clip.hardEdge`, so
+// the glow at `Positioned(left: -40, top: -40)` is cleanly wedged into the
+// top-left corner instead of spilling out.
+class _AnyTasksBanner extends StatefulWidget {
+  const _AnyTasksBanner({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  State<_AnyTasksBanner> createState() => _AnyTasksBannerState();
+}
+
+class _AnyTasksBannerState extends State<_AnyTasksBanner> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTap: widget.onTap,
+      child: AnimatedScale(
+        scale: _pressed ? 0.98 : 1.0,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOut,
+        child: Container(
+          clipBehavior: Clip.hardEdge,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF1E1B3A),
+                Color(0xFF2D1B4E),
+                Color(0xFF4A2B7A),
+              ],
+              stops: [0.0, 0.5, 1.0],
+            ),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF4A2B7A).withValues(alpha: 0.25),
+                blurRadius: 20,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              // Soft purple radial glow near the top-left corner.
+              // Clipped by the Container's rounded rect → diffuse wedge.
+              Positioned(
+                left: -40,
+                top: -40,
+                width: 140,
+                height: 140,
+                child: IgnorePointer(
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          Color(0x668B5CF6), // #8B5CF6 @ 40%
+                          Color(0x008B5CF6), // transparent
+                        ],
+                        stops: [0.0, 0.7],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              // Content row: [icon tile] [title + tag + description] [arrow]
+              Padding(
+                padding:
+                    const EdgeInsetsDirectional.fromSTEB(22, 20, 22, 20),
+                child: Row(
+                  children: [
+                    // Glass icon tile — 48×48, rounded 14, subtle blur
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                        child: Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.18),
+                              width: 0.5,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.task_alt_rounded,
+                            color: Colors.white,
+                            size: 22,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 18),
+                    // Title + tag + description
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Text(
+                                'AnyTasks',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.2,
+                                  letterSpacing: -0.2,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  l10n.anyTasksBannerTag,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.6),
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w500,
+                                    letterSpacing: 0.2,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            l10n.anyTasksBannerDescription,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.75),
+                              fontSize: 13.5,
+                              height: 1.45,
+                              letterSpacing: -0.1,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // Forward arrow — in RTL, visually pointing LEFT = "next"
+                    Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      size: 14,
+                      color: Colors.white.withValues(alpha: 0.5),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

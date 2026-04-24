@@ -4593,6 +4593,18 @@ abstract class AppLocalizations {
   /// **'משימות מיקרו — הרווח מהיר'**
   String get homeMicroTasks;
 
+  /// No description provided for @anyTasksBannerTag.
+  ///
+  /// In he, this message translates to:
+  /// **'משימות'**
+  String get anyTasksBannerTag;
+
+  /// No description provided for @anyTasksBannerDescription.
+  ///
+  /// In he, this message translates to:
+  /// **'יש לכם משימה? כתבו אותה ואת הסכום — ונותני שירות יפנו אליכם'**
+  String get anyTasksBannerDescription;
+
   /// No description provided for @homeCommunityTitle.
   ///
   /// In he, this message translates to:
