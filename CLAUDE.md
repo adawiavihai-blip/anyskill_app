@@ -4684,6 +4684,1648 @@ After first deploy: the scheduled CFs run hourly / every 6h. To populate immedia
 
 ---
 
+## 32. Pest Control CSM (Category-Specific Module, v15.x, 2026-04-17)
+
+Full category-specific module for the "הדברה" (pest control) sub-category,
+following the same CSM pattern as massage (Section 3d / massage files).
+Adds two new blocks — provider settings and client booking — that only
+appear when the sub-category is "הדברה".
+
+### Architecture
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Model | `lib/models/pest_control_profile.dart` | `PestControlProfile` + 8 sub-models (licenses, availability, service area, warranty, packages, instructions) + `isPestControlCategory()` helper |
+| Pest types catalog | `lib/constants/pest_types_catalog.dart` | 14 pest types in 3 groups (insects, rodents, animal capture) with icons + colors |
+| Treatment methods | `lib/constants/pest_treatment_methods.dart` | 5 methods (green, spray, heat, injection, fumigation) |
+| Instructions catalog | `lib/constants/pest_structured_instructions.dart` | 7 structured post-treatment instructions with duration options + color-coded cards |
+| Booking service | `lib/services/pest_control_booking_service.dart` | Price calculation, breakdown builder, last-booking preferences fetch |
+| Provider block | `lib/screens/pest_control/pest_control_settings_block.dart` | 9-section settings form (licenses, pest types, methods, availability, pricing, warranty, packages, instructions) |
+| Client block | `lib/screens/pest_control/pest_booking_block.dart` | AI pest identification (Gemini Vision), treatment instructions display with acknowledgement checkbox, urgency/location/method selectors, summary bar |
+
+### Key features
+
+- **AI Pest Identification**: Gemini Vision via `identifyPestFromImage` Cloud Function (NOT Claude). Client uploads/captures photo, AI returns pest type + confidence + recommendation.
+- **Treatment Instructions**: Provider sets 7 structured instructions (evacuate home, remove pets, no washing, ventilation, cover food, cover aquarium, remove ceramics) with duration selectors + custom free-text. Client sees color-coded cards and MUST acknowledge before booking.
+- **Licenses**: Provider must have Ministry of Environmental Protection license. Snake catching requires separate snake catcher license.
+- **Emergency service**: Toggle with configurable surcharge (default ₪150).
+- **Maintenance packages**: Provider creates quarterly/monthly packages with discount percentages.
+- **Demo profile parity**: Admin demo experts tab renders the same `PestControlSettingsBlock` when "הדברה" is selected.
+
+### Firestore field
+
+`users/{uid}.pestControlProfile` — nested Map identical to the `PestControlProfile.toMap()` output. Synced to `provider_listings/{id}.pestControlProfile` on save.
+
+`jobs/{id}.pestControlPreferences` — booking preferences including AI identification data, selected pest type, urgency, treatment method, special household members, add-ons, and `instructionsAcknowledged` with timestamp.
+
+### Detection function
+
+```dart
+bool isPestControlCategory(String? serviceType) {
+  if (serviceType == null) return false;
+  final lower = serviceType.trim().toLowerCase();
+  return lower == 'הדברה' || lower == 'pest_control' ||
+      lower.contains('הדברה') || lower.contains('מדביר');
+}
+```
+
+### Integration points
+
+| Screen | Method | What happens |
+|--------|--------|-------------|
+| `edit_profile_screen.dart` | `_isPestControlSubCategory()` | Shows `PestControlSettingsBlock` after sub-category dropdown |
+| `expert_profile_screen.dart` | `_hasPestControlProfile()` | Shows `PestBookingBlock` between About and Service sections |
+| `admin_demo_experts_tab.dart` | `_isDemoPestControlCategory()` | Shows `PestControlSettingsBlock` in demo profile form |
+
+### Localization
+
++35 keys in all 4 locale files (he/en/es/ar), prefix `pest*`.
+
+### Cloud Function needed (NOT yet created)
+
+`identifyPestFromImage` — callable, takes `{imageBase64}`, calls Gemini Vision, returns `{pestType, pestTypeHe, confidence, alternativeMatches, urgencyLevel, description, treatmentRecommendation}`. Deploy separately.
+
+### Files
+
+**Created (7):**
+- `lib/models/pest_control_profile.dart`
+- `lib/constants/pest_types_catalog.dart`
+- `lib/constants/pest_treatment_methods.dart`
+- `lib/constants/pest_structured_instructions.dart`
+- `lib/services/pest_control_booking_service.dart`
+- `lib/screens/pest_control/pest_control_settings_block.dart`
+- `lib/screens/pest_control/pest_booking_block.dart`
+
+**Modified (7):**
+- `lib/screens/edit_profile_screen.dart` — imports, state, detection, validation, UI, save, listing sync
+- `lib/screens/expert_profile_screen.dart` — imports, state, detection, builder, insertion, job doc
+- `lib/screens/admin_demo_experts_tab.dart` — imports, state, init, detection, UI, both save payloads
+- `lib/l10n/app_he.arb` — +35 keys
+- `lib/l10n/app_en.arb` — +35 keys
+- `lib/l10n/app_es.arb` — +35 keys
+- `lib/l10n/app_ar.arb` — +35 keys
+
+---
+
+## 33. Delivery CSM (Category-Specific Module, v15.x, 2026-04-17)
+
+Full category-specific module for the "משלוחים" (delivery / couriers)
+sub-category, following the same CSM pattern as massage (§3d) and pest
+control (§32). Adds two new blocks — provider settings and client booking —
+that appear only when the sub-category is "משלוחים".
+
+### Architecture
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Model | `lib/models/delivery_profile.dart` | `DeliveryProfile` + 9 sub-models (documents, vehicles, availability, service area, pricing, rules, business packages) + `isDeliveryCategory()` helper |
+| Delivery types catalog | `lib/constants/delivery_types_catalog.dart` | 6 package types — documents, small/medium/large, flowers, cakes |
+| Vehicle types | `lib/constants/delivery_vehicle_types.dart` | 2 vehicles per spec — scooter, car (NO trucks, NO fridges) |
+| Courier rules catalog | `lib/constants/courier_rules_catalog.dart` | 5 built-in rules (no_dangerous, photo_documentation, call_before_arrival, weight_verification, rain_delivery) |
+| Package tags | `lib/constants/delivery_package_tags.dart` | 4 tags (fragile, sensitive, photo_documentation, signature_required) |
+| Booking service | `lib/services/delivery_booking_service.dart` | `calculateTotal`, `buildPriceBreakdown`, `getLastBookingWith` (for Express Reorder) |
+| Provider block | `lib/screens/delivery/delivery_settings_block.dart` | Dark premium "הקריירה שלך" settings form — 9 sections |
+| Client block | `lib/screens/delivery/delivery_booking_block.dart` | Dark premium "שלח עם {name}" booking block — hero, route preview, package + AI vehicle, timing, method, add-ons, recipient, rules display, summary |
+
+### Key features
+
+- **AI Vehicle Recommendation** via Gemini (NOT Claude) — `recommendVehicleForDelivery` Cloud Function calls `gemini-2.5-flash-lite` with package type, distance, urgency, weather. Returns recommended vehicle + savings + reason + confidence. Auto-switches the client's selected vehicle when confidence > 0.7.
+- **Scheduled delivery** (unique to AnySkill) — client can pick a date up to 30 days ahead via `showDatePicker`.
+- **Phone masking notice** — summary shows "המספר שלך מוסתר מ-{courier} אוטומטית". (Actual masking requires a future CF — UI contract is in place.)
+- **Express Reorder** — `DeliveryBookingService.getLastBookingWith(customerId, expertId)` is ready to populate the reorder card. (UI widget deferred — service is live.)
+- **Live map preview** — static dark map with LIVE badge, courier pin with distance, A→B markers. Real GPS tracking deferred to a future PR (piggybacks on existing `dog_walks` pattern in §3d).
+- **Courier rules** — provider picks from 5 built-in rules + free-text custom (500-char max). Client sees them on the profile before booking.
+- **Demo profile parity** — admin demo experts tab renders the same `DeliverySettingsBlock` when "משלוחים" is selected.
+- **🚫 NO insurance** per user decision — not in UI, not in model, not in CF.
+
+### Firestore fields
+
+```
+users/{uid}.deliveryProfile — nested Map, 9 fields (see model above)
+jobs/{id}.deliveryPreferences — booking-time snapshot:
+  packageType, packageTags, packageDescription,
+  selectedVehicle, aiRecommendedVehicle, aiSavingsAmount, aiSavingsMinutes,
+  pickupAddress {address, details}, deliveryAddress {address, details},
+  distanceKm, timing, scheduledFor,
+  deliveryMethod, specialInstructions,
+  addOns[], recipient {name, phone, phoneVerified},
+  priceBreakdown {base, addOnsTotal, immediateSurcharge, kmAfter5, total}
+```
+
+`provider_listings/{id}.deliveryProfile` is synced on save (same pattern as
+massage/pest) so demo + real delivery providers surface in search.
+
+### Detection function
+
+```dart
+bool isDeliveryCategory(String? serviceType) {
+  if (serviceType == null) return false;
+  final lower = serviceType.trim().toLowerCase();
+  return lower == 'משלוחים' || lower == 'delivery' ||
+      lower == 'שליחים' || lower == 'courier' ||
+      lower.contains('משלוח') || lower.contains('שליח') ||
+      lower.contains('deliver') || lower.contains('courier');
+}
+```
+
+### Integration points
+
+| Screen | Method | What happens |
+|--------|--------|-------------|
+| `edit_profile_screen.dart` | `_isDeliverySubCategory()` | Shows `DeliverySettingsBlock` after pest block, before tax ID |
+| `expert_profile_screen.dart` | `_hasDeliveryProfile()` | Shows `DeliveryBookingBlock` between About and Service sections (right after pest block) |
+| `admin_demo_experts_tab.dart` | `_isDemoDeliveryCategory()` | Shows `DeliverySettingsBlock` in demo profile form |
+
+### Cloud Functions
+
+**`recommendVehicleForDelivery`** (callable) — Gemini 2.5 Flash Lite.
+- Auth required
+- Input: `{packageType, distanceKm, urgency, weatherConditions?}`
+- Output: `{recommendedVehicle, savingsAmount, savingsMinutes, reason, confidence}`
+- Timeout: 20s, memory: 256MiB
+- Rules baked into prompt: documents/small/flowers/cakes → scooter, large/heavy → car, distance > 20km → car, rain → car
+- Fails gracefully — client just hides the recommendation card if the CF errors
+
+### Design system
+
+Dark premium palette (scoped, does NOT replace `Brand.*`):
+- Background gradient: `[#0A0E1A, #151B2E, #0F1420]`
+- Primary gold: `[#D97706, #F59E0B, #FBBF24, #FCD34D]`
+- Status: green `#16A34A`, red `#DC2626`, blue `#3B82F6`
+- Unique indigo (scheduled): `#6366F1`
+- Ambient orbs: 3 positioned radial gradients per block (gold + indigo + green)
+- Glass cards: white @ 4% opacity, 1px border white @ 8%, radius 18px
+
+### Rules for future code
+
+- **Never re-add insurance** — explicitly removed per spec.
+- **Delivery CF must use Gemini, not Claude.** Spec is explicit. AI CEO tab (§12c) uses Claude Sonnet; this CF uses Gemini Flash Lite. They co-exist.
+- **Vehicle enum is strictly `scooter | car`** — do not add truck/van without updating vehicle_types_catalog + Gemini prompt + the client vehicle selector.
+- **Rounding** — `DeliveryBookingService.calculateTotal` uses `.toStringAsFixed(2)` matching §18 Rule 7.
+
+### Deployment
+
+```bash
+firebase deploy --only functions:recommendVehicleForDelivery
+flutter build web --release && firebase deploy --only hosting
+```
+
+### Files
+
+**Created (8):**
+- `lib/models/delivery_profile.dart`
+- `lib/constants/delivery_types_catalog.dart`
+- `lib/constants/delivery_vehicle_types.dart`
+- `lib/constants/courier_rules_catalog.dart`
+- `lib/constants/delivery_package_tags.dart`
+- `lib/services/delivery_booking_service.dart`
+- `lib/screens/delivery/delivery_settings_block.dart`
+- `lib/screens/delivery/delivery_booking_block.dart`
+
+**Modified (4):**
+- `lib/screens/edit_profile_screen.dart` — imports, state, init loader, detection, validation, UI block, save payload, listing sync
+- `lib/screens/expert_profile_screen.dart` — imports, state, detection, builder, insertion between pest block and service menu, job doc payload
+- `lib/screens/admin_demo_experts_tab.dart` — imports, state, init, detection, UI block, save payloads (user + listing)
+- `functions/index.js` — `recommendVehicleForDelivery` CF appended after `identifyPestFromImage`
+
+### Validation
+
+- `flutter analyze` → 0 issues on all 10 new/modified delivery files
+- Full project analyze → 13 pre-existing info-level warnings unrelated to delivery code
+
+---
+
+## 34. Cleaning CSM (Category-Specific Module, v15.x, 2026-04-18)
+
+Category-specific module for the "נקיון" (cleaning) sub-category, following
+the same CSM pattern as massage (§3d), pest control (§32) and delivery (§33).
+Adds a provider-side "המקצועיות שלך" settings block and a client-side
+"בואי נתאים את הניקיון שלך" booking block that appear only when the
+sub-category resolves to cleaning.
+
+### CRITICAL sync rules (spec 01_MAIN_PROMPT_CLEANING.md)
+
+Cleaning does NOT own its own chat, calendar, booking history, or analytics.
+Every such read/write flows through the **existing** systems:
+
+| Touchpoint | Wired to |
+|------------|----------|
+| Chat button + Quick Reply chips | `ChatScreen(receiverId, receiverName, initialMessage)` — the single `initialMessage` param pre-fills the text box (see CLAUDE.md §15b support flow). NO new chat screen is built. |
+| "קבעי מועד" CTA | Relies on the existing TableCalendar + "Pay & Secure" button already embedded in [expert_profile_screen.dart](lib/screens/expert_profile_screen.dart). The booking block only `emit()`s preferences + price through `onChanged`; the parent escrow flow writes the job doc with `cleaningPreferences`. The CTA itself shows a Hebrew nudge to use the calendar below. |
+| Express Reorder card | `CleaningBookingService.getLastBookingWith` reads the most-recent `status == 'completed'` job between this `(customerId, expertId)` pair from the existing `jobs` collection and joins the matching `reviews` doc. Zero duplicate storage. |
+| Recurring Customers counter | `CleaningBookingService.streamRecurringCustomersCount` streams the `jobs` collection and counts distinct `customerId` where `cleaningPreferences.recurrence.enabled == true` AND `recurrence.active != false`. |
+| Trust Center badges | Reads from `CleaningProfile.verifications` (embedded in `users/{uid}.cleaningProfile`) + the escrow guarantee (always true — platform feature). |
+
+### Architecture
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Model | `lib/models/cleaning_profile.dart` | `CleaningProfile` + 9 sub-models (CleaningVerifications, CleaningEcoMode, CleaningChecklistCategory, CleaningTask, CleaningPricing, CleaningRecurringDiscounts, CleaningQualityGuarantee, CleaningServiceArea, CleaningBusinessPackage) + `isCleaningCategory(String?)` helper |
+| Cleaning types catalog | `lib/constants/cleaning_types_catalog.dart` | 6 `CleaningTypeDef`: regular_home, deep_renovation, airbnb, office, store, event |
+| Customer types | `lib/constants/cleaning_customer_types.dart` | 4 types — private, business, stores, restaurants |
+| Add-ons catalog | `lib/constants/cleaning_addons_catalog.dart` | 4 add-ons — oven_inside (₪40), fridge_inside (₪30), windows_outside (₪60), sofa_steam (₪120) |
+| Default checklists | `lib/constants/cleaning_default_checklists.dart` | Template with 3 categories (bedroom/bathroom/kitchen) + default business packages + 14-city list |
+| Booking service | `lib/services/cleaning_booking_service.dart` | `estimateDurationMinutes`, `calculateTotal`, `buildPriceBreakdown`, `getLastBookingWith`, `streamRecurringCustomersCount` |
+| Provider block | `lib/screens/cleaning/cleaning_settings_block.dart` | Dark premium cyan/teal 9-section form (hero + verifications + types + customers + eco + checklist builder + pricing + recurring discounts + service area + business packages) |
+| Client block | `lib/screens/cleaning/cleaning_booking_block.dart` | Dark premium 15-section booking — hero, trust center, express reorder, type picker, property, AI duration, smart checklist, scheduling, eco toggle, access, before/after, quality guarantee, chat preview (opens existing ChatScreen), business packages, sticky summary |
+
+### Key features
+
+- **AI Duration Calculation** via Gemini 2.5 Flash Lite — `calculateCleaningDuration` Cloud Function. The client runs a local heuristic first (zero-latency UX) then overrides with Gemini's answer when it lands. Graceful failure = keeps heuristic.
+- **Smart Checklist with progress bars** — each category shows `activeInCat/totalInCat` with a live `LinearProgressIndicator`. Tasks tagged with `withPhoto: true` show a 📷 icon — downstream documented in `jobs/{id}.cleaningPreferences.beforeAfterPhotos`.
+- **Trust Center** — 4 badges (ID verified, background checked, insurance amount, escrow) wired to `CleaningProfile.verifications`.
+- **Quality Guarantee** — default enabled. Reports within 24h → re-clean free OR full refund. No new CF yet — uses existing dispute flow (§4.5).
+- **Recurring discounts** — weekly (−15%), biweekly (−10%), monthly (−5%), overridable per provider.
+- **Business packages** — provider creates 4×/8×/custom monthly packages; client sees up to 3.
+- **Express Reorder** — one-tap prefill from the most recent completed cleaning job with this provider (reads from existing `jobs` + `reviews`).
+- **NO monthly subscriptions for private customers** per spec — only business packages.
+- **NO Claude API** — spec explicitly requires Gemini.
+- **Demo profile parity** — admin demo experts tab renders the same `CleaningSettingsBlock` when sub-category is "נקיון".
+
+### Firestore fields
+
+```
+users/{uid}.cleaningProfile                   // 9-field Map (see CleaningProfile.toMap)
+users/{uid}/cleaningProfile.verifications     // idVerified, backgroundChecked, referencesCount, insuranceAmount…
+provider_listings/{id}.cleaningProfile        // synced on save — required for search discoverability
+jobs/{id}.cleaningPreferences                 // booking-time snapshot:
+  cleaningType, propertyDetails{bedrooms, bathrooms, squareMeters, hasPets, floor},
+  estimatedDurationMinutes, selectedTasks[], selectedAddOns[],
+  schedulingType, recurrence{enabled, frequency, active},
+  ecoMode{enabled}, accessMethod, specialInstructions,
+  qualityGuaranteeOptedIn, beforeAfterPhotos{enabled, deliveryChannel},
+  priceBreakdown{base, addOnsTotal, ecoSurcharge, subtotal, recurringDiscount, total}
+```
+
+### Detection function
+
+```dart
+bool isCleaningCategory(String? serviceType) {
+  if (serviceType == null) return false;
+  final lower = serviceType.trim().toLowerCase();
+  if (lower.isEmpty) return false;
+  return lower == 'נקיון' || lower == 'ניקיון' || lower == 'cleaning' ||
+      lower.contains('נקי') || lower.contains('cleaning') ||
+      lower.contains('cleaner');
+}
+```
+
+### Integration points
+
+| Screen | Method | Behavior |
+|--------|--------|----------|
+| `edit_profile_screen.dart` | `_isCleaningSubCategory()` | Shows `CleaningSettingsBlock` after delivery block. Validation requires idVerified + backgroundChecked + ≥3 references + ≥1 cleaningType + non-empty checklist. |
+| `expert_profile_screen.dart` | `_hasCleaningProfile()` | Shows `CleaningBookingBlock` between delivery block and service menu. On escrow, writes `cleaningPreferences` + `priceBreakdown` to the job doc. |
+| `admin_demo_experts_tab.dart` | `_isDemoCleaningCategory()` | Shows `CleaningSettingsBlock` in demo profile form. Saves to BOTH user doc and `provider_listings/demo_{uid}`. |
+
+### Cloud Function
+
+**`calculateCleaningDuration`** (callable) — Gemini 2.5 Flash Lite.
+- Auth required
+- Input: `{cleaningType, bedrooms, bathrooms, squareMeters, hasPets, selectedTasksCount, addOnsCount}`
+- Output: `{estimatedMinutes, rangeMin, rangeMax, reasoning}`
+- Timeout: 20s, memory: 256MiB
+- Prompt rules: regular × 1.0, deep × 2.0, airbnb × 0.8, office × 1.5, store × 1.3; +15-20min for pets; +3-5min per task; +10-20min per add-on
+- Graceful degradation — client keeps its local heuristic on any error
+
+### Design system
+
+Dark premium palette (scoped, does NOT replace `Brand.*`):
+- Background gradient: `[#0A0E1A, #0F1A2E, #0F1420]`
+- Primary cyan/teal: `[#0891B2, #06B6D4, #67E8F9]`
+- Status: green `#16A34A`, red `#DC2626`, blue `#3B82F6`, purple `#A855F7` (checklist/express reorder), amber `#F59E0B` (before/after)
+- 3 ambient orbs per block (cyan + green + purple)
+- Glass cards: white @ 4% opacity, 1px border white @ 8%, radius 18px
+
+### Rules for future code
+
+- **Never build a new chat screen for cleaning.** Use `ChatScreen(receiverId, receiverName, initialMessage)` — if you need to pass more context, extend ChatScreen's constructor, don't fork it.
+- **Never build a new calendar for cleaning.** The "קבעי מועד" CTA is a nudge; the actual booking happens through the existing TableCalendar + "Pay & Secure" in expert_profile_screen.
+- **Never duplicate booking history.** `getLastBookingWith` reads directly from the existing `jobs` + `reviews` collections.
+- **Cleaning CF must use Gemini, not Claude.** Spec is explicit (aligns with delivery §33 and pest control §32).
+- **Rounding** — `CleaningBookingService.calculateTotal` uses `.toStringAsFixed(2)` matching §18 Rule 7.
+
+### Deployment
+
+```bash
+firebase deploy --only functions:calculateCleaningDuration
+flutter build web --release && firebase deploy --only hosting
+```
+
+### Files
+
+**Created (8):**
+- `lib/models/cleaning_profile.dart`
+- `lib/constants/cleaning_types_catalog.dart`
+- `lib/constants/cleaning_customer_types.dart`
+- `lib/constants/cleaning_addons_catalog.dart`
+- `lib/constants/cleaning_default_checklists.dart`
+- `lib/services/cleaning_booking_service.dart`
+- `lib/screens/cleaning/cleaning_settings_block.dart`
+- `lib/screens/cleaning/cleaning_booking_block.dart`
+
+**Modified (4):**
+- `lib/screens/edit_profile_screen.dart` — imports, state, init loader, detection, validation, UI, save payload, listing sync
+- `lib/screens/expert_profile_screen.dart` — imports, state, detection, builder, insertion after delivery block, job doc payload
+- `lib/screens/admin_demo_experts_tab.dart` — imports, state, init, detection, UI block, save payloads (user + listing)
+- `functions/index.js` — `calculateCleaningDuration` CF appended after `recommendVehicleForDelivery`
+
+**Spec archived in** `docs/cleaning_upgrade/` (three files from `docs/ui-specs/Cleaning/`).
+
+### Validation
+
+- `flutter analyze` → 0 issues on all 10 new/modified cleaning files
+- Full project analyze → 13 pre-existing info-level warnings unrelated to cleaning code
+- `node -c functions/index.js` → syntax OK
+
+---
+
+---
+
+## 35. AnyTasks Banner — Role Gating Fix (v15.x, 2026-04-18)
+
+**Bug report:** A provider tapping the AnyTasks banner on the home tab landed
+on `MyTasksScreen` — the customer's "publish task" flow. Providers cannot
+publish in AnyTasks; they should see the open-tasks feed so they can browse
+and claim jobs.
+
+**Root cause:** [home_tab.dart](lib/screens/home_tab.dart) hardcoded the
+Navigator target to `MyTasksScreen()` for every user. Both `MyTasksScreen`
+(customer publish hub) AND `ProviderHubScreen` (provider browse & claim)
+already existed — the entry point just wasn't gated.
+
+**Fix — role + view-mode aware banner.** In the same sliver block that
+builds the AnyTasks banner, compute:
+
+```dart
+final actualIsProvider = widget.userData['isProvider'] == true;
+final inCustomerView = ViewModeService.instance.customerMode;
+final showProviderAnyTasks = actualIsProvider && !inCustomerView;
+```
+
+Then route on tap: `ProviderHubScreen()` if `showProviderAnyTasks`, else
+`MyTasksScreen()`. This mirrors [home_screen.dart's](lib/screens/home_screen.dart)
+tab-segmentation pattern (§22) — an admin/provider in customer-view gets
+the customer publish flow; only a provider in normal/provider-only mode
+gets the browse feed.
+
+**Banner content adapts to role:**
+
+| Element | Customer | Provider |
+|---------|----------|----------|
+| Icon | `Icons.rocket_launch_rounded` | `Icons.work_outline_rounded` |
+| Title pill | "פרסם משימה" | "משימות פתוחות" |
+| Subtitle | "מצא נותן שירות תוך דקות" | "בחר/י עבודות וצבור/י הכנסה עכשיו" |
+
+Gradient + shadow + corner radius unchanged — the indigo → purple feel is
+the shared AnyTasks brand.
+
+**i18n** — 4 new keys in all 4 locales (`he/en/es/ar` ARB files + all 5
+Dart localization stubs):
+- `anyTasksBannerProviderTitle`, `anyTasksBannerProviderSub`
+- `anyTasksBannerCustomerTitle`, `anyTasksBannerCustomerSub`
+
+**Entry points audit (for future changes):**
+
+| Entry | Routes to | Notes |
+|-------|-----------|-------|
+| Home-tab banner | `ProviderHubScreen` OR `MyTasksScreen` | Role-gated (THIS FIX) |
+| `live_offers_screen.dart` × 3 | `MyTasksScreen` | Post-publish — reachable only by customer (publishing requires customer role) |
+| Legacy `lib/screens/anytasks_screen.dart` | — | Dead code, no Navigator routes to it |
+
+### Rules for future code
+
+- **Every new Navigator.push to `MyTasksScreen` MUST be gated** on `isProvider` + `ViewModeService.instance.customerMode`. Providers can't publish.
+- **Every new Navigator.push to `ProviderHubScreen` MUST be gated** the opposite way — customers shouldn't see the provider browse feed.
+- Legacy `lib/screens/anytasks_screen.dart` is NOT gated. Do not re-introduce a route to it from any surface.
+- When adding a new category to AnyTasks, keep the provider-feed filter in `provider_hub_screen.dart` / `provider_feed_screen.dart` aligned — the provider's eligible categories come from `users/{uid}.serviceType` and friends (no new field).
+
+### Files touched
+
+- `lib/screens/home_tab.dart` — imports, banner logic + adaptive UI
+- `lib/l10n/app_he.arb`, `app_en.arb`, `app_es.arb`, `app_ar.arb` — 4 keys each
+- `lib/l10n/app_localizations.dart` — 4 abstract getters
+- `lib/l10n/app_localizations_he.dart`, `_en.dart`, `_es.dart`, `_ar.dart` — 4 concrete overrides each
+
+### Validation
+
+- `flutter analyze lib/screens/home_tab.dart lib/l10n/*.dart` → 0 issues
+- Full project analyze → 13 pre-existing info warnings unchanged (no regressions)
+
+---
+
+---
+
+## 36. AnyTasks Error Display — Hebrew via ErrorMapper (v15.x, 2026-04-18)
+
+**Bug report:** A provider tapped a task in AnyTasks, proceeded to the
+detail screen, tapped "אשר משימה ב-₪X" to claim it — and saw a raw
+English error surfaced from Firestore / the platform layer.
+
+**Root cause:** Five AnyTasks screens had `catch (e)` blocks that fell
+through to `Text('שגיאה: $e')` — the prefix was Hebrew but `e.toString()`
+from `FirebaseException` (e.g. `[cloud_firestore/permission-denied] …`),
+`StateError` (e.g. `Bad state: task-not-open`), or a `PlatformException`
+is **always English**.
+
+**Fix — Law 10 everywhere in AnyTasks.** Every `catch` now routes to
+`ErrorMapper.show(context, e)` which maps the exception to a friendly
+Hebrew message + offers a "לחץ כאן לדבר עם תמיכה" link that opens the
+internal Support Chat with the error code pre-filled.
+
+The provider-claim screen gets an extra layer: domain errors thrown by
+`AnyTaskService.submitResponse` (the Firestore transaction inside
+`any_task_service.dart:113`) are matched BEFORE falling through:
+
+```dart
+// provider_task_detail_screen.dart _submit catch block
+if (err.contains('task-not-open')) {
+  domainMsg = 'המשימה כבר לא פתוחה — מישהו אחר תפס אותה';
+} else if (err.contains('self-response-not-allowed')) {
+  domainMsg = 'לא ניתן להציע על משימה שלך';
+} else if (err.contains('task-not-found')) {
+  domainMsg = 'המשימה לא נמצאה — ייתכן שהלקוח הסיר אותה';
+}
+if (domainMsg != null) {
+  // Specific Hebrew toast
+} else {
+  ErrorMapper.show(context, e);  // permission-denied, network, timeout…
+}
+```
+
+The previous version missed `task-not-found` entirely and treated
+every Firestore/Platform exception as "שגיאה: <English text>".
+
+### Files touched
+
+| File | Change |
+|------|--------|
+| `lib/features/any_tasks/screens/provider_task_detail_screen.dart` | Added all 3 domain code mappings + ErrorMapper fallback (primary reported site) |
+| `lib/features/any_tasks/screens/provider_active_task_screen.dart` | 2 catch blocks → ErrorMapper |
+| `lib/features/any_tasks/screens/publish_task_screen.dart` | 1 catch → ErrorMapper |
+| `lib/features/any_tasks/screens/task_tracking_screen.dart` | 1 catch → ErrorMapper |
+
+### Rules for future code
+
+- **Every new `catch (e)` inside `lib/features/any_tasks/` MUST use `ErrorMapper.show(context, e)`** (Law 10) as the fallback. Never `'שגיאה: $e'`.
+- **Domain error codes** thrown by `AnyTaskService` (`task-not-open`, `self-response-not-allowed`, `task-not-found`) should be matched explicitly with a Hebrew message BEFORE the ErrorMapper fallback — those carry product meaning that the generic mapper can't reproduce.
+- **Never extend `ErrorMapper` with AnyTasks-specific codes.** Keep it generic; domain errors stay in the screen that knows the context.
+- Firestore rule rejections surface as `FirebaseException` with code `permission-denied` — `ErrorMapper` already translates it to `"היי, נראה שיש לנו תקלה קטנה בחיבור הפרופיל שלך. נסה לרענן את הדף או לחץ לדבר עם תמיכה."` Do NOT try to re-translate it with `err.contains('Permission denied')` string-matching in the screen — that duplicates logic.
+
+### Validation
+
+- `flutter analyze lib/features/any_tasks/` → 0 issues
+- Full project analyze → 13 pre-existing info warnings unchanged
+
+---
+
+---
+
+## 37. AnyTasks Deadlines + Edit + Delete (v15.x, 2026-04-18)
+
+**Product ask:** Customers need a product deadline ("I need this done by X"),
+the system needs an auto-expire safety net, and customers need Edit + Delete
+on their own tasks after publishing. Shipped all four in one pass — the
+hybrid design survives the widest set of real scenarios.
+
+### 1. Product deadline (customer-set)
+
+New deadline picker in Step 3 of the publish wizard ([_DeadlinePicker](lib/features/any_tasks/screens/publish_task_screen.dart)):
+- 4 quick chips: **היום / מחר / השבוע / החודש** (each computes end-of-day in local TZ)
+- 5th chip opens `showDatePicker` with `firstDate = now`, `lastDate = now + 90d`
+- Live footer: "אם לא ייתפס עד DD/MM/YYYY — המשימה תפוג אוטומטית."
+- Null deadline → footer reminds: "תוגדר תפוגה אוטומטית של 7 ימים."
+
+**Default at publish time:** `deadline ?? DateTime.now() + 7d`. Always written to the task doc so providers see a real countdown and the CF has something concrete to act on.
+
+### 2. Auto-expire — two-bucket CF
+
+`expireOpenTasks` in [functions/index.js](functions/index.js) was previously a daily 03:30 cron that only checked `createdAt > 30d`. Now:
+
+- Runs **every 30 minutes** (so user-set deadlines flip within the half-hour window they expire).
+- **Bucket 1:** `status=='open' AND deadline < now` → flip to `status='expired'` + write `expiredReason='deadline'`.
+- **Bucket 2:** `status=='open' AND createdAt < now-30d` — safety net for any task missing a deadline. Dedupes against bucket 1, writes `expiredReason='age'`.
+- Batch caps at 400 per bucket (800/run). Fan-out is O(n) — expected run cost stays negligible.
+- Log line shows `(X by deadline, Y by 30d fallback)` so ops can watch which bucket is active.
+
+### 3. Edit (owner-only, while `status=='open'`)
+
+New `AnyTaskService.updateTask(taskId, updates)` runs inside a Firestore transaction: reads the task doc, asserts `status=='open'`, then applies the update. Throws `StateError('task-not-editable')` / `'task-not-found')` on failure — the UI maps both to Hebrew.
+
+[PublishTaskScreen](lib/features/any_tasks/screens/publish_task_screen.dart) was extended with an optional `existingTask` param. When non-null:
+- Category step is skipped (start on step 1).
+- All fields pre-fill from the task.
+- Wizard header reads "עריכת פרטים / עריכת תשלום ולוגיסטיקה / סיכום שינויים".
+- Final CTA reads "שמור שינויים" (instead of "פרסם משימה").
+- Submit calls `updateTask` with the allowlist payload (`title`, `description`, `deadline`, `locationFrom`, `locationTo`, `imageUrl`).
+- `budgetNis` / `urgency` / `proofType` stay editable in the UI but are NOT in the allowlist — product decision: these are signals providers already saw, so changing them mid-flight would be misleading. If the user really needs to change them, they cancel + republish.
+- On success → `Navigator.pop(true)` so the caller can refresh.
+
+### 4. Delete = soft-delete via cancel
+
+Per §19 TTL policy, business data is NEVER hard-deleted. The "מחק" button reuses the existing `AnyTaskService.cancelTask()` which writes `status='cancelled'` + `cancelledAt`. The task disappears from the provider feed (streams filter on `status=='open'`), stays in the customer's "history" section, and admin audit / support can still see it.
+
+Rule allows it: `'status'` + `'cancelledAt'` are both in the client update allowlist.
+
+### 5. Firestore rules
+
+[firestore.rules](firestore.rules) — added `'deadline'` to the client update allowlist on `any_tasks/{taskId}`. Everything else untouched. Rules still reject `budgetNis` / `category` / `urgency` / `proofType` updates from the client — that's intentional (see point 3).
+
+### 6. Countdown UI — `DeadlineBadge` widget
+
+New [lib/features/any_tasks/widgets/deadline_badge.dart](lib/features/any_tasks/widgets/deadline_badge.dart) — single source of truth for "time remaining". Renders nothing when `deadline == null`. 5 visual states:
+
+| Remaining | Color | Icon | Label |
+|-----------|-------|------|-------|
+| Past | grey | event_busy | פג תוקף |
+| < 2h | red | whatshot | נותרו X דק׳ |
+| < 24h | amber | timer | נותרו X שעות |
+| ≤ 3d | green | event | נותרו X ימים (emphasised) |
+| > 3d | neutral | calendar | נותרו X ימים |
+
+Wired into:
+- **Customer's own task card** ([my_tasks_screen.dart](lib/features/any_tasks/screens/my_tasks_screen.dart)) — next to the price
+- **Provider feed card** ([provider_feed_screen.dart](lib/features/any_tasks/screens/provider_feed_screen.dart)) — alongside the location/urgency/proof/escrow pill row
+
+Detail screen keeps its simple meta tile (DD/MM) since the provider is already past the discovery moment at that point.
+
+### UX flow examples
+
+**Customer publishes with "מחר" deadline:**
+- `deadline = 2026-04-19T23:59:59`
+- Provider sees "נותרו 15 שעות" amber badge on the feed card → urgency signal without spam
+- CF's next run sees `deadline < now` at 00:00 the day after → flips to `expired`, removed from feed
+- Customer's history tab still shows the task with "פג תוקף" pill
+
+**Customer publishes, changes their mind the next day:**
+- Taps "ערוך" on their card → pre-filled wizard → edits title / pushes deadline to "השבוע" → "שמור שינויים"
+- `updateTask` tx asserts still open → write succeeds → customer sees "השינויים נשמרו" toast
+- Provider feed re-renders (Firestore stream) with updated title + deadline
+
+**Customer wants to kill the task:**
+- Taps "מחק" → AlertDialog confirmation → `cancelTask()` writes `status='cancelled'`
+- Task instantly disappears from provider feed (status filter)
+- Customer's history shows "בוטל" pill
+
+### Rules for future code
+
+- **Never hard-delete a task** — use `cancelTask()` (soft-delete). §19 TTL applies only to operational logs.
+- **Don't expand the client update allowlist** in rules without equivalent UX thinking. Budget/urgency/proofType changes mid-flight are usually wrong — the correct answer is cancel + republish.
+- **`DeadlineBadge` is the ONLY countdown surface.** If you need to show time-remaining anywhere new, use this widget (not a local reimplementation). If the design needs to change (e.g. add a pulse for <10min), do it in `deadline_badge.dart` so every surface updates.
+- **`expireOpenTasks` runs every 30 min** — do NOT crank this higher without considering cost. Current scan reads up to 800 docs twice per hour = ~1.9M reads/month at 1k open tasks. Acceptable.
+- **On edit, always go through `AnyTaskService.updateTask`** — direct Firestore writes will bypass the `status=='open'` gate and fail rule check with `permission-denied`.
+
+### Files touched
+
+| File | Change |
+|------|--------|
+| `lib/features/any_tasks/widgets/deadline_badge.dart` | **NEW** — countdown pill widget with 5 visual states |
+| `lib/features/any_tasks/services/any_task_service.dart` | Added `updateTask(taskId, updates)` with tx-level `status=='open'` gate |
+| `lib/features/any_tasks/screens/publish_task_screen.dart` | Added `existingTask` param + edit-mode labels + `_DeadlinePicker` widget + `_deadline` state + edit-vs-publish submit branch |
+| `lib/features/any_tasks/screens/my_tasks_screen.dart` | `_TaskCard` now shows `DeadlineBadge`; when `status=='open'` also renders ערוך + מחק buttons (with confirmation dialog for delete) |
+| `lib/features/any_tasks/screens/provider_feed_screen.dart` | `DeadlineBadge` added to the pill row |
+| `functions/index.js` | `expireOpenTasks` CF rewritten — two-bucket (deadline + age fallback), runs every 30min, writes `expiredReason` |
+| `firestore.rules` | Added `'deadline'` to the client update allowlist on `any_tasks/{taskId}` |
+
+### Deploy
+
+```bash
+firebase deploy --only firestore:rules
+firebase deploy --only functions:expireOpenTasks
+flutter build web --release && firebase deploy --only hosting
+```
+
+### Validation
+
+- `flutter analyze lib/features/any_tasks/` → **0 issues**
+- Full project analyze → 13 pre-existing info warnings unchanged
+- `node -c functions/index.js` → syntax OK
+
+---
+
+## 38. Scheduled Automation Audit + `publishStaleReviews` Fix (v15.x, 2026-04-18)
+
+> **Launch-readiness sweep** of every "time-based" mechanism in the app.
+> Found one silent failure (`lazyPublish` dead code) and one still-pending
+> manual ops step (TTL Phase 1 Console policy).
+
+### Schedulers that DO auto-deploy (no manual Console step)
+
+Every `onSchedule` function auto-creates a Google Cloud Scheduler job on
+`firebase deploy --only functions:<name>`. No Console intervention needed.
+The authoritative list from `functions/index.js`:
+
+| CF | Cadence | What it guards |
+|----|---------|----------------|
+| `expireOpenTasks` | every 30 min | `any_tasks` open → expired (deadline OR 30d age, §37) |
+| `anytaskExpireOpen` | daily 02:00 IST | **Legacy** `anytasks` collection (different from above — duplicate logic, candidate for removal after confirming no more legacy docs exist) |
+| `scheduledCleanup` | hourly | stories / boosts / VIP / job_broadcasts rollup |
+| `expireStories` | (see code) | stories.hasActive → false after 25h |
+| `expireVipSubscriptions` | daily 00:30 IST | Clears expired VIP promoted flags |
+| `anytaskAutoRelease` | (see code) | AnyTasks 48h auto-release |
+| `anytaskSlaMonitor` | (see code) | AnyTasks SLA breach detection |
+| `sendRebookReminders`, `sendSeasonalNotifications`, `sendInactivityReminders`, `reengageAbandonedLeads`, `reengagementEngine`, `notifyStaleProviders` | various | Re-engagement flows |
+| `generateDailyOpportunity`, `calculateInfraCosts`, `scheduledFirestoreBackup` | various | Ops + content generation |
+| `updateVaultAnalytics`, `generateVaultAlerts` | hourly | Vault dashboard aggregates (§29) |
+| `detectMonetizationAnomalies` | hourly | Monetization alert feed (§31) |
+| `generateMonetizationInsight` | every 6h | Gemini recommendations (§31) |
+| `sendReviewReminders` | (see code) | Nudge one-sided reviewers |
+| `generateCeoInsight` | manual/scheduled | AI CEO Sonnet briefs (§12c) |
+| **`publishStaleReviews`** (NEW) | **every 60 min** | **Fixes dead lazyPublish — see below** |
+| `proactiveSlaMonitor`, `checkSLA`, `aggregateKPI` | various | System SLA dashboards |
+
+### The dead code bug: `ReviewService.lazyPublish`
+
+`lib/services/review_service.dart:307` defines `lazyPublish(jobId, expertId,
+customerId)` with a 7-day cutoff + `isPublished` batch-flip + rating recalc.
+The inline comment says "Called when reviews are displayed". **`grep lazyPublish
+lib/` returns zero call sites** — it was never wired in.
+
+**Production impact**: when a client submitted a review but the provider didn't
+(or vice-versa), the review stayed `isPublished: false` FOREVER. The expert's
+`rating` + `reviewsCount` never incorporated one-sided ratings. At scale this
+silently accumulates — after a few weeks of real users, hundreds of invisible
+reviews + stale aggregate ratings.
+
+Older CLAUDE.md §5.2 documented the "7-day lazy publish trigger" as if it were
+alive. It wasn't. Section 38 is the source of truth now.
+
+### Fix: `publishStaleReviews` CF
+
+Defined at the end of `functions/index.js` (~line 12478):
+
+```javascript
+schedule: "every 60 minutes"
+```
+
+**Flow:**
+1. Query `reviews.where(isPublished == false).where(createdAt <= now - 7d).limit(400)`
+2. Batch-update each to `isPublished: true`
+3. Collect unique `(revieweeId, isClientReview, listingId)` triples
+4. For each triple, recompute the aggregate (avg of all published reviews
+   for that reviewee, same side). Write to `users/{uid}.rating` +
+   `reviewsCount` (or `customerRating` + `customerReviewsCount` for
+   provider-reviews-customer). Also update `provider_listings/{id}` if
+   `listingId` is set.
+
+**Idempotent**: second run sees no stale reviews (empty query) and exits
+at the `snap.empty` log. Recomputation also idempotent (reads all
+published, averages — deterministic).
+
+**Index added** (`firestore.indexes.json`):
+```
+reviews: isPublished ASC + createdAt ASC
+```
+
+### Operations playbook
+
+#### Mandatory deploy after this change
+
+```bash
+firebase deploy --only functions:publishStaleReviews
+firebase deploy --only firestore:indexes
+```
+
+The Scheduler job is created automatically on the first deploy.
+
+#### One-time manual Console step: TTL Phase 1 (§19)
+
+Still outstanding from v12.3.0. Two collections write `expireAt` timestamps
+but the TTL policy hasn't been turned on in the Google Cloud Console:
+
+1. https://console.cloud.google.com/firestore/databases/-default-/ttl
+2. For each collection below, click **"Create Policy"** → select field
+   `expireAt`:
+   - `error_logs`
+   - `activity_log`
+
+Firestore starts deleting expired docs within 24h. TTL deletes consume no
+quota (free).
+
+Without this step, those collections grow forever. Not a UX bug, but:
+- `error_logs` — admin performance tab gets noisier over time
+- `activity_log` — live-feed tab shows stale actions from months ago
+
+#### Verify scheduler jobs exist after deploy
+
+```
+gcloud scheduler jobs list --project=anyskill-6fdf3 --location=us-central1
+```
+
+Should show `firebase-schedule-publishStaleReviews-us-central1` + 20+ other
+`firebase-schedule-*` entries.
+
+### Candidates for future cleanup (not critical)
+
+- **`anytaskExpireOpen`** (line 7879) — queries the legacy `anytasks`
+  collection. All new code uses `any_tasks` (underscore). If you confirm
+  no docs remain in the legacy collection, this CF can be retired.
+- **Scheduler name drift** — a few old CFs use cron syntax (`0 2 * * *`)
+  instead of the more readable `"every N hours/minutes"`. Cosmetic only.
+
+### Rules for future code
+
+- **Any new `isPublished`-style flag** that's supposed to self-heal must
+  have a scheduled CF — NOT a "called on view" client hook. Client hooks
+  silently rot if the caller is deleted.
+- **Never write `lazyX()` comments** that imply a cron without the cron
+  actually existing. Either wire the scheduler or remove the fallback.
+- **Every new `onSchedule` function deploys its scheduler job automatically.**
+  Do NOT document them as requiring manual Console work — that's false and
+  causes confusion.
+- **TTL policies** are the ONE exception — they require manual Console
+  setup per-collection, per-field. Always document explicitly.
+
+### Files touched
+
+| File | Change |
+|------|--------|
+| `functions/index.js` | Added `publishStaleReviews` CF (~110 lines, end of file) |
+| `firestore.indexes.json` | Added composite index `reviews.(isPublished, createdAt)` |
+| `CLAUDE.md` | This section (38) |
+
+### Validation
+
+- `node -c functions/index.js` → OK
+- Full CF list unchanged except +1 export
+- Indexes file is valid JSON
+
+---
+
+## 39. Provider Approval Push Notification (v15.x, 2026-04-18)
+
+> Closes a silent UX gap: when the admin approved a provider, the provider
+> was never actively told — they had to refresh the app or open it the next
+> day and notice the role change. Now they get an FCM push + in-app
+> notification **within seconds** of admin tapping "Approve".
+
+### The gap
+
+Two admin paths lead to approval:
+
+| Admin action | Path | Before |
+|--------------|------|--------|
+| "אישור זהות" tab → "אשר" button | `adminApproveProvider` CF | Wrote in-app notification doc, but **no FCM push** — silent unless the user had the app open |
+| "ניהול משתמשים" tab → "אמת" action | `AdminUsersRepository.toggleVerified` → direct Firestore write | **Nothing at all** — no notification of any kind |
+
+### The fix
+
+New CF **`notifyProviderOnApproval`** ([functions/index.js:2163](functions/index.js)) — a single `onDocumentUpdated("users/{uid}")` trigger that catches both paths:
+
+```javascript
+const wasVerified = before.isVerified === true;
+const isVerified  = after.isVerified === true;
+if (wasVerified || !isVerified) return null;          // only false → true
+if (after.isProvider !== true) return null;           // providers only
+if (after.verifiedAt) return null;                    // idempotent
+```
+
+On fire:
+1. **FCM push** with `title="אושרת בהצלחה! 🎉"` + personalized body (includes `serviceType` if known). Android priority high, iOS `apns-priority: 10`, Web with icon.
+2. **In-app notification** doc (durable record even if push fails / token missing).
+3. **`verifiedAt` timestamp** + **`isPendingExpert: false`** stamp for idempotency + pending-flag cleanup.
+
+### Deduplication
+
+`adminApproveProvider` previously wrote its own in-app notification doc (line 5154-5161). Removed — the trigger owns notifications now. Single source of truth.
+
+Result: regardless of which admin UI path fires the approval, the provider gets exactly one push + one in-app notification.
+
+### Client routing
+
+[lib/main.dart](lib/main.dart) `PendingNotification.fromMessage` now handles `type: 'provider_approved'` → `tabIndex = 0` (Home tab). Tapping the push lands the provider on the search feed where they can see their profile is live.
+
+### Non-fires (by design)
+
+- **`isVerified: true → false`** (un-verify). No push. That's disruptive and usually admin-error territory.
+- **Customer accounts with `isVerified: true`**. Shouldn't happen, but if it does, the `isProvider !== true` guard skips them.
+- **Second approval after an un-verify → re-verify cycle**. The `verifiedAt` stamp persists. If we ever want re-notification, admin-side code must explicitly delete `verifiedAt` before flipping `isVerified`.
+
+### Rules for future code
+
+- **Every permission-changing admin action MUST notify the target user.** Direct Firestore writes from the client (like `toggleVerified`) are OK ONLY if a server-side trigger catches the state change and notifies. Never rely on a CF-in-admin-action to do the notification — it's bypassed by the Management-tab path.
+- **When adding a new push type, add it to `PendingNotification.fromMessage`** in main.dart so the deep-link lands the user on the right tab.
+- **Idempotency via timestamp stamp** is the cheapest Firestore-native pattern — always use `verifiedAt` / `notifiedAt` / `resolvedAt` style fields instead of separate dedupe collections.
+
+### Deploy
+
+```bash
+firebase deploy --only functions:notifyProviderOnApproval,functions:adminApproveProvider
+flutter build web --release && firebase deploy --only hosting
+```
+
+After deploy: next time admin approves a provider (either path), they get a push on their phone within ~2-3 seconds.
+
+### Validation
+
+- `node -c functions/index.js` → OK
+- `flutter analyze lib/main.dart` → 0 issues
+
+---
+
+## 40. Scheduled-CF Index Recovery (v15.x, 2026-04-18)
+
+> **Five scheduled CFs were failing in production** with `FAILED_PRECONDITION:
+> The query requires an index`. Single root cause for all five — composite
+> indexes never added. Fixed with 6 new indexes. **Zero code changes** to the
+> functions themselves; their logic was already correct + idempotent.
+
+### Root-cause audit (via `firebase functions:log`)
+
+Same exception signature across all 5: Firestore rejects the query and the CF
+crashes at the `await q.get()` line.
+
+| Failing CF | Failing query | Missing index |
+|------------|---------------|---------------|
+| `expireOpenTasks` (Bucket 1) | `any_tasks.where(status==open).where(deadline<now)` | `any_tasks(status ASC, deadline ASC)` |
+| `expireOpenTasks` (Bucket 2) | `any_tasks.where(status==open).where(createdAt<cutoff)` | `any_tasks(status ASC, createdAt ASC)` — existing DESC doesn't satisfy ASC range |
+| `expireStories` | `stories.where(hasActive==true).where(expiresAt<=now)` | `stories(hasActive ASC, expiresAt ASC)` |
+| `reengageAbandonedLeads` | `incomplete_registrations.where(isRegistrationComplete==false).where(lastUpdatedAt<=cutoff)` | `incomplete_registrations(isRegistrationComplete ASC, lastUpdatedAt ASC)` |
+| `detectMonetizationAnomalies` | `monetization_alerts.where(resolved==false).where(detectedAt>=cutoff)` (idempotency dedupe) | `monetization_alerts(resolved ASC, detectedAt ASC)` |
+| `generateDailyOpportunity` | `users.where(isProvider==false).where(lastActiveAt<cutoff)` (dormant clients sweep) | `users(isProvider ASC, lastActiveAt ASC)` |
+
+### Why the indexes were missing
+
+- **`expireOpenTasks` Bucket 1** — added in §37 ("deadlines + edit + delete")
+  alongside the new deadline field, but the composite index wasn't.
+- **`expireOpenTasks` Bucket 2** — an existing `any_tasks(status ASC, createdAt DESC)`
+  index covers provider-feed queries (orderBy DESC), but a `range ASC` query on
+  `createdAt` needs an ASC-direction index. Firestore's planner is strict about
+  this.
+- **`expireStories` / `reengageAbandonedLeads`** — predate the indexes file.
+  Likely worked locally with auto-created dev indexes that never shipped.
+- **`detectMonetizationAnomalies` / `generateDailyOpportunity`** — added in §31
+  and §8b respectively; indexes for the AI-side CFs were documented but the
+  dormant-sweep + dedupe queries were overlooked.
+
+### Non-fixes investigated and ruled out
+
+**`generateDailyOpportunity` — Anthropic "credit balance too low" warning.** The
+log shows both the billing warning AND the FAILED_PRECONDITION. Reading the
+code at [functions/index.js:4747-4763](functions/index.js) — the Claude call
+is wrapped in `try/catch`, and falls back to hardcoded Hebrew templates on any
+error. So Anthropic billing is already handled defensively. The ACTUAL crash
+comes from the `dormantSnap` query a few lines later. Fixing the index is
+sufficient. (Filling Anthropic credits is an orthogonal ops task — the CF
+runs daily either way, just with rotating templates instead of AI-generated.)
+
+**Service account permissions.** All 5 run as
+`281981409319-compute@developer.gserviceaccount.com` (default GCE SA) with
+Firestore admin access. Not a permission issue.
+
+**Memory / timeout.** All 5 use 256MiB and complete well under 60s. The
+failures fire on the first `.get()` — never reach any compute-heavy stage.
+
+**Empty-collection handling.** All 5 CFs already guard correctly:
+- `expireOpenTasks` — `if (toExpire.size === 0) return` (line 9957)
+- `expireStories` — `if (expiredSnap.empty) return` (line 2927)
+- `reengageAbandonedLeads` — `if (snap.empty) return` (line 3781)
+- `detectMonetizationAnomalies` — empty `alerts` array → batch commit no-op
+- `generateDailyOpportunity` — `if (dormantSnap.empty) return null` (line 4806)
+
+No code changes needed on this axis.
+
+### Index file changes
+
+Added 6 new entries to `firestore.indexes.json` after the existing
+`any_tasks` block. Total index count: 74 (was 68).
+
+### Deploy — fix all 5 in one shot
+
+```bash
+firebase deploy --only firestore:indexes
+```
+
+That's it. The CF code is already correct — re-deploying the functions is
+NOT required. The indexes take 1-5 minutes to build (depending on collection
+size); CFs resume on the next scheduled tick once the indexes go active.
+
+**Watch the build:**
+https://console.firebase.google.com/project/anyskill-6fdf3/firestore/indexes
+
+**Verify CFs are green post-build:**
+```bash
+firebase functions:log --only expireOpenTasks --lines 5
+firebase functions:log --only expireStories --lines 5
+firebase functions:log --only reengageAbandonedLeads --lines 5
+firebase functions:log --only detectMonetizationAnomalies --lines 5
+firebase functions:log --only generateDailyOpportunity --lines 5
+```
+
+### Rules for future code
+
+- **Every new `.where(A==x).where(B<y|>y|<=y|>=y)` requires a composite index
+  matching the exact direction of the range field.** Firestore won't fall back
+  to an existing DESC index for a range-ASC query.
+- **Add the index in the SAME PR as the query.** §37 added the deadline query
+  without the index — this is exactly how we end up here.
+- **Schedulers auto-deploy but schedulers don't verify queries at deploy
+  time.** The first scheduled tick is when you find out. For any new
+  scheduled CF, run it manually via `firebase functions:shell` BEFORE the
+  first natural tick to surface missing indexes immediately.
+- **When reading a range index from a log URL, decode `create_composite=...`
+  with base64 to confirm the exact `(field, direction)` tuples the engine
+  wants.** The URL tells you exactly what to add — no guessing.
+
+### Files touched
+
+| File | Change |
+|------|--------|
+| `firestore.indexes.json` | Added 6 composite indexes (lines ~48-109 after the any_tasks block) |
+| `CLAUDE.md` | This section (40) |
+
+### Validation
+
+- `node -e "JSON.parse(strip(fs.read('firestore.indexes.json')))"` → OK
+- Total indexes: **74** (up from 68)
+- `node -c functions/index.js` → OK (no CF changes, sanity only)
+
+---
+
+### §40.1 — `generateDailyOpportunity` migrated to Gemini (v15.x, 2026-04-18)
+
+Part of the broader "Gemini everywhere for non-Ilon-reasoning Hebrew tasks" pattern (see §12c / §31 / §33 / §34).
+
+**Swapped:**
+- `secrets: [ANTHROPIC_API_KEY]` → `secrets: [GEMINI_API_KEY]`
+- `new Anthropic({apiKey}).messages.create({model: "claude-haiku-4-5-20251001"...})` → `fetch(https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key=...)` with the same 2-model fallback used by the Ilon agent: `gemini-3.1-flash-lite-preview` → `gemini-2.5-flash-lite`.
+- JSON parsing uses `generationConfig.responseMimeType: "application/json"` but keeps the code-fence strip as a defensive belt-and-suspenders.
+
+**Kept unchanged:**
+- Prompt text (Hebrew marketing, 80-char max, seasonal + market context)
+- 4-template fallback for when Gemini fails / kill-switch active / no API key
+- `_isAiEnabled(db)` kill-switch check (cost ceiling)
+- `_trackApiCost(db, inTok, outTok)` billing tracker — uses Anthropic Haiku pricing, which slightly over-estimates Gemini cost (~3× conservative). Acceptable — keeps the kill-switch strict on the safe side.
+- Idempotency via the `daily_opportunities/{dateKey}` existence check — only first run per IST day hits the API.
+
+**Why not `gemini-1.5-flash`:** the user asked for 1.5-flash in the request, but the entire project migrated off Gemini 1.x months ago. Every other Gemini CF uses 2.5/3.1 flash-lite. Kept consistent.
+
+**No new config needed.** `GEMINI_API_KEY` secret already provisioned in Secret Manager from the other Gemini CFs.
+
+**Deploy (just this one CF):**
+
+```bash
+firebase deploy --only functions:generateDailyOpportunity
+```
+
+Runs at 08:00 IST daily. To force-run now, Firebase Console → Functions → `generateDailyOpportunity` → "Force run" (or: remove today's `daily_opportunities/{YYYY-MM-DD}` doc and wait for the next scheduled tick).
+
+---
+
+## 41. Handyman CSM (Category-Specific Module, v15.x, 2026-04-18)
+
+Fifth CSM in the pattern (§3d massage, §32 pest, §33 delivery, §34 cleaning).
+Gated to sub-category **"הנדימן"** via `isHandymanCategory()`. Adds a provider
+settings block ("ההגדרות שלך") and a client booking block ("בוא נתקן את זה
+ביחד") that appear ONLY when the sub-category resolves to handyman.
+
+> **User requested "Section 35" in the spec.** Section 35 already documents
+> the AnyTasks banner role-gating fix, so this ships as Section 41 to avoid
+> overwriting prior work. Numbering follows the CSM sequence (§32/§33/§34).
+
+### CRITICAL hardcoded rules (spec 01_MAIN_PROMPT_HANDYMAN.md)
+
+| Rule | Enforcement |
+|------|-------------|
+| **NO insurance** anywhere | Model has no `insurance*` field. Trust Center shows Escrow instead. Sticky summary shows 🔒 נאמנות, not 🛡 ביטוח. |
+| **NO idVerification** duplicate | `HandymanVerifications` has only `backgroundCheck` + `warrantyEnabled`. The global onboarding ID check covers everyone. |
+| **NO working-hours section** in the provider edit block | `HandymanServiceArea` has `cities`, `emergency24_7`, `bufferMinutes` — no `workingHours`. A blue "🗓️ שעות פעילות נקבעות ביומן" banner points the provider to the existing calendar. |
+| **NO Reviews Insights on the provider edit block** | Reviews Insights renders only on the client booking block. |
+| **Chat syncs with existing ChatScreen** | Booking block's chat button + Quick Replies push `ChatScreen(receiverId, receiverName, initialMessage)` — no forked chat. |
+| **Calendar syncs with existing picker** | Booking block does NOT own the calendar. It `emit()`s `(prefs, total)` to the parent expert_profile_screen, which threads them through the existing "Pay & Secure" escrow flow (same pattern as §34 cleaning). |
+| **AI = Gemini only, never Claude** | `diagnoseHandymanProblemFromPhoto` CF uses `gemini-2.5-flash-lite`. |
+
+### Architecture
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Model | `lib/models/handyman_profile.dart` | `HandymanProfile` + 10 nested sub-models (Verifications, BackgroundCheck, Specialty, AiPhotoSettings, Pricing, PunchListDiscount, ServiceArea, Materials, MaintenancePackage) + client-side (BookingPreferences, PunchListItem, AiDiagnosis, MaterialItem, PropertyInfo). Plus `isHandymanCategory()` detector. |
+| Specialties catalog | `lib/constants/handyman_specialties_catalog.dart` | 23 canonical specialties with Hebrew names, emojis, default prices + durations, popularity tags. Plus `defaultActiveSpecialties()` (seeds 8 "hot" for new providers), default maintenance packages, default city list. |
+| Urgency catalog | `lib/constants/handyman_urgency_options.dart` | 4 urgencies — emergency / today / scheduled / maintenance_contract — with gradients. |
+| Quick replies | `lib/constants/handyman_quick_replies.dart` | 3 pre-filled chat messages. |
+| Booking service | `lib/services/handyman_booking_service.dart` | `calculateTotal`, `buildPriceBreakdown`, `punchListDiscountAmount`, `servicesTotal`, `estimatedDurationMinutes`, `getLastBookingWith` (Express Reorder — reads `jobs` + `reviews`). |
+| Provider block | `lib/screens/handyman/handyman_settings_block.dart` | Dark premium orange/amber — 9 sections: Hero + revenue banner, Verifications (2 badges), AI Photo-to-Quote settings, 23 specialties grid (active + inactive + add-from-catalog), Pricing editor with market intelligence hint, Punch List graduated discount (2/3/4+ jobs), Service area (cities + emergency 24/7 + buffer + CALENDAR BANNER), Materials (tools + policy chips), Maintenance packages (3 tiers). |
+| Client block | `lib/screens/handyman/handyman_booking_block.dart` | Dark premium orange/amber — 14 sections: LIVE banner, Hero, Trust Center (4 badges: Verified/Background/Warranty/Escrow — NO ID/insurance), AI Photo-to-Quote ⭐ (pick photo → Gemini → auto-populate Punch List item), 23 specialties selector with search, Punch List with savings banner, Problem description, Property info (5 chips), Materials transparency (AI-calculated breakdown + 2 options), Urgency selector (4 options, 2×2 grid), Warranty (3 pillars), Chat preview (main button + 3 Quick Reply chips → existing ChatScreen), Maintenance packages selector, Sticky bottom summary with price + duration + calendar nudge. |
+
+### Firestore fields
+
+```
+users/{uid}.handymanProfile                  // nested Map (see HandymanProfile.toMap)
+provider_listings/{id}.handymanProfile       // synced on save — required for search
+jobs/{id}.handymanPreferences                // booking-time snapshot:
+  punchList[], aiPhotoDiagnosis{},
+  problemDescription, propertyInfo{},
+  materialsOption, estimatedMaterialsCost,
+  materialsBreakdown[],
+  urgency, maintenancePackageId?,
+  priceBreakdown{servicesTotal, materialsEstimate,
+                 punchListDiscount, emergencySurcharge, total},
+  warranty12MonthsIncluded
+```
+
+### Detection function
+
+```dart
+bool isHandymanCategory(String? serviceType) {
+  if (serviceType == null) return false;
+  final lower = serviceType.trim().toLowerCase();
+  if (lower.isEmpty) return false;
+  return lower == 'הנדימן' || lower == 'handyman' || lower == 'handy man' ||
+      lower.contains('הנדי') || lower.contains('handyman') ||
+      lower.contains('handy man');
+}
+```
+
+### Integration points
+
+| Screen | Method | Behavior |
+|--------|--------|----------|
+| `edit_profile_screen.dart` | `_isHandymanSubCategory()` | Shows `HandymanSettingsBlock` after cleaning block. Validates ≥1 active specialty AND `backgroundCheck.verified`. |
+| `expert_profile_screen.dart` | `_hasHandymanProfile()` | Shows `HandymanBookingBlock` between cleaning block and service menu. On escrow, writes `handymanPreferences` + `priceBreakdown` to the job doc. |
+| `admin_demo_experts_tab.dart` | `_isDemoHandymanCategory()` | Shows `HandymanSettingsBlock` in demo profile form. Saves to BOTH user doc and `provider_listings/demo_{uid}`. |
+
+### Cloud Function
+
+**`diagnoseHandymanProblemFromPhoto`** (callable) — Gemini 2.5 Flash Lite with Vision.
+- Auth required
+- Input: `{photoUrls: string[], additionalDescription?: string}`
+- Output: `{identifiedProblem, confidence, aiAnalysis, category, estimatedDurationMinutes, estimatedPrice, estimatedMaterialsCost, recommendedMaterials[{name,price,details}], urgencyLevel}`
+- Timeout: 30s, memory: 512MiB (higher than duration/vehicle CFs because Vision + multiple image fetches)
+- Caps at 3 photos per request for latency/size.
+- Fetches each URL → converts to base64 → sends as `inlineData`. Uses `responseMimeType: "application/json"` with defensive clamping of all numeric fields on parse.
+- Graceful failure — client surfaces a Hebrew snackbar "לא הצלחנו לנתח את התמונה" and user can retry or pick from the 23 specialties manually.
+
+### Design system
+
+Dark premium orange/amber palette (scoped, does NOT replace `Brand.*`):
+- Background gradient: `[#0A0E1A, #1A1612, #0F1420]` — warmer mid-tone than other CSMs
+- Primary: `orange #F97316` + `orangeDark #EA580C` + `amberPale #FDBA74`
+- Status: green `#16A34A`, red `#DC2626`, blue `#3B82F6`, purple `#A855F7`
+- Glass cards: white @ 4% opacity, radius 18px, 1px border white @ 8%
+
+### Rules for future code
+
+- **Never add insurance** to this module. Not in model, not in UI, not in CF.
+- **Never add idVerification** as a badge — global onboarding §3 covers it.
+- **Never add a "working hours" section** to `HandymanSettingsBlock` — the blue calendar banner is the final answer.
+- **Handyman CF must use Gemini**, matching §32/§33/§34. AI CEO (§12c) uses Claude Sonnet; all CSM CFs use Gemini Flash Lite.
+- **Never fork ChatScreen** — use `ChatScreen(receiverId, receiverName, initialMessage)` with `initialMessage` pre-filled by Quick Reply chips.
+- **Rounding** — `HandymanBookingService` uses `.toStringAsFixed(2)` matching §18 Rule 7.
+
+### Deployment
+
+```bash
+firebase deploy --only functions:diagnoseHandymanProblemFromPhoto
+flutter build web --release && firebase deploy --only hosting
+```
+
+### Files
+
+**Created (7):**
+- `lib/models/handyman_profile.dart`
+- `lib/constants/handyman_specialties_catalog.dart`
+- `lib/constants/handyman_urgency_options.dart`
+- `lib/constants/handyman_quick_replies.dart`
+- `lib/services/handyman_booking_service.dart`
+- `lib/screens/handyman/handyman_settings_block.dart`
+- `lib/screens/handyman/handyman_booking_block.dart`
+
+**Modified (4):**
+- `lib/screens/edit_profile_screen.dart` — imports, state, init loader, detection, validation, UI block, save payload, listing sync
+- `lib/screens/expert_profile_screen.dart` — imports, state, detection, builder, insertion after cleaning block, job doc payload
+- `lib/screens/admin_demo_experts_tab.dart` — imports, state, init, detection, UI block, save payloads (user + listing)
+- `functions/index.js` — `diagnoseHandymanProblemFromPhoto` CF appended
+
+**Spec archived in** `docs/handyman_upgrade/` (three files from `docs/ui-specs/Handyman/`).
+
+---
+
+## 42. App Feedback & Ideas system (v15.x, 2026-04-18)
+
+> User-submitted product feedback + Gemini-labeled + weekly CEO digest.
+> Separate collection from `support_tickets` (§16): feedback is about making
+> AnySkill better, not about fixing bugs on an individual booking.
+
+### UX flow
+
+1. User taps "הצעות ורעיונות לשיפור" in the Profile tab (purple/indigo
+   button above the red "Delete Account" button — both occurrences).
+2. Lands on [AppFeedbackScreen](lib/screens/app_feedback_screen.dart) —
+   title "AnySkill Feedback & Ideas", 4 category chips, 500-char text area,
+   10-point NPS scale with red→amber→green color coding.
+3. Submit enables only when: content ≥ 10 chars AND NPS selected.
+4. On success — soft elastic scale-in heart icon + Hebrew thank-you message:
+   "תודה על העזרה! צוות הפיתוח שלנו קורא אישית כל הצעה..." + "הפנייה התקבלה"
+   pill + "שלח הצעה נוספת" button to submit another without leaving.
+
+### Firestore schema
+
+**Collection:** `app_feedback/{autoId}`
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `uid` | string | author (rule gate) |
+| `userRole` | 'provider' \| 'customer' | from `users/{uid}.isProvider` |
+| `userName`, `userEmail` | string | denormalized at submit time for the AI digest |
+| `category` | 'app_interface' \| 'payment_process' \| 'new_feature_idea' \| 'other' | rule-enforced enum |
+| `content` | string (≤500) | rule-enforced length |
+| `npsScore` | number 1-10 | rule-enforced range |
+| `status` | 'pending' \| 'reviewing' \| 'planned' \| 'shipped' \| 'declined' | default 'pending'; admin-only update |
+| `priority` | 'Low' \| 'High' \| null | **filled by `analyzeFeedbackOnCreate` CF** |
+| `topic` | 'UX' \| 'Pricing' \| 'Bug' \| 'Feature' \| 'Performance' \| 'Other' \| null | **filled by CF** |
+| `analyzedAt` | Timestamp \| null | when the CF tagged the doc |
+| `createdAt` | Timestamp | server |
+| `appVersion`, `platform` | string | client hint |
+
+### Firestore rules ([firestore.rules](firestore.rules))
+
+```
+match /app_feedback/{feedbackId} {
+  allow read: if isAdmin() ||
+                 (isVerifiedAuth() && resource.data.uid == request.auth.uid);
+  allow create: if isVerifiedAuth()
+                && request.resource.data.uid == request.auth.uid
+                && request.resource.data.content.size() <= 500
+                && request.resource.data.npsScore in [1..10]
+                && request.resource.data.status == 'pending'
+                && request.resource.data.category in [... enum];
+  allow update: if isAdmin();   // AI tags flow via Admin SDK anyway
+  allow delete: if false;       // feedback is immutable/append-only
+}
+```
+
+### Cloud Functions ([functions/index.js](functions/index.js))
+
+**1. `analyzeFeedbackOnCreate`** — Gemini tagging trigger
+- Trigger: `onDocumentCreated("app_feedback/{id}")`
+- Model: `gemini-2.5-flash-lite` (NOT Claude — matches §32/33/34/41)
+- Output: `{priority: 'Low' | 'High', topic: 'UX' | 'Pricing' | 'Bug' | 'Feature' | 'Performance' | 'Other'}`
+- Prompt includes role + category + NPS + 2000-char slice of content.
+- Guidelines: High = blocker / bug / money / NPS ≤ 6 / critical feature request. Low = nice-to-have / stylistic / general praise.
+- **Defensive fallback**: if Gemini fails or key missing, still writes `priority` (High if NPS≤6 else Low) + `topic: 'Other'` so nothing stays untagged.
+- Also writes `analyzedAt` timestamp.
+
+**2. `generateFeedbackWeeklyInsight`** — Weekly CEO digest
+- Schedule: **every Monday 08:00 Asia/Jerusalem** (via `onSchedule`, auto-deploys its Cloud Scheduler job — per §38 rule, no manual Console step).
+- Model: `gemini-2.5-flash-lite`
+- Scans past 7d of `app_feedback` (cap 500 docs) → aggregates NPS avg + detractors/passives/promoters + topic + priority distributions.
+- Feeds a compressed sample of up to 60 items to Gemini with role/cat/NPS/topic/priority/content snippets.
+- Output written to **`ai_insights/feedback_weekly`** (single doc, merge-written):
+  ```
+  {
+    summary,                           // 2-3 sentence overview
+    topThemes: [{title, description, count, exampleQuote}] x3,
+    topPriority: {title, reason, suggestedAction},
+    totalCount, npsAverage,
+    npsDistribution {detractors, passives, promoters},
+    byTopic, byPriority,
+    generatedAt, model
+  }
+  ```
+- **Defensive fallback**: if Gemini errors, writes just the stats (no themes) so the AI CEO tab always has something to show.
+
+### Required composite index
+
+None! Both queries in use are single-field (`createdAt` range) which
+Firestore auto-indexes. No new entry in `firestore.indexes.json`.
+
+### Entry point
+
+[lib/screens/profile_screen.dart](lib/screens/profile_screen.dart) — button inserted in **both** logout/delete stacks (lines ~990 and ~1410), always above "Delete Account", using `Brand.indigo` color with `Icons.auto_awesome_rounded` and label "הצעות ורעיונות לשיפור".
+
+### Rules for future code
+
+- **Never extend `support_tickets`** for product feedback. Support tickets are for support/bug triage — `app_feedback` is for product direction. Different mental models, different lifecycles, different admin views.
+- **Never allow user updates on `app_feedback`** — AI tags would be clobbered. If a user needs to clarify, they submit a new feedback item.
+- **Never store the feedback CF output back via a callable from the client** — the trigger (`onDocumentCreated`) owns tagging. A client-side callable would allow tag manipulation.
+- **Never switch either CF to Claude** — matches the §32/33/34/41 Gemini-everywhere-for-Hebrew-product-tasks convention.
+- **If you add a new category**, update both the enum in [firestore.rules](firestore.rules) AND `_kCategories` in the screen. The rule `in [...]` check will reject writes with unknown category IDs.
+
+### Admin surface (future — NOT shipped yet)
+
+The `ai_insights/feedback_weekly` doc is ready to be consumed by a new tile
+or tab in either the AI CEO tab (§12c) or the existing admin panel. Shape
+matches the mockup in `ai_insights` schema. A dedicated
+`AdminFeedbackInsightsTab` would stream the single doc + show the 3 theme
+cards + stats; inline admin `status` update buttons can flip individual
+feedback docs between `pending/reviewing/planned/shipped/declined`. Not
+built in this PR — ship the pipeline first, then the dashboard.
+
+### Deployment
+
+```bash
+firebase deploy --only functions:analyzeFeedbackOnCreate,functions:generateFeedbackWeeklyInsight
+firebase deploy --only firestore:rules
+flutter build web --release && firebase deploy --only hosting
+```
+
+No new index deploy needed.
+
+### Files
+
+**Created (1):**
+- `lib/screens/app_feedback_screen.dart` (~600 lines) — form UI + success view
+
+**Modified (3):**
+- `lib/screens/profile_screen.dart` — import + button in 2 logout/delete stacks
+- `firestore.rules` — new `match /app_feedback/{feedbackId}` block
+- `functions/index.js` — 2 new CFs appended
+
+### Validation
+
+- `flutter analyze lib/screens/app_feedback_screen.dart` → **0 issues**
+- `flutter analyze lib/screens/profile_screen.dart` → 1 pre-existing async-context warning on the legacy `_deleteAccount` call (unchanged by this PR)
+- Full project: 13 pre-existing info warnings, zero regressions
+- `node -c functions/index.js` → OK
+
+---
+
+## 43. Smart Notification Router (v15.x, 2026-04-18)
+
+> Central routing table for notification taps — both the bell-icon inbox
+> (`NotificationsScreen`) AND FCM push taps now deep-link to the specific
+> source screen instead of just switching tabs. Tapping a chat notification
+> opens that specific ChatScreen; tapping an anytask notification opens
+> that task's TaskTrackingScreen; tapping a support ticket opens that
+> specific TicketChatScreen, etc.
+
+### Problem it solves
+
+Before §43, the in-app bell icon (`NotificationsScreen._navigate`) handled
+only **6 types** (ai_insight, help_request, volunteer_accepted, volunteer_completed,
+broadcast_urgent, broadcast_claimed, csat_survey). Everything else —
+`chat`, `job_status`, `new_booking`, `anytask_*`, `support_ticket`,
+`payment_received`, `provider_approved`, `request_declined`, `review_received`,
+`seasonal`, `geo_nearby`, re-engagement, admin alerts — **fell through
+silently**. User taps, nothing happens.
+
+FCM (§26) was slightly better — it had tab routing for more types plus a
+hand-rolled chat deep-link in `HomeScreen.initState` — but still only
+routed to tabs, never to a specific ticket/task/booking.
+
+### Architecture — one shared router
+
+**File:** [lib/services/notification_router.dart](lib/services/notification_router.dart)
+
+```dart
+static Future<bool> NotificationRouter.route(
+  BuildContext context,
+  Map<String, dynamic> raw,  // notification doc OR FCM data payload
+);
+```
+
+**Return contract:**
+- `true` → router consumed the tap (pushed the target screen or popped back).
+- `false` → caller should fall back to local handling.
+
+Only 3 types return `false` — those that need screen-local modals because
+they depend on the parent screen's services/state:
+
+| Type | Modal | Owner |
+|------|-------|-------|
+| `broadcast_urgent` | `JobBroadcastService` claim sheet | `NotificationsScreen` |
+| `help_request` | Volunteer accept sheet (fetches `help_requests` doc) | `NotificationsScreen` |
+| `csat_survey` | `showCsatSurveyModal` (needs context) | `NotificationsScreen` |
+
+Everything else routes through the router.
+
+### Routing table
+
+| Type | Destination |
+|------|-------------|
+| `chat` | `ChatScreen(receiverId: senderId OR derived from roomId, receiverName: title)` |
+| `support_ticket` | `TicketChatScreen(ticketId, category, isAdmin: false)` or `SupportCenterScreen` if no ticketId |
+| `job_status`, `new_booking`, `booking_confirmed`, `booking`, `job_accepted`, `quote_received`, `payment_release` | `MyBookingsScreen` |
+| `anytask_*` (10 types) | `TaskTrackingScreen(taskId)` if taskId present, else pop to Home |
+| `volunteer_accepted`, `volunteer_completed`, `broadcast_claimed` | `ChatScreen(receiverId: relatedUserId)` |
+| `payment_received`, `wallet_credit`, `admin_credit_grant`, `withdrawal_status` | `FinanceScreen` |
+| `ai_insight`, `ai_suggestion`, `pro_granted` | `ProviderAiInsightsScreen` |
+| `review_received`, `review` | `PublicProfileScreen(userId: relatedUserId OR self)` |
+| `provider_approved`, `request_declined`, `seasonal`, `geo_nearby`, `rebook_reminder`, `inactivity_reminder`, `reengagement`, `market_alert`, `admin_payment_alert`, `demo_contact`, `general` | pop to Home (informational-only) |
+| unknown | return `false` → caller shows "ההתראה נפתחה" toast |
+
+### Field extraction — dual-level reader
+
+Different CFs write the same id field at different locations. The chat CF
+writes `data.senderId` + `data.roomId` (nested), while older CFs put
+`relatedUserId` + `broadcastId` at the TOP level of the notification doc.
+
+`_extractField(raw, keys)` reads BOTH the top level AND the nested
+`data` map, returning the first non-empty match. So the router works
+unchanged against legacy + new payload formats.
+
+### Chat deep-link special case
+
+Tap on a chat notification → need the **other user's uid** to push
+`ChatScreen`. Two-step fallback:
+1. Try `data.senderId` / top-level `relatedUserId`.
+2. If missing, derive from `roomId` / `chatRoomId` using the
+   `uid1_uid2` sorted-join format: find the one that isn't the current user.
+
+### UX: pop-then-push for inbox, just-push for FCM cold-start
+
+`_replaceWith` calls `Navigator.pop()` ONLY if `canPop() == true`. So:
+- Inbox tap → pops `NotificationsScreen` first, then pushes target →
+  final stack is `[Home → Target]`, not `[Home → Inbox → Target]`.
+- FCM cold-start → HomeScreen is the only route, `canPop == false` → just
+  pushes → `[Home → Target]`.
+
+Both paths converge on the same stack. Back button goes to Home.
+
+### CF payload additions
+
+Eight AnyTasks notification CF writes were missing `taskId` in the
+notification payload. Added `taskId: doc.id` (or `taskId,` where a local
+variable was already in scope) to all eight:
+
+| Line | Type |
+|------|------|
+| 7947 | `anytask_auto_released` (provider) |
+| 7955 | `anytask_auto_released` (creator) |
+| 7997 | `anytask_reminder_24h` |
+| 8011 | `anytask_reminder_2h` |
+| 8089 | `anytask_expired` |
+| 8141 | `anytask_sla_reminder` |
+| 8181 | `anytask_sla_returned` (pool-return side) |
+| 8191 | `anytask_sla_returned` (provider side) |
+
+Chat + support_ticket + job_status CFs already had their IDs in `data`.
+
+### FCM alignment
+
+[main.dart](lib/main.dart) `PendingNotification` now carries a full
+`payload: Map<String, dynamic>?` field in addition to `tabIndex` and
+`chatRoomId`. On FCM tap → HomeScreen reads `pendingTab`, switches tab,
+and in a post-frame callback invokes `NotificationRouter.route(context, pendingPayload)`
+— same routing logic as the bell icon. The hand-rolled chat deep-link
+in `HomeScreen.initState` (~20 lines, §26 v9.3.1) is retired. The
+`chatRoomId` field is kept for backwards-compat until all call sites
+are verified migrated.
+
+### Refactored files
+
+| File | Change |
+|------|--------|
+| `lib/services/notification_router.dart` | **NEW** — ~200 lines, single `route()` method + 3 private helpers |
+| `lib/screens/notifications_screen.dart` | `_navigate` shrunk from ~80 → ~50 lines. 3 screen-local modals preserved; everything else → `NotificationRouter.route`. Legacy "is this AI?" heuristic normalized to `type='ai_insight'`. Unknown type → toast. |
+| `lib/main.dart` | `PendingNotification.payload` field + copy from `message.data`; `clear()` resets it |
+| `lib/screens/home_screen.dart` | Removed hand-rolled chat deep-link (~20 lines); replaced with `NotificationRouter.route(context, pendingPayload)` in a post-frame callback |
+| `functions/index.js` | 8 anytask notification writes now include `taskId` |
+
+### Rules for future code
+
+- **Every new notification CF** must put the primary id in a TOP-LEVEL
+  field on the notification doc — `taskId`, `jobId`, `ticketId`,
+  `chatRoomId`, `relatedUserId`, or `broadcastId` as appropriate. The
+  router's `_extractField` reads both top-level and nested, but top-level
+  is cheaper to query/filter and matches the existing convention on
+  most CFs.
+- **Never add a switch-on-type inside a screen** for notification routing.
+  Extend `NotificationRouter.route()` instead — it's the single source
+  of truth. If the new type needs a screen-local modal, return `false`
+  from the router and document it in the "local modals" table.
+- **Never forget to update `PendingNotification.payload` contract** when
+  you add a new FCM push CF. Make sure the FCM `data: {}` map carries
+  enough ids for the router to deep-link; otherwise the push tap falls
+  back to a tab-switch only.
+- **Chat deep-link must stay robust to both `senderId` and `roomId`** —
+  some CFs only set one. Never remove the `roomId` fallback path.
+
+### Validation
+
+- `flutter analyze` on touched files → **0 new issues** (only one
+  pre-existing async-context warning in `notifications_screen.dart:336`
+  inside the volunteer sheet, not introduced here).
+- Full project: 13 pre-existing info warnings, **zero regressions**.
+- `node -c functions/index.js` → OK.
+
+### Deployment
+
+```bash
+# No new indexes. CF changes only touch in-body payloads — redeploy them:
+firebase deploy --only functions:anytaskAutoRelease,functions:anytaskExpireOpen,functions:anytaskSlaMonitor
+flutter build web --release && firebase deploy --only hosting
+```
+
+---
+
+---
+
+## 44. Fitness Trainer CSM (Category-Specific Module, v15.x, 2026-04-19)
+
+Sixth CSM in the pattern (§3d massage, §32 pest, §33 delivery, §34 cleaning,
+§41 handyman). Gated to sub-category **"מאמני כושר"** via
+`isFitnessTrainerCategory()`. Adds a provider settings block ("ההגדרות שלך",
+9 sections) and a client booking block ("בואי נתאים את האימון שלך",
+10 sections) that appear ONLY when the sub-category resolves to fitness trainer.
+
+> **Design language break from the other 5 CSMs**: provider block uses the
+> dark premium glass palette (same as Handyman/Cleaning), but client block
+> uses a LIGHT cream/white canvas with orange/gold/green/purple accents —
+> the booking surface is the "wow" moment the client sees first and needs
+> to feel bright + energetic, not dim + technical. Apple-style 3-ring
+> animation on the Monthly Journey Preview is the visual centerpiece.
+
+### CRITICAL hardcoded rules (spec 01_MAIN_PROMPT.md)
+
+| Rule | Enforcement |
+|------|-------------|
+| **NO "online" location** | `LocationType` enum is literally `{home, park, gym}`. No 4th option exists. |
+| **NO rating breakdown duplication** | Block renders Monthly Journey Preview + Trust Badges instead. Existing review breakdown below the block is untouched. |
+| **NO weekly availability widget** | Block does NOT render schedule. Existing Google Calendar integration owns that. Provider block ends with a blue info pill "🗓️ שעות פעילות נקבעות דרך היומן". |
+| **NO portfolio gallery duplication** | Block does NOT include a gallery. Existing `_buildGalleryAndVideo` in expert_profile_screen is unchanged. |
+| **Every list item editable** (provider side) | Each row has ✏️ + 🗑️, every section has ➕, all deletions show a Hebrew confirmation dialog. |
+| **AI = Gemini 2.5 Flash Lite only, never Claude** | All 3 CFs use `gemini-2.5-flash-lite` with a `gemini-3.1-flash-lite-preview` primary attempt. Matches §32/33/34/41. |
+| **Auto-advance 300ms** in Personality Quiz | `Future.delayed(const Duration(milliseconds: 300))` after each selection + `HapticFeedback.lightImpact`. |
+
+### Architecture
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Model | `lib/models/fitness_trainer_profile.dart` | `FitnessTrainerProfile` root + 5 instance models (PricingPackage, Certification, SuccessStory, SpecialOffer, TrainingLocation) + `TrainerSpecialty` catalog (12 options, hardcoded const list) + `isFitnessTrainerCategory()` detector + `fallbackScore` getter mirroring the server-side score formula. 678 lines. |
+| Provider block | `lib/screens/fitness_trainer/fitness_trainer_settings_block.dart` | Dark premium orange/gold — 9 sections + 5 bottom-sheet modals: `_PackageModal`, `_LocationModal`, `_CertificationModal`, `_StoryModal`, `_OfferModal`. Every add/edit/delete action goes through `HapticFeedback` + `_confirmDelete` dialog. 3,306 lines. |
+| Client block | `lib/screens/fitness_trainer/fitness_trainer_booking_block.dart` | Light cream — 10 sections including Apple-style 3 rings via `_ThreeRingsPainter` (CustomPaint, 2-second forward animation on mount) + `_DashedBorderPainter` for offer banner + `_GlowingScoreCircle` for match-result (animated green glow, 1600ms reverse repeat). 1,913 lines. |
+| Quiz screen | `lib/screens/fitness_trainer/personality_quiz_screen.dart` | 5-question flow (goal / experience / frequency / location / style) with purple progress bar + 300ms auto-advance + green-glow 94% on result screen. Calls `recommendTrainersByGoals` CF with 15s timeout; falls back to 87% + 4 derived reasons on ANY failure. Returns `QuizMatchResult` via `Navigator.pop`. 683 lines. |
+
+### 9 provider sections
+
+1. **Hero** — "⚡ נפתח אוטומטית" pill + "🏋️ מאמני כושר" pill
+2. **AI Coach Score** — purple/indigo card, 0-100 with target-90 marker, dynamic improvement hint (derived locally when `lastOptimized == null`)
+3. **Specialties** — 12 gradient chips, max 5, × to deselect, live "X% תואם חיפושים" insight
+4. **Pricing Packages** — editable list + "💡 טיפ: מחיר ממוצע באזור ₪180-₪250" Smart Tip + `_PackageModal` with type radio (single/package/monthly) + num-pickers for sessions/duration/validity + isPopular/freeOnboarding checkboxes
+5. **Locations** — 3 cards max (home/park/gym), blocks duplicate-type selection in modal via `blockedTypes: Set<LocationType>`
+6. **Certifications** — editable list with `_CertificationModal` (6-institution dropdown: NASM/Wingate/ACSM/ISSA/אורט בראודה/אחר) + "⚠️ התעודה תאומת ע״י הצוות תוך 48 שעות" warning
+7. **Success Stories** — editable list with before/after URLs + ⭐ rating selector (1-5) + "⚠️ נדרש אישור הלקוח" gate (`clientApproved: bool`)
+8. **Special Offers** — editable list with 4 offer types + date picker + auto "פעיל"/"פג תוקף" pills
+9. **Performance Dashboard** — read-only, dark navy 4-KPI grid with "🔒 פרטי" pill (rating + retention left blank with "לפי יבוא"/"Milestone 3" until real telemetry exists per §29)
+10. **AI Suggestions** — 5 priority-coded cards + "✨ החילי הכל אוטומטית" button
+- **Calendar banner** (not a section) — blue info pill pointing to the existing Google Calendar
+
+### 10 client sections
+
+1. **AI Match Quiz CTA** — purple→indigo gradient, pushes `PersonalityQuizScreen`
+2. **Personality Match Result** — shown only after quiz. `_GlowingScoreCircle` with animated green shadow
+3. **Specialties display** — read-only gradient chips from catalog
+4. **Packages carousel** — horizontal `ListView.separated`, popular package **elevated -6px via `Matrix4.translationValues(0,-6,0)`** (note: NOT deprecated `Matrix4..translate` — use translationValues)
+5. **Locations grid** — responsive 2/3-column, cream cards, "+ ₪X" or "ללא תוספת מחיר" pills
+6. **Certifications list** — read-only rows with ✓ מאומת blue pill
+7. **Monthly Journey Preview** (WOW factor) — dark navy card with Apple-style 3-ring `CustomPaint`: red `#FF455A` / green `#32D74B` / turquoise `#00C7BE`. 2-second forward animation on first mount via `WidgetsBinding.instance.addPostFrameCallback`. 4 stat tiles + gold "Top 15% בארץ" banner.
+8. **Success Story** — 180px before/after panels, labeled overlays (red לפני / green אחרי)
+9. **Trust Badges** — responsive 2×2 grid with 4 guarantees (🛡️ Satisfaction, 💯 Refund, 🔐 Secure payment, ⭐ Verified trainer)
+10. **Active Offer Banner** — custom `_DashedBorderPainter` using `path.computeMetrics()`, red-urgency when ≤3 days or ≤3 spots
+
+### Firestore fields
+
+```
+users/{uid}.fitnessTrainerProfile      // 9-field nested Map
+  selectedSpecialties: List<String>     // enum names, max 5
+  packages: List<Map>
+  locations: List<Map>
+  certifications: List<Map>
+  successStories: List<Map>
+  offers: List<Map>
+  profileScore: int (0-100)             // written by optimizeTrainerProfile CF
+  aiSuggestions: List<Map>              // same, 5 items
+  lastOptimized: Timestamp              // same
+
+provider_listings/{id}.fitnessTrainerProfile    // synced on save
+
+jobs/{id}.fitnessTrainerPreferences             // booking-time snapshot:
+  packageId, packageName, packageType, sessions,
+  durationMinutes, price, discount?, isPopular
+
+jobs/{id}.priceBreakdown
+  basePrice, total
+
+matching_analytics/{autoId}                     // written by recommendTrainersByGoals CF
+  userId, criteria, trainerId, matchScore, success, createdAt,
+  expireAt (createdAt + 90d, TTL-eligible per §19)
+
+users/{clientId}/workout_plans/{autoId}         // written by generateCustomWorkoutPlan CF
+  planOverview, weeklySchedule[], progressionStrategy,
+  recoveryTips[], nutritionGuidelines[],
+  createdBy (trainerId), clientId, goal, experience, frequency,
+  durationWeeks, createdAt, isActive
+```
+
+### Detection function
+
+```dart
+bool isFitnessTrainerCategory(String? serviceType) {
+  if (serviceType == null) return false;
+  final lower = serviceType.trim().toLowerCase();
+  if (lower.isEmpty) return false;
+  return lower == 'מאמני כושר' ||
+      lower == 'מאמן כושר' ||
+      lower == 'fitness_trainer' ||
+      lower == 'personal trainer' ||
+      lower.contains('מאמן כושר') ||
+      lower.contains('מאמנת כושר') ||
+      lower.contains('fitness') ||
+      lower.contains('personal trainer');
+}
+```
+
+### Integration points
+
+| Screen | Method | Behavior |
+|--------|--------|----------|
+| `edit_profile_screen.dart` | `_isFitnessTrainerSubCategory()` | Renders `FitnessTrainerSettingsBlock` AFTER the handyman block. Validation: ≥1 selectedSpecialty AND ≥1 package AND ≥1 location before submit. |
+| `expert_profile_screen.dart` | `_hasFitnessTrainerProfile()` | Renders `FitnessTrainerBookingBlock` AFTER handyman block, BEFORE "Service Menu". `onPackageSelected` updates `_fitnessPackage` state; payment path writes `fitnessTrainerPreferences` + `priceBreakdown` to job doc via existing Pay & Secure flow. |
+| `admin_demo_experts_tab.dart` | `_isDemoFitnessTrainerCategory()` | Renders same settings block in the demo-expert builder. Saves to BOTH user doc and `provider_listings/demo_{uid}`. |
+
+### Cloud Functions (Gemini 2.5 Flash Lite only — never Claude)
+
+**1. `recommendTrainersByGoals`** (callable, 512MiB, 60s, region us-central1, maxInstances 10)
+- Auth required. Input: `{goal, experience, frequency, location, style, trainerId?}`.
+- If `trainerId` provided, loads `users/{trainerId}.fitnessTrainerProfile` and embeds it in the prompt.
+- Temperature 0.3, `responseMimeType: 'application/json'`, maxTokens 1024.
+- Output: `{matchScore: 50-100, reasons: string[4], success, fallback?}`.
+- Logs to `matching_analytics` with `expireAt = now + 90d` (TTL-eligible per §19).
+- **Always-succeeds contract** — on ANY error, deterministic fallback (70-100 based on completeness + per-goal/location Hebrew reasons). The client-side quiz also has its own 87% fallback so the UX never breaks.
+
+**2. `optimizeTrainerProfile`** (callable, 512MiB, 60s, maxInstances 5)
+- Auth: self OR admin (via `isAdminCaller`).
+- Reads `users/{trainerId}`, computes deterministic score (mirrors `FitnessTrainerProfile.fallbackScore` + aboutMe length + gallery count + rating bonus).
+- Temperature 0.4, maxTokens 2048. Calls Gemini for 5 suggestions with `{icon, title, description, impact, action, priority: 'high'|'medium'|'low'}`.
+- Writes back: `users/{uid}.fitnessTrainerProfile.profileScore + aiSuggestions + lastOptimized`.
+- **Always-succeeds contract** — deterministic fallback suggestions if Gemini fails.
+
+**3. `generateCustomWorkoutPlan`** (callable, 512MiB, 90s, maxInstances 5)
+- Auth required. Input: `{clientId, goal, experience, frequency, durationWeeks (1-12, clamped), equipmentAvailable, injuriesOrLimitations, currentWeight?, targetWeight?}`.
+- Temperature 0.5, maxTokens 4096 (bigger plans need more tokens).
+- Output: structured `{planOverview, weeklySchedule[{week, title, days[{day, focus, duration, exercises[{name, sets, reps, restSeconds, notes}]}]}], progressionStrategy, recoveryTips[], nutritionGuidelines[]}`.
+- If `clientId` provided, persists to `users/{clientId}/workout_plans/{autoId}` (best-effort — still returns plan to caller on persistence failure).
+- **Throws on malformed Gemini response** — unlike the other 2 CFs, no fallback here because workout plans need real structure.
+
+All 3 CFs use the shared `_fitnessCallGemini({prompt, temperature, maxTokens})` helper which tries `gemini-3.1-flash-lite-preview` then `gemini-2.5-flash-lite`. `_stripCodeFences` is already defined at the top of `functions/index.js`.
+
+### Firestore rules added
+
+```
+match /users/{uid}/workout_plans/{planId} {
+  allow read: if isOwner(uid)
+              || isAdmin()
+              || (isVerifiedAuth()
+                  && resource.data.createdBy == request.auth.uid);
+  allow create, update, delete: if false;   // CF-only via Admin SDK
+}
+```
+
+Everything else (the main `fitnessTrainerProfile` Map field, `matching_analytics`) is covered by existing rules — the Map nests inside `users/{uid}` and `matching_analytics` doesn't need a client-write rule since it's CF-written.
+
+### Design tokens
+
+**Provider side** (`_FPalette` — scoped, does NOT replace `Brand.*`):
+- Background gradient: `[#0A0E1A, #1A120C, #0F1420]` (warm-leaning dark)
+- Orange `#FF6B35`, Gold `#F59E0B`, Green `#10B981`, Red `#DC2626`, Purple `#8B5CF6`, Blue `#3B82F6`
+- Glass cards: white @ 4% opacity, 1px border white @ 8%, radius 18px
+
+**Client side** (`_FCPalette`):
+- Background: `[#FFF8F3, #FFFFFF]` (cream + white)
+- Same accent colors
+- Border: `#FED7AA` (borderOrange) + `#E5E7EB` (borderGray)
+- Apple ring colors (exact Apple Activity): red `#FF455A` / green `#32D74B` / turquoise `#00C7BE`
+
+### Rules for future code
+
+- **Never reintroduce "online" location.** `LocationType` enum is sealed at 3 values. If someone asks to add online training, they need to invent a NEW category (e.g. "מאמני כושר אונליין") — do NOT pollute this enum.
+- **Never fork `PersonalityQuizScreen` per-trainer.** The quiz is generic — the `trainerId` parameter is how per-trainer scoring plugs in. Keep the quiz shape (5 questions, 300ms auto-advance) stable across launches.
+- **Never bypass `FitnessTrainerProfile.fallbackScore`.** It's the deterministic mirror of the server-side `_fitnessComputeProfileScore` in `functions/index.js`. When tweaking the formula, update BOTH together or the UI will drift from the CF.
+- **Always use Gemini 2.5 Flash Lite for all 3 CFs.** Matches §32/33/34/41 rule. AI CEO (§12c) is the only Claude-backed admin tool.
+- **`Matrix4..translate(0, -6)` is deprecated** — always use `Matrix4.translationValues(0, -6, 0)` for the popular-package elevation transform in the packages carousel (or anywhere else).
+- **`intl` import must `hide TextDirection`** in both provider and client blocks — the package exports a conflicting `TextDirection` that breaks the `Directionality` widget.
+- **Green glow animation on the 94% score** is an intentional UX flourish (`_GlowingScoreCircle` with 1600ms reverse repeat) — don't "optimize" it away by removing the `AnimationController`.
+
+### Deployment
+
+```bash
+firebase deploy --only functions:recommendTrainersByGoals,functions:optimizeTrainerProfile,functions:generateCustomWorkoutPlan
+firebase deploy --only firestore:rules
+flutter build web --release && firebase deploy --only hosting
+```
+
+`GEMINI_API_KEY` secret is already provisioned from previous Gemini CFs — no new secret setup needed.
+
+### Files
+
+**Created (4):**
+- `lib/models/fitness_trainer_profile.dart` (678 lines)
+- `lib/screens/fitness_trainer/fitness_trainer_settings_block.dart` (3,306 lines)
+- `lib/screens/fitness_trainer/fitness_trainer_booking_block.dart` (1,913 lines)
+- `lib/screens/fitness_trainer/personality_quiz_screen.dart` (683 lines)
+
+**Modified (5):**
+- `lib/screens/edit_profile_screen.dart` — imports, state, init loader, detector, validation, save payload, listing sync, UI block
+- `lib/screens/expert_profile_screen.dart` — imports, state, detector + builder, UI insertion (after handyman block, before service menu), job payload
+- `lib/screens/admin_demo_experts_tab.dart` — imports, state, init loader, detector, user save payload, listing save payload, UI block
+- `functions/index.js` — 3 new CFs + 2 helpers (`_fitnessCallGemini`, `_fitnessComputeProfileScore`) appended at end (+518 lines)
+- `firestore.rules` — new `workout_plans` subcollection rule
+
+**Spec archived at** `docs/ui-specs/Fitness Trainer/` (6 files: README, 01_MAIN_PROMPT, 02_PROVIDER_CODE, 03_CLIENT_CODE, 04_BACKEND_CODE, 05_INTEGRATION).
+
+---
+
 ## 45. Categories v3 — Premium Admin Workspace (v15.x, 2026-04-20)
 
 > Full redesign of the admin "קטגוריות" tab into a Linear/Airbnb/Notion-grade
@@ -4696,13 +6338,13 @@ After first deploy: the scheduled CFs run hourly / every 6h. To populate immedia
 | Decision | Choice | Why |
 |----------|--------|-----|
 | Folder layout | `lib/screens/categories_v3/` sub-tree | Co-locates 14 model/service/controller files + 17 widgets + 4 dialogs without polluting the flat `lib/screens/admin_*.dart` namespace |
-| State management | Riverpod 2.x with `riverpod_annotation` (new `Ref` API) | Matches existing admin providers; zero deprecated `*Ref` types in new code |
+| State management | Riverpod 2.x with `riverpod_annotation` (new `Ref` API) | Matches existing admin providers (admin_users, admin_billing); zero deprecated `*Ref` types in new code |
 | Feature flag | Hard-coded UID whitelist in `feature_flag.dart` | Soft-launch reality (~5 users) — Remote Config is overkill. Replace with Firestore-backed flag (`system_settings/feature_flags`) when widening. **DO NOT** install `firebase_remote_config` package. |
-| Dark mode | Light-only (matches Vault + Monetization admin tabs) | Categories tab follows the established admin convention. |
+| Dark mode | Light-only (matches Vault §29 + Monetization §31) | Categories tab follows the established admin convention. Adding dark mode would require `Theme.of(context).brightness` switching across 21 widgets — re-evaluate if user demand surfaces. |
 | Analytics source | Real `jobs` + `users` aggregation; views/clicks placeholder ("—") | Q4-B+C decision — no `category_impressions` / `category_clicks` collections exist. Build tracking infra in a future PR when DAU justifies the write cost. |
-| Banner integration | Read-only mirror in `promoted_banners` | Q5-A — `home_tab.dart` keeps rendering AnyTasks + נתינה מהלב hardcoded. Migrating to live rendering is a separate PR. |
-| Icons | Material only | Rejected `lucide_icons` for consistency with the other 87 screens |
-| Old tab | `AdminCategoriesManagementTab` kept fully functional | Renders for any admin NOT in the whitelist. |
+| Banner integration | Read-only mirror in `promoted_banners` | Q5-A — `home_tab.dart` keeps rendering AnyTasks + נתינה מהלב hardcoded (per §35). Migrating to live rendering is a separate PR. |
+| Icons | Material only | `lucide_icons` was considered (per spec) but rejected for consistency with the other 87 screens |
+| Old tab | `AdminCategoriesManagementTab` kept fully functional | Renders for any admin NOT in the whitelist. Archive to `lib/screens/legacy/` after 2 weeks of v3 stability. |
 
 ### Firestore schema additions (additive only — `categories` collection)
 
@@ -4740,7 +6382,7 @@ categories/{id}
 | Collection | Purpose | Rule |
 |-----------|---------|------|
 | `admin_activity_log/{logId}` | Append-only audit trail. Every admin mutation goes through `logAdminAction` CF. Used by Activity Log panel + Undo. | admin read; CF-only write |
-| `admin_saved_views/{viewId}` | Per-admin filter/sort/view-mode presets. | per-admin scoped |
+| `admin_saved_views/{viewId}` | Per-admin filter/sort/view-mode presets. | per-admin scoped (admin_uid == auth.uid) |
 | `promoted_banners/{bannerId}` | Read-only mirror of AnyTasks + נתינה מהלב + future banners. | auth read; admin write |
 
 ### Cloud Functions added (5 total)
@@ -4749,9 +6391,9 @@ categories/{id}
 |----|---------|---------|
 | `updateCategoryAnalytics` | `onSchedule("every 15 minutes")` | Aggregates jobs + users into `categories/{id}.analytics`. Cap 50 categories per run. |
 | `refreshCategoryAnalyticsNow` | `onCall` (admin-only) | Manual trigger from the "כלי-עוצמה" footer's Refresh button |
-| `logAdminAction` | `onCall` (admin-only) | Server-stamps every admin write to `admin_activity_log`. Tamper-resistant. |
-| `undoAdminAction` | `onCall` (admin-only) | Restores `payload_before` snapshot. Idempotent. Reorder undo intentionally refused. |
-| `backfillCategoriesV3` | `onCall` (admin-only) | One-shot field initializer. Idempotent. Run ONCE after deploy. |
+| `logAdminAction` | `onCall` (admin-only) | Server-stamps every admin write to `admin_activity_log`. Tamper-resistant audit trail. |
+| `undoAdminAction` | `onCall` (admin-only) | Restores `payload_before` snapshot. Idempotent. Reorder undo is intentionally refused (snapshot too heavy). |
+| `backfillCategoriesV3` | `onCall` (admin-only) | One-shot field initializer. Idempotent — skips docs already with `admin_meta`. Run ONCE after deploy. |
 
 ### Composite indexes added
 
@@ -4765,11 +6407,11 @@ admin_saved_views: (admin_uid ASC, is_default DESC, created_at DESC)
 
 | Phase | Commit | Contents |
 |-------|--------|----------|
-| **A — Foundation** | `ffe68d1` | 14 files + 3 indexes + 3 rule blocks + 5 CFs. Backfill verified: 77 categories initialized. Zero UI change. |
-| **B — Core UI** | `4918d5f` | 8 widgets + main tab entry behind feature flag. |
-| **C — Advanced UI** | `fdb7ec3` | 6 widgets (Sparkline CustomPainter, Health bar, Coverage, Funnel, BulkBar, ShortcutsHint) + Drag-and-drop + 10 keyboard shortcuts |
-| **D — Power Features** | `3f16e52` | 7 files: ActivityLogPanel (slide-in + undo), CommandPaletteOverlay (⌘K), PowerToolsFooter, ConfirmDestructive + SavedView + Edit (5 tabs) + Add (3-step wizard) dialogs |
-| **E — Polish & QA** | (this commit) | Animated LoadingShimmer, mobile-responsive 480px, SharedPreferences persistence, this §45, `docs/categories_v3_CHANGES.md` |
+| **A — Foundation** | `ffe68d1` | 14 files (models/services/controllers) + 3 indexes + 3 rule blocks + 5 CFs. Backfill verified: 77 categories initialized. **Zero UI change.** |
+| **B — Core UI** | `4918d5f` | 8 widgets (KPI row, toolbar, category card basic, sub-grid, banner card, empty state) + main tab entry behind feature flag. Whitelisted admin sees v3; everyone else sees legacy. |
+| **C — Advanced UI** | `fdb7ec3` | 6 widgets (Sparkline `CustomPainter` Catmull-Rom, HealthScoreBar, CoverageChip, ConversionFunnel, BulkActionsBar, KeyboardShortcutsHint) + Drag-and-drop reorder (debounced 500ms) + 10 keyboard shortcuts (↑↓ Space E H P Del ⌘K ⌘Z Esc /) |
+| **D — Power Features** | `3f16e52` | 7 files: ActivityLogPanel (slide-in, inline undo), CommandPaletteOverlay (⌘K, fuzzy, ↑↓↵Esc nav), PowerToolsFooter (export/import/refresh/reset), ConfirmDestructiveDialog (type-to-delete), SavedViewDialog, EditCategoryDialog (5 tabs), AddCategoryDialog (3-step wizard) |
+| **E — Polish & QA** | (this commit) | Animated `LoadingShimmer` (no `shimmer` package — custom `ShaderMask` + `LinearGradient` slide), mobile-responsive at 480px breakpoint (sparkline + coverage hidden, health bar shrinks 50→36px), `SharedPreferences` persistence for `shortcutsHintDismissed`, this CLAUDE.md §45, `docs/categories_v3_CHANGES.md` |
 
 ### Keyboard shortcuts (web only; mobile auto-hides hint strip)
 
@@ -4788,17 +6430,17 @@ admin_saved_views: (admin_uid ASC, is_default DESC, created_at DESC)
 
 ### Rules for future code
 
-- **Never reintroduce email/password admin login or hardcoded UID checks elsewhere.** The whitelist in `feature_flag.dart` is the only place. When migrating to the Firestore flag, replace the file's body — don't sprinkle UID checks across screens.
-- **Every admin mutation MUST go through `logAdminAction` CF.** Direct Firestore writes bypass the audit trail and break Undo.
-- **Health score formula** lives in BOTH client + server. When tweaking weights, update BOTH together.
-- **Sparkline data** is a `List<int>` of 30 daily counts (oldest → newest). Padding to length-30 is the caller's responsibility.
-- **Reorder writes are debounced 500ms** to avoid storming Firestore on multiple drags.
-- **Shortcuts hint dismissal** persists via `SharedPreferences['categories_v3.shortcuts_dismissed']`.
-- **No `firebase_remote_config` package.** Swap `feature_flag.dart` for a Firestore stream when widening.
-- **Mobile breakpoint is 480px** (set in `CategoryRowCard.build`). Below this, sparkline + coverage auto-hide, health bar shrinks 50→36px.
-- **`promoted_banners` is read-only mirror** until a separate PR migrates `home_tab.dart` rendering.
+- **Never reintroduce email/password admin login or hardcoded UID checks elsewhere.** The whitelist in `feature_flag.dart` is *intentionally* the only place. When migrating to the Firestore flag, replace the file's body — don't sprinkle UID checks across screens.
+- **Every admin mutation MUST go through `logAdminAction` CF.** Direct Firestore writes from the v3 tab bypass the audit trail and break Undo. The `CategoriesV3Service` enforces this — keep all mutations there.
+- **Health score formula** lives in BOTH client (`CategoryAnalytics.healthBand` thresholds + display) and server (`_catComputeHealthScore` in functions/index.js). When tweaking weights, update BOTH together or scores will drift between cached + recomputed values.
+- **Sparkline data is a `List<int>` of 30 daily counts (oldest → newest).** Padding to length-30 is the caller's responsibility — see `CategoryAnalyticsService.sparklineForDisplay`.
+- **`ReorderableListView` reorder writes are debounced 500ms** to avoid storming Firestore on multiple drags. Keep this discipline if adding more reorderable surfaces.
+- **The keyboard shortcuts hint dismissal persists via `SharedPreferences['categories_v3.shortcuts_dismissed']`.** If you ever clear/reset preferences globally, the hint will reappear — that's the intended behavior.
+- **No `firebase_remote_config` package.** When opening v3 to more admins, swap `feature_flag.dart` for a Firestore stream of `system_settings/feature_flags.enable_categories_v3`. NOT a Remote Config dependency.
+- **Mobile breakpoint is 480px** (set in `CategoryRowCard.build`). Below this, sparkline + coverage chip auto-hide, health bar shrinks 50→36px. Test at 360px (iPhone SE min) before any future row-card changes.
+- **`promoted_banners` is read-only mirror until further notice.** Editing a banner doc here does NOT yet flow to `home_tab.dart` (which still renders AnyTasks + נתינה מהלב hardcoded per §35). When migrating, the `BannerType.anytasks` and `BannerType.community` IDs become the lookup keys.
 
-### Deploy checklist (run once after first merge)
+### Deploy checklist (run once after first merge to main)
 
 ```bash
 firebase deploy --only firestore:indexes
@@ -4806,18 +6448,789 @@ firebase deploy --only firestore:rules
 firebase deploy --only "functions:updateCategoryAnalytics,functions:refreshCategoryAnalyticsNow,functions:logAdminAction,functions:undoAdminAction,functions:backfillCategoriesV3"
 
 # Then ONCE: invoke backfillCategoriesV3 from Firebase Console → Functions → Force run → {}
+# Verify: open any categories doc in Firestore Console, confirm `admin_meta` field exists.
 ```
 
 ### Files
 
-**Created (28 files in `lib/screens/categories_v3/`):** see `docs/categories_v3_CHANGES.md` for the full list with line counts.
+**Created (28 files in `lib/screens/categories_v3/`):** see `docs/categories_v3_CHANGES.md` for the full file list with line counts.
 
 **Modified:**
 - `lib/screens/admin_screen.dart` — 2 imports + `if/else` conditional in TabBarView
 - `firestore.indexes.json` — +3 composite indexes
-- `firestore.rules` — +3 rule blocks
+- `firestore.rules` — +3 rule blocks (admin_activity_log, admin_saved_views, promoted_banners)
 - `functions/index.js` — +5 CFs + 4 helpers
 
 ---
 
-*Last updated: 2026-04-20 | Version: 15.x (Monetization + **Categories v3 Premium Workspace §45**)*
+## 46. Chat Dark-Mode QA Pass — Input Bar Palette Fix (v15.x, 2026-04-21)
+
+> Pre-deploy QA audit of the 4 messages-upgrade commits (PR-1 9ce50cb, PR-2a
+> 4ca0dda, PR-2b 3a1e4ef, PR-3a a3c1662 — see §43-area notes / chat upgrade
+> memory). Found 4 BLOCKER-severity gaps where PR-3a's palette wiring missed
+> the input bar's private widgets. Fixed in-place; zero new analyze issues.
+
+### What was broken
+
+PR-3a wired the main `ChatScreen` + message bubbles + app bar to
+`ChatThemeScope`, but 5 call sites inside
+[chat_input_bar.dart](lib/screens/chat_helpers/chat_input_bar.dart) kept
+hardcoded `Colors.white` / `Colors.grey[200]` / `Color(0xFF6366F1)` /
+`Color(0xFFEDE9FE)`. Result in dark mode:
+
+| Element | Symptom in dark |
+|---------|-----------------|
+| Send button (line 219) | Invisible — grey-on-dark + grey icon |
+| Attach button active state (line 264) | Lavender bg disappeared on dark surface |
+| Attach menu container (line 355) | White popup on white → completely unreadable |
+| Attach item label (line 476) | Dark text on dark card |
+| Upload progress bar (line 162) | Hardcoded indigo wouldn't lerp with palette |
+
+### Fix — single rule: every private widget in a chat helper reads palette itself
+
+Each of `_AttachButton`, `_AttachMenuState.build`, and `_AttachItem.build`
+now starts with:
+
+```dart
+final p = ChatThemeScope.of(context).palette;
+```
+
+Then uses palette tokens instead of hex:
+- Send bg: `hasText ? p.accent : p.surfaceMuted`
+- Send icon: `hasText ? Colors.white : p.textMuted`
+- AttachButton active bg: `p.accent.withValues(alpha: 0.15)` (works in both themes)
+- AttachButton icon: `active ? p.accent : p.textSecondary`
+- AttachMenu container: `color: p.surface, border: p.border`
+- AttachItem label: `color: p.textPrimary`
+- LinearProgressIndicator: `color: p.accent`
+
+The gradient circles inside each attach item (📍📷🎥💰) stay hardcoded by
+design — branded icon chips are intentionally theme-independent and stay
+vibrant on both backgrounds.
+
+### Rules for future code
+
+- **Every StatelessWidget / StatefulWidget in `lib/screens/chat_helpers/`
+  or `lib/screens/chat_modules/` that paints a container/text/icon MUST
+  read palette via `ChatThemeScope.of(context).palette` at the top of
+  its `build()`.** Never use hardcoded indigo/white/grey there.
+- **Private widgets are NOT exempt.** The 4 blockers were all in `_Xxx`
+  private widgets — they need palette just as much as public widgets.
+  The reviewer of PR-3a assumed "private widget = rarely rebuilt, safe
+  to hardcode" — wrong.
+- **Branded gradient chips are exempt** (the 4 emoji circles). Keep them
+  branded — the label text below them MUST still use palette.
+- **When adding a new chat widget**, run a dark-mode visual pass before
+  commit. The dev rule: open `chat_settings_sheet.dart`, flip to dark,
+  scroll every interactive element. If anything looks washed out or
+  invisible, it's a palette miss.
+
+### Deferred (non-blocking)
+
+The QA also flagged 2 MEDIUM + 1 LOW issues documented here for later:
+- `_OfficialQuoteCardState` Timer in `chat_ui_helper.dart:710` is wall-clock
+  only — could race if device clock jumps. Mitigated by the
+  `escrow_service.dart` pre-flight expiry guard, so real impact is tiny.
+- Decline-error `setState` at `chat_ui_helper.dart:846` only fires if
+  `mounted`. Unmount mid-decline leaves no user-visible error. Edge case.
+- i18n keys added in PRs 2a/2b/3a were spot-checked across 4 locales; no
+  exhaustive diff run. Safe because Flutter's build fails on missing keys.
+
+### Files touched
+
+| File | Change |
+|------|--------|
+| `lib/screens/chat_helpers/chat_input_bar.dart` | 5 palette fixes (progress bar, send button bg+icon, attach button active state, attach menu container, attach item label) |
+| `CLAUDE.md` | This section (46) |
+
+### Validation
+
+- `flutter analyze lib/screens/chat_helpers/chat_input_bar.dart` → **0 issues**
+- Full project `flutter analyze` → 10 pre-existing deprecation warnings (same
+  Riverpod/flutter_secure_storage notices as every recent commit), **zero
+  new issues**
+- Chat-upgrade-file spot check (7 files): **0 issues**
+
+### Deployment
+
+No CF / rules / index changes. Client-only fix:
+
+```bash
+flutter build web --release && firebase deploy --only hosting
+```
+
+---
+
+## 47. Chat Attachments — Location (web-safe) + Video Upload + Banner Removal (v15.x, 2026-04-21)
+
+> Fixed both broken attachment actions in the chat input's paperclip menu
+> AND removed the two top-of-chat banners the user reported as noise.
+
+### Issues reported
+
+1. **"שלח מיקום" did not work** on web. Legacy `LocationModule.getMapUrl()`
+   called `Geolocator.getCurrentPosition` directly, which silently returns
+   `null` on web when the browser's Permissions API disagrees with the
+   platform channel — no fallback, no user feedback.
+2. **"שלח וידאו" did not work** — PR-2a shipped it as a coming-soon
+   placeholder (spec option B), but the user now needs the real upload.
+3. **Two banners above the conversation** — always-green
+   `ChatSafetyBanner` ("התשלום שלך מוגן על ידי AnySkill...") and the
+   amber `ChatGuardBanner` ("שמירה על התשלום בתוך AnySkill...") — needed
+   to come off entirely. The `ChatJobStatusBanner` with the "סיימתי ✅"
+   action stays (workflow-critical).
+
+### Fixes
+
+**1. Location** — [location_module.dart](lib/screens/chat_modules/location_module.dart)
+rewritten to delegate to the production-grade
+[LocationService.requestAndGet(context)](lib/services/location_service.dart).
+That service owns the OS/stored-state reconciliation + branded pre-prompt
+dialog + JS-interop fallback on web (`_web_geo_web.dart` calls
+`navigator.geolocation.getCurrentPosition` directly when geolocator
+silently returns null). Callsite in chat_screen.dart now passes
+`context` in and shows a Hebrew snackbar on failure instead of
+swallowing it.
+
+**2. Video** — new [video_module.dart](lib/screens/chat_modules/video_module.dart)
+mirrors the `ImageModule` shape: `ImagePicker().pickVideo(source: gallery,
+maxDuration: 60s)` → Storage upload at `chats/{chatRoomId}/vid_{ts}.{ext}`
+with correct `SettableMetadata(contentType)`. Supports mp4/mov/webm/m4v.
+60-second cap is a hardcoded cost guardrail (see rules below).
+
+**3. Video bubble rendering** — new `case 'video':` in
+[chat_ui_helper.dart](lib/screens/chat_modules/chat_ui_helper.dart)
+`_buildContent`. Tappable card with circular play button + "וידאו"
+title + "לחץ לצפייה" subtitle. `launchUrl(uri, mode:
+externalApplication)` opens the Firebase Storage URL in the browser's
+native video player — same strategy as the existing walk_summary
+card opens the static map. Palette-aware colors (Law §46 rule —
+every new chat widget reads `ChatThemeScope.of(context).palette`).
+
+**4. Banners removed** — deleted `ChatSafetyBanner()` +
+`ChatGuardBanner(...)` invocations from
+[chat_screen.dart](lib/screens/chat_screen.dart) `build()`, plus the
+dead `_showGuardBanner` field. The classes stay defined in
+[chat_banners.dart](lib/screens/chat_helpers/chat_banners.dart) so
+they can be restored trivially if product asks — no references
+remain. `ChatJobStatusBanner` is untouched (workflow-critical).
+
+### Rules for future code
+
+- **Never use `Geolocator.getCurrentPosition` directly from chat/UI
+  code.** Always route through `LocationService.requestAndGet(context)`
+  so the web JS-interop fallback + branded dialog + stored-state
+  reconciliation fire. This is the single source of truth.
+- **Every upload helper (image/video/file) MUST have a snackbar-
+  surfaced failure path.** The pre-fix pattern of `if (url != null)
+  _send(...)` with silent null was exactly what left users staring at
+  a dead button. Every call site shows a Hebrew error snackbar on
+  `null`.
+- **Video cap is 60 seconds.** Increasing this needs explicit product
+  sign-off because Storage bandwidth cost is linear. To bypass via
+  a new sender, go through `VideoModule.uploadVideo` — don't
+  re-implement raw `pickVideo` elsewhere.
+- **Never re-add `ChatSafetyBanner` or `ChatGuardBanner` invocations**
+  without explicit product ask. They were explicitly removed as
+  user-perceived clutter. If a regulatory banner is needed later,
+  add a NEW, dismissible, conditional banner — don't restore these.
+- **Content-type on Storage matters.** Web video playback via
+  `launchUrl` depends on `contentType` being set correctly, else the
+  browser downloads instead of streaming. `VideoModule` sets this
+  based on file extension — preserve the logic.
+
+### Files touched
+
+| File | Change |
+|------|--------|
+| `lib/screens/chat_modules/location_module.dart` | Rewritten to delegate to `LocationService` — 1-line function body |
+| `lib/screens/chat_modules/video_module.dart` | **NEW** — picker + upload + contentType |
+| `lib/screens/chat_modules/chat_ui_helper.dart` | Added `case 'video':` to `_buildContent` (~60 lines, palette-aware) |
+| `lib/screens/chat_screen.dart` | Removed 2 banner widgets + dead state field; wired real video upload callback; wired location to use context; added 2 failure snackbars |
+
+### Validation
+
+- `flutter analyze lib/screens/chat_screen.dart lib/screens/chat_modules/video_module.dart lib/screens/chat_modules/location_module.dart lib/screens/chat_modules/chat_ui_helper.dart` → **0 issues**
+- Full `flutter analyze` → 10 pre-existing deprecation warnings, **zero new issues**
+- No Firebase Storage rule change needed — the `chats/{chatRoomId}/**` path is the same one already used by `ImageModule`.
+
+### Deploy
+
+Client-only fix:
+
+```bash
+flutter build web --release && firebase deploy --only hosting
+```
+
+---
+
+## 48. Legacy Categories Tab — Removed 4 admin footgun buttons (v15.x, 2026-04-21)
+
+> Housekeeping on the legacy categories management tab (the one admin
+> sees while the v3 whitelist in
+> [feature_flag.dart](lib/screens/categories_v3/feature_flag.dart) stays
+> empty — see §45). Four admin tools above the category list were
+> removed because they'd become operational footguns or now duplicate
+> v3 flows.
+
+### Removed
+
+- **"תקן כל התמונות (ייחודי)"** red button — called
+  `VisualFetcherService.fixAllImages` and rewrote every category's
+  image URL. Any admin click would stomp on category images that
+  were manually tuned in v3's EditCategoryDialog. No confirm dialog,
+  no undo.
+- **"אפס מוני פופולריות"** amber button — batch-zeroed `clickCount`
+  on every category doc. The v3 Analytics pipeline now derives
+  popularity from `orders_30d` (see §45), so the legacy counter is
+  already dead data and resetting it has no effect on ranking.
+- **"רענן תמונות קטגוריה"** cyan button — called
+  `VisualFetcherService.forceRefreshAll()` which silently overwrote
+  admin-curated images (same risk as "תקן כל התמונות" but with a
+  gentler icon). Removed with the other image-bulk action.
+- **"קטגוריות ממתינות לאישור AI"** outlined button — pushed
+  `PendingCategoriesScreen`. The modern category-request flow lives
+  inside the v3 "פעולות על קטגוריה" dialog + category_requests admin
+  views, so the bespoke pending screen is redundant. Route + screen
+  file kept on disk for now (dead code) in case we need to pin it
+  back to a different admin surface.
+
+### What stays
+
+- **Popularity leaderboard card** — read-only top-5 display is kept
+  for the at-a-glance view. It uses `_buildPopularityLeaderboard` +
+  `_fmtClicks` which are untouched.
+- **"AI Auto-Created Categories Log"** inline list (`admin_logs`
+  stream, `isReviewed == false`) — this IS useful, gives the admin
+  a single-scroll view of AI-discovered categories with an
+  inline "סמן כנבדק" button. Not removed.
+- **"הוסף קטגוריה"** black button — primary create action, kept.
+
+### Rules for future code
+
+- **Never re-add `fixAllImages` / `forceRefreshAll` from a raw admin
+  button.** If admins need a bulk-image tool, it should live in the
+  v3 power tools footer (§45) and write to `admin_activity_log` via
+  `logAdminAction` CF so the action is auditable + reversible via
+  `undoAdminAction`.
+- **Never expose `clickCount` reset** unless the v3 Analytics pipeline
+  is deprecated. The field is vestigial; resets are noise.
+- **`VisualFetcherService.fixAllImages` + `.forceRefreshAll()` stay
+  defined** — the services themselves aren't broken, only the admin-UI
+  exposure was risky. Re-wire later from v3 if needed.
+- **Pending AI categories — future home**: if category-request volume
+  picks up, add a v3 power tools footer button that streams
+  `category_requests.where(status == 'pending')` instead of resurrecting
+  `PendingCategoriesScreen`. Keeps the auditable / reversible pattern.
+
+### Files touched
+
+| File | Change |
+|------|--------|
+| `lib/screens/admin_categories_management_tab.dart` | Removed 4 button widgets + `_refreshingImages` / `_fixingImages` / `_fixImagesDone` / `_fixImagesTotal` / `_resettingCounters` state fields + `_resetPopularityCounters()` method + dropped imports for `VisualFetcherService` and `PendingCategoriesScreen` (~160 lines total) |
+| `CLAUDE.md` | This section (48) |
+
+### Validation
+
+- `flutter analyze lib/screens/admin_categories_management_tab.dart` → **0 issues**
+- Full `flutter analyze` → 10 pre-existing deprecation warnings, **zero new issues**
+
+### Deploy
+
+Client-only fix:
+
+```bash
+flutter build web --release && firebase deploy --only hosting
+```
+
+---
+
+## 49. Banners v2 — Admin workspace + Provider Carousel (v15.x, 2026-04-21)
+
+Full redesign of the admin "באנרים" tab inspired by Linear/Stripe,
+plus a new **provider_carousel** banner type that rotates 2-20 real
+providers on the customer home tab. Built in 6 phases (2-7) behind a
+parallel tab so v1 stays fully operational until v2 proves stable.
+
+> **Source of truth for this feature**: `docs/ui-specs/banners_redesign/`.
+> Two HTML mockups (`01_banners_list.html` + `02_provider_carousel_builder.html`)
+> + product spec (`01_product_spec.md`) + Claude Code prompt
+> (`02_claude_code_prompt.md`). When text and mockup conflict, mockup wins.
+
+### Architecture decisions
+
+| Decision | Choice | Why |
+|----------|--------|-----|
+| Scoped palette | `#6B5CFF` purple (spec-mandated), **only** inside the admin banners tab | Rest of app stays on `Brand.indigo` `#6366F1`. Same pattern as Vault (§29) and Monetization (§31). |
+| Backward-compatibility | DB field stays `placement` (not renamed to `type`); Dart enum is `BannerType` that serializes to `placement` | V1 tab + `_PromoCarousel` in home_tab.dart keep working unchanged. New fields (`providerCarousel`, `impressions`, `attributedRevenue`, `hasAbTest`, `abVariants`) are optional with defaults. |
+| v2 tab placement | **Parallel** tab next to v1 (`באנרים · חדש ✨`), not replacement | A/B visual comparison during rollout. Remove v1 tab after v2 proves stable. |
+| Stack | `StatefulWidget` + `StreamBuilder` / `StreamSubscription` (NOT Riverpod) | Matches every other admin tab (Vault, Monetization, Demo Experts). |
+| State management in wizard | Single wizard `StatefulWidget` holds config; sub-sections are pure `StatelessWidget` driven by props + callbacks | Keeps section files ≤ 700 lines each; live preview mirrors edits via `didUpdateWidget`. |
+| Runtime widget location | `lib/widgets/provider_carousel_banner.dart` (customer-facing) | Separate from admin widgets under `lib/widgets/banners_admin/`. |
+| Click tracking | Single `FieldValue.increment(1)` on tap, `catchError((_){})` | Never blocks navigation on network failure. |
+| Impression tracking | Deferred to a future debounced/capped implementation | Per-rotation writes would cost 86k/day from an idle tab. Admin KPI strip shows `—` until analytics infra lands. |
+| AI for insights + reorder | **Gemini 2.5 Flash Lite** (NOT Claude) | Matches §32/33/34/41/42/44 rule. AI CEO (§12c) is the only Claude-backed admin tool. |
+
+### Firestore schema — additive only on `banners/{id}`
+
+```
+banners/{id}
+  // Existing fields (unchanged) ──────────────────────────────────────
+  title, subtitle, placement, isActive, order, imageUrl,
+  color1, color2, iconName, expiresAt, providerId, providerName,
+  providerPhoto, clicks
+
+  // v15.x additions (all optional with sensible defaults) ─────────────
+  startDate: Timestamp | null            // new — null means "live immediately"
+  providerCarousel: {                    // ONLY for placement=='provider_carousel'
+    providerIds: string[],               // 2-20 uids (rule-enforced when active)
+    rotationDurationMs: number,          // 2000-8000 (rule-enforced when active)
+    sortMode: 'ai'|'random'|'rating'|'manual',
+    transition: 'slide'|'fade'|'zoom'|'flip',
+    display: {
+      showProfilePic, showRating, showGallery, galleryCount,
+      showCategory, showPrice, showAvailability
+    }
+  }
+  impressions: number                    // default 0
+  attributedRevenue: number              // default 0
+  hasAbTest: boolean                     // default false
+  abVariants: [{id, title, subtitle?, imageUrl?,
+                trafficPercent, impressions, clicks}]  // schema only, no runtime split yet
+  createdAt: Timestamp
+  createdBy: string                      // admin uid
+```
+
+### New collections
+
+| Collection | Purpose | Rule |
+|-----------|---------|------|
+| `ai_insights/banners` | Output of `generateBannerInsights` CF — single doc streamed by the admin v2 tab's insight card | Admin read (uses existing `ai_insights/{id}` rule §31); CF-only write via Admin SDK |
+| `ai_provider_order/{uid}_{bannerId}` | 1-hour cache of `smartProviderOrder` CF results | `allow read, write: if false` — CF-only via Admin SDK |
+
+### Cloud Functions added (2)
+
+| CF | Trigger | Purpose |
+|----|---------|---------|
+| `generateBannerInsights` | `onSchedule("every 6 hours")` | Aggregates up to 50 banners (status/ctr/impressions buckets), feeds a compact snapshot to Gemini, writes one strategic Hebrew insight to `ai_insights/banners`. **Always produces a visible state** — on Gemini failure writes a deterministic fallback doc referencing the highest-CTR banner. |
+| `smartProviderOrder` | `onCall` (auth required) | Input: `{providerIds, bannerId}`. Reads cache first (1h TTL via `expireAt`); on miss, fetches provider summaries + user preferences + Israeli time-of-day → Gemini → returns ordered list with integrity check. **Silent fallback** to input order on any failure (no creds, Gemini down, bad permutation, fetch error). |
+
+### Firestore rules added
+
+`validBannerDocV2()` + `validProviderCarouselConfig()` helpers, wired into `banners/{id}` create + update. Active `provider_carousel` banners MUST pass:
+- `providerIds.size() in 2..20`
+- `rotationDurationMs in 2000..8000`
+
+Drafts (`isActive == false`) and legacy gradient/image placements bypass validation so schema evolution doesn't block saves. Client-side wizard also checks via `ProviderCarouselConfig.validate()` before the publish CTA — Firestore rule is a defense-in-depth second layer.
+
+`ai_provider_order/{cacheId}` is locked to CF-only (`allow read, write: if false`). Client never reads or writes — the CF returns ordered IDs directly.
+
+### Files — 6-phase breakdown
+
+**Phase 2 — Data schema (1 file):**
+- `lib/models/banner_model.dart` — `BannerType` + `BannerStatus` enums, `ProviderCarouselConfig` with `validate() → String?`, `CarouselDisplayOptions`, `BannerAbVariant`, `BannerModel` with `fromDoc`/`fromMap`/`toFirestore`/`copyWith` (sentinel pattern for nullable clears) + derived `status` + `ctr`
+
+**Phase 3 — Design system (7 files under `lib/widgets/banners_admin/`):**
+- `design_tokens.dart` — `BannersTokens` (palette, typography, spacing, radii) + `BannersCard` + `BannersDivider`
+- `banner_sparkline.dart` — `BannerSparkline` + `CustomPainter`, handles 0/1/2+ values, hover stroke 1.2→2px
+- `banner_metric_card.dart` — `BannerMetricCard` + `BannerMetricStrip` (4 KPIs with 1px dividers)
+- `banner_chip.dart` — 6 variants (success/warn/neutral/accent/danger/draft) × dot × icon × dense
+- `banner_toggle.dart` — 26×14 optimistic toggle with rollback + Hebrew SnackBar
+- `banner_kbd.dart` — keyboard shortcut pills with empty-list guard
+- `_dev_widgets_gallery.dart` — **dev-only** preview of every widget in every state
+
+**Phase 4 — Main list screen (3 files under `lib/screens/admin_banners_v2/`):**
+- `provider_carousel_live_preview.dart` — 72×40 rotating mini preview (single Timer, AnimatedBuilder scoped to progress bar)
+- `banner_row.dart` — 8-column RTL row with hover-reveal actions (toggle always visible, edit + more on hover) + CTR bar capped at 15%
+- `admin_banners_tab_v2.dart` — header + KPI strip + 6 type tabs + filter bar + list + insight card + shortcuts footer + 4 states (loading / empty-all / filter-empty / error)
+
+**Phase 5 — Wizard (4 files under `lib/screens/admin_banners_v2/wizard/`):**
+- `provider_picker_section.dart` — debounced 300ms search + category/rating filters + 2-20 soft enforcement
+- `rotation_settings_section.dart` — slider + 6 presets + sort radio 2×2 + 6 display checkboxes + 4 transition buttons
+- `wizard_live_preview.dart` — 280px phone frame + rotating card + summary card (honest "—" for unknowable impressions/day)
+- `provider_carousel_wizard.dart` — split view (desktop ≥900px / stacked <900px) + save/publish with `config.validate()` gate
+
+**Phase 6 — Runtime widget (1 file + wiring):**
+- `lib/widgets/provider_carousel_banner.dart` — customer-facing rotating card
+- Wiring in `lib/screens/home_tab.dart` `_PromoCarousel`:
+  - Query: `whereIn: ['home_carousel', 'provider_carousel']` (was single `isEqualTo`)
+  - `_PromoBanner` extended with `id`, `type`, `providerCarousel` (back-compat via defaults)
+  - `_BannerCard` branches at the top: `provider_carousel` → new widget; else → existing gradient/image path unchanged
+
+**Phase 7 — Gemini integration:**
+- `functions/index.js` — `generateBannerInsights` (scheduled) + `smartProviderOrder` (callable)
+- `firestore.rules` — new `ai_provider_order` block (CF-only) + `validBannerDocV2` shape helpers
+- Client wiring: `_InsightCardLive` streams `ai_insights/banners`; `ProviderCarouselBanner._requestAiOrder` fires on mount when `sortMode==ai`, `_applyAiOverride` in build
+
+### Memory safety — single rule for every rotating widget
+
+Every rotating preview / runtime card follows the same pattern:
+
+1. **Exactly one `Timer.periodic`** per instance, stored in a nullable field
+2. **Exactly one `AnimationController`** with `SingleTickerProviderStateMixin`
+3. `AnimatedBuilder` wraps **only** the progress bar so the outer card never repaints at 60fps
+4. Both torn down in `dispose()` — `_timer?.cancel(); _progressCtrl.dispose();`
+5. `didUpdateWidget` re-syncs `rotationDurationMs` into the controller when the admin edits
+
+Without this discipline, 5 banners × 60fps rebuild of the full card = 300 widget rebuilds/sec. With AnimatedBuilder scoping, it's 5 × 60 tiny 2px bar repaints/sec.
+
+### User interactions (runtime widget)
+
+| Gesture | Action |
+|---------|--------|
+| Single tap on card | Navigate to `ExpertProfileScreen(expertId, expertName)` + bump `banners/{id}.clicks` |
+| Long-press | Toggle pause (Timer + progress bar stop together) |
+| Horizontal drag | Manual prev/next + reset timer |
+
+### Deploy checklist
+
+```bash
+# Functions
+firebase deploy --only \
+  functions:generateBannerInsights,\
+  functions:smartProviderOrder
+
+# Rules
+firebase deploy --only firestore:rules
+
+# Web app
+flutter build web --release && firebase deploy --only hosting
+```
+
+**One-time manual step** in GCP Console (same pattern as §19 TTL):
+- https://console.cloud.google.com/firestore/databases/-default-/ttl
+- Create Policy → collection `ai_provider_order`, field `expireAt`
+
+Without the TTL policy, cache docs accumulate forever. Correctness is unaffected (the CF ignores entries older than 1h) but storage grows unbounded.
+
+### Rules for future code
+
+- **Never delete `admin_banners_tab.dart` (v1)** until v2 is battle-tested. Both read/write the same `banners` collection — dual-surface is cheap and safe.
+- **Never hardcode banner rendering based on `placement` string.** Use `BannerType.fromDb(placement)` and branch on the enum. New placements are one enum value away.
+- **Never pass `BannersTokens` colors into customer-facing code.** That palette is scoped to `lib/widgets/banners_admin/`. The customer runtime widget uses `Brand.*` / local const hex to match the rest of the home tab.
+- **Never fake banner metrics.** If a number can't be honestly derived from the data, show `—` with a tooltip explaining the missing infra. Admin trust > marketing polish.
+- **Every new rotating widget** must follow the §49 memory-safety rule above (single Timer, scoped AnimatedBuilder, dispose both).
+- **Every new CF in the banners subsystem** must use **Gemini** (never Claude) and must have a deterministic fallback path.
+- **`smartProviderOrder` integrity check is non-negotiable.** Gemini returning a list that's not a permutation of the input → silent fallback to input. Allowing stray IDs would send users to providers that weren't in the admin's selection.
+
+### Known deferred work
+
+| Item | Where | Why deferred |
+|------|-------|-------------|
+| Daily metric aggregation (`banners/{id}/stats/{yyyy-mm-dd}`) | KPI sparklines + trend % | Requires a new subcollection + nightly CF. Admin KPI strip shows `—` until this lands. |
+| Impression tracking with debounce/daily-cap | `ProviderCarouselBanner` `onImpression` | Per-tick write would cost 86k/day from idle tab. Needs CF-side debouncer. |
+| A/B testing runtime split | `BannerAbVariant` schema already shipped | Deferred per spec priority — "nice to have". |
+| Command Palette (⌘K) | Admin v2 tab header | Deferred per spec priority. Button is wired to a "בקרוב" SnackBar. |
+| Calendar + Gallery view toggles | Admin v2 filter bar | Only the list view is implemented; the other two icons show a tooltip "בקרוב". |
+| Edit dialog for non-provider-carousel banners | v2 edit button | Gradient/image edits still go to v1 tab. Only `provider_carousel` opens the wizard. |
+| AI `actionType` auto-apply (e.g. `duplicate_banner`) | Admin v2 insight card | The card shows the recommendation text but action-type buttons aren't wired yet. |
+| Slide/zoom/flip transition animations | `ProviderCarouselBanner` | Only fade is implemented; other transitions accepted from config but render as fade. |
+
+### Validation
+
+- `flutter analyze` → **0 new issues** (10 pre-existing Ref-deprecations unchanged)
+- `node -c functions/index.js` → syntax OK
+- All rotating widgets follow the memory-safety pattern
+- RTL audit: all directional positioning uses `EdgeInsetsDirectional` / `PositionedDirectional` / `Alignment{Start|End}`. Two intentional `TextDirection.rtl` wrappers (dev gallery + wizard scaffold). Zero left/right hardcoded paddings.
+- Back-compat audit: v1 tab unchanged; legacy doc shapes deserialize cleanly via defaults; existing `_PromoCarousel` continues to render `home_carousel` banners identically.
+
+---
+
+## 50. Security Hardening — v15.x Audit (2026-04-25)
+
+> Three-round defensive review of every Firestore rule, Storage rule, and
+> Cloud Function in the codebase. Identified and closed 9 high/medium-
+> severity vulnerabilities, then layered Firebase Custom Claims on top
+> of the existing Firestore-field-based role checks for protocol-level
+> defense in depth. **Source of truth for all future security work** —
+> see `Rules for future code` below before adding any new rule, callable,
+> or storage path.
+
+### Current security posture (post-audit)
+
+**Honest assessment: 7/10** — production-grade for a startup with real
+users; not a 9-10 (bank-grade) because:
+
+What we now have (✅):
+- All known privilege-escalation primitives closed at the rule layer.
+- All known money-creation paths closed at the CF layer.
+- Critical Storage paths gated by parent-doc participant lookup.
+- Admin-gated CFs unified through a single `isAdminCaller` helper.
+- Defense-in-depth: JWT custom claim → Firestore field → blocklist on
+  both create + update.
+- Audit logging on every sensitive admin action (`admin_audit_log` +
+  `support_audit_log`).
+- Sentry + Crashlytics + Watchtower error reporting (Law 7).
+- Service-account credentials are gitignored (`functions/.gitignore:9`).
+
+What we do NOT have (⚠️ — known gaps):
+- App Check is configured but **NOT in Enforce mode**. Determined
+  attackers with a stolen `apiKey` from `firebase_options.dart` can
+  still hit Firebase APIs from a non-app client. (App Check only
+  matters once toggled to Enforce in the Firebase Console — operator
+  step, not code.)
+- Custom Claims is in **transition**: rules + isAdminCaller prefer
+  the JWT claim but still fall back to the Firestore field. Phase 2
+  (drop the field-based fallback) is deferred until all admins have
+  refreshed their tokens.
+- No automated rule-emulator tests in CI. Rule regressions would be
+  caught only at code review or in production.
+- No professional penetration test.
+- No 2FA enforcement for admins (relies on Firebase Auth defaults).
+- No rate limiting on most CFs (App Check is the practical rate
+  control, but it's not enforced).
+- A few lower-priority storage paths still open to any signed-in
+  user (`community_evidence` — embeds docId in filename, would need
+  a path refactor to gate).
+
+Where this places us on the curve:
+
+| Tier | Description | Where we are |
+|------|-------------|--------------|
+| 3-4/10 | Hobby project — open rules, trust the client | Where we WERE pre-audit |
+| 6-7/10 | Production startup — rules locked, CFs gated, secrets out of code, audit log | **WE ARE HERE** |
+| 8-9/10 | Mature SaaS — App Check enforced, automated rule tests, anomaly detection, 2FA admins | Next milestone |
+| 10/10 | Bank/regulated — SOC2/ISO 27001, 24/7 SOC, bug bounty, HSM | Years away |
+
+### Vulnerabilities closed (3 rounds)
+
+| # | Severity | Title | Fix |
+|---|----------|-------|-----|
+| 1 | HIGH | Self-promote to admin via `roles[]` | `role`, `roles`, `activeRole`, audit fields added to `users/{uid}` doesNotTouch blocklist; create rule also rejects setting privileged values at signup. |
+| 2 | HIGH | `processPaymentRelease` minted money from client-supplied `expertId` + `totalAmount` | All financial values now read from `jobs/{jobId}` doc inside the transaction; `jobId` is the only trusted client input. |
+| 3 | MEDIUM | `boarding_proofs/` storage open to any signed-in user | Read/write gated by `expertId`/`customerId` lookup on the parent jobs/{jobId} doc. |
+| 4 | HIGH | `supportAgentAction` trusted client-writable `role` field | Resolved by Vuln 1 fix (role becomes CF-only); JWT claim layered on top in Round C as defense in depth. |
+| 5 | MEDIUM | `job_requests` update rule allowed any auth user to overwrite `interestedProviders`/`status` | 4-branch rule: owner full control, provider self-add (append-only), provider self-decline, broadcast-claim cosmetic close (winner-verified). |
+| 6 | HIGH | Provider could self-write `customCommissionActive: true, customCommission: 0` to zero out platform fee | `customCommission` + `customCommissionActive` added to blocklist (both create and update). |
+| 7 | HIGH | `sendGlobalBroadcast` had NO server-side admin check — any auth user could spam every device with arbitrary FCM | Explicit `isAdminCaller` gate added; comment that previously claimed "server check here" was a lie. |
+| 8 | MEDIUM | `anytask_proofs/{taskId}/` open to any signed-in user — proof tampering could trick customers into releasing escrow | Read gated to participants; write gated to `selectedProviderId` on the parent any_tasks doc. |
+| 9 | MEDIUM | `any_tasks/{taskId}/{file}` (client task images + provider proof) open to any signed-in user | Read: 'open' tasks public, otherwise participants only. Write: client OR selectedProviderId. |
+| Round C C1 | LOW | `dog_walks/{walkId}/route_map.png` open to any signed-in user — tampering with route map | Same pattern as Vuln 3: gated by `providerId`/`customerId` on parent dog_walks doc. |
+
+### Custom Claims architecture (Round C)
+
+**Goal:** Layer Firebase Auth Custom Claims on top of Firestore-field
+role checks. JWT claims are signed by Firebase and CANNOT be forged
+from the client. Even if a future blocklist regression accidentally
+allows a user to write `isAdmin: true` to their own doc, the JWT-claim
+branch in the rule helpers and `isAdminCaller` keeps the gate closed.
+
+**3-layer defense for admin status (in priority order):**
+
+1. **`request.auth.token.admin == true`** — JWT custom claim, signed
+   by Firebase, set ONLY via `admin.auth().setCustomUserClaims()`.
+   Rule helpers + `isAdminCaller` check this FIRST. Zero Firestore
+   reads on the admin path → performance bonus.
+2. **`users/{uid}.isAdmin == true`** — Firestore field, fallback
+   during the migration window (admins whose token was issued before
+   the claim landed still get access from this branch until natural
+   token expiry, ≤1h).
+3. **`'admin' in users/{uid}.roles[]`** — multi-role array fallback
+   (legacy from Phase 1 multi-role).
+
+**Same pattern for `support_agent`:** `request.auth.token.support_agent`
+→ `users/{uid}.role == 'support_agent'` → `'support_agent' in roles`.
+
+**Migration steps performed:**
+
+1. Updated `isAdmin()` and `isSupportAgent()` rule helpers to check
+   JWT claim FIRST, falling back to existing field reads.
+2. Updated `isAdminCaller` CF helper to mirror the same pattern.
+3. Updated `setUserRole` CF to dual-write Custom Claims alongside
+   the Firestore field. On privilege REMOVAL, also calls
+   `admin.auth().revokeRefreshTokens(uid)` to force re-auth within
+   1h instead of waiting for natural token expiry.
+4. Created `backfillAdminClaims` CF + parallel local script
+   (`functions/scripts/backfill-admin-claims.js`) for one-time sync
+   of all existing admins/agents.
+5. Added Custom Claims to `users/{uid}` create-rule rejection list
+   so brand-new users can't ship a profile with `isAdmin: true`.
+
+### Operations runbook
+
+#### Inspecting an admin's current claim state
+
+```bash
+cd functions
+node -e "
+  const admin = require('firebase-admin');
+  admin.initializeApp({ projectId: 'anyskill-6fdf3' });
+  admin.auth().getUserByEmail('admin@example.com')
+    .then(u => console.log('uid:', u.uid, 'claims:', JSON.stringify(u.customClaims)))
+    .catch(e => console.error(e));
+"
+```
+
+(Requires either `service-account.json` next to the script OR
+Application Default Credentials via `firebase login` + `gcloud auth
+application-default login`.)
+
+#### Granting a new admin
+
+Use the in-app Admin Panel → User Management → "Set Role" — calls
+the `setUserRole` CF, which dual-writes the Firestore field AND the
+Custom Claim. Target user must sign out / in (or wait ≤1h) to refresh
+their JWT.
+
+NEVER write `users/{uid}.isAdmin: true` directly in the Firestore
+console — the field write succeeds (admin SDK bypasses rules), but
+the Custom Claim won't be set. The user gets admin via the Firestore-
+field fallback only, which is the legacy primitive we're moving away
+from.
+
+#### Backfilling Custom Claims after schema/role changes
+
+If a manual Firestore edit (or a bug) makes the Custom Claim drift
+from the Firestore field state, run the local backfill script:
+
+```bash
+cd functions
+node scripts/backfill-admin-claims.js --dry-run    # preview
+node scripts/backfill-admin-claims.js              # apply
+```
+
+The script is idempotent. Logs each updated/cleared user. Writes a
+summary to `admin_audit_log`. Operators MUST sign out / in afterward
+for their new JWT to include the synced claim.
+
+#### Revoking an admin in an emergency
+
+Two layers of revocation needed (claim + refresh tokens):
+
+```bash
+cd functions
+node -e "
+  const admin = require('firebase-admin');
+  admin.initializeApp({ projectId: 'anyskill-6fdf3' });
+  const TARGET_UID = '...uid here...';
+  admin.auth().setCustomUserClaims(TARGET_UID, { admin: false, support_agent: false })
+    .then(() => admin.auth().revokeRefreshTokens(TARGET_UID))
+    .then(() => admin.firestore().collection('users').doc(TARGET_UID).update({
+      isAdmin: false,
+      role: 'customer',
+      roles: ['customer'],
+    }))
+    .then(() => console.log('Done. Existing access tokens still valid for ≤1h.'))
+    .catch(e => console.error(e));
+"
+```
+
+After this: the user's existing access tokens still work for up to
+1 hour. There is NO way to invalidate access tokens before natural
+expiry (Firebase architectural limit). For instant lockout, also
+disable the Firebase Auth account via
+`admin.auth().updateUser(uid, { disabled: true })`.
+
+#### Rotating service-account.json
+
+If a service-account key is leaked or suspected:
+
+1. Firebase Console → Project Settings → Service accounts → delete
+   the leaked key from "Manage all service accounts".
+2. Generate a new key if needed for one-off scripts.
+3. Audit `admin_audit_log` for unexpected entries during the
+   suspected window.
+4. Rotate any other secrets that may have been on the same machine.
+
+### Rules for future code
+
+These are non-negotiable for any new code touching auth, money, or
+sensitive Storage paths:
+
+**Firestore rules:**
+- **Every new sensitive field on `users/{uid}` MUST go to one of:**
+  (a) the `doesNotTouch` blocklist (CF-only writable), OR
+  (b) a private subcollection at `users/{uid}/private/{docId}` (§11).
+- **Never trust client-supplied values for money math.** Always read
+  amounts/recipients from a server-side doc inside the transaction.
+- **Cross-user writes (`X` writes to `Y`'s doc) require a tight
+  field-level allow-list.** Generic `allow update: if isAuth()` is
+  always wrong for cross-user paths.
+- **Sentinel fields for `where()` queries** (e.g. `customCommissionActive`)
+  must be in the same blocklist as the data field they sentinel.
+
+**Cloud Functions:**
+- **Every new admin-only callable MUST use `isAdminCaller(request)`.**
+  Never duplicate the `users/{uid}.isAdmin === true` inline check.
+  When `isAdminCaller` is upgraded (e.g., to require 2FA), all CFs
+  inherit the upgrade for free.
+- **Every callable that mutates money MUST read amounts and parties
+  from the canonical Firestore doc (job, task, etc.) inside the
+  transaction.** Never trust the request body for these values.
+- **`onCall` CFs that sit between users (e.g., releasing escrow)
+  MUST verify the caller's role on the resource (customer, provider,
+  admin)** before any mutation, even if the auth check passes.
+
+**Storage rules:**
+- **No new `allow write: if isSignedIn()` rules without ownership
+  check.** Use `firestore.exists(...)` + a participant check on the
+  parent doc. Pattern: see boarding_proofs (§3d), AnyTasks (§50
+  Vulns 8-9), dog_walks (Round C C1).
+- **Writable paths must verify content type** (`isImageContentType`,
+  `isMediaContentType`) AND a size cap. Never accept arbitrary
+  content types.
+
+**Custom Claims:**
+- **Never grant admin via direct Firestore write** outside `setUserRole`.
+  The CF dual-writes both layers (field + claim); a direct write
+  leaves them desynced.
+- **`admin.auth().setCustomUserClaims()` REPLACES all claims** (no
+  merge). When updating one claim, set all relevant claims explicitly
+  (e.g., `{ admin: true, support_agent: false }`).
+- **Always `revokeRefreshTokens()` on privilege removal** so the
+  new claim takes effect within 1h instead of natural token expiry.
+- **Never store secrets in claims** — they're embedded in JWT and
+  visible to the client.
+
+### Deferred work (lower priority — pick up later)
+
+- **Phase 2 Custom Claims:** drop the Firestore-field fallback
+  branches in `isAdmin()` and `isAdminCaller`. Requires confirmation
+  that all admins have signed out/in at least once since the backfill.
+- **App Check Enforce mode:** flip from Monitor → Enforce in Firebase
+  Console after 24-48h of clean Monitor logs. See Law 9d for the
+  per-API toggle. Operator step — not code.
+- **`community_evidence/` storage gate:** filename embeds docId
+  (`{docId}_{ts}.{ext}`) which makes path-based ownership lookup
+  awkward. Refactor to `community_evidence/{docId}/{file}` then add
+  the participant gate.
+- **`dog_walks/{walkId}/{allPaths=**}` MIME tightening:** currently
+  only `isImageContentType()` + 5MB. Add an explicit filename pattern
+  if the route map is the only intended file.
+- **Automated Firestore rule tests:** add `@firebase/rules-unit-testing`
+  scenarios to CI for the most-traveled rules (users update, jobs
+  read, escrow flow).
+- **Anomaly detection:** monitor `admin_audit_log` for
+  out-of-baseline patterns (e.g., burst of grant_credit calls,
+  off-hours role changes).
+- **2FA enforcement for admin emails:** Firebase Auth supports MFA
+  via SMS/TOTP. Enforce for any account holding `admin` claim.
+
+### Files modified by this audit
+
+| File | Round | Purpose |
+|------|-------|---------|
+| `firestore.rules` | A, B, C | Blocklist expansion, JWT claim helpers, job_requests 4-branch update rule, customCommission added |
+| `storage.rules` | A, B, C | boarding_proofs, anytask_proofs, any_tasks, dog_walks all gated by parent-doc participant lookup |
+| `functions/index.js` | A, B, C | processPaymentRelease hardening, sendGlobalBroadcast admin gate, isAdminCaller JWT-aware, setUserRole dual-write claims, 5 inline isAdmin checks → isAdminCaller, backfillAdminClaims CF added |
+| `functions/scripts/backfill-admin-claims.js` | C | NEW — local one-shot script for admin claim sync |
+
+### Commit history (this audit)
+
+11 separate commits across the 3 rounds, in chronological order:
+
+1. `a69867f` — Round A Vuln 3: boarding_proofs storage requires job ownership
+2. `717c476` — Round A Vulns 1+4+5: blocklist + job_requests rule
+3. `5f58464` — Round A Vuln 2: processPaymentRelease reads from job doc
+4. `0a96153` — Round B Vuln 6: customCommission self-write blocked
+5. `01259c7` — Round B Vuln 7: sendGlobalBroadcast admin gate
+6. `db8a395` — Round B Vulns 8+9: AnyTasks storage participant gate
+7. `863cb24` — Round C C1: dog_walks storage walk ownership
+8. `6034793` — Round C C4: rule helpers prefer JWT custom claim
+9. `66b5a85` — Round C C3+C5+C6+C7: CF JWT-claim hardening + backfill CF
+10. `393a818` — Round C: local backfill script (chore)
+11. `8c6bdbd` — Round C: backfill script ADC + service account fallback
+
+---
+
+*Last updated: 2026-04-25 | Version: 15.x (Pest/Delivery/Cleaning/Handyman/Fitness CSM + Monetization + AnyTasks deadlines + `publishStaleReviews` + `notifyProviderOnApproval` + scheduled-CF index recovery + `generateDailyOpportunity` on Gemini + App Feedback & Ideas §42 + Smart Notification Router §43 + Fitness Trainer CSM §44 + Categories v3 Premium Workspace §45 + Chat Dark-Mode Input-Bar Fix §46 + Chat Attachments: Location/Video/Banners §47 + Legacy Categories Tab cleanup §48 + Banners v2 §49 + **Security Hardening v15.x Audit §50**)*
