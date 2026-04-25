@@ -173,6 +173,11 @@ service cloud.firestore {
                       && !(request.resource.data.get('role', '') in ['admin', 'support_agent'])
                       && !('admin' in request.resource.data.get('roles', []))
                       && !('support_agent' in request.resource.data.get('roles', []))
+                      // v15.x security audit Round B: customCommission must be
+                      // CF-only at create AND update — providers must not be
+                      // able to ship a profile with their own 0% commission.
+                      && request.resource.data.get('customCommissionActive', false) != true
+                      && !('customCommission' in request.resource.data)
                     )
                     || isAdmin();
 
@@ -201,11 +206,16 @@ service cloud.firestore {
           'isVerifiedProvider', 'isVerified', 'isAdmin',
           'balance',
           'isAnySkillPro', 'proManualOverride', 'anySkillProGrantedAt',
-          // v15.x security audit:
+          // v15.x security audit Round A:
           'role', 'roles', 'activeRole', 'roleUpdatedAt', 'roleUpdatedBy',
           'verifiedAt', 'verifiedBy',
           'flagged', 'flaggedAt', 'flaggedBy', 'flagReason',
           'unflaggedAt', 'unflaggedBy',
+          // v15.x security audit Round B (Vuln 6 — provider self-zeroing
+          // platform commission). customCommission/customCommissionActive
+          // are managed exclusively by MonetizationService.setUserCommission
+          // (admin-only) → uses Admin SDK rule bypass.
+          'customCommission', 'customCommissionActive',
         ]))
         // ── Owner balance decrement (client-side escrow payment) ──────────
         // Owner may ONLY decrease their own balance. Increments are
