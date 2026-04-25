@@ -41,6 +41,17 @@ function roundNIS(n) { return Math.round(n * 100) / 100; }
 // Usage:  if (!(await isAdminCaller(request))) throw ...
 async function isAdminCaller(request) {
   if (!request.auth) return false;
+  // v15.x audit Round C (2026-04-25): prefer the signed JWT custom claim.
+  // Custom claims are set ONLY via the Admin SDK (setCustomUserClaims) and
+  // are signed by Firebase, so an attacker can't forge them — they're a
+  // strictly stronger primitive than reading isAdmin from a Firestore
+  // field. The Firestore-field branch remains as a fallback during the
+  // migration window: existing admins keep working until their token
+  // refreshes (max ~1 hour), and brand-new admins set via setUserRole
+  // get the claim immediately but their old session token still reads
+  // the field. Once the backfill CF has run and all admins have signed
+  // out/in once, the field-based branch can be dropped.
+  if (request.auth.token && request.auth.token.admin === true) return true;
   try {
     const callerSnap = await admin.firestore()
       .collection("users").doc(request.auth.uid).get();
@@ -199,9 +210,8 @@ exports.migrateProvidersToListings = onCall(async (request) => {
 // Replaces the need for `gsutil cors set cors.json gs://bucket`
 exports.setCorsOnStorage = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Auth required");
-    // Admin check
-    const userDoc = await admin.firestore().collection("users").doc(request.auth.uid).get();
-    if (!userDoc.exists || userDoc.data().isAdmin !== true) {
+    // v15.x audit Round C: unified admin check via isAdminCaller helper.
+    if (!(await isAdminCaller(request))) {
         throw new HttpsError("permission-denied", "Admin only");
     }
     try {
@@ -2562,10 +2572,8 @@ exports.approvecategory = onCall(
             throw new HttpsError("unauthenticated", "Authentication required");
         }
 
-        // Guard: caller must be admin
-        const callerSnap = await admin.firestore()
-            .collection("users").doc(request.auth.uid).get();
-        if (!callerSnap.exists || callerSnap.data()?.isAdmin !== true) {
+        // Guard: caller must be admin (v15.x audit Round C — unified helper)
+        if (!(await isAdminCaller(request))) {
             throw new HttpsError("permission-denied", "Admin only");
         }
 
@@ -5091,10 +5099,9 @@ exports.deleteUserAccount = onCall(
     }
 
     // ── 1. Authorisation: self-deletion or admin ────────────────────────
+    // v15.x audit Round C: admin path uses unified isAdminCaller helper.
     if (callerUid !== targetUid) {
-      const callerSnap = await admin.firestore()
-          .collection("users").doc(callerUid).get();
-      if (!callerSnap.exists || !callerSnap.data().isAdmin) {
+      if (!(await isAdminCaller(request))) {
         throw new HttpsError("permission-denied",
             "You can only delete your own account");
       }
@@ -5167,9 +5174,8 @@ exports.syncUserPhones = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required");
 
-    const callerSnap = await admin.firestore()
-        .collection("users").doc(request.auth.uid).get();
-    if (!callerSnap.exists || !callerSnap.data().isAdmin) {
+    // v15.x audit Round C: unified admin check via isAdminCaller helper.
+    if (!(await isAdminCaller(request))) {
       throw new HttpsError("permission-denied", "Admins only");
     }
 
@@ -8735,6 +8741,37 @@ exports.setUserRole = onCall(
         roleUpdatedBy: callerUid,
       });
 
+      // v15.x audit Round C (2026-04-25): dual-write Custom Claims.
+      // Custom claims are signed by Firebase and cannot be forged from
+      // the client — they're a strictly stronger security primitive than
+      // the Firestore field. Best-effort: if the claim write fails, the
+      // Firestore field already succeeded and the rule helpers fall back
+      // to it, so the user still has the right access until reconciliation.
+      // Note: setCustomUserClaims REPLACES all claims (no merge), so we
+      // explicitly set both `admin` and `support_agent` together. The user
+      // must refresh their ID token (sign out / in, or call
+      // user.getIdToken(true)) before the new claim takes effect — until
+      // then the rule helpers fall back to reading the Firestore field.
+      try {
+        await admin.auth().setCustomUserClaims(targetUserId, {
+          admin: afterRoles.includes("admin"),
+          support_agent: afterRoles.includes("support_agent"),
+        });
+        // When demoting (removing admin/support_agent), revoke refresh
+        // tokens so the next refresh forces re-auth and the new claims
+        // take effect within 1h instead of waiting for natural expiry.
+        const losingPrivilege = (
+          (beforeRoles.includes("admin") && !afterRoles.includes("admin"))
+          || (beforeRoles.includes("support_agent") && !afterRoles.includes("support_agent"))
+        );
+        if (losingPrivilege) {
+          await admin.auth().revokeRefreshTokens(targetUserId);
+          console.log(`[setUserRole] revoked refresh tokens for ${targetUserId} (privilege removed)`);
+        }
+      } catch (claimErr) {
+        console.warn(`[setUserRole] custom-claims write failed for ${targetUserId}: ${claimErr.message}. Firestore field still succeeded — fallback path works.`);
+      }
+
       const auditPayload = {
         targetUserId,
         targetName,
@@ -8889,6 +8926,152 @@ exports.migrateUserRoles = onCall(
 
     return { scanned, migrated, skipped, errors: errors.length, dryRun };
   }
+);
+
+
+// ── backfillAdminClaims ────────────────────────────────────────────────────
+// v15.x audit Round C (2026-04-25). Admin-only one-shot migration.
+//
+// Sets Firebase Auth Custom Claims (admin, support_agent) for every user
+// whose Firestore record indicates they hold one of those roles. After
+// this CF runs:
+//   • setUserRole's dual-write keeps claims in sync going forward.
+//   • The rule helpers and isAdminCaller prefer the signed JWT claim over
+//     the Firestore field, eliminating the self-promote primitive even if
+//     a future blocklist regression lands.
+//   • Existing admins must sign out / in (or wait ≤1h for token refresh)
+//     for their new claim to take effect. Until then the rule helpers and
+//     isAdminCaller fall back to the Firestore field — backward-compatible.
+//
+// Idempotent: re-running the CF rewrites the same claims. Safe to call
+// multiple times (e.g., to re-sync after a Firestore manual edit).
+//
+// Optional: { dryRun: true } returns counts without writing claims.
+exports.backfillAdminClaims = onCall(
+  { maxInstances: 1, timeoutSeconds: 540 },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+    if (!(await isAdminCaller(request))) {
+      throw new HttpsError("permission-denied", "Admin only.");
+    }
+
+    const dryRun = request.data?.dryRun === true;
+    const db = admin.firestore();
+    let scanned = 0;
+    let updated = 0;
+    let cleared = 0;
+    let skipped = 0;
+    const errors = [];
+
+    // We need to scan EVERY user — both privileged (set claims) and
+    // non-privileged (clear stale claims). Use Auth listUsers as the
+    // authoritative source; for each Auth user, look up their Firestore
+    // doc to compute the desired claim state.
+    let pageToken = undefined;
+    do {
+      let listResult;
+      try {
+        listResult = await admin.auth().listUsers(1000, pageToken);
+      } catch (e) {
+        errors.push({ stage: "listUsers", message: e.message });
+        break;
+      }
+
+      for (const authUser of listResult.users) {
+        scanned++;
+        const uid = authUser.uid;
+        try {
+          const userSnap = await db.collection("users").doc(uid).get();
+          const data = userSnap.exists ? (userSnap.data() || {}) : {};
+          const roles = Array.isArray(data.roles) ? data.roles : [];
+          const isAdminRole =
+            data.isAdmin === true
+            || data.role === "admin"
+            || roles.includes("admin");
+          const isSupportRole =
+            data.role === "support_agent"
+            || roles.includes("support_agent");
+
+          const desiredAdmin = isAdminRole;
+          const desiredSupport = isSupportRole;
+          const currentClaims = authUser.customClaims || {};
+          const currentAdmin = currentClaims.admin === true;
+          const currentSupport = currentClaims.support_agent === true;
+
+          // Skip if claims already match.
+          if (currentAdmin === desiredAdmin && currentSupport === desiredSupport) {
+            skipped++;
+            continue;
+          }
+
+          if (!dryRun) {
+            await admin.auth().setCustomUserClaims(uid, {
+              admin: desiredAdmin,
+              support_agent: desiredSupport,
+            });
+            // If we just removed a privilege, revoke refresh tokens so
+            // the demotion takes effect within 1h instead of waiting for
+            // natural token expiry.
+            if (
+              (currentAdmin && !desiredAdmin)
+              || (currentSupport && !desiredSupport)
+            ) {
+              await admin.auth().revokeRefreshTokens(uid);
+            }
+          }
+
+          if (!desiredAdmin && !desiredSupport && (currentAdmin || currentSupport)) {
+            cleared++;
+          } else {
+            updated++;
+          }
+        } catch (e) {
+          errors.push({ uid, message: e.message });
+        }
+      }
+
+      pageToken = listResult.pageToken;
+    } while (pageToken);
+
+    // Audit log (best-effort)
+    if (!dryRun) {
+      try {
+        await db.collection("admin_audit_log").add({
+          targetUserId: "*",
+          targetName: "[ALL USERS]",
+          action: "backfill_admin_claims",
+          adminUid: request.auth.uid,
+          adminName: request.auth.token?.name || request.auth.token?.email || "מנהל",
+          scanned,
+          updated,
+          cleared,
+          skipped,
+          errorCount: errors.length,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (_) {
+        // Logging best-effort; don't fail.
+      }
+    }
+
+    console.log(
+      `[backfillAdminClaims] dryRun=${dryRun} scanned=${scanned} ` +
+      `updated=${updated} cleared=${cleared} skipped=${skipped} ` +
+      `errors=${errors.length}`,
+    );
+
+    return {
+      scanned,
+      updated,
+      cleared,
+      skipped,
+      errorCount: errors.length,
+      errorSamples: errors.slice(0, 5),
+      dryRun,
+    };
+  },
 );
 
 
@@ -11669,10 +11852,9 @@ exports.getEffectiveCommission = onCall(async (request) => {
   }
   // Only admins may preview another user's effective commission; a
   // non-admin may query their own.
+  // v15.x audit Round C: unified admin check via isAdminCaller helper.
   if (userId !== request.auth.uid) {
-    const callerSnap = await admin.firestore()
-      .collection("users").doc(request.auth.uid).get();
-    if (!callerSnap.exists || callerSnap.data().isAdmin !== true) {
+    if (!(await isAdminCaller(request))) {
       throw new HttpsError("permission-denied",
         "You may only query your own effective commission.");
     }
