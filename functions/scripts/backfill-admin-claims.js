@@ -33,13 +33,26 @@
  */
 
 const admin = require("firebase-admin");
+const path = require("path");
+const fs = require("fs");
 
 const DRY_RUN = process.argv.includes("--dry-run");
 
-// Use the project that firebase-tools is logged into.
-admin.initializeApp({
-  projectId: "anyskill-6fdf3",
-});
+// Credential resolution (ordered):
+//   1. functions/service-account.json   — explicit key (gitignored)
+//   2. Application Default Credentials  — `firebase login` / `gcloud auth ADC`
+const SA_PATH = path.join(__dirname, "..", "service-account.json");
+if (fs.existsSync(SA_PATH)) {
+  console.log("[Backfill] Using explicit service-account.json credential");
+  admin.initializeApp({
+    credential: admin.credential.cert(require(SA_PATH)),
+  });
+} else {
+  console.log("[Backfill] Using Application Default Credentials");
+  admin.initializeApp({
+    projectId: "anyskill-6fdf3",
+  });
+}
 
 async function main() {
   const db = admin.firestore();
