@@ -49,10 +49,27 @@ service cloud.firestore {
     // Phase 1 multi-role: admin iff legacy isAdmin flag is true OR
     // 'admin' appears in the new roles[] array. Both are kept in sync by
     // setUserRole CF, so either check is sufficient.
+    //
+    // v15.x audit Round C (2026-04-25): JWT custom claim check added as
+    // FIRST branch. Custom claims are signed by Firebase and cannot be
+    // forged from the client (unlike Firestore fields, where an attacker
+    // could exploit a future blocklist regression to self-promote).
+    // setUserRole CF dual-writes the claim alongside the field, so the
+    // claim is the canonical source of truth. The Firestore-field branches
+    // remain as a fallback during the migration window — users whose
+    // token was issued before the claim landed (≤1h staleness) still get
+    // admin access from their user doc until their token refreshes.
+    // Once all admins have refreshed at least once, future PRs can drop
+    // the field-based branches entirely.
+    //
+    // Performance bonus: `request.auth.token.admin == true` evaluates
+    // without any Firestore read, so most admin requests skip the get()
+    // calls below entirely.
     function isAdmin() {
       return isVerifiedAuth()
           && (
-               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
+               request.auth.token.admin == true
+               || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
                || ('admin' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roles', []))
              );
     }
@@ -65,10 +82,13 @@ service cloud.firestore {
     // grantAdminCredit, or change other users' roles.
     //
     // Role assignment goes through the setUserRole CF (admin-only).
+    //
+    // v15.x audit Round C: same JWT-claim-first pattern as isAdmin().
     function isSupportAgent() {
       return isVerifiedAuth()
           && (
-               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'support_agent'
+               request.auth.token.support_agent == true
+               || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'support_agent'
                || ('support_agent' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roles', []))
              );
     }
