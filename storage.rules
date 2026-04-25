@@ -166,16 +166,53 @@ service firebase.storage {
 
     // ── AnyTask proofs (provider's "work done" evidence) ─────────────────
     // Path: anytask_proofs/{taskId}/proof_*.{ext}
+    //
+    // SECURITY (v15.x audit Round B, 2026-04-25 — Vuln 8):
+    // Proof of work gates the customer's `releaseTaskPayment` decision —
+    // if anyone could overwrite the proof, an attacker could replace the
+    // provider's real photos with fake "all done" images and trick the
+    // customer into releasing escrow. Now strictly: only the selected
+    // provider on the parent any_tasks doc may write.
     match /anytask_proofs/{taskId}/{allPaths=**} {
-      allow read:  if isSignedIn();
-      allow write: if isSignedIn() && isMediaContentType() && underSize(20);
+      allow read:  if isSignedIn()
+                   && firestore.exists(/databases/(default)/documents/any_tasks/$(taskId))
+                   && (
+                        firestore.get(/databases/(default)/documents/any_tasks/$(taskId)).data.clientId == request.auth.uid
+                        || firestore.get(/databases/(default)/documents/any_tasks/$(taskId)).data.selectedProviderId == request.auth.uid
+                      );
+      allow write: if isSignedIn()
+                   && isMediaContentType()
+                   && underSize(20)
+                   && firestore.exists(/databases/(default)/documents/any_tasks/$(taskId))
+                   && firestore.get(/databases/(default)/documents/any_tasks/$(taskId)).data.selectedProviderId == request.auth.uid;
     }
 
     // ── AnyTasks v14.0.0 — client task attachments + provider proof ──────
     // Path: any_tasks/{taskId}/{file}  (task_image_*, proof_*, etc.)
+    //
+    // SECURITY (v15.x audit Round B, 2026-04-25 — Vuln 9):
+    // Both client (task images at publish/edit) AND selected provider
+    // (proof) may write here. Anyone-signed-in writes were vulnerable to
+    // tampering — an attacker could overwrite the client's task image
+    // with deceptive content or replace the provider's proof. Now gated
+    // to participants only.
     match /any_tasks/{taskId}/{allPaths=**} {
-      allow read:  if isSignedIn();
-      allow write: if isSignedIn() && isImageContentType() && underSize(10);
+      allow read:  if isSignedIn()
+                   && firestore.exists(/databases/(default)/documents/any_tasks/$(taskId))
+                   && (
+                        // 'open' tasks are part of the public provider feed
+                        firestore.get(/databases/(default)/documents/any_tasks/$(taskId)).data.status == 'open'
+                        || firestore.get(/databases/(default)/documents/any_tasks/$(taskId)).data.clientId == request.auth.uid
+                        || firestore.get(/databases/(default)/documents/any_tasks/$(taskId)).data.selectedProviderId == request.auth.uid
+                      );
+      allow write: if isSignedIn()
+                   && isImageContentType()
+                   && underSize(10)
+                   && firestore.exists(/databases/(default)/documents/any_tasks/$(taskId))
+                   && (
+                        firestore.get(/databases/(default)/documents/any_tasks/$(taskId)).data.clientId == request.auth.uid
+                        || firestore.get(/databases/(default)/documents/any_tasks/$(taskId)).data.selectedProviderId == request.auth.uid
+                      );
     }
 
     // ── Banners (admin-managed home screen carousel) ─────────────────────
