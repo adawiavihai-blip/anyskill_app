@@ -3992,7 +3992,24 @@ exports.logNewRegistration = onDocumentCreated(
 exports.sendGlobalBroadcast = onCall(
   { maxInstances: 1 },
   async (request) => {
-    // Only callable by admin (verified client-side; server check here for safety)
+    // SECURITY (v15.x audit Round B, 2026-04-25 — Vuln 7):
+    // The original comment claimed "verified client-side; server check here
+    // for safety" but the server check was never actually written — any
+    // authenticated user could call this CF and push an arbitrary FCM
+    // notification ("title: 📢 AnySkill, body: <attacker text>") to every
+    // user with a registered token. Concrete attack: phishing ("your
+    // account has been suspended, click here") + brand damage.
+    //
+    // Now properly admin-gated server-side via isAdminCaller (which reads
+    // the caller's locked-down `users/{uid}.isAdmin` field — see Vuln 1
+    // fix making that field CF-only writable).
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication required.');
+    }
+    if (!(await isAdminCaller(request))) {
+      throw new HttpsError('permission-denied', 'Admins only.');
+    }
+
     const message = (request.data?.message ?? '').trim();
     if (!message) throw new HttpsError('invalid-argument', 'message is required');
 
