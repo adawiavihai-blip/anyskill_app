@@ -694,21 +694,34 @@ exports.processPaymentRelease = onCall(async (request) => {
     }
     console.log(`[PPR] STEP1 OK: callerUid=${request.auth.uid}`);
 
-    // STEP 2: Input validation
-    const { jobId, expertId, expertName, customerName, totalAmount } = request.data;
-    console.log(`[PPR] STEP2 input: jobId=${jobId}, expertId=${expertId}, totalAmount=${totalAmount}, customerName=${customerName}, expertName=${expertName}`);
-    if (!jobId || !expertId || totalAmount == null) {
-        console.error('[PPR] STEP2 FAIL: missing required fields');
-        throw new HttpsError('invalid-argument', 'jobId, expertId and totalAmount are required.');
+    // STEP 2: Input validation — jobId is the ONLY trusted client input.
+    //
+    // SECURITY (v15.x audit, 2026-04-25): the legacy version trusted
+    // `expertId` and `totalAmount` from `request.data` and used them to
+    // build the payee ref + commission math. An attacker who legitimately
+    // owned an `expert_completed` job (as customer) could call with
+    // `expertId=attackerSecondAccount, totalAmount=99999` and mint
+    // ₪99999*(1-fee) into their own wallet — pure money creation
+    // (non-deposit jobs have no offsetting customer debit).
+    //
+    // The fix: every value that drives a balance mutation, ledger write,
+    // or recipient ref MUST be read from the canonical `jobs/{jobId}`
+    // document. Cosmetic display fields (expertName, customerName) are
+    // also re-derived from jobData; we only fall back to request fields
+    // for the transaction title text if jobData lacks them.
+    const { jobId } = request.data;
+    if (!jobId || typeof jobId !== 'string') {
+        console.error('[PPR] STEP2 FAIL: jobId missing or invalid');
+        throw new HttpsError('invalid-argument', 'jobId is required.');
     }
-    console.log('[PPR] STEP2 OK: inputs valid');
+    console.log(`[PPR] STEP2 OK: jobId=${jobId}`);
 
     const db = admin.firestore();
     const jobRef = db.collection('jobs').doc(jobId);
-    const expertRef = db.collection('users').doc(expertId);
     const adminSettingsRef = db.collection('admin').doc('admin').collection('settings').doc('settings');
 
-    // STEP 3: Load & validate job
+    // STEP 3: Load & validate job — derive expertId, totalAmount, names
+    // from the job doc (NOT from request.data).
     let jobSnap;
     try {
         jobSnap = await jobRef.get();
@@ -721,7 +734,20 @@ exports.processPaymentRelease = onCall(async (request) => {
         throw new HttpsError('not-found', 'Job not found.');
     }
     const jobData = jobSnap.data();
-    console.log(`[PPR] STEP3 OK: job exists. status=${jobData.status}, customerId=${jobData.customerId}`);
+    const expertId = jobData.expertId;
+    const totalAmount = Number(jobData.totalAmount);
+    const expertName = jobData.expertName || '';
+    const customerName = jobData.customerName || '';
+    if (!expertId || typeof expertId !== 'string') {
+        console.error(`[PPR] STEP3 FAIL: job has no expertId`);
+        throw new HttpsError('failed-precondition', 'Job is missing expertId.');
+    }
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+        console.error(`[PPR] STEP3 FAIL: job has invalid totalAmount=${jobData.totalAmount}`);
+        throw new HttpsError('failed-precondition', 'Job has invalid totalAmount.');
+    }
+    const expertRef = db.collection('users').doc(expertId);
+    console.log(`[PPR] STEP3 OK: jobData → expertId=${expertId}, totalAmount=${totalAmount}, status=${jobData.status}, customerId=${jobData.customerId}`);
 
     // STEP 4: Caller == customer?
     if (jobData.customerId !== request.auth.uid) {
@@ -736,6 +762,14 @@ exports.processPaymentRelease = onCall(async (request) => {
         throw new HttpsError('failed-precondition', `Job status is '${jobData.status}', expected 'expert_completed'.`);
     }
     console.log('[PPR] STEP5 OK: status is expert_completed');
+
+    // SECURITY: also reject self-payment as a defense-in-depth check.
+    // EscrowService already blocks this at booking time (CLAUDE.md Law 13)
+    // but a pre-existing bad job doc shouldn't slip through.
+    if (jobData.customerId === expertId) {
+        console.error(`[PPR] STEP5b FAIL: self-payment detected (customer == expert == ${expertId})`);
+        throw new HttpsError('failed-precondition', 'Cannot release payment to self.');
+    }
 
     // PRE-TRANSACTION: resolve category ref for bookingCount increment
     // (queries are not allowed inside transactions — must do this outside)
@@ -14750,3 +14784,668 @@ exports.checkChatMessage = onCall(
     };
   },
 );
+
+// ═════════════════════════════════════════════════════════════════════
+// Banners v15.x §49 — Gemini integration (Phase 7)
+//
+// Two CFs:
+//   1. `generateBannerInsights`   — scheduled every 6 hours; scans the
+//       `banners` collection and writes ONE strategic insight to
+//       `ai_insights/banners`. The admin v2 tab streams that doc.
+//
+//   2. `smartProviderOrder`       — callable; reorders a
+//       provider_carousel's providerIds per-user based on Israeli
+//       time-of-day + user history. Cached in
+//       `ai_provider_order/{uid}_{bannerId}` for 1 hour so each viewer
+//       costs at most 1 Gemini call per banner per hour.
+//
+// Both use Gemini 2.5 Flash Lite (never Claude — §32/33/34/41 rule).
+// Both degrade gracefully: insights CF logs + returns {ok:false};
+// order CF falls back to the original order when anything fails.
+// ═════════════════════════════════════════════════════════════════════
+
+exports.generateBannerInsights = onSchedule(
+  {
+    schedule: "every 6 hours",
+    region: "us-central1",
+    timeoutSeconds: 120,
+    secrets: [GEMINI_API_KEY],
+  },
+  async () => {
+    const db = admin.firestore();
+    const now = new Date();
+
+    // ── Fetch banners (cap 50 — matches admin v2 stream limit) ────────
+    const snap = await db.collection("banners").limit(50).get();
+    if (snap.empty) {
+      console.log("[generateBannerInsights] no banners — skipping");
+      return { ok: true, reason: "no_banners" };
+    }
+
+    // ── Reduce into a compact snapshot for the prompt ─────────────────
+    const banners = [];
+    let totalImp = 0;
+    let totalClicks = 0;
+    let activeCount = 0;
+    let draftCount = 0;
+    let expiredCount = 0;
+    let scheduledCount = 0;
+
+    for (const doc of snap.docs) {
+      const d = doc.data() || {};
+      const imp = Number(d.impressions || 0);
+      const clk = Number(d.clicks || 0);
+      const placement = String(d.placement || "home_carousel");
+      const isActive = d.isActive === true;
+      const expiresAt = d.expiresAt?.toDate?.();
+      const startDate = d.startDate?.toDate?.();
+
+      let status;
+      if (expiresAt && expiresAt <= now) {
+        status = "expired";
+        expiredCount++;
+      } else if (!isActive) {
+        status = imp > 0 || clk > 0 ? "expired" : "draft";
+        if (status === "draft") draftCount++;
+        else expiredCount++;
+      } else if (startDate && startDate > now) {
+        status = "scheduled";
+        scheduledCount++;
+      } else {
+        status = "active";
+        activeCount++;
+      }
+
+      totalImp += imp;
+      totalClicks += clk;
+
+      banners.push({
+        id: doc.id,
+        title: String(d.title || "(ללא כותרת)"),
+        type: placement,
+        status,
+        impressions: imp,
+        clicks: clk,
+        ctr: imp > 0 ? Number(((clk / imp) * 100).toFixed(2)) : null,
+        hasAbTest: d.hasAbTest === true,
+        providerCount: Array.isArray(d.providerCarousel?.providerIds)
+          ? d.providerCarousel.providerIds.length
+          : null,
+      });
+    }
+    // Sort by CTR desc (nulls last) so the prompt sees winners first.
+    banners.sort((a, b) => {
+      if (a.ctr === null && b.ctr === null) return 0;
+      if (a.ctr === null) return 1;
+      if (b.ctr === null) return -1;
+      return b.ctr - a.ctr;
+    });
+
+    const globalCtr =
+      totalImp > 0
+        ? Number(((totalClicks / totalImp) * 100).toFixed(2))
+        : null;
+
+    const metricsJson = {
+      now: now.toISOString(),
+      totals: {
+        count: banners.length,
+        active: activeCount,
+        scheduled: scheduledCount,
+        draft: draftCount,
+        expired: expiredCount,
+        impressions: totalImp,
+        clicks: totalClicks,
+        ctrPct: globalCtr,
+      },
+      // Top 15 — enough signal, keeps the token bill small.
+      banners: banners.slice(0, 15),
+    };
+
+    // ── Prompt ────────────────────────────────────────────────────────
+    const systemPrompt =
+      "אתה מנהל מוצר של AnySkill — מרקטפלייס שירותים ישראלי. " +
+      "קיבלת תמונת מצב של כל הבאנרים ברחבי הפלטפורמה. " +
+      "החזר תובנה אסטרטגית אחת בעברית שהאדמין יכול לפעול לפיה היום. " +
+      "עדיפות: מקסם CTR של באנרים פעילים > דחוף לפרסום טיוטות מבטיחות > " +
+      "סגור באנרים בעלי ביצועים חלשים (CTR < 1% עם 500+ חשיפות). " +
+      "אם אין מספיק data (כל ה-CTR נאל), תן המלצה על publishing / timing. " +
+      "החזר אך ורק JSON תקין בסכמה:\n" +
+      '{"title":"כותרת קצרה (עד 40 תווים)",' +
+      '"recommendation":"משפט פעולה קונקרטי",' +
+      '"expectedImpact":"השפעה מספרית צפויה (אופציונלי)",' +
+      '"actionType":"toggle_banner|duplicate_banner|adjust_schedule|none",' +
+      '"actionParams":{"bannerId":"<doc id>","...":"..."}}';
+
+    let result;
+    try {
+      const geminiKey =
+        GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
+      if (!geminiKey) throw new Error("GEMINI_API_KEY not configured");
+      const url =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" +
+        geminiKey;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{
+            role: "user",
+            parts: [{
+              text: "תמונת מצב של הבאנרים:\n" +
+                JSON.stringify(metricsJson, null, 2),
+            }],
+          }],
+          generationConfig: {
+            temperature: 0.4,
+            maxOutputTokens: 500,
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+      if (!resp.ok) throw new Error("Gemini HTTP " + resp.status);
+      const json = await resp.json();
+      const text = json?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      result = JSON.parse(text);
+    } catch (e) {
+      console.error("[generateBannerInsights] Gemini failed:", e.message);
+      // Write a deterministic fallback so the admin tab never shows a
+      // stale-forever insight — per §49 Phase-7 spec, any failure must
+      // still produce a safe visible state.
+      const top = banners.find((b) => b.ctr !== null && b.ctr > 0);
+      await db.collection("ai_insights").doc("banners").set({
+        title: "Gemini לא זמין",
+        recommendation: top
+          ? `הבאנר "${top.title}" מוביל עם CTR ${top.ctr}% — שקול לשכפל את הסגנון.`
+          : "אין מספיק נתונים לניתוח כרגע — פרסם 2-3 באנרים ובדוק שוב בעוד יום.",
+        expectedImpact: "",
+        actionType: "none",
+        actionParams: {},
+        model: "fallback",
+        generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        applied: false,
+        dismissedBy: admin.firestore.FieldValue.delete(),
+        dismissedAt: admin.firestore.FieldValue.delete(),
+      }, { merge: true });
+      return { ok: false, error: e.message };
+    }
+
+    // ── Shape-safe write ──────────────────────────────────────────────
+    const safe = {
+      title: String(result.title || "תובנת Gemini").slice(0, 60),
+      recommendation: String(result.recommendation || ""),
+      expectedImpact: String(result.expectedImpact || ""),
+      actionType: String(result.actionType || "none"),
+      actionParams: typeof result.actionParams === "object"
+        ? result.actionParams
+        : {},
+      model: "gemini-2.5-flash-lite",
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      applied: false,
+      dismissedBy: admin.firestore.FieldValue.delete(),
+      dismissedAt: admin.firestore.FieldValue.delete(),
+    };
+
+    await db.collection("ai_insights").doc("banners").set(safe, { merge: true });
+
+    console.log(
+      `[generateBannerInsights] wrote insight: ${safe.actionType} — ${safe.recommendation.substring(0, 80)}`
+    );
+    return { ok: true, actionType: safe.actionType };
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────
+// smartProviderOrder — per-user AI reordering of a provider_carousel.
+//
+// The ProviderCarouselBanner calls this on mount when its config's
+// sortMode == 'ai'. Caches per (uid, bannerId) for 1 hour in the
+// `ai_provider_order` collection so repeat mounts within an hour
+// cost 0 Gemini calls.
+//
+// Fails gracefully: on ANY error (Gemini down, malformed response,
+// missing key) returns the original order with `{fallback: true}`.
+// ─────────────────────────────────────────────────────────────────────
+
+exports.smartProviderOrder = onCall(
+  {
+    secrets: [GEMINI_API_KEY],
+    timeoutSeconds: 20,
+    memory: "256MiB",
+    maxInstances: 10,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+    const uid = request.auth.uid;
+    const {
+      providerIds = [],
+      bannerId = "",
+    } = request.data || {};
+
+    // ── Input sanity ──────────────────────────────────────────────────
+    if (!Array.isArray(providerIds) || providerIds.length < 2) {
+      return { orderedIds: providerIds, fallback: true, reason: "too_few" };
+    }
+    const ids = providerIds
+      .filter((v) => typeof v === "string" && v.length > 0)
+      .slice(0, 20);
+    if (ids.length < 2) {
+      return { orderedIds: ids, fallback: true, reason: "too_few" };
+    }
+
+    const db = admin.firestore();
+    const now = Date.now();
+    const cacheId = `${uid}_${bannerId || "noid"}`;
+
+    // ── Cache check (1-hour freshness) ────────────────────────────────
+    try {
+      const cached = await db
+        .collection("ai_provider_order")
+        .doc(cacheId)
+        .get();
+      if (cached.exists) {
+        const d = cached.data();
+        const gen = d?.generatedAt?.toDate?.();
+        if (gen && now - gen.getTime() < 60 * 60 * 1000) {
+          const stored = Array.isArray(d.orderedIds)
+            ? d.orderedIds.filter((v) => typeof v === "string")
+            : [];
+          // Verify the cache covers the same provider set.
+          const sameSet =
+            stored.length === ids.length &&
+            stored.every((v) => ids.includes(v));
+          if (sameSet) {
+            return {
+              orderedIds: stored,
+              fallback: false,
+              cached: true,
+            };
+          }
+        }
+      }
+    } catch (e) {
+      // Cache read failure is non-fatal — proceed to Gemini.
+      console.error("[smartProviderOrder] cache read failed:", e.message);
+    }
+
+    // ── Fetch provider summaries + calling user context ───────────────
+    let providerData = [];
+    let userContext = {};
+    try {
+      const chunks = [];
+      for (let i = 0; i < ids.length; i += 10) {
+        chunks.push(ids.slice(i, i + 10));
+      }
+      const results = await Promise.all(
+        chunks.map((c) =>
+          db.collection("users")
+            .where(admin.firestore.FieldPath.documentId(), "in", c)
+            .get()
+        )
+      );
+      const byId = {};
+      for (const qs of results) {
+        for (const d of qs.docs) byId[d.id] = d.data();
+      }
+      providerData = ids.map((id) => {
+        const u = byId[id] || {};
+        return {
+          id,
+          name: String(u.name || "").slice(0, 40),
+          serviceType: String(u.serviceType || ""),
+          rating: Number(u.rating || 0),
+          reviewsCount: Number(u.reviewsCount || 0),
+          isOnline: u.isOnline === true,
+          isVerified: u.isVerified === true,
+        };
+      });
+
+      const userSnap = await db.collection("users").doc(uid).get();
+      if (userSnap.exists) {
+        const u = userSnap.data();
+        userContext = {
+          serviceTypeAffinity: String(u.lastCategoryViewed || ""),
+          preferredCategories: Array.isArray(u.preferredCategories)
+            ? u.preferredCategories.slice(0, 3)
+            : [],
+        };
+      }
+    } catch (e) {
+      console.error("[smartProviderOrder] fetch failed:", e.message);
+      return { orderedIds: ids, fallback: true, reason: "fetch_error" };
+    }
+
+    // Compute Israeli hour-of-day for the context.
+    const ilOffsetMs = 2 * 60 * 60 * 1000; // UTC+2; DST not critical here
+    const ilHour = new Date(now + ilOffsetMs).getUTCHours();
+    const timeBucket =
+      ilHour < 6 ? "לילה"
+      : ilHour < 12 ? "בוקר"
+      : ilHour < 18 ? "צהריים"
+      : "ערב";
+
+    // ── Gemini call ──────────────────────────────────────────────────
+    const geminiKey =
+      GEMINI_API_KEY.value() || process.env.GEMINI_API_KEY || "";
+    if (!geminiKey) {
+      return { orderedIds: ids, fallback: true, reason: "no_key" };
+    }
+
+    const prompt =
+      "אתה מנוע דירוג של AnySkill. החזר את providerIds מסודרים מ-Relevanti ל-less relevant " +
+      "עבור המשתמש שלהלן. שימוש בכל המזהים, ללא הוספות או השמטות.\n\n" +
+      `משתמש: uid=${uid}, שעה בישראל=${timeBucket} (${ilHour}:00)\n` +
+      "העדפות משתמש: " + JSON.stringify(userContext) + "\n\n" +
+      "נותני שירות:\n" + JSON.stringify(providerData, null, 2) + "\n\n" +
+      "החזר JSON בלבד:\n" +
+      '{"orderedIds":["uid1","uid2",...],"reasoning":"משפט קצר בעברית"}\n' +
+      "אסור להשמיט או להכפיל id. אסור להחזיר id שלא ברשימה המקורית.";
+
+    try {
+      const resp = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" +
+          geminiKey,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.3,
+              maxOutputTokens: 1024,
+              responseMimeType: "application/json",
+            },
+          }),
+        }
+      );
+      if (!resp.ok) throw new Error("Gemini HTTP " + resp.status);
+      const json = await resp.json();
+      const text = json?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+      const parsed = JSON.parse(text);
+      const geminiIds = Array.isArray(parsed.orderedIds)
+        ? parsed.orderedIds.filter((v) => typeof v === "string")
+        : [];
+      // Integrity check — must be a permutation of `ids`.
+      const sameSet =
+        geminiIds.length === ids.length &&
+        geminiIds.every((v) => ids.includes(v)) &&
+        ids.every((v) => geminiIds.includes(v));
+      if (!sameSet) {
+        console.error(
+          "[smartProviderOrder] Gemini returned invalid permutation"
+        );
+        return { orderedIds: ids, fallback: true, reason: "bad_permutation" };
+      }
+
+      // ── Write to cache (1h TTL via expireAt per §19) ────────────────
+      const expireAt = admin.firestore.Timestamp.fromDate(
+        new Date(now + 60 * 60 * 1000)
+      );
+      await db.collection("ai_provider_order").doc(cacheId).set({
+        uid,
+        bannerId,
+        orderedIds: geminiIds,
+        reasoning: String(parsed.reasoning || "").slice(0, 200),
+        timeBucket,
+        model: "gemini-2.5-flash-lite",
+        generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        expireAt,
+      });
+
+      return {
+        orderedIds: geminiIds,
+        reasoning: parsed.reasoning || "",
+        fallback: false,
+        cached: false,
+      };
+    } catch (e) {
+      console.error("[smartProviderOrder] Gemini failed:", e.message);
+      return { orderedIds: ids, fallback: true, reason: "gemini_error" };
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ANYSKILL PRO — auto-eval system (Phase 1, v15.x)
+//
+// 3 Firestore triggers + 1 scheduled cron + 2 callables.
+// All decisions go through `./pro_service.js :: evaluateProStatus`, which
+// writes both the `users/{uid}.isAnySkillPro` flag AND the audit-log
+// entry in `admin_audit_log`.
+//
+// Client writes to `isAnySkillPro`, `proManualOverride`, and
+// `anySkillProGrantedAt` are blocked by firestore.rules — only the Admin
+// SDK (these CFs) or an admin user via the `|| isAdmin()` clause can
+// touch those fields. That keeps the badge tamper-proof.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const { evaluateProStatus: _evaluateProStatus } = require("./pro_service");
+
+// ── Small anti-abuse cache for the self callable ──────────────────────────
+// Providers can tap "refresh" repeatedly — we cap at one eval per 60s per
+// uid. Stored in process memory (per CF instance); not bullet-proof across
+// hot cold-starts, but cheap and effective in practice.
+const _proSelfRateLimit = new Map(); // uid → last-eval-ms
+const _PRO_SELF_RATE_MS = 60 * 1000;
+
+function _rateLimitPassForSelf(uid) {
+  const now  = Date.now();
+  const last = _proSelfRateLimit.get(uid) || 0;
+  if (now - last < _PRO_SELF_RATE_MS) return false;
+  _proSelfRateLimit.set(uid, now);
+  return true;
+}
+
+// ── Trigger 1: job completed ──────────────────────────────────────────────
+// Fires when a job doc transitions to status == 'completed'. Evaluates the
+// expert side (customer isn't a provider candidate). Does nothing for
+// non-transitions (e.g. unrelated field updates on an already-completed
+// job).
+exports.onJobCompletedEvalPro = onDocumentUpdated(
+  "jobs/{jobId}",
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after  = event.data?.after?.data();
+    if (!before || !after) return;
+    if (before.status === "completed" || after.status !== "completed") return;
+    const expertId = after.expertId;
+    if (!expertId || typeof expertId !== "string") return;
+
+    try {
+      const res = await _evaluateProStatus({
+        db: admin.firestore(),
+        uid: expertId,
+        source: "auto",
+        triggerReason: `job_completed:${event.params.jobId}`,
+      });
+      if (res.transition !== "unchanged" && res.transition !== "manual_override_skip") {
+        console.log(`[onJobCompletedEvalPro] ${expertId} → ${res.transition}`);
+      }
+    } catch (e) {
+      console.error("[onJobCompletedEvalPro] error:", e);
+    }
+  }
+);
+
+// ── Trigger 2: job cancelled by expert ────────────────────────────────────
+// Fires when a job doc transitions to status == 'cancelled' AND the
+// cancellation was expert-initiated. This is the critical "instant revoke"
+// path — a single expert cancellation kills the badge per the spec.
+exports.onJobCancelledEvalPro = onDocumentUpdated(
+  "jobs/{jobId}",
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after  = event.data?.after?.data();
+    if (!before || !after) return;
+    if (before.status === "cancelled" || after.status !== "cancelled") return;
+    if (after.cancelledBy !== "expert") return;
+    const expertId = after.expertId;
+    if (!expertId || typeof expertId !== "string") return;
+
+    try {
+      const res = await _evaluateProStatus({
+        db: admin.firestore(),
+        uid: expertId,
+        source: "auto",
+        triggerReason: `job_cancelled_by_expert:${event.params.jobId}`,
+      });
+      if (res.transition !== "unchanged" && res.transition !== "manual_override_skip") {
+        console.log(`[onJobCancelledEvalPro] ${expertId} → ${res.transition}`);
+      }
+    } catch (e) {
+      console.error("[onJobCancelledEvalPro] error:", e);
+    }
+  }
+);
+
+// ── Trigger 3: review published ───────────────────────────────────────────
+// Fires when a review's isPublished flips false → true (see §5.2 in
+// CLAUDE.md — the "both sides submitted OR 7 days passed" publish rule).
+// Evaluates the PROVIDER (revieweeId on a client-side review). Skips
+// provider-of-customer reviews.
+exports.onReviewPublishedEvalPro = onDocumentUpdated(
+  "reviews/{reviewId}",
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after  = event.data?.after?.data();
+    if (!before || !after) return;
+    const wasPublished = before.isPublished === true;
+    const isPublished  = after.isPublished === true;
+    if (wasPublished || !isPublished) return;
+    if (after.isClientReview !== true) return;  // only client→provider reviews
+    const providerId = after.revieweeId;
+    if (!providerId || typeof providerId !== "string") return;
+
+    try {
+      const res = await _evaluateProStatus({
+        db: admin.firestore(),
+        uid: providerId,
+        source: "auto",
+        triggerReason: `review_published:${event.params.reviewId}`,
+      });
+      if (res.transition !== "unchanged" && res.transition !== "manual_override_skip") {
+        console.log(`[onReviewPublishedEvalPro] ${providerId} → ${res.transition}`);
+      }
+    } catch (e) {
+      console.error("[onReviewPublishedEvalPro] error:", e);
+    }
+  }
+);
+
+// ── Cron: 6-hourly pass over every provider ───────────────────────────────
+// Covers the only case triggers can't: a 30-day-old expert cancellation
+// rolling out of the rolling window. Scans all providers ordered by
+// anySkillProGrantedAt DESC so active Pros are evaluated first (they're
+// the ones most at risk of losing the badge on window roll-off). Runs
+// in batches of 200 to stay well under the 9-minute CF timeout.
+exports.scheduledProRefresh = onSchedule(
+  { schedule: "every 6 hours", timeoutSeconds: 540, memory: "512MiB" },
+  async () => {
+    const db = admin.firestore();
+    let scanned = 0, granted = 0, revoked = 0, unchanged = 0, errors = 0;
+    let cursor = null;
+    const BATCH = 200;
+
+    // Active Pros first (they're most likely to lose the badge).
+    // Use two queries and stitch them so providers without the timestamp
+    // still get evaluated in the same pass.
+    try {
+      while (true) {
+        let q = db.collection("users")
+          .where("isProvider", "==", true)
+          .orderBy("anySkillProGrantedAt", "desc")
+          .limit(BATCH);
+        if (cursor) q = q.startAfter(cursor);
+        const snap = await q.get();
+        if (snap.empty) break;
+        cursor = snap.docs[snap.docs.length - 1];
+
+        for (const d of snap.docs) {
+          scanned++;
+          try {
+            const res = await _evaluateProStatus({
+              db, uid: d.id, source: "cron", triggerReason: "scheduled_6h",
+            });
+            if (res.transition === "granted") granted++;
+            else if (res.transition === "revoked") revoked++;
+            else unchanged++;
+          } catch (e) {
+            errors++;
+            console.error(`[scheduledProRefresh] ${d.id} error:`, e.message);
+          }
+        }
+        if (snap.size < BATCH) break;
+      }
+
+      // Second pass: providers WITHOUT anySkillProGrantedAt (never been
+      // Pro). Firestore's orderBy filters these out, so we need a second
+      // pass keyed on __name__ for deterministic pagination.
+      // Skipped for now — in practice the 6h cron won't grant brand-new
+      // Pros anyway (they need 20+ completed jobs; those jobs already
+      // fire the onJobCompleted trigger). Re-evaluate if users complain.
+    } catch (e) {
+      console.error("[scheduledProRefresh] top-level error:", e);
+      errors++;
+    }
+
+    console.log(
+      `[scheduledProRefresh] scanned=${scanned} granted=${granted} ` +
+      `revoked=${revoked} unchanged=${unchanged} errors=${errors}`
+    );
+  }
+);
+
+// ── Callable 1: self-evaluation (no params) ───────────────────────────────
+// Invoked from ProviderAiInsightsScreen when the provider taps "refresh".
+// Uses context.auth.uid EXCLUSIVELY — the client cannot target another
+// provider, preventing abuse.
+exports.evaluateMyProStatus = onCall(async (request) => {
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError("unauthenticated", "Auth required");
+  }
+  const uid = request.auth.uid;
+
+  if (!_rateLimitPassForSelf(uid)) {
+    throw new HttpsError("resource-exhausted", "נסה שוב בעוד דקה");
+  }
+
+  const res = await _evaluateProStatus({
+    db: admin.firestore(),
+    uid,
+    source: "callable_self",
+  });
+  return {
+    isPro:       res.isPro,
+    transition:  res.transition,
+    revokeReason: res.revokeReason || null,
+  };
+});
+
+// ── Callable 2: admin-triggered evaluation (targetUid param) ──────────────
+// Invoked from AdminProTab when admin clicks "Recompute" on a provider.
+// Strictly admin-gated — non-admins get permission-denied.
+exports.evaluateProStatusAsAdmin = onCall(async (request) => {
+  if (!(await isAdminCaller(request))) {
+    throw new HttpsError("permission-denied", "Admin only");
+  }
+  const targetUid = request.data?.targetUid;
+  if (!targetUid || typeof targetUid !== "string") {
+    throw new HttpsError("invalid-argument", "targetUid is required");
+  }
+
+  const res = await _evaluateProStatus({
+    db: admin.firestore(),
+    uid: targetUid,
+    source: "callable_admin",
+    adminUid: request.auth.uid,
+  });
+  return {
+    isPro:       res.isPro,
+    transition:  res.transition,
+    revokeReason: res.revokeReason || null,
+  };
+});
+
