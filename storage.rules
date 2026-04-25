@@ -125,9 +125,24 @@ service firebase.storage {
 
     // ── Dog-walk route map snapshots (provider posts on End Walk) ────────
     // Path: dog_walks/{walkId}/route_map.png
+    //
+    // SECURITY (v15.x audit Round C, 2026-04-25): the parent dog_walks
+    // doc carries `providerId` and `customerId` (mirroring the job's
+    // expertId/customerId). Storage write is now restricted to the
+    // walk's actual provider — without this, any signed-in user could
+    // overwrite the route map with a fake/garbage image.
     match /dog_walks/{walkId}/{allPaths=**} {
-      allow read:  if isSignedIn();
-      allow write: if isSignedIn() && isImageContentType() && underSize(5);
+      allow read:  if isSignedIn()
+                   && firestore.exists(/databases/(default)/documents/dog_walks/$(walkId))
+                   && (
+                        firestore.get(/databases/(default)/documents/dog_walks/$(walkId)).data.providerId == request.auth.uid
+                        || firestore.get(/databases/(default)/documents/dog_walks/$(walkId)).data.customerId == request.auth.uid
+                      );
+      allow write: if isSignedIn()
+                   && isImageContentType()
+                   && underSize(5)
+                   && firestore.exists(/databases/(default)/documents/dog_walks/$(walkId))
+                   && firestore.get(/databases/(default)/documents/dog_walks/$(walkId)).data.providerId == request.auth.uid;
     }
 
     // ── Boarding daily proofs (provider uploads photo + video per day) ───
