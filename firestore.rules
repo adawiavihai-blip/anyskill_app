@@ -98,6 +98,36 @@ service cloud.firestore {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(keys);
     }
 
+    // ── Banners v15.x §49 — provider_carousel shape guard ────────────────
+    //
+    // A published (`isActive == true`) `provider_carousel` banner MUST
+    // have 2-20 providerIds and a rotationDurationMs in [2000, 8000].
+    // Drafts (`isActive == false`) and legacy gradient/image banners
+    // bypass the check — they may save with any partial config.
+    //
+    // Called from the `banners/{id}` create+update rules.
+    function validBannerDocV2() {
+      return !(
+        request.resource.data.isActive == true
+        && request.resource.data.placement == 'provider_carousel'
+        && 'providerCarousel' in request.resource.data
+      ) || validProviderCarouselConfig(
+        request.resource.data.providerCarousel
+      );
+    }
+
+    function validProviderCarouselConfig(c) {
+      return c is map
+          && 'providerIds' in c
+          && c.providerIds is list
+          && c.providerIds.size() >= 2
+          && c.providerIds.size() <= 20
+          && 'rotationDurationMs' in c
+          && c.rotationDurationMs is number
+          && c.rotationDurationMs >= 2000
+          && c.rotationDurationMs <= 8000;
+    }
+
 
     // ═══════════════════════════════════════════════════════════════════════
     // USERS
@@ -124,16 +154,58 @@ service cloud.firestore {
       // Uses direct auth check — no get() calls that could fail on missing docs.
       // Admins may also create user docs with arbitrary UIDs (used by the
       // demo experts admin tab to seed and create demo provider profiles).
-      allow create: if (request.auth != null && request.auth.uid == uid)
+      //
+      // SECURITY (v15.x audit, 2026-04-25): create-time also blocks the same
+      // privileged identity flags that the update rule blocks. Without this,
+      // a brand-new user could `set({isAdmin: true, roles: ['admin']})` on
+      // signup and gain admin privileges before any update rule fires.
+      // The `role` and `roles` fields are explicitly checked AGAINST the
+      // privileged values 'admin' and 'support_agent' — non-privileged
+      // values like 'customer'/'provider' (legacy signup paths) still pass.
+      allow create: if (
+                      request.auth != null && request.auth.uid == uid
+                      && request.resource.data.get('isAdmin', false) != true
+                      && request.resource.data.get('isVerified', false) != true
+                      && request.resource.data.get('isVerifiedProvider', false) != true
+                      && request.resource.data.get('isPromoted', false) != true
+                      && request.resource.data.get('isAnySkillPro', false) != true
+                      && request.resource.data.get('proManualOverride', false) != true
+                      && !(request.resource.data.get('role', '') in ['admin', 'support_agent'])
+                      && !('admin' in request.resource.data.get('roles', []))
+                      && !('support_agent' in request.resource.data.get('roles', []))
+                    )
                     || isAdmin();
 
       allow update: if
         // ── Owner general update ───────────────────────────────────────────
         // Owner may update any field EXCEPT server-only fields.
+        //
+        // AnySkill Pro fields (v15.x, §Pro Auto-Eval):
+        //   isAnySkillPro, proManualOverride, anySkillProGrantedAt
+        // are blocked from owner writes. They're managed exclusively by
+        // Cloud Functions (Admin SDK → rules bypass) or by admins via the
+        // `|| isAdmin()` clause below. This tamper-proofs the badge.
+        //
+        // SECURITY (v15.x audit, 2026-04-25):
+        //   `role`, `roles`, `activeRole`, `roleUpdatedAt`, `roleUpdatedBy`
+        // are now CF-only (managed exclusively by setUserRole + Admin SDK
+        // rule bypass). Without this an authenticated user could call
+        // `users.doc(myUid).update({roles: ['admin']})` from the SDK and
+        // self-promote, because `isAdmin()` reads `roles`/`role` from the
+        // user's own doc.
+        //   `verifiedAt`/`verifiedBy` and the `flagged*`/`unflagged*` audit
+        // fields are CF-only (written by supportAgentAction CF), so an
+        // attacker can't forge a verification audit trail.
         (isOwner(uid) && doesNotTouch([
           'xp', 'current_xp', 'level', 'isPromoted',
           'isVerifiedProvider', 'isVerified', 'isAdmin',
           'balance',
+          'isAnySkillPro', 'proManualOverride', 'anySkillProGrantedAt',
+          // v15.x security audit:
+          'role', 'roles', 'activeRole', 'roleUpdatedAt', 'roleUpdatedBy',
+          'verifiedAt', 'verifiedBy',
+          'flagged', 'flaggedAt', 'flaggedBy', 'flagReason',
+          'unflaggedAt', 'unflaggedBy',
         ]))
         // ── Owner balance decrement (client-side escrow payment) ──────────
         // Owner may ONLY decrease their own balance. Increments are
@@ -524,6 +596,16 @@ service cloud.firestore {
       allow update:                if isAdmin();
     }
 
+    // Banners-v2 (§49 Phase-7) — per-user cache of the `smartProviderOrder`
+    // CF's reordering. CF-only write via Admin SDK; client NEVER reads or
+    // writes (the CF returns the ordered list to the caller directly).
+    // Each doc has `expireAt` set to now+1h so Firestore TTL (when the
+    // policy is turned on in GCP Console for this collection's `expireAt`
+    // field, per §19) garbage-collects stale entries without quota cost.
+    match /ai_provider_order/{cacheId} {
+      allow read, write: if false;
+    }
+
     // Anomaly / churn / growth alerts. Append-only from the CF; admins may
     // update to mark as resolved.
     match /monetization_alerts/{alertId} {
@@ -615,8 +697,13 @@ service cloud.firestore {
 
     match /banners/{id} {
       allow read:   if isAuth() || isAppCheckValid();
-      allow create, delete: if isAdmin() || isCmsAdmin();
-      allow update: if isAdmin()
+      // Phase-10 (§49): shape validation now enforced. Published
+      // `provider_carousel` banners MUST pass `validBannerDocV2()`.
+      // Drafts and legacy gradient/image placements pass unconditionally.
+      allow create: if (isAdmin() || isCmsAdmin())
+                    && validBannerDocV2();
+      allow delete: if isAdmin() || isCmsAdmin();
+      allow update: if (isAdmin() && validBannerDocV2())
                     || (isVerifiedAuth() && onlyFields(['clicks']));
     }
 
@@ -702,15 +789,98 @@ service cloud.firestore {
 
     // ═══════════════════════════════════════════════════════════════════════
     // JOB REQUESTS (quick-order board)
+    //
+    // SECURITY (v15.x audit, 2026-04-25): the legacy update rule allowed any
+    // verified user to overwrite `interestedProviders`, `interestedProviderNames`,
+    // `interestedCount`, and `status` on ANY request — enabling platform-wide
+    // sabotage (clearing all providers from open requests, flipping every
+    // request to 'closed', impersonating interest from competitors).
+    //
+    // The new rule has three branches:
+    //   1. Owner branch: clientId == auth.uid → can write anything (status,
+    //      assigned provider, etc.)
+    //   2. Self-add to interestedProviders: non-owner may ONLY append their
+    //      own uid; cannot remove others, cannot replace the array, cannot
+    //      change status. interestedCount must match the new array size.
+    //   3. Self-add to declinedProviders (provider Decline flow, §27): same
+    //      append-only restriction. Lets providers say "not me" without
+    //      letting them poison-pill OTHER providers.
     // ═══════════════════════════════════════════════════════════════════════
     match /job_requests/{reqId} {
       allow read:   if isVerifiedAuth();
       allow create: if isVerifiedAuth()
                     && request.resource.data.clientId == request.auth.uid;
       allow update: if isVerifiedAuth()
-                    && (onlyFields(['interestedProviders', 'interestedProviderNames',
-                                    'interestedCount', 'status'])
-                        || resource.data.clientId == request.auth.uid);
+                    && (
+                         // Branch 1: owner has full control over their own request.
+                         resource.data.clientId == request.auth.uid
+                         ||
+                         // Branch 2: provider self-adds to interestedProviders[].
+                         // Idempotent: providers already in the array cannot
+                         // re-write it (which would let them tamper with names).
+                         //
+                         // The 3rd interest also auto-flips status to 'closed'
+                         // (UX cap from opportunities_screen.dart:204). We
+                         // permit `status` to be touched ONLY when:
+                         //   • it stays unchanged, OR
+                         //   • it flips to 'closed' AND the new array size is
+                         //     ≥3 (the documented "max 3 interests" UX cap).
+                         // Server-side cap of 3 is also enforced as defense
+                         // in depth.
+                         (
+                           onlyFields(['interestedProviders',
+                                       'interestedProviderNames',
+                                       'interestedCount',
+                                       'status'])
+                           && !(request.auth.uid in resource.data.get('interestedProviders', []))
+                           && (request.auth.uid in request.resource.data.interestedProviders)
+                           && request.resource.data.interestedProviders.hasAll(
+                                resource.data.get('interestedProviders', []))
+                           && request.resource.data.interestedProviders.size() ==
+                                resource.data.get('interestedProviders', []).size() + 1
+                           && request.resource.data.interestedProviders.size() <= 3
+                           && request.resource.data.interestedCount ==
+                                request.resource.data.interestedProviders.size()
+                           && (
+                                request.resource.data.get('status', '') ==
+                                  resource.data.get('status', '')
+                                || (
+                                  request.resource.data.status == 'closed'
+                                  && request.resource.data.interestedProviders.size() >= 3
+                                )
+                              )
+                         )
+                         ||
+                         // Branch 3: provider self-adds to declinedProviders[]
+                         // (decline flow per CLAUDE.md §27). Append-only.
+                         (
+                           onlyFields(['declinedProviders'])
+                           && !(request.auth.uid in resource.data.get('declinedProviders', []))
+                           && (request.auth.uid in request.resource.data.declinedProviders)
+                           && request.resource.data.declinedProviders.hasAll(
+                                resource.data.get('declinedProviders', []))
+                           && request.resource.data.declinedProviders.size() ==
+                                resource.data.get('declinedProviders', []).size() + 1
+                         )
+                         ||
+                         // Branch 4: broadcast-claim cosmetic close.
+                         // job_broadcast_service.claimJob() runs an atomic
+                         // claim against job_broadcasts/{id} (with its own
+                         // single-winner rules), then writes a side-effect
+                         // close of the source job_request. The caller MUST
+                         // be the broadcast's verified winner, and the
+                         // broadcast's sourceJobRequestId MUST match this
+                         // request — otherwise any auth user could close any
+                         // request by inventing a fake claimedByBroadcast.
+                         (
+                           onlyFields(['status', 'claimedByBroadcast'])
+                           && request.resource.data.status == 'closed'
+                           && request.resource.data.claimedByBroadcast is string
+                           && exists(/databases/$(database)/documents/job_broadcasts/$(request.resource.data.claimedByBroadcast))
+                           && get(/databases/$(database)/documents/job_broadcasts/$(request.resource.data.claimedByBroadcast)).data.claimedBy == request.auth.uid
+                           && get(/databases/$(database)/documents/job_broadcasts/$(request.resource.data.claimedByBroadcast)).data.sourceJobRequestId == reqId
+                         )
+                       );
       allow delete: if isVerifiedAuth() && resource.data.clientId == request.auth.uid;
     }
 
