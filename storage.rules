@@ -132,10 +132,29 @@ service firebase.storage {
 
     // ── Boarding daily proofs (provider uploads photo + video per day) ───
     // Path: boarding_proofs/{jobId}/{date}_{kind}.{ext}  (kind = photo|video)
+    //
+    // SECURITY (v15.x audit, 2026-04-25): inherits participant identity
+    // from the parent job doc (matches the pattern documented in
+    // CLAUDE.md §3d). Without this gate, any signed-in user could write
+    // arbitrary 50 MB media files to ANY jobId, including jobs they are
+    // not a participant in — enabling tampering with another booking's
+    // proof feed (fraudulent care evidence) and free arbitrary content
+    // hosting on the platform's CDN.
+    //
+    // Read: customer or provider on the job (or admin via Firestore SDK).
+    // Write: ONLY the provider on the job, image/video content type only.
     match /boarding_proofs/{jobId}/{allPaths=**} {
-      allow read:  if isSignedIn();
-      // Allow both image and video — the file size cap rises to 50 MB.
-      allow write: if isSignedIn() && underSize(50);
+      allow read:  if isSignedIn()
+                   && firestore.exists(/databases/(default)/documents/jobs/$(jobId))
+                   && (
+                        firestore.get(/databases/(default)/documents/jobs/$(jobId)).data.expertId == request.auth.uid
+                        || firestore.get(/databases/(default)/documents/jobs/$(jobId)).data.customerId == request.auth.uid
+                      );
+      allow write: if isSignedIn()
+                   && isMediaContentType()
+                   && underSize(50)
+                   && firestore.exists(/databases/(default)/documents/jobs/$(jobId))
+                   && firestore.get(/databases/(default)/documents/jobs/$(jobId)).data.expertId == request.auth.uid;
     }
 
     // ── Community evidence (photo proof for volunteer task) ──────────────
