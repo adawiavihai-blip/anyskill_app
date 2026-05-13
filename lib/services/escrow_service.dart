@@ -53,23 +53,22 @@ class EscrowService {
 
     // Pet Stay Tracker gate (v13.0.0) — block pet-service quotes
     try {
-      final providerSnap =
-          await _db.collection('users').doc(providerId).get();
+      final providerSnap = await _db.collection('users').doc(providerId).get();
       final category =
           (providerSnap.data() ?? {})['serviceType']?.toString() ?? '';
       if (category.isNotEmpty) {
-        final catSnap = await _db
-            .collection('categories')
-            .where('name', isEqualTo: category)
-            .limit(1)
-            .get();
+        final catSnap =
+            await _db
+                .collection('categories')
+                .where('name', isEqualTo: category)
+                .limit(1)
+                .get();
         if (catSnap.docs.isNotEmpty) {
-          final schemaRaw =
-              catSnap.docs.first.data()['serviceSchema'] as Map?;
+          final schemaRaw = catSnap.docs.first.data()['serviceSchema'] as Map?;
           final walkTracking = schemaRaw?['walkTracking'] == true;
           final dailyProof = schemaRaw?['dailyProof'] == true;
           if (walkTracking || dailyProof) {
-            return 'זהו שירות פנסיון/דוגווקר — יש להזמין מפרופיל הספק כדי לצרף פרופיל כלב';
+            return 'זהו שירות פנסיון/דוגווקר — יש להזמין מפרופיל הנותן שירות כדי לצרף פרופיל כלב';
           }
         }
       }
@@ -81,15 +80,16 @@ class EscrowService {
       final result = await FirebaseFunctions.instance
           .httpsCallable('createEscrowPayment')
           .call({
-        'quoteId': quoteId,
-        'chatMessageId': chatMessageId,
-        'chatRoomId': chatRoomId,
-        'providerId': providerId,
-        'providerName': providerName,
-        'clientName': clientName,
-        'amount': amount,
-        'description': description,
-      }).timeout(const Duration(seconds: 30));
+            'quoteId': quoteId,
+            'chatMessageId': chatMessageId,
+            'chatRoomId': chatRoomId,
+            'providerId': providerId,
+            'providerName': providerName,
+            'clientName': clientName,
+            'amount': amount,
+            'description': description,
+          })
+          .timeout(const Duration(seconds: 30));
 
       final data = result.data as Map?;
       if (data?['success'] == true) return null;

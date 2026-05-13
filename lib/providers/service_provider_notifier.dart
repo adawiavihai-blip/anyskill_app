@@ -136,7 +136,7 @@ class ServiceProviderNotifier extends ChangeNotifier {
       notifyListeners();
       return true;
     } catch (e) {
-      _error  = 'שגיאה באישור מומחה';
+      _error  = 'שגיאה באישור נותן שירות';
       _action = ProviderAction.none;
       notifyListeners();
       return false;
@@ -156,7 +156,7 @@ class ServiceProviderNotifier extends ChangeNotifier {
       notifyListeners();
       return true;
     } catch (e) {
-      _error  = 'שגיאה בדחיית מומחה';
+      _error  = 'שגיאה בדחיית נותן שירות';
       _action = ProviderAction.none;
       notifyListeners();
       return false;

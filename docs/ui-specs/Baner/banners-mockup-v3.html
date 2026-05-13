@@ -1,0 +1,2895 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>באנרים · Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ================================================================
+   DESIGN SYSTEM — Apple/Premium · RTL Hebrew
+   ================================================================ */
+:root {
+  --bg: #FAFAF7;
+  --bg-elevated: #FFFFFF;
+  --bg-subtle: #F4F3EF;
+  --bg-tonal: #EFEEE8;
+  --ink: #1A1A1A;
+  --ink-2: #3A3A38;
+  --ink-3: #6B6B68;
+  --ink-4: #9A9A95;
+  --ink-5: #C8C7BF;
+  --line: rgba(0,0,0,.06);
+  --line-2: rgba(0,0,0,.10);
+  --line-strong: rgba(0,0,0,.14);
+  --accent: #1A1A1A;
+  --accent-soft: rgba(26,26,26,.06);
+  --success: #1A7F4E;
+  --success-bg: #E8F5EE;
+  --warn: #B8651A;
+  --warn-bg: #FBF1E2;
+  --danger: #B83A2A;
+  --danger-bg: #FBEBE7;
+  --info: #2C5BA8;
+  --info-bg: #E9F0FB;
+  --gold: #B89855;
+  --gold-soft: #F5EDD9;
+  --gold-deep: #8C6F36;
+  --font-display: 'Fraunces', 'Heebo', serif;
+  --font-body: 'Heebo', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --r-xs: 6px; --r-sm: 10px; --r-md: 14px; --r-lg: 20px; --r-xl: 28px;
+  --sh-1: 0 1px 2px rgba(0,0,0,.04);
+  --sh-2: 0 1px 3px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.04);
+  --sh-3: 0 2px 6px rgba(0,0,0,.05), 0 12px 32px rgba(0,0,0,.06);
+  --sh-4: 0 4px 16px rgba(0,0,0,.08), 0 24px 64px rgba(0,0,0,.10);
+  --s-1:4px;--s-2:8px;--s-3:12px;--s-4:16px;--s-5:20px;--s-6:24px;--s-7:32px;--s-8:40px;--s-9:56px;
+  --ease: cubic-bezier(.2,.8,.2,1);
+  --ease-out: cubic-bezier(.16,1,.3,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{font-family:var(--font-body);background:var(--bg);color:var(--ink);font-size:14px;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select,textarea{font-family:inherit}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(80% 50% at 80% -10%,rgba(184,152,85,.08) 0%,transparent 50%),radial-gradient(60% 40% at 0% 10%,rgba(26,26,26,.03) 0%,transparent 50%);pointer-events:none;z-index:0}
+
+/* ============= LAYOUT ============= */
+.app{position:relative;z-index:1;min-height:100vh;display:grid;grid-template-columns:280px 1fr}
+
+/* ============= SIDEBAR ============= */
+.sidebar{position:sticky;top:0;height:100vh;background:var(--bg-elevated);border-left:1px solid var(--line);padding:24px 20px;display:flex;flex-direction:column;gap:24px;overflow-y:auto}
+.brand{display:flex;align-items:center;gap:12px;padding:8px 12px}
+.brand-mark{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#1A1A1A 0%,#3A3A38 100%);display:grid;place-items:center;color:white;font-family:var(--font-display);font-weight:600;font-size:16px}
+.brand-name{font-family:var(--font-display);font-weight:500;font-size:17px;letter-spacing:-.02em}
+.brand-sub{font-size:11px;color:var(--ink-4);letter-spacing:.04em;text-transform:uppercase}
+.nav-section{display:flex;flex-direction:column;gap:2px}
+.nav-label{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--ink-4);padding:0 12px 8px;font-weight:600}
+.nav-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;font-size:13.5px;color:var(--ink-2);font-weight:500;transition:all .15s var(--ease);cursor:pointer}
+.nav-item:hover{background:var(--bg-subtle);color:var(--ink)}
+.nav-item.active{background:var(--ink);color:white}
+.nav-item.active .nav-count{background:rgba(255,255,255,.18);color:white}
+.nav-icon{width:16px;height:16px;opacity:.7}
+.nav-item.active .nav-icon{opacity:1}
+.nav-count{margin-inline-start:auto;font-size:11px;background:var(--bg-tonal);color:var(--ink-3);padding:2px 8px;border-radius:10px;font-weight:600;font-variant-numeric:tabular-nums}
+
+/* sub-nav (children) */
+.nav-sub{display:none;flex-direction:column;gap:1px;padding:4px 0 4px 20px;margin-inline-start:8px;border-inline-start:1.5px solid var(--line)}
+.nav-section.expanded .nav-sub{display:flex}
+.nav-sub-item{display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:12.5px;color:var(--ink-3);border-radius:8px;cursor:pointer;transition:all .12s var(--ease)}
+.nav-sub-item:hover{color:var(--ink);background:var(--bg-subtle)}
+.nav-sub-item.active{color:var(--ink);background:var(--bg-subtle);font-weight:500}
+.nav-sub-dot{width:5px;height:5px;border-radius:50%;background:var(--ink-5)}
+.nav-sub-item.active .nav-sub-dot{background:var(--gold)}
+
+.sidebar-footer{margin-top:auto;padding:16px;background:linear-gradient(135deg,#FAFAF7 0%,#F0EFE8 100%);border-radius:14px;border:1px solid var(--line)}
+.sf-title{font-family:var(--font-display);font-size:14px;font-weight:500;margin-bottom:4px}
+.sf-text{font-size:12px;color:var(--ink-3);line-height:1.5;margin-bottom:12px}
+.sf-btn{width:100%;padding:8px;background:var(--ink);color:white;border-radius:10px;font-size:12px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:6px}
+
+/* ============= MAIN ============= */
+.main{min-width:0;padding:32px 40px;max-width:1400px}
+.topbar{display:flex;align-items:center;gap:16px;margin-bottom:32px}
+.crumb{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-4)}
+.crumb strong{color:var(--ink-2);font-weight:500}
+.crumb a{color:var(--ink-4);cursor:pointer;text-decoration:none}
+.crumb a:hover{color:var(--ink-2)}
+.crumb-sep{opacity:.4}
+.search-bar{margin-inline-start:auto;display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--bg-elevated);border:1px solid var(--line-2);border-radius:999px;width:320px;transition:all .15s var(--ease);box-shadow:var(--sh-1)}
+.search-bar input{background:transparent;border:none;outline:none;flex:1;font-size:13px;color:var(--ink)}
+.search-bar input::placeholder{color:var(--ink-4)}
+.kbd{display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:var(--bg-subtle);border:1px solid var(--line);border-radius:5px;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3);font-weight:500}
+.user-chip{display:flex;align-items:center;gap:8px;padding:4px 12px 4px 4px;background:var(--bg-elevated);border:1px solid var(--line-2);border-radius:999px;font-size:12.5px;font-weight:500;cursor:pointer}
+.user-chip-avatar{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,#B89855,#8C6F36);display:grid;place-items:center;color:white;font-size:11px;font-weight:600}
+
+/* ============= PAGE HEADER ============= */
+.page-header{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:32px;padding-bottom:24px;border-bottom:1px solid var(--line)}
+.page-title{font-family:var(--font-display);font-size:38px;font-weight:400;letter-spacing:-.025em;line-height:1.1;margin-bottom:6px}
+.page-title em{font-style:italic;font-weight:300;color:var(--ink-3)}
+.page-sub{font-size:13.5px;color:var(--ink-3);display:flex;align-items:center;gap:8px}
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--success);position:relative}
+.live-dot::after{content:'';position:absolute;inset:-3px;border-radius:50%;background:var(--success);opacity:.3;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{transform:scale(1);opacity:.3}50%{transform:scale(1.5);opacity:0}}
+.page-actions{display:flex;gap:8px}
+
+/* ============= BUTTONS ============= */
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:500;transition:all .15s var(--ease);white-space:nowrap;border:1px solid transparent}
+.btn-secondary{background:var(--bg-elevated);border-color:var(--line-2);color:var(--ink-2);box-shadow:var(--sh-1)}
+.btn-secondary:hover{background:var(--bg-subtle);border-color:var(--line-strong)}
+.btn-primary{background:var(--ink);color:white;box-shadow:0 1px 0 rgba(255,255,255,.1) inset,var(--sh-2)}
+.btn-primary:hover{background:#000;transform:translateY(-1px)}
+.btn-gold{background:linear-gradient(135deg,var(--gold) 0%,var(--gold-deep) 100%);color:white;box-shadow:0 4px 12px rgba(184,152,85,.25)}
+.btn-gold:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(184,152,85,.35)}
+.btn-icon{width:14px;height:14px}
+.btn-sm{padding:6px 12px;font-size:12px}
+
+/* ============= SCREENS (route stack) ============= */
+.screen{display:none}
+.screen.active{display:block;animation:fadeIn .2s var(--ease)}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+/* ===================================================================
+   SCREEN A — MAIN DASHBOARD
+   =================================================================== */
+
+/* KPI Strip */
+.kpi-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:32px}
+.kpi{position:relative;padding:20px;background:var(--bg-elevated);border:1px solid var(--line);border-radius:14px;overflow:hidden;transition:all .2s var(--ease)}
+.kpi::before{content:'';position:absolute;top:0;right:0;width:80px;height:80px;background:radial-gradient(circle at top right,var(--accent-soft),transparent 70%);pointer-events:none}
+.kpi:hover{transform:translateY(-2px);box-shadow:var(--sh-3)}
+.kpi-label{font-size:11.5px;color:var(--ink-3);letter-spacing:.04em;text-transform:uppercase;font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.kpi-value{font-family:var(--font-display);font-size:32px;font-weight:400;letter-spacing:-.02em;line-height:1;margin-bottom:12px;font-variant-numeric:tabular-nums}
+.kpi-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.kpi-delta{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;font-variant-numeric:tabular-nums}
+.kpi-delta.up{color:var(--success);background:var(--success-bg)}
+.kpi-delta.down{color:var(--danger);background:var(--danger-bg)}
+.kpi-spark{height:22px;flex:1;max-width:80px}
+
+/* Section heads */
+.section-title{font-family:var(--font-display);font-size:22px;font-weight:400;letter-spacing:-.02em;margin-bottom:4px}
+.section-sub{font-size:13px;color:var(--ink-3);margin-bottom:20px}
+.section-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:20px;gap:16px}
+
+/* Placement cards */
+.placements-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:14px;margin-bottom:56px}
+.placement{position:relative;background:var(--bg-elevated);border:1px solid var(--line);border-radius:20px;padding:20px;overflow:hidden;transition:all .2s var(--ease);cursor:pointer}
+.placement:hover{transform:translateY(-3px);box-shadow:var(--sh-3)}
+.placement.featured{background:linear-gradient(135deg,#1F1B14 0%,#2A2317 50%,#1A1A1A 100%);color:white;border-color:rgba(184,152,85,.3)}
+.placement.featured::before{content:'';position:absolute;top:-50%;right:-20%;width:70%;height:200%;background:radial-gradient(ellipse,rgba(184,152,85,.18) 0%,transparent 60%);pointer-events:none}
+.placement-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;position:relative;z-index:1}
+.placement-icon{width:38px;height:38px;border-radius:10px;background:var(--bg-subtle);display:grid;place-items:center;flex-shrink:0}
+.placement.featured .placement-icon{background:linear-gradient(135deg,var(--gold) 0%,var(--gold-deep) 100%)}
+.placement-icon svg{width:18px;height:18px;color:var(--ink-2)}
+.placement.featured .placement-icon svg{color:white}
+.placement-meta{flex:1;min-width:0}
+.placement-tier{font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:var(--ink-4);margin-bottom:2px}
+.placement.featured .placement-tier{color:var(--gold)}
+.placement-name{font-family:var(--font-display);font-size:18px;font-weight:500;letter-spacing:-.015em;line-height:1.2}
+.placement-where{font-size:12px;color:var(--ink-3);margin-top:2px}
+.placement.featured .placement-where{color:rgba(255,255,255,.6)}
+.placement-status{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--success-bg);color:var(--success);position:relative;z-index:1}
+.placement.featured .placement-status{background:rgba(184,152,85,.18);color:var(--gold)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+
+.placement-preview{position:relative;z-index:1;height:116px;border-radius:14px;overflow:hidden;margin-bottom:16px;background:var(--bg-subtle);border:1px solid var(--line)}
+.placement.featured .placement-preview{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.08)}
+.vip-prev{position:absolute;inset:0;display:flex;gap:6px;padding:10px;align-items:center}
+.vip-card{flex:1;height:100%;border-radius:8px;background:linear-gradient(135deg,#2C2519 0%,#1A1A1A 100%);border:1px solid rgba(184,152,85,.2);position:relative;overflow:hidden}
+.vip-card.active{flex:2;border-color:var(--gold);box-shadow:0 0 0 2px rgba(184,152,85,.3)}
+.vip-card::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 30% 30%,rgba(184,152,85,.15),transparent 60%)}
+.vip-card-pulse{position:absolute;bottom:6px;right:6px;display:flex;gap:2px}
+.vip-card-pulse span{width:4px;height:4px;border-radius:50%;background:var(--gold);opacity:.4}
+.vip-card.active .vip-card-pulse span{animation:dot-pulse 1.5s infinite}
+.vip-card.active .vip-card-pulse span:nth-child(2){animation-delay:.2s}
+.vip-card.active .vip-card-pulse span:nth-child(3){animation-delay:.4s}
+@keyframes dot-pulse{0%,100%{opacity:.4}50%{opacity:1}}
+
+.wallet-prev{position:absolute;inset:12px;border-radius:8px;background:linear-gradient(135deg,#4A2A6E 0%,#6B3A8F 100%);display:flex;align-items:center;padding:0 14px;color:white;overflow:hidden}
+.wallet-prev::after{content:'';position:absolute;top:-20px;right:-20px;width:80px;height:80px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.12),transparent 70%)}
+.promo-prev{position:absolute;inset:12px;border-radius:8px;background:linear-gradient(135deg,#1A6B5B 0%,#2A8F77 100%);display:flex;align-items:center;padding:0 14px;color:white;overflow:hidden}
+.promo-prev-content,.wallet-prev-content{position:relative;z-index:1}
+.wallet-prev-title,.promo-prev-title{font-size:12px;font-weight:600}
+.wallet-prev-sub,.promo-prev-sub{font-size:10px;opacity:.85}
+
+.placement-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding-top:12px;border-top:1px solid var(--line);position:relative;z-index:1}
+.placement.featured .placement-stats{border-top-color:rgba(255,255,255,.08)}
+.ps-label{font-size:10px;color:var(--ink-4);text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin-bottom:2px}
+.placement.featured .ps-label{color:rgba(255,255,255,.5)}
+.ps-value{font-family:var(--font-display);font-size:16px;font-weight:500;font-variant-numeric:tabular-nums}
+
+.placement-link{position:absolute;bottom:16px;left:16px;width:32px;height:32px;border-radius:50%;background:var(--bg-subtle);display:grid;place-items:center;transition:all .15s var(--ease);z-index:2}
+.placement.featured .placement-link{background:rgba(255,255,255,.1)}
+.placement:hover .placement-link{background:var(--ink);color:white;transform:rotate(-45deg) scale(1.1)}
+.placement.featured:hover .placement-link{background:var(--gold);color:#1A1A1A}
+
+/* ============= TOOLBAR / TABS / TABLE ============= */
+.toolbar{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.tabs{display:inline-flex;background:var(--bg-elevated);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px}
+.tab{padding:7px 14px;border-radius:7px;font-size:13px;font-weight:500;color:var(--ink-3);display:flex;align-items:center;gap:6px;transition:all .15s var(--ease)}
+.tab:hover{color:var(--ink)}
+.tab.active{background:var(--ink);color:white;box-shadow:var(--sh-1)}
+.tab-count{font-size:11px;background:var(--bg-subtle);color:var(--ink-3);padding:1px 7px;border-radius:999px;font-weight:600;font-variant-numeric:tabular-nums}
+.tab.active .tab-count{background:rgba(255,255,255,.18);color:white}
+.toolbar-spacer{flex:1}
+.filter{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;background:var(--bg-elevated);border:1px solid var(--line-2);border-radius:10px;font-size:12.5px;color:var(--ink-2);font-weight:500;cursor:pointer}
+.filter:hover{background:var(--bg-subtle)}
+.filter svg{width:12px;height:12px;opacity:.6}
+
+.bulk-bar{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--ink);color:white;border-radius:14px;margin-bottom:16px;box-shadow:var(--sh-3);animation:slideDown .25s var(--ease-out)}
+@keyframes slideDown{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+.bulk-count{font-size:13px;font-weight:500}
+.bulk-count strong{font-family:var(--font-display);font-size:16px;margin-inline-end:2px}
+.bulk-bar-spacer{flex:1}
+.bulk-btn{padding:6px 12px;background:rgba(255,255,255,.1);border-radius:6px;font-size:12.5px;font-weight:500;display:inline-flex;align-items:center;gap:5px}
+.bulk-btn:hover{background:rgba(255,255,255,.18)}
+.bulk-btn.danger:hover{background:var(--danger)}
+
+.banners-table{background:var(--bg-elevated);border:1px solid var(--line);border-radius:20px;overflow:hidden;box-shadow:var(--sh-1)}
+.row{display:grid;grid-template-columns:36px 1.5fr 90px 120px 100px 100px 100px 100px 80px;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);transition:background .15s var(--ease)}
+.row:last-child{border-bottom:none}
+.row.head{background:var(--bg-subtle);border-bottom:1px solid var(--line-2);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);font-weight:600;padding:10px 20px}
+.row.body{cursor:pointer}
+.row.body:hover{background:var(--bg-subtle)}
+.row.body.selected{background:var(--bg-tonal)}
+.checkbox{width:16px;height:16px;border:1.5px solid var(--ink-5);border-radius:4px;display:grid;place-items:center;cursor:pointer;transition:all .15s var(--ease)}
+.checkbox:hover{border-color:var(--ink-3)}
+.checkbox.checked{background:var(--ink);border-color:var(--ink)}
+.checkbox.checked::after{content:'';width:5px;height:9px;border:1.5px solid white;border-top:0;border-left:0;transform:rotate(45deg) translateY(-1px)}
+
+.banner-cell{display:flex;align-items:center;gap:12px;min-width:0}
+.banner-thumb{width:56px;height:36px;border-radius:6px;flex-shrink:0;position:relative;overflow:hidden;border:1px solid var(--line)}
+.banner-thumb.gradient-1{background:linear-gradient(135deg,#6B4FA8 0%,#4A3580 100%)}
+.banner-thumb.gradient-2{background:linear-gradient(135deg,#1A6B5B 0%,#2A8F77 100%)}
+.banner-thumb.gradient-3{background:linear-gradient(135deg,#4A2A6E 0%,#6B3A8F 100%)}
+.banner-thumb.gradient-4{background:linear-gradient(135deg,#B85A2A 0%,#D67A3A 100%)}
+.banner-thumb.gradient-5{background:linear-gradient(135deg,#2C5BA8 0%,#4A7BCF 100%)}
+.banner-thumb.image-1{background:linear-gradient(135deg,#8B6F3F 0%,#B89855 100%)}
+.banner-thumb.image-2{background:linear-gradient(135deg,#4A3F2A 0%,#6B5A3F 100%)}
+.banner-thumb.vip{background:linear-gradient(135deg,#1F1B14 0%,#2A2317 100%);border-color:rgba(184,152,85,.3)}
+.banner-thumb.vip::after{content:'⭐';position:absolute;inset:0;display:grid;place-items:center;font-size:13px}
+
+.banner-info{min-width:0;flex:1}
+.banner-title{font-size:13.5px;font-weight:500;color:var(--ink);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.banner-meta{font-size:11.5px;color:var(--ink-4);display:flex;align-items:center;gap:6px}
+
+.chip{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+.chip.placement-vip{background:var(--gold-soft);color:var(--gold-deep)}
+.chip.placement-home{background:var(--info-bg);color:var(--info)}
+.chip.placement-wallet{background:#F0E5F8;color:#6B3A8F}
+.chip.placement-subcat{background:#E0F2EC;color:#0F7A55}
+
+.toggle{width:32px;height:18px;border-radius:999px;background:var(--ink-5);position:relative;cursor:pointer;transition:background .2s var(--ease);flex-shrink:0}
+.toggle.on{background:var(--success)}
+.toggle::after{content:'';position:absolute;top:2px;right:2px;width:14px;height:14px;background:white;border-radius:50%;transition:all .2s var(--ease);box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.toggle.on::after{right:calc(100% - 16px)}
+.status-cell{display:flex;align-items:center;gap:8px}
+.status-label{font-size:12px;font-weight:500}
+.status-label.active{color:var(--success)}
+.status-label.paused{color:var(--ink-4)}
+.status-label.scheduled{color:var(--info)}
+.status-label.draft{color:var(--warn)}
+
+.metric{font-family:var(--font-display);font-size:14.5px;font-weight:500;font-variant-numeric:tabular-nums;color:var(--ink)}
+.metric-sub{font-size:10.5px;color:var(--ink-4);margin-top:1px}
+.ctr-bar{height:4px;background:var(--bg-subtle);border-radius:999px;overflow:hidden;margin-top:4px}
+.ctr-bar-fill{height:100%;background:linear-gradient(90deg,var(--success) 0%,var(--gold) 100%);border-radius:999px}
+
+.row-actions{display:flex;gap:2px;opacity:0;transition:opacity .15s var(--ease);justify-content:flex-end}
+.row.body:hover .row-actions{opacity:1}
+.action-btn{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--ink-3);transition:all .15s var(--ease)}
+.action-btn:hover{background:var(--bg-tonal);color:var(--ink)}
+
+/* ============= INSIGHT CARD ============= */
+.insight-card{position:relative;margin-top:32px;padding:24px;background:linear-gradient(135deg,rgba(184,152,85,.04) 0%,rgba(255,255,255,.8) 50%,rgba(26,26,26,.02) 100%),var(--bg-elevated);border:1px solid var(--line);border-radius:20px;overflow:hidden;display:grid;grid-template-columns:auto 1fr auto;gap:20px;align-items:center}
+.insight-card::before{content:'';position:absolute;top:-50%;right:-10%;width:40%;height:200%;background:radial-gradient(ellipse,rgba(184,152,85,.1) 0%,transparent 60%);pointer-events:none}
+.insight-icon{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,var(--gold) 0%,var(--gold-deep) 100%);display:grid;place-items:center;color:white;position:relative;z-index:1;box-shadow:0 4px 12px rgba(184,152,85,.25)}
+.insight-content{position:relative;z-index:1;min-width:0}
+.insight-tag{font-size:10.5px;text-transform:uppercase;letter-spacing:.12em;color:var(--gold-deep);font-weight:700;margin-bottom:4px}
+.insight-text{font-family:var(--font-display);font-size:17px;font-weight:400;letter-spacing:-.01em;line-height:1.4}
+.insight-text mark{background:rgba(184,152,85,.18);padding:0 4px;border-radius:3px;color:var(--gold-deep);font-weight:500}
+.insight-meta{font-size:11.5px;color:var(--ink-4);margin-top:6px}
+.insight-actions{display:flex;flex-direction:column;gap:6px;position:relative;z-index:1}
+.insight-btn{padding:7px 14px;border-radius:10px;font-size:12px;font-weight:500;white-space:nowrap}
+.insight-btn.primary{background:var(--ink);color:white}
+
+/* ===================================================================
+   SCREEN B — BANNER EDIT (FULL PAGE, NOT DRAWER)
+   =================================================================== */
+.edit-layout{display:grid;grid-template-columns:1fr 380px;gap:32px;align-items:start}
+.edit-form{min-width:0;display:flex;flex-direction:column;gap:16px}
+
+/* Section card */
+.section-card{background:var(--bg-elevated);border:1px solid var(--line);border-radius:20px;overflow:hidden;transition:all .2s var(--ease)}
+.section-card-head{display:flex;align-items:center;gap:14px;padding:18px 24px;cursor:pointer;transition:background .15s var(--ease);border-bottom:1px solid transparent}
+.section-card.open .section-card-head{border-bottom-color:var(--line)}
+.section-card-head:hover{background:var(--bg-subtle)}
+.sc-num{width:28px;height:28px;border-radius:50%;background:var(--bg-subtle);display:grid;place-items:center;font-size:13px;font-weight:600;color:var(--ink-3);flex-shrink:0;font-family:var(--font-display)}
+.section-card.open .sc-num{background:var(--ink);color:white}
+.sc-meta{flex:1;min-width:0}
+.sc-title{font-family:var(--font-display);font-size:17px;font-weight:500;letter-spacing:-.01em;line-height:1.2}
+.sc-desc{font-size:12px;color:var(--ink-4);margin-top:2px}
+.sc-status{font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px;background:var(--success-bg);color:var(--success)}
+.sc-status.warn{background:var(--warn-bg);color:var(--warn)}
+.sc-status.gray{background:var(--bg-tonal);color:var(--ink-4)}
+.sc-arrow{width:14px;height:14px;color:var(--ink-4);transition:transform .2s var(--ease)}
+.section-card.open .sc-arrow{transform:rotate(180deg)}
+.section-card-body{padding:24px;display:none}
+.section-card.open .section-card-body{display:block}
+
+/* Form fields */
+.field{margin-bottom:20px}
+.field-label{display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:8px}
+.field-label-help{color:var(--ink-4);font-weight:400}
+.field-help{font-size:11.5px;color:var(--ink-4);margin-top:6px;line-height:1.5}
+.field-input{width:100%;padding:10px 14px;background:var(--bg-elevated);border:1px solid var(--line-2);border-radius:10px;font-size:13.5px;color:var(--ink);transition:all .15s var(--ease)}
+.field-input:focus{outline:none;border-color:var(--ink-3);box-shadow:0 0 0 3px rgba(0,0,0,.04)}
+.field-textarea{min-height:80px;resize:vertical;font-family:inherit}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.field-row-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+
+.segment{display:inline-flex;background:var(--bg-subtle);border-radius:10px;padding:3px;gap:2px;width:100%}
+.segment-opt{flex:1;padding:8px 10px;border-radius:7px;font-size:12.5px;font-weight:500;color:var(--ink-3);text-align:center;cursor:pointer;transition:all .15s var(--ease);display:flex;align-items:center;justify-content:center;gap:5px}
+.segment-opt.active{background:white;color:var(--ink);box-shadow:var(--sh-1)}
+.segment-opt svg{width:13px;height:13px;opacity:.7}
+
+.gradient-picker{display:grid;grid-template-columns:repeat(8,1fr);gap:8px}
+.gradient-swatch{aspect-ratio:1;border-radius:10px;cursor:pointer;transition:all .15s var(--ease);border:2px solid transparent;position:relative}
+.gradient-swatch:hover{transform:scale(1.08)}
+.gradient-swatch.selected{border-color:var(--ink);transform:scale(1.05)}
+.gradient-swatch.selected::after{content:'✓';position:absolute;inset:0;display:grid;place-items:center;color:white;font-size:14px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.3)}
+
+.icon-picker{display:grid;grid-template-columns:repeat(10,1fr);gap:6px}
+.icon-cell{aspect-ratio:1;border-radius:8px;background:var(--bg-subtle);display:grid;place-items:center;cursor:pointer;font-size:18px;transition:all .15s var(--ease);border:2px solid transparent}
+.icon-cell:hover{background:var(--bg-tonal)}
+.icon-cell.selected{background:var(--ink);color:white;border-color:var(--ink)}
+
+/* Image uploader */
+.image-uploader{border:1.5px dashed var(--ink-5);border-radius:14px;padding:32px;text-align:center;cursor:pointer;transition:all .15s var(--ease);background:var(--bg-subtle)}
+.image-uploader:hover{border-color:var(--ink-3);background:var(--bg-tonal)}
+.image-uploader-icon{width:40px;height:40px;border-radius:50%;background:white;display:grid;place-items:center;margin:0 auto 12px;color:var(--ink-3)}
+.image-uploader-text{font-size:13px;font-weight:500;margin-bottom:4px}
+.image-uploader-sub{font-size:11.5px;color:var(--ink-4)}
+
+/* Range slider (custom) */
+.range-row{display:flex;align-items:center;gap:12px}
+.range-input{flex:1;-webkit-appearance:none;appearance:none;height:4px;background:var(--bg-tonal);border-radius:999px;outline:none}
+.range-input::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;background:var(--ink);cursor:pointer;box-shadow:var(--sh-2)}
+.range-value{font-family:var(--font-display);font-size:18px;font-weight:500;font-variant-numeric:tabular-nums;color:var(--ink);min-width:60px;text-align:left}
+.range-presets{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.range-preset{padding:5px 10px;background:var(--bg-subtle);border-radius:6px;font-size:11.5px;font-weight:500;color:var(--ink-3);cursor:pointer;transition:all .15s var(--ease)}
+.range-preset:hover{background:var(--bg-tonal);color:var(--ink)}
+.range-preset.active{background:var(--ink);color:white}
+
+/* Switch with label */
+.switch-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.switch-row:last-child{border-bottom:none}
+.switch-meta{flex:1}
+.switch-title{font-size:13.5px;font-weight:500;color:var(--ink)}
+.switch-desc{font-size:11.5px;color:var(--ink-4);margin-top:2px}
+
+/* Provider picker */
+.provider-search{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--bg-subtle);border:1px solid var(--line-2);border-radius:10px;margin-bottom:12px}
+.provider-search input{flex:1;background:transparent;border:none;outline:none;font-size:13px}
+.provider-list{display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto;padding:2px}
+.provider-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:var(--bg-elevated);border:1px solid var(--line);cursor:pointer;transition:all .15s var(--ease)}
+.provider-row:hover{background:var(--bg-subtle);border-color:var(--line-strong)}
+.provider-row.selected{background:var(--gold-soft);border-color:var(--gold)}
+.provider-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#B89855,#8C6F36);display:grid;place-items:center;color:white;font-size:13px;font-weight:600;flex-shrink:0;position:relative}
+.provider-avatar.green{background:linear-gradient(135deg,#1A7F4E,#0F5638)}
+.provider-avatar.purple{background:linear-gradient(135deg,#6B4FA8,#4A3580)}
+.provider-avatar.blue{background:linear-gradient(135deg,#2C5BA8,#4A7BCF)}
+.provider-avatar.orange{background:linear-gradient(135deg,#B85A2A,#D67A3A)}
+.provider-avatar.online::after{content:'';position:absolute;bottom:0;left:0;width:10px;height:10px;border-radius:50%;background:var(--success);border:2px solid white}
+.provider-info{flex:1;min-width:0}
+.provider-name{font-size:13.5px;font-weight:500;display:flex;align-items:center;gap:5px}
+.provider-verified{color:var(--info);font-size:11px}
+.provider-meta{font-size:11.5px;color:var(--ink-4);display:flex;align-items:center;gap:6px;margin-top:1px}
+.provider-rating{color:var(--gold);font-weight:600}
+.provider-add{width:28px;height:28px;border-radius:50%;background:var(--ink);color:white;display:grid;place-items:center;font-size:14px;font-weight:300}
+.provider-row.selected .provider-add{background:var(--gold);color:white}
+
+/* Schedule grid (week heatmap edit) */
+.sched-week{display:grid;grid-template-columns:60px repeat(7,1fr);gap:3px;font-variant-numeric:tabular-nums}
+.sched-hour-label{font-size:10px;color:var(--ink-4);text-align:center;display:flex;align-items:center;justify-content:center}
+.sched-day-label{font-size:10.5px;color:var(--ink-3);font-weight:600;text-align:center;padding:4px 0}
+.sched-cell{height:18px;border-radius:3px;background:var(--bg-subtle);cursor:pointer;transition:all .1s var(--ease)}
+.sched-cell:hover{transform:scale(1.15)}
+.sched-cell.on{background:var(--ink)}
+.sched-cell.peak{background:var(--gold)}
+
+/* Date range */
+.date-range-row{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center}
+.date-arrow{color:var(--ink-4)}
+
+/* Edit page sticky preview */
+.edit-preview-sticky{position:sticky;top:24px;display:flex;flex-direction:column;gap:16px}
+.preview-header{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--ink-4);font-weight:700;text-align:center;padding-top:8px}
+.phone-frame{width:100%;max-width:280px;margin:0 auto;aspect-ratio:9/19;background:#1A1A1A;border-radius:36px;padding:8px;box-shadow:var(--sh-4);position:relative}
+.phone-screen{width:100%;height:100%;background:#FAFAF7;border-radius:30px;overflow:hidden;position:relative}
+.phone-notch{position:absolute;top:8px;left:50%;transform:translateX(-50%);width:80px;height:18px;background:#1A1A1A;border-radius:999px;z-index:5}
+.phone-status-bar{padding:14px 22px 6px;display:flex;justify-content:space-between;font-size:9.5px;font-weight:600;color:#1A1A1A}
+.phone-content{padding:6px 12px 12px;display:flex;flex-direction:column;gap:8px}
+.mock-search{height:28px;background:white;border-radius:12px;border:1px solid var(--line);display:flex;align-items:center;padding:0 10px;font-size:9px;color:var(--ink-4)}
+.mock-stories{display:flex;gap:6px;padding:4px 0}
+.mock-story{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#B89855,#4A2A6E);flex-shrink:0;border:2px solid white;box-shadow:0 0 0 1.5px var(--gold)}
+.mock-vip-card{height:80px;border-radius:10px;background:linear-gradient(135deg,#1F1B14 0%,#2A2317 100%);border:1.5px solid var(--gold);position:relative;overflow:hidden;padding:8px;display:flex;align-items:center;gap:8px}
+.mock-vip-card::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 20% 30%,rgba(184,152,85,.25),transparent 60%);pointer-events:none}
+.mock-vip-tag{position:absolute;top:6px;left:6px;font-size:7.5px;color:var(--gold);font-weight:700;letter-spacing:.05em;background:rgba(184,152,85,.15);padding:1px 5px;border-radius:4px}
+.mock-vip-avatar{width:48px;height:48px;border-radius:8px;background:linear-gradient(135deg,#B89855,#8C6F36);position:relative;z-index:1;flex-shrink:0;display:grid;place-items:center;color:white;font-weight:600;font-size:14px}
+.mock-vip-info{position:relative;z-index:1;color:white;flex:1}
+.mock-vip-name{font-size:10px;font-weight:600;margin-bottom:2px}
+.mock-vip-cat{font-size:8px;color:rgba(255,255,255,.7)}
+.mock-vip-price{font-size:9px;color:var(--gold);font-weight:600;margin-top:2px}
+.mock-vip-dots{position:absolute;bottom:5px;right:50%;transform:translateX(50%);display:flex;gap:2px;z-index:2}
+.mock-vip-dots span{width:3px;height:3px;border-radius:50%;background:rgba(184,152,85,.4)}
+.mock-vip-dots span.active{background:var(--gold);width:8px;border-radius:2px}
+.mock-section-title{height:10px;width:50%;background:var(--bg-tonal);border-radius:3px;margin-top:4px}
+.mock-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.mock-tile{aspect-ratio:1;border-radius:6px;background:var(--bg-subtle)}
+.mock-promo-banner{height:48px;border-radius:8px;background:linear-gradient(135deg,#1A6B5B 0%,#2A8F77 100%)}
+
+.preview-tabs{display:flex;background:var(--bg-elevated);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px;margin-bottom:8px}
+.preview-tab{flex:1;padding:6px 8px;border-radius:7px;font-size:11px;font-weight:500;color:var(--ink-3);text-align:center;cursor:pointer;transition:all .15s var(--ease)}
+.preview-tab.active{background:var(--ink);color:white}
+
+.preview-info{padding:14px;background:var(--bg-elevated);border:1px solid var(--line);border-radius:14px}
+.preview-info-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:12px}
+.preview-info-row + .preview-info-row{border-top:1px solid var(--line)}
+.preview-info-label{color:var(--ink-4)}
+.preview-info-value{font-weight:500;color:var(--ink-2)}
+
+/* Sticky save bar */
+.save-bar{position:sticky;bottom:0;margin:32px -40px -32px;padding:16px 40px;background:rgba(255,255,255,.95);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-top:1px solid var(--line);display:flex;align-items:center;gap:16px;z-index:10}
+.save-bar-info{flex:1;font-size:12.5px;color:var(--ink-3);display:flex;align-items:center;gap:8px}
+.save-dot{width:7px;height:7px;border-radius:50%;background:var(--success)}
+
+/* ===================================================================
+   SCREEN C — VIP MANAGEMENT
+   =================================================================== */
+.vip-hero{position:relative;background:linear-gradient(135deg,#1F1B14 0%,#2A2317 50%,#1A1A1A 100%);border-radius:24px;padding:32px;color:white;margin-bottom:32px;overflow:hidden}
+.vip-hero::before{content:'';position:absolute;top:-50%;right:-10%;width:60%;height:200%;background:radial-gradient(ellipse,rgba(184,152,85,.25) 0%,transparent 60%);pointer-events:none}
+.vip-hero-grid{position:relative;z-index:1;display:grid;grid-template-columns:1fr auto;gap:32px;align-items:center}
+.vip-hero-left{min-width:0}
+.vip-hero-tag{display:inline-flex;align-items:center;gap:6px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:var(--gold);background:rgba(184,152,85,.15);padding:5px 12px;border-radius:999px;margin-bottom:12px}
+.vip-hero-title{font-family:var(--font-display);font-size:36px;font-weight:400;letter-spacing:-.02em;line-height:1.1;margin-bottom:8px}
+.vip-hero-sub{font-size:14px;color:rgba(255,255,255,.7);max-width:520px;line-height:1.5}
+.vip-hero-stats{display:flex;gap:32px;margin-top:24px}
+.vh-stat-label{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;color:rgba(255,255,255,.5);margin-bottom:4px}
+.vh-stat-value{font-family:var(--font-display);font-size:28px;font-weight:400;color:var(--gold);font-variant-numeric:tabular-nums}
+.vh-stat-sub{font-size:11.5px;color:rgba(255,255,255,.6);margin-top:2px}
+
+.vip-capacity-ring{position:relative;width:160px;height:160px}
+.vip-capacity-ring svg{transform:rotate(-90deg)}
+.vip-capacity-track{stroke:rgba(184,152,85,.15);fill:none;stroke-width:10}
+.vip-capacity-fill{stroke:url(#goldGrad);fill:none;stroke-width:10;stroke-linecap:round;transition:stroke-dashoffset 1s var(--ease-out)}
+.vip-capacity-text{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.vc-num{font-family:var(--font-display);font-size:36px;font-weight:400;color:white;line-height:1;font-variant-numeric:tabular-nums}
+.vc-of{font-size:11px;color:rgba(255,255,255,.5);margin-top:4px}
+.vc-label{font-size:10px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;color:var(--gold);margin-top:6px}
+
+/* VIP slot grid */
+.vip-tabs{display:inline-flex;background:var(--bg-elevated);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px;margin-bottom:20px}
+.vip-tab{padding:8px 16px;border-radius:7px;font-size:13px;font-weight:500;color:var(--ink-3);display:flex;align-items:center;gap:6px;cursor:pointer;transition:all .15s var(--ease)}
+.vip-tab.active{background:var(--ink);color:white;box-shadow:var(--sh-1)}
+.vip-tab-count{font-size:11px;background:var(--bg-subtle);color:var(--ink-3);padding:1px 7px;border-radius:999px;font-weight:600;font-variant-numeric:tabular-nums}
+.vip-tab.active .vip-tab-count{background:rgba(255,255,255,.18);color:white}
+
+.vip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.vip-slot{position:relative;background:var(--bg-elevated);border:1px solid var(--line);border-radius:16px;padding:18px;transition:all .2s var(--ease);cursor:pointer;overflow:hidden}
+.vip-slot:hover{transform:translateY(-2px);box-shadow:var(--sh-3);border-color:var(--gold)}
+.vip-slot.featured{background:linear-gradient(135deg,#FAF6EB 0%,#FFFFFF 100%);border-color:var(--gold-soft)}
+.vip-slot.expired{opacity:.6;border-style:dashed}
+.vip-slot.admin-comp::after{content:'🎁 חינם · המנהל';position:absolute;top:8px;left:8px;font-size:9px;background:var(--ink);color:white;padding:3px 8px;border-radius:999px;font-weight:600}
+
+.vip-slot-rank{position:absolute;top:10px;right:10px;width:24px;height:24px;border-radius:8px;background:var(--bg-subtle);color:var(--ink-3);font-size:10.5px;font-weight:700;display:grid;place-items:center;font-family:var(--font-display)}
+.vip-slot.featured .vip-slot-rank{background:linear-gradient(135deg,var(--gold),var(--gold-deep));color:white}
+
+.vip-slot-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;margin-top:18px}
+.vip-slot-avatar{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#B89855,#8C6F36);display:grid;place-items:center;color:white;font-size:18px;font-weight:600;flex-shrink:0;position:relative}
+.vip-slot-avatar.green{background:linear-gradient(135deg,#1A7F4E,#0F5638)}
+.vip-slot-avatar.purple{background:linear-gradient(135deg,#6B4FA8,#4A3580)}
+.vip-slot-avatar.blue{background:linear-gradient(135deg,#2C5BA8,#4A7BCF)}
+.vip-slot-avatar.orange{background:linear-gradient(135deg,#B85A2A,#D67A3A)}
+.vip-slot-avatar.red{background:linear-gradient(135deg,#B83A2A,#7A2A1F)}
+.vip-slot-avatar.online::after{content:'';position:absolute;bottom:-2px;left:-2px;width:14px;height:14px;border-radius:50%;background:var(--success);border:2.5px solid var(--bg-elevated)}
+.vip-slot-meta{flex:1;min-width:0}
+.vip-slot-name{font-size:14.5px;font-weight:600;display:flex;align-items:center;gap:5px;margin-bottom:2px}
+.vip-slot-cat{font-size:11.5px;color:var(--ink-4)}
+.vip-slot-rating{font-size:11px;color:var(--gold);font-weight:600;margin-top:2px;display:flex;align-items:center;gap:3px}
+
+.vip-slot-time{padding:10px 12px;background:var(--bg-subtle);border-radius:10px;margin-bottom:12px;display:flex;align-items:center;gap:10px}
+.vip-time-icon{width:28px;height:28px;border-radius:8px;background:var(--gold-soft);display:grid;place-items:center;color:var(--gold-deep);flex-shrink:0}
+.vip-slot.expired .vip-time-icon{background:var(--danger-bg);color:var(--danger)}
+.vip-time-info{flex:1;min-width:0}
+.vip-time-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-4);font-weight:600}
+.vip-time-value{font-size:13px;font-weight:600;color:var(--ink-2)}
+.vip-slot.expired .vip-time-value{color:var(--danger)}
+.vip-renewal-tag{font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;flex-shrink:0}
+.vip-renewal-tag.auto{background:var(--success-bg);color:var(--success)}
+.vip-renewal-tag.manual{background:var(--warn-bg);color:var(--warn)}
+
+.vip-slot-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding-top:12px;border-top:1px solid var(--line)}
+.vss-label{font-size:9.5px;color:var(--ink-4);text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-bottom:2px}
+.vss-value{font-family:var(--font-display);font-size:14px;font-weight:500;font-variant-numeric:tabular-nums}
+
+.vip-slot-actions{display:flex;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.vip-action-btn{flex:1;padding:7px;background:var(--bg-subtle);border-radius:8px;font-size:11.5px;font-weight:500;color:var(--ink-2);transition:all .15s var(--ease);display:inline-flex;align-items:center;justify-content:center;gap:4px}
+.vip-action-btn:hover{background:var(--bg-tonal)}
+.vip-action-btn.danger:hover{background:var(--danger-bg);color:var(--danger)}
+.vip-action-btn.gold{background:var(--gold-soft);color:var(--gold-deep)}
+.vip-action-btn.gold:hover{background:var(--gold);color:white}
+
+/* Add VIP card (empty slot) */
+.vip-slot-empty{background:var(--bg-subtle);border:1.5px dashed var(--ink-5);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px 18px;cursor:pointer;transition:all .15s var(--ease);min-height:240px}
+.vip-slot-empty:hover{border-color:var(--gold);background:var(--gold-soft)}
+.vip-empty-icon{width:48px;height:48px;border-radius:14px;background:white;border:1px solid var(--line);display:grid;place-items:center;margin-bottom:12px;color:var(--ink-3)}
+.vip-empty-title{font-family:var(--font-display);font-size:16px;font-weight:500;margin-bottom:4px}
+.vip-empty-sub{font-size:11.5px;color:var(--ink-4);max-width:200px;line-height:1.5}
+
+/* Waitlist section */
+.waitlist-card{background:var(--bg-elevated);border:1px solid var(--line);border-radius:20px;overflow:hidden;margin-top:32px}
+.waitlist-head{padding:20px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;background:linear-gradient(to left,rgba(184,152,85,.04),transparent)}
+.waitlist-icon{width:40px;height:40px;border-radius:12px;background:var(--gold-soft);display:grid;place-items:center;color:var(--gold-deep);flex-shrink:0}
+.waitlist-meta{flex:1}
+.waitlist-title{font-family:var(--font-display);font-size:18px;font-weight:500;letter-spacing:-.01em}
+.waitlist-desc{font-size:12px;color:var(--ink-4);margin-top:2px}
+.waitlist-counter{font-family:var(--font-display);font-size:24px;font-weight:500;color:var(--gold-deep);font-variant-numeric:tabular-nums}
+
+.waitlist-row{display:grid;grid-template-columns:40px 1fr 100px 120px 90px 80px;align-items:center;gap:12px;padding:12px 24px;border-bottom:1px solid var(--line);transition:background .12s var(--ease)}
+.waitlist-row:last-child{border-bottom:none}
+.waitlist-row:hover{background:var(--bg-subtle)}
+.waitlist-pos{font-family:var(--font-display);font-size:18px;font-weight:500;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.waitlist-info{display:flex;align-items:center;gap:10px;min-width:0}
+.waitlist-eta{font-size:11.5px;color:var(--gold-deep);font-weight:500}
+
+/* Sharing capacity bar */
+.capacity-bar{display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--bg-elevated);border:1px solid var(--line);border-radius:14px;margin-bottom:24px}
+.capacity-bar-label{font-size:12.5px;font-weight:500;color:var(--ink-2)}
+.capacity-bar-track{flex:1;height:8px;background:var(--bg-subtle);border-radius:999px;overflow:hidden;display:flex}
+.capacity-bar-fill-paid{height:100%;background:linear-gradient(90deg,var(--gold),var(--gold-deep))}
+.capacity-bar-fill-comp{height:100%;background:var(--ink)}
+.capacity-bar-stats{display:flex;align-items:center;gap:12px;font-size:11.5px}
+.cb-stat{display:inline-flex;align-items:center;gap:5px;color:var(--ink-3)}
+.cb-stat .dot{width:8px;height:8px;border-radius:2px}
+.cb-stat .dot.paid{background:var(--gold)}
+.cb-stat .dot.comp{background:var(--ink)}
+.cb-stat .dot.free{background:var(--bg-tonal);border:1px solid var(--ink-5)}
+
+/* ===================================================================
+   SCREEN D — PAYMENTS
+   =================================================================== */
+.payments-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:32px}
+.pay-stat{padding:20px;background:var(--bg-elevated);border:1px solid var(--line);border-radius:14px;position:relative;overflow:hidden}
+.pay-stat.gold{background:linear-gradient(135deg,#FAF6EB 0%,white 100%);border-color:rgba(184,152,85,.2)}
+.pay-stat-label{font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;color:var(--ink-3);margin-bottom:10px}
+.pay-stat-value{font-family:var(--font-display);font-size:30px;font-weight:400;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.pay-stat.gold .pay-stat-value{color:var(--gold-deep)}
+.pay-stat-sub{font-size:12px;color:var(--ink-4);margin-top:6px;display:flex;align-items:center;gap:6px}
+
+.payments-table{background:var(--bg-elevated);border:1px solid var(--line);border-radius:20px;overflow:hidden}
+.pay-row{display:grid;grid-template-columns:1.4fr 90px 110px 100px 130px 110px 80px;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line)}
+.pay-row:last-child{border-bottom:none}
+.pay-row.head{background:var(--bg-subtle);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);font-weight:600;padding:11px 20px}
+.pay-row.body:hover{background:var(--bg-subtle)}
+.pay-status{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px}
+.pay-status.paid{background:var(--success-bg);color:var(--success)}
+.pay-status.pending{background:var(--warn-bg);color:var(--warn)}
+.pay-status.failed{background:var(--danger-bg);color:var(--danger)}
+.pay-status.comp{background:var(--bg-tonal);color:var(--ink-2)}
+.pay-amount{font-family:var(--font-display);font-size:15px;font-weight:500;font-variant-numeric:tabular-nums}
+.pay-date{font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.pay-method{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-3)}
+.pay-method-dot{width:18px;height:12px;border-radius:2px;background:linear-gradient(135deg,#1A1A1A,#3A3A38)}
+.pay-method-dot.visa{background:linear-gradient(135deg,#1A1F71,#0E134A)}
+.pay-method-dot.mc{background:linear-gradient(135deg,#EB001B,#F79E1B)}
+
+/* ===================================================================
+   COMMAND PALETTE
+   =================================================================== */
+.cmdk-overlay{position:fixed;inset:0;background:rgba(20,20,20,.4);backdrop-filter:blur(8px);z-index:100;display:none;align-items:flex-start;justify-content:center;padding-top:12vh}
+.cmdk-overlay.open{display:flex;animation:fadeIn .15s var(--ease)}
+.cmdk{width:600px;max-width:90vw;background:var(--bg-elevated);border-radius:20px;box-shadow:var(--sh-4);overflow:hidden;border:1px solid var(--line);animation:slideDown .2s var(--ease-out)}
+.cmdk-input{width:100%;padding:18px 22px;border:none;outline:none;font-size:15px;font-family:inherit;border-bottom:1px solid var(--line);background:transparent;color:var(--ink)}
+.cmdk-list{max-height:360px;overflow-y:auto;padding:6px}
+.cmdk-section{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-4);font-weight:700;padding:12px 16px 6px}
+.cmdk-item{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:10px;cursor:pointer;font-size:13px}
+.cmdk-item:hover,.cmdk-item.active{background:var(--bg-subtle)}
+.cmdk-item-icon{width:28px;height:28px;border-radius:7px;background:var(--bg-tonal);display:grid;place-items:center;color:var(--ink-2);flex-shrink:0}
+.cmdk-item-text{flex:1}
+.cmdk-item-sub{font-size:11px;color:var(--ink-4);margin-top:1px}
+.cmdk-foot{padding:10px 16px;background:var(--bg-subtle);border-top:1px solid var(--line);font-size:11px;color:var(--ink-4);display:flex;gap:16px}
+
+/* ===================================================================
+   ADD VIP MODAL
+   =================================================================== */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(4px);z-index:90;display:none;align-items:center;justify-content:center;padding:24px}
+.modal-overlay.open{display:flex;animation:fadeIn .15s var(--ease)}
+.modal{width:520px;max-width:100%;max-height:85vh;background:var(--bg-elevated);border-radius:24px;box-shadow:var(--sh-4);overflow:hidden;display:flex;flex-direction:column;animation:slideDown .25s var(--ease-out)}
+.modal-head{padding:24px 28px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px}
+.modal-icon{width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,var(--gold),var(--gold-deep));display:grid;place-items:center;color:white}
+.modal-meta{flex:1}
+.modal-title{font-family:var(--font-display);font-size:20px;font-weight:500;letter-spacing:-.01em}
+.modal-desc{font-size:12px;color:var(--ink-4);margin-top:2px}
+.modal-close{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;color:var(--ink-3)}
+.modal-close:hover{background:var(--bg-subtle)}
+.modal-body{padding:24px 28px;overflow-y:auto}
+.modal-foot{padding:18px 28px;border-top:1px solid var(--line);background:var(--bg-subtle);display:flex;gap:10px;justify-content:flex-end}
+
+/* ===================================================================
+   SCREEN E — SUBCATEGORY BANNERS
+   =================================================================== */
+.subcat-hero{position:relative;background:linear-gradient(135deg,#FAFAF7 0%,#FFFFFF 50%,#F4F3EF 100%);border:1px solid var(--line);border-radius:24px;padding:32px;margin-bottom:32px;overflow:hidden}
+.subcat-hero::before{content:'';position:absolute;top:-30%;left:-10%;width:50%;height:160%;background:radial-gradient(ellipse,rgba(44,91,168,.08) 0%,transparent 60%);pointer-events:none}
+.subcat-hero-grid{position:relative;z-index:1;display:grid;grid-template-columns:1fr auto;gap:32px;align-items:center}
+.subcat-hero-tag{display:inline-flex;align-items:center;gap:6px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:var(--info);background:var(--info-bg);padding:5px 12px;border-radius:999px;margin-bottom:12px}
+.subcat-hero-title{font-family:var(--font-display);font-size:32px;font-weight:400;letter-spacing:-.02em;line-height:1.1;margin-bottom:8px}
+.subcat-hero-sub{font-size:14px;color:var(--ink-3);max-width:560px;line-height:1.5}
+.subcat-hero-stats{display:flex;gap:32px;margin-top:20px}
+.sh-stat-label{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;color:var(--ink-4);margin-bottom:4px}
+.sh-stat-value{font-family:var(--font-display);font-size:24px;font-weight:400;color:var(--ink);font-variant-numeric:tabular-nums}
+
+/* Default banner card */
+.default-banner-card{background:var(--bg-elevated);border:1.5px dashed var(--ink-5);border-radius:20px;padding:20px;margin-bottom:24px;display:grid;grid-template-columns:auto 1fr auto;gap:20px;align-items:center;transition:all .2s var(--ease)}
+.default-banner-card:hover{border-color:var(--ink-3);background:var(--bg-subtle)}
+.default-banner-preview{width:140px;height:80px;border-radius:12px;overflow:hidden;flex-shrink:0;position:relative;background:linear-gradient(135deg,#2C5BA8 0%,#4A7BCF 100%);display:flex;align-items:center;padding:0 14px;color:white}
+.default-banner-preview-content{font-size:11px;font-weight:600;line-height:1.3;position:relative;z-index:1}
+.default-banner-info{min-width:0}
+.default-banner-tag{display:inline-flex;align-items:center;gap:5px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);background:var(--bg-subtle);padding:3px 10px;border-radius:999px;font-weight:700;margin-bottom:8px}
+.default-banner-title{font-family:var(--font-display);font-size:18px;font-weight:500;letter-spacing:-.01em;margin-bottom:4px}
+.default-banner-desc{font-size:12.5px;color:var(--ink-3);line-height:1.5}
+.default-banner-actions{display:flex;flex-direction:column;gap:6px}
+
+/* Category accordion */
+.cat-accordion{display:flex;flex-direction:column;gap:12px}
+.cat-block{background:var(--bg-elevated);border:1px solid var(--line);border-radius:18px;overflow:hidden;transition:box-shadow .2s var(--ease)}
+.cat-block.expanded{box-shadow:var(--sh-2)}
+.cat-head{display:flex;align-items:center;gap:14px;padding:16px 20px;cursor:pointer;transition:background .15s var(--ease)}
+.cat-head:hover{background:var(--bg-subtle)}
+.cat-block.expanded .cat-head{border-bottom:1px solid var(--line)}
+.cat-icon-wrap{width:40px;height:40px;border-radius:12px;background:var(--bg-subtle);display:grid;place-items:center;font-size:20px;flex-shrink:0;transition:all .2s var(--ease)}
+.cat-block.expanded .cat-icon-wrap{background:var(--ink);color:white}
+.cat-name{flex:1;min-width:0}
+.cat-name-title{font-family:var(--font-display);font-size:17px;font-weight:500;letter-spacing:-.01em}
+.cat-name-meta{font-size:12px;color:var(--ink-4);margin-top:2px;display:flex;align-items:center;gap:10px}
+.cat-stat-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;background:var(--bg-subtle);border-radius:999px;font-size:11px;font-weight:600;color:var(--ink-2)}
+.cat-stat-pill.has{background:var(--success-bg);color:var(--success)}
+.cat-stat-pill.empty{background:var(--bg-tonal);color:var(--ink-4)}
+.cat-arrow{width:14px;height:14px;color:var(--ink-4);transition:transform .2s var(--ease);flex-shrink:0}
+.cat-block.expanded .cat-arrow{transform:rotate(180deg)}
+
+.cat-body{display:none;padding:8px 16px 16px;background:var(--bg-subtle)}
+.cat-block.expanded .cat-body{display:block}
+
+.subcat-row{display:grid;grid-template-columns:auto 1fr auto auto auto;gap:14px;align-items:center;padding:12px 14px;background:var(--bg-elevated);border-radius:12px;border:1px solid var(--line);margin-bottom:8px;transition:all .15s var(--ease)}
+.subcat-row:hover{border-color:var(--line-strong);box-shadow:var(--sh-1)}
+.subcat-row:last-child{margin-bottom:0}
+.subcat-icon{width:32px;height:32px;border-radius:8px;background:var(--bg-subtle);display:grid;place-items:center;font-size:15px;flex-shrink:0}
+.subcat-info{min-width:0}
+.subcat-name{font-size:13.5px;font-weight:500;color:var(--ink);margin-bottom:2px}
+.subcat-meta{font-size:11.5px;color:var(--ink-4);display:flex;align-items:center;gap:8px}
+.subcat-banners-count{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+.subcat-banners-count.has{background:var(--success-bg);color:var(--success)}
+.subcat-banners-count.default{background:var(--bg-tonal);color:var(--ink-3)}
+.subcat-mini-thumbs{display:flex;align-items:center}
+.subcat-mini-thumb{width:32px;height:20px;border-radius:4px;border:1.5px solid white;margin-inline-start:-8px;box-shadow:0 1px 2px rgba(0,0,0,.15)}
+.subcat-mini-thumb:first-child{margin-inline-start:0}
+.subcat-add-btn{padding:7px 12px;background:var(--ink);color:white;border-radius:8px;font-size:11.5px;font-weight:500;display:inline-flex;align-items:center;gap:5px;transition:all .15s var(--ease);white-space:nowrap}
+.subcat-add-btn:hover{background:#000;transform:translateY(-1px)}
+.subcat-edit-btn{width:30px;height:30px;border-radius:8px;background:var(--bg-subtle);display:grid;place-items:center;color:var(--ink-3);transition:all .15s var(--ease)}
+.subcat-edit-btn:hover{background:var(--bg-tonal);color:var(--ink)}
+
+/* Subcategory detail page */
+.subcat-detail-back{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:var(--bg-elevated);border:1px solid var(--line);border-radius:10px;font-size:12.5px;font-weight:500;color:var(--ink-2);margin-bottom:20px;cursor:pointer}
+.subcat-detail-back:hover{background:var(--bg-subtle)}
+.subcat-banner-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+.subcat-banner-card{background:var(--bg-elevated);border:1px solid var(--line);border-radius:16px;overflow:hidden;transition:all .2s var(--ease);cursor:pointer;position:relative}
+.subcat-banner-card:hover{transform:translateY(-2px);box-shadow:var(--sh-3)}
+.subcat-banner-card-preview{height:100px;position:relative;display:flex;align-items:center;padding:0 18px;color:white}
+.subcat-banner-card-content{position:relative;z-index:1}
+.subcat-banner-card-title{font-size:14px;font-weight:600;margin-bottom:4px;line-height:1.3}
+.subcat-banner-card-sub{font-size:11px;opacity:.85}
+.subcat-banner-card-body{padding:14px 16px}
+.subcat-banner-card-meta{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.subcat-banner-card-status{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500}
+.subcat-banner-card-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding-top:10px;border-top:1px solid var(--line)}
+.subcat-banner-add-card{background:var(--bg-subtle);border:1.5px dashed var(--ink-5);border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px 18px;cursor:pointer;transition:all .15s var(--ease);min-height:200px}
+.subcat-banner-add-card:hover{border-color:var(--info);background:var(--info-bg)}
+
+/* Search bar in subcat */
+.subcat-search-row{display:flex;gap:12px;margin-bottom:24px;align-items:center;flex-wrap:wrap}
+.subcat-search-input{flex:1;min-width:240px;display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--bg-elevated);border:1px solid var(--line-2);border-radius:12px;box-shadow:var(--sh-1)}
+.subcat-search-input input{flex:1;background:transparent;border:none;outline:none;font-size:13.5px}
+.subcat-filter-pills{display:flex;gap:6px;flex-wrap:wrap}
+.subcat-filter-pill{padding:8px 14px;background:var(--bg-elevated);border:1px solid var(--line);border-radius:999px;font-size:12px;font-weight:500;color:var(--ink-2);cursor:pointer;transition:all .15s var(--ease);display:inline-flex;align-items:center;gap:5px}
+.subcat-filter-pill:hover{background:var(--bg-subtle)}
+.subcat-filter-pill.active{background:var(--ink);color:white;border-color:var(--ink)}
+.subcat-filter-pill-count{font-size:10px;background:rgba(0,0,0,.05);padding:1px 6px;border-radius:999px;font-weight:600}
+.subcat-filter-pill.active .subcat-filter-pill-count{background:rgba(255,255,255,.2)}
+
+/* Mobile preview for subcat in edit */
+.mock-subcat-header{padding:6px 8px;background:white;border-bottom:1px solid var(--line);font-size:9px;font-weight:600;text-align:center;color:var(--ink)}
+.mock-subcat-banner{margin:6px 0;height:40px;border-radius:8px;background:linear-gradient(135deg,#2C5BA8 0%,#4A7BCF 100%);display:flex;align-items:center;padding:0 12px;color:white;font-size:9px;font-weight:600}
+.mock-provider-list{display:flex;flex-direction:column;gap:5px}
+.mock-provider-card{height:50px;background:white;border-radius:8px;border:1px solid var(--line);display:flex;align-items:center;padding:0 8px;gap:8px}
+.mock-provider-avatar-mini{width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,#6B4FA8,#4A3580);flex-shrink:0}
+.mock-provider-text-mini{flex:1}
+.mock-provider-text-name{height:8px;width:60%;background:var(--bg-tonal);border-radius:2px;margin-bottom:4px}
+.mock-provider-text-cat{height:6px;width:40%;background:var(--bg-subtle);border-radius:2px}
+
+/* ============= MOBILE ============= */
+@media (max-width:1100px){
+  .app{grid-template-columns:1fr}
+  .sidebar{display:none}
+  .main{padding:20px}
+  .placements-grid{grid-template-columns:1fr}
+  .kpi-strip{grid-template-columns:repeat(2,1fr)}
+  .edit-layout{grid-template-columns:1fr}
+  .edit-preview-sticky{position:relative;top:auto}
+  .row{grid-template-columns:36px 1fr 100px;gap:8px;padding:12px}
+  .row > .hide-md{display:none}
+  .vip-hero-grid{grid-template-columns:1fr;text-align:center}
+  .vip-capacity-ring{margin:0 auto}
+  .pay-row{grid-template-columns:1fr 100px 100px}
+  .pay-row > .hide-md{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">A</div>
+      <div>
+        <div class="brand-name">AnySkill</div>
+        <div class="brand-sub">Admin · Studio</div>
+      </div>
+    </div>
+
+    <nav class="nav-section">
+      <div class="nav-label">ניהול</div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l2-2 4 4 8-8 4 4"/></svg>
+        סקירה
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="7" r="4"/><path d="M5 21v-2a7 7 0 0114 0v2"/></svg>
+        לקוחות <span class="nav-count">2.4k</span>
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        ספקים
+      </div>
+    </nav>
+
+    <nav class="nav-section expanded">
+      <div class="nav-label">באנרים</div>
+      <div class="nav-item active" onclick="goTo('dashboard')">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-5v12L3 13"/><path d="M11.6 16.8a3 3 0 11-5.8-1.6"/></svg>
+        Studio
+        <span class="nav-count">12</span>
+      </div>
+      <div class="nav-sub">
+        <div class="nav-sub-item active" onclick="goTo('dashboard')"><span class="nav-sub-dot"></span>סקירה כללית</div>
+        <div class="nav-sub-item" onclick="goTo('vip')"><span class="nav-sub-dot"></span>VIP · קרוסלת ספקים</div>
+        <div class="nav-sub-item" onclick="goTo('subcat')"><span class="nav-sub-dot"></span>באנרי תת-קטגוריות</div>
+        <div class="nav-sub-item" onclick="goTo('payments')"><span class="nav-sub-dot"></span>תשלומים</div>
+        <div class="nav-sub-item"><span class="nav-sub-dot"></span>תבניות</div>
+        <div class="nav-sub-item"><span class="nav-sub-dot"></span>ניתוח עומק</div>
+      </div>
+    </nav>
+
+    <nav class="nav-section">
+      <div class="nav-label">מערכת</div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        מוניטיזציה
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 010-4h.09A1.65 1.65 0 003.6 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H8a1.65 1.65 0 001-1.51V2a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V8a1.65 1.65 0 001.51 1H22a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        הגדרות
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="sf-title">⌘K לכל פעולה</div>
+      <div class="sf-text">חיפוש, יצירה, מעבר — הכל במקלדת.</div>
+      <button class="sf-btn" onclick="openCmdK()">פתח Command</button>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main">
+
+    <!-- Top bar -->
+    <div class="topbar">
+      <div class="crumb" id="crumb">
+        ניהול <span class="crumb-sep">/</span> <strong>באנרים · Studio</strong>
+      </div>
+      <div class="search-bar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--ink-4)"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input placeholder="חפש או הפעל פקודה...">
+        <span class="kbd">⌘K</span>
+      </div>
+      <button class="user-chip">
+        <span class="user-chip-avatar">דו</span> דוד
+      </button>
+    </div>
+
+    <!-- ====================================================================
+         SCREEN A — DASHBOARD
+         ==================================================================== -->
+    <div class="screen active" id="screen-dashboard">
+
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">באנרים <em>· Studio</em></h1>
+          <div class="page-sub">
+            <span class="live-dot"></span>
+            <strong style="color:var(--ink-2);font-weight:500">12 באנרים</strong>
+            · 9 פעילים · עדכון אחרון לפני 4 דקות
+          </div>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-secondary">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/></svg>
+            ייצוא דוח
+          </button>
+          <button class="btn btn-secondary">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+            תבניות
+          </button>
+          <button class="btn btn-primary" onclick="goTo('edit')">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            באנר חדש
+          </button>
+        </div>
+      </header>
+
+      <!-- KPI Strip -->
+      <section class="kpi-strip">
+        <div class="kpi">
+          <div class="kpi-label">חשיפות (7 ימים)</div>
+          <div class="kpi-value">284,591</div>
+          <div class="kpi-foot">
+            <span class="kpi-delta up">↑ 12.4%</span>
+            <svg class="kpi-spark" viewBox="0 0 80 22" preserveAspectRatio="none">
+              <polyline points="0,18 10,16 20,14 30,15 40,10 50,11 60,7 70,5 80,3" fill="none" stroke="#1A7F4E" stroke-width="1.5"/>
+            </svg>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">הקלקות</div>
+          <div class="kpi-value">12,847</div>
+          <div class="kpi-foot">
+            <span class="kpi-delta up">↑ 8.2%</span>
+            <svg class="kpi-spark" viewBox="0 0 80 22" preserveAspectRatio="none">
+              <polyline points="0,15 10,13 20,16 30,12 40,8 50,10 60,9 70,6 80,5" fill="none" stroke="#1A7F4E" stroke-width="1.5"/>
+            </svg>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">CTR ממוצע</div>
+          <div class="kpi-value">4.51%</div>
+          <div class="kpi-foot">
+            <span class="kpi-delta down">↓ 0.3%</span>
+            <svg class="kpi-spark" viewBox="0 0 80 22" preserveAspectRatio="none">
+              <polyline points="0,5 10,7 20,4 30,8 40,11 50,9 60,12 70,14 80,13" fill="none" stroke="#B83A2A" stroke-width="1.5"/>
+            </svg>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">הכנסה מ-VIP</div>
+          <div class="kpi-value">₪22,770</div>
+          <div class="kpi-foot">
+            <span class="kpi-delta up">↑ 31.0%</span>
+            <svg class="kpi-spark" viewBox="0 0 80 22" preserveAspectRatio="none">
+              <polyline points="0,18 10,17 20,15 30,12 40,11 50,8 60,6 70,4 80,2" fill="none" stroke="#B89855" stroke-width="1.5"/>
+            </svg>
+          </div>
+        </div>
+      </section>
+
+      <!-- Placement cards -->
+      <section>
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">4 מיקומים פעילים</h2>
+            <div class="section-sub">לחץ על כרטיס לעבור לניהול ייעודי</div>
+          </div>
+        </div>
+
+        <div class="placements-grid">
+          <div class="placement featured" onclick="goTo('vip')">
+            <div class="placement-head">
+              <div class="placement-icon">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6L12 2z"/></svg>
+              </div>
+              <div class="placement-meta">
+                <div class="placement-tier">⭐ Premium · VIP</div>
+                <div class="placement-name">קרוסלת ספקים</div>
+                <div class="placement-where">בראש לשונית בית · 99₪/חודש לספק</div>
+              </div>
+              <div class="placement-status"><span class="dot"></span> פועל</div>
+            </div>
+            <div class="placement-preview">
+              <div class="vip-prev">
+                <div class="vip-card"></div>
+                <div class="vip-card active"><div class="vip-card-pulse"><span></span><span></span><span></span></div></div>
+                <div class="vip-card"></div>
+                <div class="vip-card"></div>
+              </div>
+            </div>
+            <div class="placement-stats">
+              <div><div class="ps-label">ספקים</div><div class="ps-value">23/30</div></div>
+              <div><div class="ps-label">CTR</div><div class="ps-value">7.2%</div></div>
+              <div><div class="ps-label">הכנסה/חודש</div><div class="ps-value">₪22.7k</div></div>
+            </div>
+            <button class="placement-link">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </button>
+          </div>
+
+          <div class="placement">
+            <div class="placement-head">
+              <div class="placement-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-5v12L3 13"/></svg>
+              </div>
+              <div class="placement-meta">
+                <div class="placement-tier">Standard</div>
+                <div class="placement-name">באנרי קידום</div>
+                <div class="placement-where">חלק תחתון של הבית</div>
+              </div>
+              <div class="placement-status"><span class="dot"></span> 6 פעילים</div>
+            </div>
+            <div class="placement-preview">
+              <div class="promo-prev">
+                <div class="promo-prev-content">
+                  <div class="promo-prev-title">מומחים מהשורה הראשונה</div>
+                  <div class="promo-prev-sub">צפה בכל הקטגוריות →</div>
+                </div>
+              </div>
+            </div>
+            <div class="placement-stats">
+              <div><div class="ps-label">חשיפות</div><div class="ps-value">98k</div></div>
+              <div><div class="ps-label">CTR</div><div class="ps-value">3.4%</div></div>
+              <div><div class="ps-label">פעילים</div><div class="ps-value">6</div></div>
+            </div>
+            <button class="placement-link">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </button>
+          </div>
+
+          <div class="placement" onclick="goTo('subcat')">
+            <div class="placement-head">
+              <div class="placement-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+              </div>
+              <div class="placement-meta">
+                <div class="placement-tier">חדש · קטגוריות</div>
+                <div class="placement-name">תתי-קטגוריות</div>
+                <div class="placement-where">בראש מסך תת-קטגוריה</div>
+              </div>
+              <div class="placement-status"><span class="dot"></span> 12 פעילים</div>
+            </div>
+            <div class="placement-preview">
+              <div class="promo-prev" style="background:linear-gradient(135deg,#2C5BA8 0%,#4A7BCF 100%)">
+                <div class="promo-prev-content">
+                  <div class="promo-prev-title">המאמנים הטובים</div>
+                  <div class="promo-prev-sub">בחר מאמן מומלץ</div>
+                </div>
+              </div>
+            </div>
+            <div class="placement-stats">
+              <div><div class="ps-label">תת-קטגוריות</div><div class="ps-value">52</div></div>
+              <div><div class="ps-label">עם באנר</div><div class="ps-value">12</div></div>
+              <div><div class="ps-label">CTR ממוצע</div><div class="ps-value">5.8%</div></div>
+            </div>
+            <button class="placement-link">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </button>
+          </div>
+
+          <div class="placement">
+            <div class="placement-head">
+              <div class="placement-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12V7H5a2 2 0 010-4h14v4"/><path d="M3 5v14a2 2 0 002 2h16v-5"/><path d="M18 12a2 2 0 100 4h4v-4z"/></svg>
+              </div>
+              <div class="placement-meta">
+                <div class="placement-tier">Wallet</div>
+                <div class="placement-name">באנר ארנק</div>
+                <div class="placement-where">למעלה במסך הארנק</div>
+              </div>
+              <div class="placement-status"><span class="dot"></span> פועל</div>
+            </div>
+            <div class="placement-preview">
+              <div class="wallet-prev">
+                <div class="wallet-prev-content">
+                  <div class="wallet-prev-title">הזמן ושלם בקלות</div>
+                  <div class="wallet-prev-sub">הוסף אמצעי תשלום</div>
+                </div>
+              </div>
+            </div>
+            <div class="placement-stats">
+              <div><div class="ps-label">חשיפות</div><div class="ps-value">44k</div></div>
+              <div><div class="ps-label">CTR</div><div class="ps-value">2.1%</div></div>
+              <div><div class="ps-label">המרה</div><div class="ps-value">31%</div></div>
+            </div>
+            <button class="placement-link">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Banner table (existing 10 banners — synced) -->
+      <section>
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">כל הבאנרים</h2>
+            <div class="section-sub">12 הבאנרים שלך · נטענו לעיצוב החדש</div>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <div class="tabs">
+            <button class="tab active" onclick="switchTab(this)">הכל <span class="tab-count">12</span></button>
+            <button class="tab" onclick="switchTab(this)">פעילים <span class="tab-count">9</span></button>
+            <button class="tab" onclick="switchTab(this)">מתוזמנים <span class="tab-count">2</span></button>
+            <button class="tab" onclick="switchTab(this)">טיוטות <span class="tab-count">1</span></button>
+          </div>
+          <div class="toolbar-spacer"></div>
+          <button class="filter">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            מיקום: הכל
+          </button>
+          <button class="filter">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/></svg>
+            מיין: ביצועים
+          </button>
+        </div>
+
+        <div class="bulk-bar" id="bulkBar" style="display:none">
+          <span class="bulk-count"><strong id="bulkCount">2</strong> נבחרו</span>
+          <button class="bulk-btn">▶ הפעל</button>
+          <button class="bulk-btn">⏸ השבת</button>
+          <button class="bulk-btn">⎘ שכפל</button>
+          <button class="bulk-btn">📅 תזמן</button>
+          <div class="bulk-bar-spacer"></div>
+          <button class="bulk-btn danger">🗑 מחק</button>
+          <button class="bulk-btn" onclick="clearBulk()">בטל</button>
+        </div>
+
+        <div class="banners-table">
+          <div class="row head">
+            <div class="checkbox" onclick="toggleAll(this)"></div>
+            <div>באנר</div>
+            <div>מיקום</div>
+            <div>סטטוס</div>
+            <div>חשיפות</div>
+            <div>הקלקות</div>
+            <div>CTR</div>
+            <div class="hide-md">הכנסה</div>
+            <div></div>
+          </div>
+
+          <!-- 10 existing banners synced into new design -->
+          <div class="row body" onclick="goTo('edit')">
+            <div class="checkbox" onclick="event.stopPropagation();toggleRow(this)"></div>
+            <div class="banner-cell">
+              <div class="banner-thumb vip"></div>
+              <div class="banner-info">
+                <div class="banner-title">המומחים שלנו · VIP</div>
+                <div class="banner-meta">23 ספקים · מתחלף כל 4ש' · נוצר 12/04</div>
+              </div>
+            </div>
+            <div><span class="chip placement-vip">⭐ VIP</span></div>
+            <div class="status-cell">
+              <div class="toggle on" onclick="event.stopPropagation();toggleStatus(this)"></div>
+              <span class="status-label active">פועל</span>
+            </div>
+            <div><div class="metric">142,310</div><div class="metric-sub">7 ימים</div></div>
+            <div><div class="metric">10,247</div><div class="metric-sub">+8.4%</div></div>
+            <div><div class="metric">7.2%</div><div class="ctr-bar"><div class="ctr-bar-fill" style="width:90%"></div></div></div>
+            <div class="hide-md"><div class="metric">₪22,770</div></div>
+            <div class="row-actions">
+              <button class="action-btn" onclick="event.stopPropagation()">⎘</button>
+              <button class="action-btn" onclick="event.stopPropagation()">⋯</button>
+            </div>
+          </div>
+
+          <div class="row body" onclick="goTo('edit')">
+            <div class="checkbox" onclick="event.stopPropagation();toggleRow(this)"></div>
+            <div class="banner-cell">
+              <div class="banner-thumb gradient-1"></div>
+              <div class="banner-info">
+                <div class="banner-title">הכנות לפורים? אל תחכו לרגע האחרון</div>
+                <div class="banner-meta">מאפרים, תחפושות, צלמים זמינים</div>
+              </div>
+            </div>
+            <div><span class="chip placement-home">בית</span></div>
+            <div class="status-cell">
+              <div class="toggle on" onclick="event.stopPropagation();toggleStatus(this)"></div>
+              <span class="status-label active">פועל</span>
+            </div>
+            <div><div class="metric">48,210</div><div class="metric-sub">7 ימים</div></div>
+            <div><div class="metric">2,140</div><div class="metric-sub">+12.1%</div></div>
+            <div><div class="metric">4.4%</div><div class="ctr-bar"><div class="ctr-bar-fill" style="width:55%"></div></div></div>
+            <div class="hide-md"><div class="metric">₪6,800</div></div>
+            <div class="row-actions"><button class="action-btn">⎘</button><button class="action-btn">⋯</button></div>
+          </div>
+
+          <div class="row body" onclick="goTo('edit')">
+            <div class="checkbox" onclick="event.stopPropagation();toggleRow(this)"></div>
+            <div class="banner-cell">
+              <div class="banner-thumb gradient-2"></div>
+              <div class="banner-info">
+                <div class="banner-title">מומחי תיקונים זמינים עכשיו</div>
+                <div class="banner-meta">כל המקצועות · באזורך · ביקור היום</div>
+              </div>
+            </div>
+            <div><span class="chip placement-home">בית</span></div>
+            <div class="status-cell">
+              <div class="toggle on"></div>
+              <span class="status-label active">פועל</span>
+            </div>
+            <div><div class="metric">31,820</div><div class="metric-sub">7 ימים</div></div>
+            <div><div class="metric">1,486</div><div class="metric-sub">+5.2%</div></div>
+            <div><div class="metric">4.7%</div><div class="ctr-bar"><div class="ctr-bar-fill" style="width:60%"></div></div></div>
+            <div class="hide-md"><div class="metric">₪4,200</div></div>
+            <div class="row-actions"><button class="action-btn">⎘</button><button class="action-btn">⋯</button></div>
+          </div>
+
+          <div class="row body" onclick="goTo('edit')">
+            <div class="checkbox" onclick="event.stopPropagation();toggleRow(this)"></div>
+            <div class="banner-cell">
+              <div class="banner-thumb gradient-3"></div>
+              <div class="banner-info">
+                <div class="banner-title">הוסף אמצעי תשלום וקבל ₪20</div>
+                <div class="banner-meta">מבצע חד פעמי · עד 30/4</div>
+              </div>
+            </div>
+            <div><span class="chip placement-wallet">ארנק</span></div>
+            <div class="status-cell">
+              <div class="toggle on"></div>
+              <span class="status-label active">פועל</span>
+            </div>
+            <div><div class="metric">22,180</div><div class="metric-sub">7 ימים</div></div>
+            <div><div class="metric">468</div><div class="metric-sub">-2.1%</div></div>
+            <div><div class="metric">2.1%</div><div class="ctr-bar"><div class="ctr-bar-fill" style="width:25%"></div></div></div>
+            <div class="hide-md"><div class="metric">₪9,360</div></div>
+            <div class="row-actions"><button class="action-btn">⎘</button><button class="action-btn">⋯</button></div>
+          </div>
+
+          <div class="row body" onclick="goTo('edit')">
+            <div class="checkbox" onclick="event.stopPropagation();toggleRow(this)"></div>
+            <div class="banner-cell">
+              <div class="banner-thumb gradient-4"></div>
+              <div class="banner-info">
+                <div class="banner-title">קמפיין פסח · נקיון בתים</div>
+                <div class="banner-meta">תזמון: 27/04 06:00 → 14/05 23:59</div>
+              </div>
+            </div>
+            <div><span class="chip placement-home">בית</span></div>
+            <div class="status-cell">
+              <div class="toggle"></div>
+              <span class="status-label scheduled">⏱ מתוזמן</span>
+            </div>
+            <div><div class="metric">—</div></div>
+            <div><div class="metric">—</div></div>
+            <div><div class="metric">—</div></div>
+            <div class="hide-md"><div class="metric">—</div></div>
+            <div class="row-actions"><button class="action-btn">⎘</button><button class="action-btn">⋯</button></div>
+          </div>
+
+          <div class="row body" onclick="goTo('edit')">
+            <div class="checkbox" onclick="event.stopPropagation();toggleRow(this)"></div>
+            <div class="banner-cell">
+              <div class="banner-thumb gradient-5"></div>
+              <div class="banner-info">
+                <div class="banner-title">למידה חדשה · קורסי אנגלית</div>
+                <div class="banner-meta">A/B Test פעיל · 2 גרסאות</div>
+              </div>
+            </div>
+            <div><span class="chip placement-home">בית</span></div>
+            <div class="status-cell">
+              <div class="toggle on"></div>
+              <span class="status-label active">פועל</span>
+            </div>
+            <div><div class="metric">19,420</div><div class="metric-sub">7 ימים</div></div>
+            <div><div class="metric">802</div><div class="metric-sub">+3.0%</div></div>
+            <div><div class="metric">4.1%</div><div class="ctr-bar"><div class="ctr-bar-fill" style="width:50%"></div></div></div>
+            <div class="hide-md"><div class="metric">₪0</div></div>
+            <div class="row-actions"><button class="action-btn">⎘</button><button class="action-btn">⋯</button></div>
+          </div>
+
+          <div class="row body" onclick="goTo('edit')">
+            <div class="checkbox" onclick="event.stopPropagation();toggleRow(this)"></div>
+            <div class="banner-cell">
+              <div class="banner-thumb image-1"></div>
+              <div class="banner-info">
+                <div class="banner-title">מעצבי שיער מובילים</div>
+                <div class="banner-meta">הושבת אוטומטית · CTR נמוך מהיעד</div>
+              </div>
+            </div>
+            <div><span class="chip placement-home">בית</span></div>
+            <div class="status-cell">
+              <div class="toggle"></div>
+              <span class="status-label paused">מושבת</span>
+            </div>
+            <div><div class="metric">12,800</div><div class="metric-sub">לפני 3 ימים</div></div>
+            <div><div class="metric">152</div><div class="metric-sub">—</div></div>
+            <div><div class="metric">1.2%</div><div class="ctr-bar"><div class="ctr-bar-fill" style="width:15%"></div></div></div>
+            <div class="hide-md"><div class="metric">₪430</div></div>
+            <div class="row-actions"><button class="action-btn">⎘</button><button class="action-btn">⋯</button></div>
+          </div>
+
+          <div class="row body" onclick="goTo('edit')">
+            <div class="checkbox" onclick="event.stopPropagation();toggleRow(this)"></div>
+            <div class="banner-cell">
+              <div class="banner-thumb image-2"></div>
+              <div class="banner-info">
+                <div class="banner-title">קמפיין שבועות · בישול ביתי</div>
+                <div class="banner-meta">טיוטה · נשמר אוטומטית לפני שעה</div>
+              </div>
+            </div>
+            <div><span class="chip placement-home">בית</span></div>
+            <div class="status-cell">
+              <div class="toggle"></div>
+              <span class="status-label draft">✏️ טיוטה</span>
+            </div>
+            <div><div class="metric">—</div></div>
+            <div><div class="metric">—</div></div>
+            <div><div class="metric">—</div></div>
+            <div class="hide-md"><div class="metric">—</div></div>
+            <div class="row-actions"><button class="action-btn">⎘</button><button class="action-btn">⋯</button></div>
+          </div>
+
+          <div class="row body" onclick="goTo('edit')">
+            <div class="checkbox" onclick="event.stopPropagation();toggleRow(this)"></div>
+            <div class="banner-cell">
+              <div class="banner-thumb gradient-1"></div>
+              <div class="banner-info">
+                <div class="banner-title">קייטרינג ואירועים · הזמן עכשיו</div>
+                <div class="banner-meta">תזמון מתחיל ב-1/5</div>
+              </div>
+            </div>
+            <div><span class="chip placement-home">בית</span></div>
+            <div class="status-cell">
+              <div class="toggle"></div>
+              <span class="status-label scheduled">⏱ מתוזמן</span>
+            </div>
+            <div><div class="metric">—</div></div>
+            <div><div class="metric">—</div></div>
+            <div><div class="metric">—</div></div>
+            <div class="hide-md"><div class="metric">—</div></div>
+            <div class="row-actions"><button class="action-btn">⎘</button><button class="action-btn">⋯</button></div>
+          </div>
+
+          <div class="row body" onclick="goTo('edit')">
+            <div class="checkbox" onclick="event.stopPropagation();toggleRow(this)"></div>
+            <div class="banner-cell">
+              <div class="banner-thumb gradient-5"></div>
+              <div class="banner-info">
+                <div class="banner-title">המאמנים הטובים בעיר · מאמני כושר</div>
+                <div class="banner-meta">תת-קטגוריה · נראה רק בכושר וספורט > מאמני כושר</div>
+              </div>
+            </div>
+            <div><span class="chip placement-subcat">📁 תת-קט'</span></div>
+            <div class="status-cell">
+              <div class="toggle on" onclick="event.stopPropagation();toggleStatus(this)"></div>
+              <span class="status-label active">פועל</span>
+            </div>
+            <div><div class="metric">14,820</div><div class="metric-sub">7 ימים</div></div>
+            <div><div class="metric">892</div><div class="metric-sub">+15.2%</div></div>
+            <div><div class="metric">6.0%</div><div class="ctr-bar"><div class="ctr-bar-fill" style="width:75%"></div></div></div>
+            <div class="hide-md"><div class="metric">₪0</div></div>
+            <div class="row-actions"><button class="action-btn">⎘</button><button class="action-btn">⋯</button></div>
+          </div>
+
+          <div class="row body" onclick="goTo('edit')">
+            <div class="checkbox" onclick="event.stopPropagation();toggleRow(this)"></div>
+            <div class="banner-cell">
+              <div class="banner-thumb gradient-3"></div>
+              <div class="banner-info">
+                <div class="banner-title">בחרו את ספר השיער המושלם · עיצוב שיער</div>
+                <div class="banner-meta">תת-קטגוריה · יופי וטיפוח > עיצוב שיער</div>
+              </div>
+            </div>
+            <div><span class="chip placement-subcat">📁 תת-קט'</span></div>
+            <div class="status-cell">
+              <div class="toggle on" onclick="event.stopPropagation();toggleStatus(this)"></div>
+              <span class="status-label active">פועל</span>
+            </div>
+            <div><div class="metric">9,640</div><div class="metric-sub">7 ימים</div></div>
+            <div><div class="metric">528</div><div class="metric-sub">+9.4%</div></div>
+            <div><div class="metric">5.5%</div><div class="ctr-bar"><div class="ctr-bar-fill" style="width:68%"></div></div></div>
+            <div class="hide-md"><div class="metric">₪0</div></div>
+            <div class="row-actions"><button class="action-btn">⎘</button><button class="action-btn">⋯</button></div>
+          </div>
+
+          <div class="row body" onclick="goTo('edit')">
+            <div class="checkbox" onclick="event.stopPropagation();toggleRow(this)"></div>
+            <div class="banner-cell">
+              <div class="banner-thumb gradient-2"></div>
+              <div class="banner-info">
+                <div class="banner-title">מורי פרטיים · אונליין</div>
+                <div class="banner-meta">לכל הגילאים · 30+ קטגוריות</div>
+              </div>
+            </div>
+            <div><span class="chip placement-home">בית</span></div>
+            <div class="status-cell">
+              <div class="toggle on"></div>
+              <span class="status-label active">פועל</span>
+            </div>
+            <div><div class="metric">8,420</div><div class="metric-sub">7 ימים</div></div>
+            <div><div class="metric">381</div><div class="metric-sub">+2.4%</div></div>
+            <div><div class="metric">4.5%</div><div class="ctr-bar"><div class="ctr-bar-fill" style="width:58%"></div></div></div>
+            <div class="hide-md"><div class="metric">₪1,720</div></div>
+            <div class="row-actions"><button class="action-btn">⎘</button><button class="action-btn">⋯</button></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- AI Insight -->
+      <div class="insight-card">
+        <div class="insight-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        </div>
+        <div class="insight-content">
+          <div class="insight-tag">⭐ תובנת AI · Gemini</div>
+          <div class="insight-text">
+            הבאנר <mark>"המומחים שלנו · VIP"</mark> מציג ביצועים יוצאי דופן עם CTR של 7.2% — גבוה ב־<mark>56% מהממוצע</mark>. נותרו <mark>7 מקומות פנויים</mark> בקרוסלת ה-VIP — קידום אקטיבי בקרב הספקים יכול להוסיף <mark>₪693/חודש</mark> בהכנסות.
+          </div>
+          <div class="insight-meta">🕒 עודכן לפני 2 שעות · מבוסס על 14 ימי נתונים</div>
+        </div>
+        <div class="insight-actions">
+          <button class="insight-btn primary" onclick="goTo('vip')">פתח ניהול VIP</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ====================================================================
+         SCREEN B — BANNER EDIT (FULL PAGE)
+         ==================================================================== -->
+    <div class="screen" id="screen-edit">
+
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">המומחים שלנו <em>· VIP</em></h1>
+          <div class="page-sub">
+            <span class="live-dot"></span>
+            פועל · נוצר 12/04 · 23 ספקים פעילים · עדכון אחרון לפני 4 דקות
+          </div>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-secondary" onclick="goTo('dashboard')">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            חזור לרשימה
+          </button>
+          <button class="btn btn-secondary">⎘ שכפל</button>
+          <button class="btn btn-secondary" style="color:var(--danger)">🗑 מחק</button>
+          <button class="btn btn-primary">פרסם שינויים</button>
+        </div>
+      </header>
+
+      <div class="edit-layout">
+
+        <div class="edit-form">
+
+          <!-- SECTION 1 — BASIC INFO -->
+          <div class="section-card open">
+            <div class="section-card-head" onclick="toggleCard(this.parentElement)">
+              <div class="sc-num">1</div>
+              <div class="sc-meta">
+                <div class="sc-title">פרטים בסיסיים</div>
+                <div class="sc-desc">כותרת, תת-כותרת, ומיקום הצגה</div>
+              </div>
+              <div class="sc-status">✓ הושלם</div>
+              <svg class="sc-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="section-card-body">
+              <div class="field">
+                <label class="field-label">כותרת ראשית <span class="field-label-help">חובה · עד 40 תווים</span></label>
+                <input class="field-input" value="המומחים שלנו · VIP">
+              </div>
+              <div class="field">
+                <label class="field-label">תת-כותרת <span class="field-label-help">עד 60 תווים</span></label>
+                <input class="field-input" value="תהיו עם הטובים ביותר">
+              </div>
+              <div class="field">
+                <label class="field-label">מיקום באפליקציה <span class="field-label-help">היכן הבאנר יוצג ללקוח</span></label>
+                <div class="segment">
+                  <div class="segment-opt active" onclick="selectSeg(this)">
+                    <span>⭐</span> VIP · ראש הבית
+                  </div>
+                  <div class="segment-opt" onclick="selectSeg(this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-5v12L3 13"/></svg>
+                    באנר בית
+                  </div>
+                  <div class="segment-opt" onclick="selectSeg(this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+                    תת-קטגוריה
+                  </div>
+                  <div class="segment-opt" onclick="selectSeg(this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/></svg>
+                    ארנק
+                  </div>
+                </div>
+                <div class="field-help">💡 VIP = הקרוסלה היוקרתית בראש הבית. ספקים משלמים 99₪/חודש להופיע בה.</div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label class="field-label">סדר הצגה</label>
+                  <input class="field-input" value="1" type="number">
+                </div>
+                <div class="field">
+                  <label class="field-label">קטגוריה ראשית</label>
+                  <input class="field-input" value="כל הקטגוריות">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECTION 2 — DESIGN -->
+          <div class="section-card open">
+            <div class="section-card-head" onclick="toggleCard(this.parentElement)">
+              <div class="sc-num">2</div>
+              <div class="sc-meta">
+                <div class="sc-title">עיצוב ומראה</div>
+                <div class="sc-desc">צבעים, אייקון, או תמונה</div>
+              </div>
+              <div class="sc-status">✓ הושלם</div>
+              <svg class="sc-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="section-card-body">
+              <div class="field">
+                <label class="field-label">סגנון רקע</label>
+                <div class="segment">
+                  <div class="segment-opt active" onclick="selectSeg(this)">קרוסלת ספקים</div>
+                  <div class="segment-opt" onclick="selectSeg(this)">גרדיאנט</div>
+                  <div class="segment-opt" onclick="selectSeg(this)">תמונה</div>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">פלטת צבעים</label>
+                <div class="gradient-picker">
+                  <div class="gradient-swatch selected" style="background:linear-gradient(135deg,#B89855,#8C6F36)"></div>
+                  <div class="gradient-swatch" style="background:linear-gradient(135deg,#1F1B14,#2A2317)"></div>
+                  <div class="gradient-swatch" style="background:linear-gradient(135deg,#6B4FA8,#4A3580)"></div>
+                  <div class="gradient-swatch" style="background:linear-gradient(135deg,#1A6B5B,#2A8F77)"></div>
+                  <div class="gradient-swatch" style="background:linear-gradient(135deg,#4A2A6E,#6B3A8F)"></div>
+                  <div class="gradient-swatch" style="background:linear-gradient(135deg,#B85A2A,#D67A3A)"></div>
+                  <div class="gradient-swatch" style="background:linear-gradient(135deg,#2C5BA8,#4A7BCF)"></div>
+                  <div class="gradient-swatch" style="background:linear-gradient(135deg,#1A1A1A,#3A3A38)"></div>
+                </div>
+                <div class="field-help">בחר פלטה מוכנה או צור גרדיאנט מותאם אישית →</div>
+              </div>
+              <div class="field">
+                <label class="field-label">תמונת רקע (אופציונלי)</label>
+                <div class="image-uploader">
+                  <div class="image-uploader-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                  </div>
+                  <div class="image-uploader-text">גרור תמונה לכאן או לחץ לבחירה</div>
+                  <div class="image-uploader-sub">JPG, PNG · עד 5MB · מומלץ 1200×400px</div>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">אייקון</label>
+                <div class="icon-picker">
+                  <div class="icon-cell selected">⭐</div>
+                  <div class="icon-cell">❤️</div>
+                  <div class="icon-cell">🏆</div>
+                  <div class="icon-cell">🎓</div>
+                  <div class="icon-cell">🔥</div>
+                  <div class="icon-cell">⚡</div>
+                  <div class="icon-cell">💎</div>
+                  <div class="icon-cell">🎁</div>
+                  <div class="icon-cell">🎉</div>
+                  <div class="icon-cell">🚀</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECTION 3 — PROVIDERS (only for VIP) -->
+          <div class="section-card open">
+            <div class="section-card-head" onclick="toggleCard(this.parentElement)">
+              <div class="sc-num">3</div>
+              <div class="sc-meta">
+                <div class="sc-title">ספקים בקרוסלה</div>
+                <div class="sc-desc">בחר 2-30 ספקים שיופיעו בקרוסלה</div>
+              </div>
+              <div class="sc-status">23 / 30</div>
+              <svg class="sc-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="section-card-body">
+              <div class="provider-search">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--ink-4)"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                <input placeholder="חפש לפי שם, קטגוריה או דירוג...">
+                <button class="btn btn-sm btn-secondary">🔽 דירוג ★4+</button>
+              </div>
+
+              <div class="provider-list">
+                <div class="provider-row selected">
+                  <div class="provider-avatar online">דכ</div>
+                  <div class="provider-info">
+                    <div class="provider-name">דניאל כהן <span class="provider-verified">✓</span></div>
+                    <div class="provider-meta"><span class="provider-rating">★ 5.0</span><span>·</span><span>מיזוג אוויר</span><span>·</span><span>3 עבודות</span></div>
+                  </div>
+                  <div class="provider-add">−</div>
+                </div>
+
+                <div class="provider-row selected">
+                  <div class="provider-avatar green online">דל</div>
+                  <div class="provider-info">
+                    <div class="provider-name">דנה לוי <span class="provider-verified">✓</span></div>
+                    <div class="provider-meta"><span class="provider-rating">★ 5.0 (5)</span><span>·</span><span>ניקיון הבית</span></div>
+                  </div>
+                  <div class="provider-add">−</div>
+                </div>
+
+                <div class="provider-row selected">
+                  <div class="provider-avatar purple">רא</div>
+                  <div class="provider-info">
+                    <div class="provider-name">רועי אזולאי <span class="provider-verified">✓</span></div>
+                    <div class="provider-meta"><span class="provider-rating">★ 5.0 (4)</span><span>·</span><span>מאמני כושר</span></div>
+                  </div>
+                  <div class="provider-add">−</div>
+                </div>
+
+                <div class="provider-row">
+                  <div class="provider-avatar blue online">אכ</div>
+                  <div class="provider-info">
+                    <div class="provider-name">אילנה כהן <span class="provider-verified">✓</span></div>
+                    <div class="provider-meta"><span class="provider-rating">★ 4.8</span><span>·</span><span>עיסוי</span></div>
+                  </div>
+                  <div class="provider-add">+</div>
+                </div>
+
+                <div class="provider-row">
+                  <div class="provider-avatar orange">אמ</div>
+                  <div class="provider-info">
+                    <div class="provider-name">אלי מזרחי <span class="provider-verified">✓</span></div>
+                    <div class="provider-meta"><span class="provider-rating">★ 5.0 (5)</span><span>·</span><span>הובלות</span></div>
+                  </div>
+                  <div class="provider-add">+</div>
+                </div>
+              </div>
+              <div class="field-help" style="margin-top:14px">💡 הקרוסלה תציג מקסימום 30 ספקים. אם יש יותר משלמים, המערכת תחליף ביניהם בסבבים יומיים. <a style="color:var(--ink);text-decoration:underline" onclick="goTo('vip')">פתח ניהול VIP מלא →</a></div>
+            </div>
+          </div>
+
+          <!-- SECTION 4 — ROTATION & TIMING -->
+          <div class="section-card">
+            <div class="section-card-head" onclick="toggleCard(this.parentElement)">
+              <div class="sc-num">4</div>
+              <div class="sc-meta">
+                <div class="sc-title">סיבוב והצגה</div>
+                <div class="sc-desc">מהירות מעבר בין ספקים, אנימציה</div>
+              </div>
+              <div class="sc-status">4 שניות · Fade</div>
+              <svg class="sc-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="section-card-body">
+              <div class="field">
+                <label class="field-label">משך הצגה לכל ספק</label>
+                <div class="range-row">
+                  <input type="range" min="2" max="8" value="4" step="1" class="range-input">
+                  <div class="range-value">4 שניות</div>
+                </div>
+                <div class="range-presets">
+                  <button class="range-preset">2s</button>
+                  <button class="range-preset">3s</button>
+                  <button class="range-preset active">4s</button>
+                  <button class="range-preset">5s</button>
+                  <button class="range-preset">6s</button>
+                  <button class="range-preset">8s</button>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">סדר הצגה</label>
+                <div class="segment">
+                  <div class="segment-opt active" onclick="selectSeg(this)">🤖 AI חכם</div>
+                  <div class="segment-opt" onclick="selectSeg(this)">🎲 אקראי</div>
+                  <div class="segment-opt" onclick="selectSeg(this)">⭐ דירוג</div>
+                  <div class="segment-opt" onclick="selectSeg(this)">✋ ידני</div>
+                </div>
+                <div class="field-help">AI מסדר לפי הקשר — שעת יום, היסטוריית הלקוח, ומגמות.</div>
+              </div>
+              <div class="field">
+                <label class="field-label">אנימציית מעבר</label>
+                <div class="segment">
+                  <div class="segment-opt active" onclick="selectSeg(this)">Fade</div>
+                  <div class="segment-opt" onclick="selectSeg(this)">Slide</div>
+                  <div class="segment-opt" onclick="selectSeg(this)">Zoom</div>
+                  <div class="segment-opt" onclick="selectSeg(this)">3D Flip</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECTION 5 — SCHEDULING -->
+          <div class="section-card">
+            <div class="section-card-head" onclick="toggleCard(this.parentElement)">
+              <div class="sc-num">5</div>
+              <div class="sc-meta">
+                <div class="sc-title">תזמון ופרסום</div>
+                <div class="sc-desc">מתי להציג, ימים ושעות</div>
+              </div>
+              <div class="sc-status">פעיל 24/7</div>
+              <svg class="sc-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="section-card-body">
+              <div class="field">
+                <label class="field-label">פרק זמן הצגה</label>
+                <div class="date-range-row">
+                  <input class="field-input" value="01/04/2026" type="text">
+                  <span class="date-arrow">←</span>
+                  <input class="field-input" placeholder="ללא תוקף" type="text">
+                </div>
+              </div>
+              <div class="switch-row">
+                <div class="switch-meta">
+                  <div class="switch-title">תזמון חכם לפי שעות</div>
+                  <div class="switch-desc">הצג רק בשעות בהן הקהל הכי פעיל</div>
+                </div>
+                <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              </div>
+              <div class="field" style="margin-top:16px">
+                <label class="field-label">heatmap שבועי <span class="field-label-help">לחץ לבחור שעות פעילות</span></label>
+                <div class="sched-week">
+                  <div></div>
+                  <div class="sched-day-label">א</div>
+                  <div class="sched-day-label">ב</div>
+                  <div class="sched-day-label">ג</div>
+                  <div class="sched-day-label">ד</div>
+                  <div class="sched-day-label">ה</div>
+                  <div class="sched-day-label">ו</div>
+                  <div class="sched-day-label">ש</div>
+                  <div class="sched-hour-label">8:00</div>
+                  <div class="sched-cell on"></div><div class="sched-cell on"></div><div class="sched-cell on"></div><div class="sched-cell on"></div><div class="sched-cell on"></div><div class="sched-cell"></div><div class="sched-cell"></div>
+                  <div class="sched-hour-label">12:00</div>
+                  <div class="sched-cell on"></div><div class="sched-cell peak"></div><div class="sched-cell peak"></div><div class="sched-cell peak"></div><div class="sched-cell peak"></div><div class="sched-cell on"></div><div class="sched-cell"></div>
+                  <div class="sched-hour-label">16:00</div>
+                  <div class="sched-cell peak"></div><div class="sched-cell peak"></div><div class="sched-cell peak"></div><div class="sched-cell peak"></div><div class="sched-cell peak"></div><div class="sched-cell on"></div><div class="sched-cell on"></div>
+                  <div class="sched-hour-label">20:00</div>
+                  <div class="sched-cell on"></div><div class="sched-cell on"></div><div class="sched-cell on"></div><div class="sched-cell on"></div><div class="sched-cell on"></div><div class="sched-cell"></div><div class="sched-cell on"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECTION 6 — TARGETING & A/B -->
+          <div class="section-card">
+            <div class="section-card-head" onclick="toggleCard(this.parentElement)">
+              <div class="sc-num">6</div>
+              <div class="sc-meta">
+                <div class="sc-title">Targeting & A/B Testing</div>
+                <div class="sc-desc">קהל יעד מותאם, גרסאות תחרותיות</div>
+              </div>
+              <div class="sc-status gray">כבוי</div>
+              <svg class="sc-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="section-card-body">
+              <div class="switch-row">
+                <div class="switch-meta">
+                  <div class="switch-title">הצג לכל המשתמשים</div>
+                  <div class="switch-desc">ללא סינון · המלצה כברירת מחדל</div>
+                </div>
+                <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              </div>
+              <div class="switch-row">
+                <div class="switch-meta">
+                  <div class="switch-title">הפעל A/B Test</div>
+                  <div class="switch-desc">צור גרסה ב' ובחן אוטומטית מי מנצח</div>
+                </div>
+                <div class="toggle" onclick="this.classList.toggle('on')"></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- LIVE PREVIEW (sticky) -->
+        <aside class="edit-preview-sticky">
+          <div class="preview-tabs">
+            <div class="preview-tab active">📱 מובייל</div>
+            <div class="preview-tab">💻 דסקטופ</div>
+          </div>
+          <div class="preview-header">תצוגה מקדימה · חיה</div>
+
+          <div class="phone-frame">
+            <div class="phone-screen">
+              <div class="phone-notch"></div>
+              <div class="phone-status-bar">
+                <span>9:41</span>
+                <span>●●●●●</span>
+              </div>
+              <div class="phone-content">
+                <div class="mock-search">חפש מקצוע, שירות...</div>
+                <div class="mock-stories">
+                  <div class="mock-story"></div>
+                  <div class="mock-story"></div>
+                  <div class="mock-story"></div>
+                  <div class="mock-story"></div>
+                  <div class="mock-story"></div>
+                </div>
+                <div class="mock-vip-card">
+                  <div class="mock-vip-tag">⭐ VIP</div>
+                  <div class="mock-vip-avatar">דכ</div>
+                  <div class="mock-vip-info">
+                    <div class="mock-vip-name">דניאל כהן ✓</div>
+                    <div class="mock-vip-cat">מיזוג אוויר · ★ 5.0</div>
+                    <div class="mock-vip-price">החל מ-₪150</div>
+                  </div>
+                  <div class="mock-vip-dots">
+                    <span></span><span class="active"></span><span></span><span></span><span></span>
+                  </div>
+                </div>
+                <div class="mock-section-title"></div>
+                <div class="mock-tiles">
+                  <div class="mock-tile"></div>
+                  <div class="mock-tile"></div>
+                  <div class="mock-tile"></div>
+                  <div class="mock-tile"></div>
+                  <div class="mock-tile"></div>
+                  <div class="mock-tile"></div>
+                  <div class="mock-tile"></div>
+                  <div class="mock-tile"></div>
+                </div>
+                <div class="mock-promo-banner"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="preview-info">
+            <div class="preview-info-row">
+              <span class="preview-info-label">מיקום</span>
+              <span class="preview-info-value">⭐ VIP · ראש הבית</span>
+            </div>
+            <div class="preview-info-row">
+              <span class="preview-info-label">ספקים</span>
+              <span class="preview-info-value">23 פעילים</span>
+            </div>
+            <div class="preview-info-row">
+              <span class="preview-info-label">סיבוב</span>
+              <span class="preview-info-value">כל 4 שניות</span>
+            </div>
+            <div class="preview-info-row">
+              <span class="preview-info-label">חשיפות צפויות/יום</span>
+              <span class="preview-info-value">~20,330</span>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- Sticky save bar -->
+      <div class="save-bar">
+        <div class="save-bar-info">
+          <span class="save-dot"></span>
+          נשמר אוטומטית · לפני 4 שניות · 3 שינויים מאז הפרסום
+        </div>
+        <button class="btn btn-secondary">צפה בהיסטוריה</button>
+        <button class="btn btn-secondary">שמור כטיוטה</button>
+        <button class="btn btn-primary">פרסם 3 שינויים</button>
+      </div>
+    </div>
+
+    <!-- ====================================================================
+         SCREEN C — VIP MANAGEMENT
+         ==================================================================== -->
+    <div class="screen" id="screen-vip">
+
+      <!-- VIP Hero -->
+      <div class="vip-hero">
+        <div class="vip-hero-grid">
+          <div class="vip-hero-left">
+            <div class="vip-hero-tag">⭐ VIP · קרוסלת ספקים</div>
+            <div class="vip-hero-title">הקרוסלה היוקרתית של AnySkill</div>
+            <div class="vip-hero-sub">ספקים משלמים <strong style="color:var(--gold)">99₪/חודש</strong> כדי להופיע בראש לשונית הבית. עד 30 מקומות בכל רגע, רוטציה הוגנת אם יש יותר משלמים.</div>
+            <div class="vip-hero-stats">
+              <div>
+                <div class="vh-stat-label">הכנסה חודשית</div>
+                <div class="vh-stat-value">₪22,770</div>
+                <div class="vh-stat-sub">↑ 31% מהחודש שעבר</div>
+              </div>
+              <div>
+                <div class="vh-stat-label">משלמים פעילים</div>
+                <div class="vh-stat-value">23</div>
+                <div class="vh-stat-sub">+ 7 מנהל-comp</div>
+              </div>
+              <div>
+                <div class="vh-stat-label">ברשימת המתנה</div>
+                <div class="vh-stat-value">42</div>
+                <div class="vh-stat-sub">פוטנציאל ₪41.5k</div>
+              </div>
+            </div>
+          </div>
+          <div class="vip-capacity-ring">
+            <svg width="160" height="160" viewBox="0 0 160 160">
+              <defs>
+                <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#B89855"/>
+                  <stop offset="100%" stop-color="#8C6F36"/>
+                </linearGradient>
+              </defs>
+              <circle class="vip-capacity-track" cx="80" cy="80" r="68"/>
+              <circle class="vip-capacity-fill" cx="80" cy="80" r="68" stroke-dasharray="427" stroke-dashoffset="100"/>
+            </svg>
+            <div class="vip-capacity-text">
+              <div class="vc-num">23</div>
+              <div class="vc-of">מתוך 30 מקומות</div>
+              <div class="vc-label">נותרו 7</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Capacity bar -->
+      <div class="capacity-bar">
+        <div class="capacity-bar-label">חלוקת מקומות</div>
+        <div class="capacity-bar-track">
+          <div class="capacity-bar-fill-paid" style="width:53%"></div>
+          <div class="capacity-bar-fill-comp" style="width:24%"></div>
+        </div>
+        <div class="capacity-bar-stats">
+          <span class="cb-stat"><span class="dot paid"></span>16 משלמים</span>
+          <span class="cb-stat"><span class="dot comp"></span>7 מנהל</span>
+          <span class="cb-stat"><span class="dot free"></span>7 פנויים</span>
+        </div>
+      </div>
+
+      <!-- Header bar -->
+      <div class="section-head" style="margin-bottom:20px">
+        <div>
+          <h2 class="section-title">המקומות הנוכחיים</h2>
+          <div class="section-sub">23 ספקים מופיעים עכשיו · החלפה כל 4 שניות בקרוסלה</div>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-secondary">⚙ הגדרות קרוסלה</button>
+          <button class="btn btn-gold" onclick="openAddVip()">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            הוסף ספק חינם
+          </button>
+        </div>
+      </div>
+
+      <!-- Tabs (filter slots) -->
+      <div class="vip-tabs">
+        <div class="vip-tab active">הכל <span class="vip-tab-count">23</span></div>
+        <div class="vip-tab">משלמים <span class="vip-tab-count">16</span></div>
+        <div class="vip-tab">חינם · מנהל <span class="vip-tab-count">7</span></div>
+        <div class="vip-tab">פג בקרוב <span class="vip-tab-count">3</span></div>
+      </div>
+
+      <!-- VIP slot grid -->
+      <div class="vip-grid">
+
+        <!-- Slot 1 - paid, lots of time -->
+        <div class="vip-slot featured">
+          <div class="vip-slot-rank">1</div>
+          <div class="vip-slot-head">
+            <div class="vip-slot-avatar online">דכ</div>
+            <div class="vip-slot-meta">
+              <div class="vip-slot-name">דניאל כהן <span style="color:var(--info)">✓</span></div>
+              <div class="vip-slot-cat">מיזוג אוויר · תל אביב</div>
+              <div class="vip-slot-rating">★ 5.0 (3 ביקורות)</div>
+            </div>
+          </div>
+          <div class="vip-slot-time">
+            <div class="vip-time-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <div class="vip-time-info">
+              <div class="vip-time-label">נותרו</div>
+              <div class="vip-time-value">23 ימים · עד 18/05</div>
+            </div>
+            <div class="vip-renewal-tag auto">↻ חידוש אוטו</div>
+          </div>
+          <div class="vip-slot-stats">
+            <div><div class="vss-label">חשיפות</div><div class="vss-value">8.4k</div></div>
+            <div><div class="vss-label">קליקים</div><div class="vss-value">612</div></div>
+            <div><div class="vss-label">CTR</div><div class="vss-value">7.3%</div></div>
+          </div>
+          <div class="vip-slot-actions">
+            <button class="vip-action-btn">📊 פרטים</button>
+            <button class="vip-action-btn">✏️ ערוך</button>
+            <button class="vip-action-btn danger">🗑 הסר</button>
+          </div>
+        </div>
+
+        <!-- Slot 2 - admin comp -->
+        <div class="vip-slot featured admin-comp">
+          <div class="vip-slot-rank">2</div>
+          <div class="vip-slot-head">
+            <div class="vip-slot-avatar green online">דל</div>
+            <div class="vip-slot-meta">
+              <div class="vip-slot-name">דנה לוי <span style="color:var(--info)">✓</span></div>
+              <div class="vip-slot-cat">ניקיון הבית · מרכז</div>
+              <div class="vip-slot-rating">★ 5.0 (5 ביקורות)</div>
+            </div>
+          </div>
+          <div class="vip-slot-time">
+            <div class="vip-time-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M5 12l7-10 7 10"/></svg>
+            </div>
+            <div class="vip-time-info">
+              <div class="vip-time-label">תוקף</div>
+              <div class="vip-time-value">ללא הגבלה</div>
+            </div>
+            <div class="vip-renewal-tag" style="background:var(--bg-tonal);color:var(--ink-2)">קבוע</div>
+          </div>
+          <div class="vip-slot-stats">
+            <div><div class="vss-label">חשיפות</div><div class="vss-value">6.2k</div></div>
+            <div><div class="vss-label">קליקים</div><div class="vss-value">428</div></div>
+            <div><div class="vss-label">CTR</div><div class="vss-value">6.9%</div></div>
+          </div>
+          <div class="vip-slot-actions">
+            <button class="vip-action-btn">📊 פרטים</button>
+            <button class="vip-action-btn">✏️ ערוך</button>
+            <button class="vip-action-btn danger">🗑 הסר</button>
+          </div>
+        </div>
+
+        <!-- Slot 3 - manual renewal -->
+        <div class="vip-slot featured">
+          <div class="vip-slot-rank">3</div>
+          <div class="vip-slot-head">
+            <div class="vip-slot-avatar purple">רא</div>
+            <div class="vip-slot-meta">
+              <div class="vip-slot-name">רועי אזולאי <span style="color:var(--info)">✓</span></div>
+              <div class="vip-slot-cat">מאמני כושר · רמת גן</div>
+              <div class="vip-slot-rating">★ 5.0 (4 ביקורות)</div>
+            </div>
+          </div>
+          <div class="vip-slot-time">
+            <div class="vip-time-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <div class="vip-time-info">
+              <div class="vip-time-label">נותרו</div>
+              <div class="vip-time-value">12 ימים · עד 07/05</div>
+            </div>
+            <div class="vip-renewal-tag manual">⚠ ידני</div>
+          </div>
+          <div class="vip-slot-stats">
+            <div><div class="vss-label">חשיפות</div><div class="vss-value">5.1k</div></div>
+            <div><div class="vss-label">קליקים</div><div class="vss-value">298</div></div>
+            <div><div class="vss-label">CTR</div><div class="vss-value">5.8%</div></div>
+          </div>
+          <div class="vip-slot-actions">
+            <button class="vip-action-btn">📊 פרטים</button>
+            <button class="vip-action-btn">✏️ ערוך</button>
+            <button class="vip-action-btn danger">🗑 הסר</button>
+          </div>
+        </div>
+
+        <!-- Slot 4 - expiring -->
+        <div class="vip-slot featured">
+          <div class="vip-slot-rank">4</div>
+          <div class="vip-slot-head">
+            <div class="vip-slot-avatar blue online">אכ</div>
+            <div class="vip-slot-meta">
+              <div class="vip-slot-name">אילנה כהן <span style="color:var(--info)">✓</span></div>
+              <div class="vip-slot-cat">עיסוי · הרצליה</div>
+              <div class="vip-slot-rating">★ 4.8</div>
+            </div>
+          </div>
+          <div class="vip-slot-time">
+            <div class="vip-time-icon" style="background:var(--warn-bg);color:var(--warn)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </div>
+            <div class="vip-time-info">
+              <div class="vip-time-label">פג בקרוב</div>
+              <div class="vip-time-value" style="color:var(--warn)">3 ימים · עד 28/04</div>
+            </div>
+            <div class="vip-renewal-tag manual">⚠ ידני</div>
+          </div>
+          <div class="vip-slot-stats">
+            <div><div class="vss-label">חשיפות</div><div class="vss-value">4.8k</div></div>
+            <div><div class="vss-label">קליקים</div><div class="vss-value">241</div></div>
+            <div><div class="vss-label">CTR</div><div class="vss-value">5.0%</div></div>
+          </div>
+          <div class="vip-slot-actions">
+            <button class="vip-action-btn gold">🔔 שלח תזכורת</button>
+            <button class="vip-action-btn">✏️ ערוך</button>
+            <button class="vip-action-btn danger">🗑 הסר</button>
+          </div>
+        </div>
+
+        <!-- Slot 5 - admin comp green -->
+        <div class="vip-slot featured admin-comp">
+          <div class="vip-slot-rank">5</div>
+          <div class="vip-slot-head">
+            <div class="vip-slot-avatar orange online">אמ</div>
+            <div class="vip-slot-meta">
+              <div class="vip-slot-name">אלי מזרחי <span style="color:var(--info)">✓</span></div>
+              <div class="vip-slot-cat">הובלות · גוש דן</div>
+              <div class="vip-slot-rating">★ 5.0 (5 ביקורות)</div>
+            </div>
+          </div>
+          <div class="vip-slot-time">
+            <div class="vip-time-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <div class="vip-time-info">
+              <div class="vip-time-label">חודש ניסיון · נותרו</div>
+              <div class="vip-time-value">14 ימים</div>
+            </div>
+            <div class="vip-renewal-tag" style="background:var(--bg-tonal);color:var(--ink-2)">קבוע</div>
+          </div>
+          <div class="vip-slot-stats">
+            <div><div class="vss-label">חשיפות</div><div class="vss-value">3.9k</div></div>
+            <div><div class="vss-label">קליקים</div><div class="vss-value">218</div></div>
+            <div><div class="vss-label">CTR</div><div class="vss-value">5.6%</div></div>
+          </div>
+          <div class="vip-slot-actions">
+            <button class="vip-action-btn">📊 פרטים</button>
+            <button class="vip-action-btn">✏️ ערוך</button>
+            <button class="vip-action-btn danger">🗑 הסר</button>
+          </div>
+        </div>
+
+        <!-- Slot 6 - regular paid -->
+        <div class="vip-slot featured">
+          <div class="vip-slot-rank">6</div>
+          <div class="vip-slot-head">
+            <div class="vip-slot-avatar red">דכ</div>
+            <div class="vip-slot-meta">
+              <div class="vip-slot-name">דניאל כהן (אחר) <span style="color:var(--info)">✓</span></div>
+              <div class="vip-slot-cat">חשמלאי · תל אביב</div>
+              <div class="vip-slot-rating">★ 4.9</div>
+            </div>
+          </div>
+          <div class="vip-slot-time">
+            <div class="vip-time-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <div class="vip-time-info">
+              <div class="vip-time-label">נותרו</div>
+              <div class="vip-time-value">19 ימים · עד 14/05</div>
+            </div>
+            <div class="vip-renewal-tag auto">↻ חידוש אוטו</div>
+          </div>
+          <div class="vip-slot-stats">
+            <div><div class="vss-label">חשיפות</div><div class="vss-value">3.2k</div></div>
+            <div><div class="vss-label">קליקים</div><div class="vss-value">186</div></div>
+            <div><div class="vss-label">CTR</div><div class="vss-value">5.8%</div></div>
+          </div>
+          <div class="vip-slot-actions">
+            <button class="vip-action-btn">📊 פרטים</button>
+            <button class="vip-action-btn">✏️ ערוך</button>
+            <button class="vip-action-btn danger">🗑 הסר</button>
+          </div>
+        </div>
+
+        <!-- Empty slot - add manually -->
+        <div class="vip-slot vip-slot-empty" onclick="openAddVip()">
+          <div class="vip-empty-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </div>
+          <div class="vip-empty-title">הוסף ספק חינם</div>
+          <div class="vip-empty-sub">בחר נותן שירות והכנס לרשימה ללא תשלום</div>
+        </div>
+      </div>
+
+      <!-- Waitlist -->
+      <div class="waitlist-card">
+        <div class="waitlist-head">
+          <div class="waitlist-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83"/></svg>
+          </div>
+          <div class="waitlist-meta">
+            <div class="waitlist-title">רשימת המתנה</div>
+            <div class="waitlist-desc">42 ספקים שילמו וממתינים לכניסה · רוטציה אוטומטית כשמתפנה מקום</div>
+          </div>
+          <div class="waitlist-counter">42</div>
+        </div>
+
+        <div class="waitlist-row">
+          <div class="waitlist-pos">7</div>
+          <div class="waitlist-info">
+            <div class="provider-avatar green">מד</div>
+            <div>
+              <div class="provider-name">מרים דדון</div>
+              <div class="provider-meta">★ 5.0 · מעצבת בלונים · 4 עבודות</div>
+            </div>
+          </div>
+          <div><span class="pay-status paid">✓ שילם</span></div>
+          <div class="waitlist-eta">צפי כניסה: 28/04</div>
+          <div class="pay-amount">₪99</div>
+          <div><button class="vip-action-btn gold">↑ קדם</button></div>
+        </div>
+
+        <div class="waitlist-row">
+          <div class="waitlist-pos">8</div>
+          <div class="waitlist-info">
+            <div class="provider-avatar purple">יע</div>
+            <div>
+              <div class="provider-name">יוסי עזרא</div>
+              <div class="provider-meta">★ 4.9 · אינסטלציה · 12 עבודות</div>
+            </div>
+          </div>
+          <div><span class="pay-status paid">✓ שילם</span></div>
+          <div class="waitlist-eta">צפי כניסה: 02/05</div>
+          <div class="pay-amount">₪99</div>
+          <div><button class="vip-action-btn gold">↑ קדם</button></div>
+        </div>
+
+        <div class="waitlist-row">
+          <div class="waitlist-pos">9</div>
+          <div class="waitlist-info">
+            <div class="provider-avatar blue">שכ</div>
+            <div>
+              <div class="provider-name">שני כהן</div>
+              <div class="provider-meta">★ 4.8 · מורה לאנגלית · 8 עבודות</div>
+            </div>
+          </div>
+          <div><span class="pay-status paid">✓ שילם</span></div>
+          <div class="waitlist-eta">צפי כניסה: 05/05</div>
+          <div class="pay-amount">₪99</div>
+          <div><button class="vip-action-btn gold">↑ קדם</button></div>
+        </div>
+
+        <div style="padding:14px 24px;text-align:center;border-top:1px solid var(--line)">
+          <button class="btn btn-secondary">הצג עוד 39 ברשימת ההמתנה →</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ====================================================================
+         SCREEN D — PAYMENTS
+         ==================================================================== -->
+    <div class="screen" id="screen-payments">
+
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">תשלומים <em>· VIP</em></h1>
+          <div class="page-sub">
+            <span class="live-dot"></span>
+            ספקים ששילמו על מקום בקרוסלת ה-VIP · עדכון בזמן אמת
+          </div>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-secondary">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/></svg>
+            ייצוא לאקסל
+          </button>
+          <button class="btn btn-secondary">📅 חודש: אפריל 2026</button>
+        </div>
+      </header>
+
+      <!-- Stats -->
+      <div class="payments-stats">
+        <div class="pay-stat gold">
+          <div class="pay-stat-label">הכנסה החודש</div>
+          <div class="pay-stat-value">₪22,770</div>
+          <div class="pay-stat-sub">↑ ₪5,400 מאפריל שעבר</div>
+        </div>
+        <div class="pay-stat">
+          <div class="pay-stat-label">תשלומים פעילים</div>
+          <div class="pay-stat-value">23</div>
+          <div class="pay-stat-sub">16 משלמים + 7 חינם · מנהל</div>
+        </div>
+        <div class="pay-stat">
+          <div class="pay-stat-label">חידוש בחודש הבא</div>
+          <div class="pay-stat-value">14</div>
+          <div class="pay-stat-sub">9 ידני · 5 אוטומטי</div>
+        </div>
+        <div class="pay-stat">
+          <div class="pay-stat-label">פוטנציאל המתנה</div>
+          <div class="pay-stat-value">₪41.5k</div>
+          <div class="pay-stat-sub">42 ספקים בהמתנה</div>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="toolbar">
+        <div class="tabs">
+          <button class="tab active">הכל <span class="tab-count">68</span></button>
+          <button class="tab">שולמו <span class="tab-count">52</span></button>
+          <button class="tab">בהמתנה <span class="tab-count">14</span></button>
+          <button class="tab">נכשלו <span class="tab-count">2</span></button>
+        </div>
+        <div class="toolbar-spacer"></div>
+        <button class="filter">חודש: אפריל 2026</button>
+      </div>
+
+      <!-- Payments table -->
+      <div class="payments-table">
+        <div class="pay-row head">
+          <div>ספק</div>
+          <div>סכום</div>
+          <div>סטטוס</div>
+          <div>תאריך</div>
+          <div class="hide-md">אמצעי תשלום</div>
+          <div class="hide-md">חידוש</div>
+          <div></div>
+        </div>
+
+        <div class="pay-row body">
+          <div class="banner-cell">
+            <div class="provider-avatar online">דכ</div>
+            <div class="banner-info">
+              <div class="banner-title">דניאל כהן ✓</div>
+              <div class="banner-meta">מיזוג אוויר · עד 18/05</div>
+            </div>
+          </div>
+          <div class="pay-amount">₪99</div>
+          <div><span class="pay-status paid">✓ שולם</span></div>
+          <div class="pay-date">18/04/2026</div>
+          <div class="hide-md"><span class="pay-method"><span class="pay-method-dot visa"></span>•••• 4242</span></div>
+          <div class="hide-md"><span class="vip-renewal-tag auto">↻ אוטו</span></div>
+          <div><button class="action-btn">⋯</button></div>
+        </div>
+
+        <div class="pay-row body">
+          <div class="banner-cell">
+            <div class="provider-avatar green online">דל</div>
+            <div class="banner-info">
+              <div class="banner-title">דנה לוי ✓</div>
+              <div class="banner-meta">ניקיון הבית · ללא תוקף</div>
+            </div>
+          </div>
+          <div class="pay-amount">₪0</div>
+          <div><span class="pay-status comp">🎁 מנהל</span></div>
+          <div class="pay-date">02/04/2026</div>
+          <div class="hide-md"><span class="pay-method">— ללא חיוב</span></div>
+          <div class="hide-md"><span class="vip-renewal-tag" style="background:var(--bg-tonal);color:var(--ink-2)">קבוע</span></div>
+          <div><button class="action-btn">⋯</button></div>
+        </div>
+
+        <div class="pay-row body">
+          <div class="banner-cell">
+            <div class="provider-avatar purple">רא</div>
+            <div class="banner-info">
+              <div class="banner-title">רועי אזולאי ✓</div>
+              <div class="banner-meta">מאמני כושר · עד 07/05</div>
+            </div>
+          </div>
+          <div class="pay-amount">₪99</div>
+          <div><span class="pay-status paid">✓ שולם</span></div>
+          <div class="pay-date">07/04/2026</div>
+          <div class="hide-md"><span class="pay-method"><span class="pay-method-dot mc"></span>•••• 8821</span></div>
+          <div class="hide-md"><span class="vip-renewal-tag manual">⚠ ידני</span></div>
+          <div><button class="action-btn">⋯</button></div>
+        </div>
+
+        <div class="pay-row body">
+          <div class="banner-cell">
+            <div class="provider-avatar blue online">אכ</div>
+            <div class="banner-info">
+              <div class="banner-title">אילנה כהן ✓</div>
+              <div class="banner-meta">עיסוי · עד 28/04</div>
+            </div>
+          </div>
+          <div class="pay-amount">₪99</div>
+          <div><span class="pay-status pending">⏱ חידוש ידני</span></div>
+          <div class="pay-date">28/03/2026</div>
+          <div class="hide-md"><span class="pay-method"><span class="pay-method-dot visa"></span>•••• 1117</span></div>
+          <div class="hide-md"><span class="vip-renewal-tag manual">⚠ ידני</span></div>
+          <div><button class="action-btn">⋯</button></div>
+        </div>
+
+        <div class="pay-row body">
+          <div class="banner-cell">
+            <div class="provider-avatar orange online">אמ</div>
+            <div class="banner-info">
+              <div class="banner-title">אלי מזרחי ✓</div>
+              <div class="banner-meta">הובלות · חודש ניסיון</div>
+            </div>
+          </div>
+          <div class="pay-amount">₪0</div>
+          <div><span class="pay-status comp">🎁 ניסיון</span></div>
+          <div class="pay-date">11/04/2026</div>
+          <div class="hide-md"><span class="pay-method">— ללא חיוב</span></div>
+          <div class="hide-md"><span class="vip-renewal-tag" style="background:var(--bg-tonal);color:var(--ink-2)">14 ימים</span></div>
+          <div><button class="action-btn">⋯</button></div>
+        </div>
+
+        <div class="pay-row body">
+          <div class="banner-cell">
+            <div class="provider-avatar red">דכ</div>
+            <div class="banner-info">
+              <div class="banner-title">דניאל כהן ✓</div>
+              <div class="banner-meta">חשמלאי · עד 14/05</div>
+            </div>
+          </div>
+          <div class="pay-amount">₪99</div>
+          <div><span class="pay-status paid">✓ שולם</span></div>
+          <div class="pay-date">14/04/2026</div>
+          <div class="hide-md"><span class="pay-method"><span class="pay-method-dot visa"></span>•••• 9923</span></div>
+          <div class="hide-md"><span class="vip-renewal-tag auto">↻ אוטו</span></div>
+          <div><button class="action-btn">⋯</button></div>
+        </div>
+
+        <div class="pay-row body">
+          <div class="banner-cell">
+            <div class="provider-avatar">יא</div>
+            <div class="banner-info">
+              <div class="banner-title">יוסי אברהם</div>
+              <div class="banner-meta">צביעת בתים</div>
+            </div>
+          </div>
+          <div class="pay-amount">₪99</div>
+          <div><span class="pay-status failed">✗ נכשל</span></div>
+          <div class="pay-date">15/04/2026</div>
+          <div class="hide-md"><span class="pay-method"><span class="pay-method-dot visa"></span>•••• 0001</span></div>
+          <div class="hide-md"><span style="color:var(--danger);font-size:11px;font-weight:600">⚠ פג תוקף</span></div>
+          <div><button class="action-btn">⋯</button></div>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- ====================================================================
+         SCREEN E — SUBCATEGORY BANNERS
+         ==================================================================== -->
+    <div class="screen" id="screen-subcat">
+
+      <!-- Subcategory Hero -->
+      <div class="subcat-hero">
+        <div class="subcat-hero-grid">
+          <div>
+            <div class="subcat-hero-tag">📁 חדש · באנרי תת-קטגוריות</div>
+            <div class="subcat-hero-title">באנר אישי לכל תת-קטגוריה</div>
+            <div class="subcat-hero-sub">הצג באנר מותאם בראש מסך תת-הקטגוריה — כשמשתמש לוחץ על "מאמני כושר", הוא יראה באנר ייעודי לפני רשימת הספקים. ללא הגדרה ייעודית — מוצג <strong>באנר ברירת המחדל הגלובלי</strong>.</div>
+            <div class="subcat-hero-stats">
+              <div>
+                <div class="sh-stat-label">סה"כ תת-קטגוריות</div>
+                <div class="sh-stat-value">52</div>
+              </div>
+              <div>
+                <div class="sh-stat-label">עם באנר ייעודי</div>
+                <div class="sh-stat-value">12</div>
+              </div>
+              <div>
+                <div class="sh-stat-label">משתמשות בברירת מחדל</div>
+                <div class="sh-stat-value">40</div>
+              </div>
+              <div>
+                <div class="sh-stat-label">CTR ממוצע</div>
+                <div class="sh-stat-value">5.8%</div>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+            <button class="btn btn-primary">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              באנר תת-קטגוריה חדש
+            </button>
+            <button class="btn btn-secondary">⚙ הגדרות גלובליות</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Default Banner Card -->
+      <div class="default-banner-card">
+        <div class="default-banner-preview">
+          <div class="default-banner-preview-content">
+            המומחים הטובים<br>בתת-הקטגוריה
+          </div>
+        </div>
+        <div class="default-banner-info">
+          <div class="default-banner-tag">⚡ ברירת מחדל גלובלית</div>
+          <div class="default-banner-title">"המומחים הטובים בתת-הקטגוריה"</div>
+          <div class="default-banner-desc">באנר זה מוצג <strong>אוטומטית</strong> בכל תת-קטגוריה שלא הוגדר לה באנר ייעודי. כרגע מוצג ב-<strong>40 תת-קטגוריות</strong>. לחץ על "ערוך" כדי לשנות את הטקסט והעיצוב הגלובלי.</div>
+        </div>
+        <div class="default-banner-actions">
+          <button class="btn btn-primary btn-sm" onclick="goTo('edit')">✏️ ערוך ברירת מחדל</button>
+          <button class="btn btn-secondary btn-sm">📊 סטטיסטיקה</button>
+        </div>
+      </div>
+
+      <!-- Search & filters -->
+      <div class="subcat-search-row">
+        <div class="subcat-search-input">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--ink-4)"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input placeholder="חפש קטגוריה או תת-קטגוריה...">
+        </div>
+        <div class="subcat-filter-pills">
+          <button class="subcat-filter-pill active">הכל <span class="subcat-filter-pill-count">52</span></button>
+          <button class="subcat-filter-pill">עם באנר ייעודי <span class="subcat-filter-pill-count">12</span></button>
+          <button class="subcat-filter-pill">בברירת מחדל <span class="subcat-filter-pill-count">40</span></button>
+          <button class="subcat-filter-pill">CTR גבוה</button>
+        </div>
+      </div>
+
+      <!-- Categories accordion -->
+      <div class="cat-accordion">
+
+        <!-- Category 1 - Sports & Fitness (expanded) -->
+        <div class="cat-block expanded">
+          <div class="cat-head" onclick="toggleCat(this.parentElement)">
+            <div class="cat-icon-wrap">💪</div>
+            <div class="cat-name">
+              <div class="cat-name-title">כושר וספורט</div>
+              <div class="cat-name-meta">
+                <span class="cat-stat-pill has">3 / 6 תת-קטגוריות עם באנר</span>
+                <span>·</span>
+                <span>32k חשיפות השבוע</span>
+              </div>
+            </div>
+            <svg class="cat-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="cat-body">
+
+            <div class="subcat-row">
+              <div class="subcat-icon">🏋️</div>
+              <div class="subcat-info">
+                <div class="subcat-name">מאמני כושר</div>
+                <div class="subcat-meta">
+                  <span>147 ספקים</span>
+                  <span>·</span>
+                  <span>14,820 חשיפות · CTR 6.0%</span>
+                </div>
+              </div>
+              <div class="subcat-mini-thumbs">
+                <div class="subcat-mini-thumb" style="background:linear-gradient(135deg,#2C5BA8 0%,#4A7BCF 100%)"></div>
+              </div>
+              <div><span class="subcat-banners-count has">✓ 1 באנר</span></div>
+              <button class="subcat-add-btn" onclick="goTo('edit')">✏️ ערוך</button>
+            </div>
+
+            <div class="subcat-row">
+              <div class="subcat-icon">🧘</div>
+              <div class="subcat-info">
+                <div class="subcat-name">יוגה ופילאטיס</div>
+                <div class="subcat-meta">
+                  <span>89 ספקים</span>
+                  <span>·</span>
+                  <span>8,420 חשיפות · CTR 5.2%</span>
+                </div>
+              </div>
+              <div class="subcat-mini-thumbs">
+                <div class="subcat-mini-thumb" style="background:linear-gradient(135deg,#1A6B5B 0%,#2A8F77 100%)"></div>
+                <div class="subcat-mini-thumb" style="background:linear-gradient(135deg,#6B4FA8 0%,#4A3580 100%)"></div>
+              </div>
+              <div><span class="subcat-banners-count has">✓ 2 באנרים</span></div>
+              <button class="subcat-add-btn" onclick="goTo('edit')">✏️ ערוך</button>
+            </div>
+
+            <div class="subcat-row">
+              <div class="subcat-icon">🥊</div>
+              <div class="subcat-info">
+                <div class="subcat-name">אומנויות לחימה</div>
+                <div class="subcat-meta">
+                  <span>34 ספקים</span>
+                  <span>·</span>
+                  <span>מציג ברירת מחדל</span>
+                </div>
+              </div>
+              <div></div>
+              <div><span class="subcat-banners-count default">⚡ ברירת מחדל</span></div>
+              <button class="subcat-add-btn" onclick="goTo('edit')">+ הוסף באנר</button>
+            </div>
+
+            <div class="subcat-row">
+              <div class="subcat-icon">🏊</div>
+              <div class="subcat-info">
+                <div class="subcat-name">שחייה</div>
+                <div class="subcat-meta">
+                  <span>22 ספקים</span>
+                  <span>·</span>
+                  <span>4,210 חשיפות · CTR 4.8%</span>
+                </div>
+              </div>
+              <div class="subcat-mini-thumbs">
+                <div class="subcat-mini-thumb" style="background:linear-gradient(135deg,#2C5BA8 0%,#4A7BCF 100%)"></div>
+              </div>
+              <div><span class="subcat-banners-count has">✓ 1 באנר</span></div>
+              <button class="subcat-add-btn" onclick="goTo('edit')">✏️ ערוך</button>
+            </div>
+
+            <div class="subcat-row">
+              <div class="subcat-icon">⚽</div>
+              <div class="subcat-info">
+                <div class="subcat-name">כדורגל</div>
+                <div class="subcat-meta">
+                  <span>18 ספקים</span>
+                  <span>·</span>
+                  <span>מציג ברירת מחדל</span>
+                </div>
+              </div>
+              <div></div>
+              <div><span class="subcat-banners-count default">⚡ ברירת מחדל</span></div>
+              <button class="subcat-add-btn" onclick="goTo('edit')">+ הוסף באנר</button>
+            </div>
+
+            <div class="subcat-row">
+              <div class="subcat-icon">🎾</div>
+              <div class="subcat-info">
+                <div class="subcat-name">טניס</div>
+                <div class="subcat-meta">
+                  <span>12 ספקים</span>
+                  <span>·</span>
+                  <span>מציג ברירת מחדל</span>
+                </div>
+              </div>
+              <div></div>
+              <div><span class="subcat-banners-count default">⚡ ברירת מחדל</span></div>
+              <button class="subcat-add-btn" onclick="goTo('edit')">+ הוסף באנר</button>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Category 2 - Beauty (expanded) -->
+        <div class="cat-block expanded">
+          <div class="cat-head" onclick="toggleCat(this.parentElement)">
+            <div class="cat-icon-wrap">💇</div>
+            <div class="cat-name">
+              <div class="cat-name-title">יופי וטיפוח</div>
+              <div class="cat-name-meta">
+                <span class="cat-stat-pill has">4 / 8 תת-קטגוריות עם באנר</span>
+                <span>·</span>
+                <span>48k חשיפות השבוע</span>
+              </div>
+            </div>
+            <svg class="cat-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="cat-body">
+
+            <div class="subcat-row">
+              <div class="subcat-icon">💇‍♀️</div>
+              <div class="subcat-info">
+                <div class="subcat-name">עיצוב שיער</div>
+                <div class="subcat-meta">
+                  <span>203 ספקים</span>
+                  <span>·</span>
+                  <span>9,640 חשיפות · CTR 5.5%</span>
+                </div>
+              </div>
+              <div class="subcat-mini-thumbs">
+                <div class="subcat-mini-thumb" style="background:linear-gradient(135deg,#4A2A6E 0%,#6B3A8F 100%)"></div>
+              </div>
+              <div><span class="subcat-banners-count has">✓ 1 באנר</span></div>
+              <button class="subcat-add-btn" onclick="goTo('edit')">✏️ ערוך</button>
+            </div>
+
+            <div class="subcat-row">
+              <div class="subcat-icon">💅</div>
+              <div class="subcat-info">
+                <div class="subcat-name">לק ג'ל ומניקור</div>
+                <div class="subcat-meta">
+                  <span>156 ספקים</span>
+                  <span>·</span>
+                  <span>7,820 חשיפות · CTR 4.9%</span>
+                </div>
+              </div>
+              <div class="subcat-mini-thumbs">
+                <div class="subcat-mini-thumb" style="background:linear-gradient(135deg,#B85A2A 0%,#D67A3A 100%)"></div>
+              </div>
+              <div><span class="subcat-banners-count has">✓ 1 באנר</span></div>
+              <button class="subcat-add-btn" onclick="goTo('edit')">✏️ ערוך</button>
+            </div>
+
+            <div class="subcat-row">
+              <div class="subcat-icon">💄</div>
+              <div class="subcat-info">
+                <div class="subcat-name">איפור</div>
+                <div class="subcat-meta">
+                  <span>87 ספקים</span>
+                  <span>·</span>
+                  <span>5,210 חשיפות · CTR 6.2%</span>
+                </div>
+              </div>
+              <div class="subcat-mini-thumbs">
+                <div class="subcat-mini-thumb" style="background:linear-gradient(135deg,#6B4FA8 0%,#4A3580 100%)"></div>
+                <div class="subcat-mini-thumb" style="background:linear-gradient(135deg,#B85A2A 0%,#D67A3A 100%)"></div>
+              </div>
+              <div><span class="subcat-banners-count has">✓ 2 באנרים</span></div>
+              <button class="subcat-add-btn" onclick="goTo('edit')">✏️ ערוך</button>
+            </div>
+
+            <div class="subcat-row">
+              <div class="subcat-icon">🪒</div>
+              <div class="subcat-info">
+                <div class="subcat-name">הסרת שיער</div>
+                <div class="subcat-meta">
+                  <span>62 ספקים</span>
+                  <span>·</span>
+                  <span>מציג ברירת מחדל</span>
+                </div>
+              </div>
+              <div></div>
+              <div><span class="subcat-banners-count default">⚡ ברירת מחדל</span></div>
+              <button class="subcat-add-btn" onclick="goTo('edit')">+ הוסף באנר</button>
+            </div>
+
+            <div class="subcat-row">
+              <div class="subcat-icon">💆</div>
+              <div class="subcat-info">
+                <div class="subcat-name">עיסוי</div>
+                <div class="subcat-meta">
+                  <span>114 ספקים</span>
+                  <span>·</span>
+                  <span>11,240 חשיפות · CTR 7.1%</span>
+                </div>
+              </div>
+              <div class="subcat-mini-thumbs">
+                <div class="subcat-mini-thumb" style="background:linear-gradient(135deg,#1A6B5B 0%,#2A8F77 100%)"></div>
+              </div>
+              <div><span class="subcat-banners-count has">✓ 1 באנר</span></div>
+              <button class="subcat-add-btn" onclick="goTo('edit')">✏️ ערוך</button>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Category 3 - Home & Garden (collapsed) -->
+        <div class="cat-block">
+          <div class="cat-head" onclick="toggleCat(this.parentElement)">
+            <div class="cat-icon-wrap">🏠</div>
+            <div class="cat-name">
+              <div class="cat-name-title">בית וגינה</div>
+              <div class="cat-name-meta">
+                <span class="cat-stat-pill has">2 / 9 תת-קטגוריות עם באנר</span>
+                <span>·</span>
+                <span>28k חשיפות השבוע</span>
+              </div>
+            </div>
+            <svg class="cat-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+        </div>
+
+        <!-- Category 4 - Education (collapsed) -->
+        <div class="cat-block">
+          <div class="cat-head" onclick="toggleCat(this.parentElement)">
+            <div class="cat-icon-wrap">🎓</div>
+            <div class="cat-name">
+              <div class="cat-name-title">חינוך והוראה</div>
+              <div class="cat-name-meta">
+                <span class="cat-stat-pill has">2 / 7 תת-קטגוריות עם באנר</span>
+                <span>·</span>
+                <span>22k חשיפות השבוע</span>
+              </div>
+            </div>
+            <svg class="cat-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+        </div>
+
+        <!-- Category 5 - Business (collapsed) -->
+        <div class="cat-block">
+          <div class="cat-head" onclick="toggleCat(this.parentElement)">
+            <div class="cat-icon-wrap">💼</div>
+            <div class="cat-name">
+              <div class="cat-name-title">עסקים ופיננסים</div>
+              <div class="cat-name-meta">
+                <span class="cat-stat-pill empty">0 / 5 תת-קטגוריות עם באנר</span>
+                <span>·</span>
+                <span>15k חשיפות השבוע</span>
+              </div>
+            </div>
+            <svg class="cat-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+        </div>
+
+        <!-- Category 6 - Events (collapsed) -->
+        <div class="cat-block">
+          <div class="cat-head" onclick="toggleCat(this.parentElement)">
+            <div class="cat-icon-wrap">🎉</div>
+            <div class="cat-name">
+              <div class="cat-name-title">אירועים ובילוי</div>
+              <div class="cat-name-meta">
+                <span class="cat-stat-pill has">1 / 6 תת-קטגוריות עם באנר</span>
+                <span>·</span>
+                <span>18k חשיפות השבוע</span>
+              </div>
+            </div>
+            <svg class="cat-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+</div>
+
+<!-- Command Palette -->
+<div class="cmdk-overlay" id="cmdk" onclick="if(event.target===this)closeCmdK()">
+  <div class="cmdk">
+    <input class="cmdk-input" placeholder="הקלד פקודה או חפש..." autofocus>
+    <div class="cmdk-list">
+      <div class="cmdk-section">פעולות</div>
+      <div class="cmdk-item active" onclick="closeCmdK();goTo('edit')">
+        <div class="cmdk-item-icon">+</div>
+        <div class="cmdk-item-text"><div>צור באנר חדש</div><div class="cmdk-item-sub">פתח עורך מלא</div></div>
+      </div>
+      <div class="cmdk-item" onclick="closeCmdK();goTo('vip')">
+        <div class="cmdk-item-icon" style="background:var(--gold-soft);color:var(--gold-deep)">⭐</div>
+        <div class="cmdk-item-text"><div>פתח ניהול VIP</div><div class="cmdk-item-sub">23 ספקים פעילים</div></div>
+      </div>
+      <div class="cmdk-item" onclick="closeCmdK();goTo('payments')">
+        <div class="cmdk-item-icon">💳</div>
+        <div class="cmdk-item-text"><div>תשלומי VIP</div><div class="cmdk-item-sub">₪22,770 החודש</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add VIP modal -->
+<div class="modal-overlay" id="addVipModal" onclick="if(event.target===this)closeAddVip()">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6L12 2z"/></svg>
+      </div>
+      <div class="modal-meta">
+        <div class="modal-title">הוסף ספק ל-VIP</div>
+        <div class="modal-desc">ללא תשלום · החלטת מנהל</div>
+      </div>
+      <button class="modal-close" onclick="closeAddVip()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label class="field-label">בחר נותן שירות</label>
+        <div class="provider-search">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--ink-4)"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input placeholder="חפש לפי שם או טלפון..." autofocus>
+        </div>
+        <div class="provider-list" style="max-height:200px">
+          <div class="provider-row">
+            <div class="provider-avatar green">מד</div>
+            <div class="provider-info">
+              <div class="provider-name">מרים דדון</div>
+              <div class="provider-meta"><span class="provider-rating">★ 5.0</span><span>·</span><span>מעצבת בלונים</span></div>
+            </div>
+            <div class="provider-add">+</div>
+          </div>
+          <div class="provider-row">
+            <div class="provider-avatar purple">יע</div>
+            <div class="provider-info">
+              <div class="provider-name">יוסי עזרא</div>
+              <div class="provider-meta"><span class="provider-rating">★ 4.9</span><span>·</span><span>אינסטלציה</span></div>
+            </div>
+            <div class="provider-add">+</div>
+          </div>
+          <div class="provider-row">
+            <div class="provider-avatar blue">שכ</div>
+            <div class="provider-info">
+              <div class="provider-name">שני כהן</div>
+              <div class="provider-meta"><span class="provider-rating">★ 4.8</span><span>·</span><span>מורה לאנגלית</span></div>
+            </div>
+            <div class="provider-add">+</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="field-label">סוג העלאה</label>
+        <div class="segment">
+          <div class="segment-opt active" onclick="selectSeg(this)">חודש ניסיון</div>
+          <div class="segment-opt" onclick="selectSeg(this)">חודש</div>
+          <div class="segment-opt" onclick="selectSeg(this)">3 חודשים</div>
+          <div class="segment-opt" onclick="selectSeg(this)">קבוע</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="field-label">סיבה (פנימי)</label>
+        <textarea class="field-input field-textarea" placeholder="לדוגמה: ספק טופ עם 5 כוכבים — מקום ניסיון לחודש"></textarea>
+      </div>
+
+      <div class="switch-row" style="border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--bg-subtle)">
+        <div class="switch-meta">
+          <div class="switch-title">שלח הודעה לספק</div>
+          <div class="switch-desc">"קיבלת מקום VIP חינם — כמתנה ממנהל המערכת"</div>
+        </div>
+        <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-secondary" onclick="closeAddVip()">ביטול</button>
+      <button class="btn btn-gold">⭐ הוסף ל-VIP</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function goTo(screen) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + screen).classList.add('active');
+  document.querySelectorAll('.nav-sub-item').forEach(i => i.classList.remove('active'));
+  const labels = {
+    dashboard: 'סקירה כללית',
+    edit: 'עריכת באנר',
+    vip: 'VIP · קרוסלת ספקים',
+    subcat: 'באנרי תת-קטגוריות',
+    payments: 'תשלומים'
+  };
+  // update sub-nav active state
+  document.querySelectorAll('.nav-sub-item').forEach(i => {
+    if (i.textContent.trim() === labels[screen]) i.classList.add('active');
+  });
+  // update breadcrumb
+  const crumb = document.getElementById('crumb');
+  const crumbMap = {
+    dashboard: 'ניהול <span class="crumb-sep">/</span> <strong>באנרים · Studio</strong>',
+    edit: 'ניהול <span class="crumb-sep">/</span> <a onclick="goTo(\'dashboard\')">באנרים</a> <span class="crumb-sep">/</span> <strong>עריכת באנר</strong>',
+    vip: 'ניהול <span class="crumb-sep">/</span> <a onclick="goTo(\'dashboard\')">באנרים</a> <span class="crumb-sep">/</span> <strong>⭐ VIP · קרוסלת ספקים</strong>',
+    subcat: 'ניהול <span class="crumb-sep">/</span> <a onclick="goTo(\'dashboard\')">באנרים</a> <span class="crumb-sep">/</span> <strong>📁 באנרי תת-קטגוריות</strong>',
+    payments: 'ניהול <span class="crumb-sep">/</span> <a onclick="goTo(\'dashboard\')">באנרים</a> <span class="crumb-sep">/</span> <strong>תשלומים</strong>'
+  };
+  crumb.innerHTML = crumbMap[screen];
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
+function toggleCat(el) { el.classList.toggle('expanded'); }
+
+function openCmdK() { document.getElementById('cmdk').classList.add('open'); setTimeout(() => document.querySelector('.cmdk-input').focus(), 50); }
+function closeCmdK() { document.getElementById('cmdk').classList.remove('open'); }
+function openAddVip() { document.getElementById('addVipModal').classList.add('open'); }
+function closeAddVip() { document.getElementById('addVipModal').classList.remove('open'); }
+
+function toggleCard(el) { el.classList.toggle('open'); }
+function selectSeg(el) {
+  el.parentElement.querySelectorAll('.segment-opt').forEach(o => o.classList.remove('active'));
+  el.classList.add('active');
+}
+function switchTab(el) {
+  el.parentElement.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+}
+function toggleStatus(el) {
+  el.classList.toggle('on');
+  const label = el.parentElement.querySelector('.status-label');
+  if (el.classList.contains('on')) { label.textContent = 'פועל'; label.className = 'status-label active'; }
+  else { label.textContent = 'מושבת'; label.className = 'status-label paused'; }
+}
+function toggleRow(el) {
+  el.classList.toggle('checked');
+  const row = el.closest('.row.body');
+  if (row) row.classList.toggle('selected', el.classList.contains('checked'));
+  updateBulkBar();
+}
+function toggleAll(el) {
+  el.classList.toggle('checked');
+  const checked = el.classList.contains('checked');
+  document.querySelectorAll('.row.body .checkbox').forEach(cb => {
+    cb.classList.toggle('checked', checked);
+    const row = cb.closest('.row.body');
+    if (row) row.classList.toggle('selected', checked);
+  });
+  updateBulkBar();
+}
+function updateBulkBar() {
+  const count = document.querySelectorAll('.row.body .checkbox.checked').length;
+  const bar = document.getElementById('bulkBar');
+  document.getElementById('bulkCount').textContent = count;
+  bar.style.display = count > 0 ? 'flex' : 'none';
+}
+function clearBulk() {
+  document.querySelectorAll('.checkbox.checked').forEach(cb => cb.classList.remove('checked'));
+  document.querySelectorAll('.row.body.selected').forEach(r => r.classList.remove('selected'));
+  updateBulkBar();
+}
+
+// Range presets
+document.querySelectorAll('.range-preset').forEach(p => p.addEventListener('click', e => {
+  e.target.parentElement.querySelectorAll('.range-preset').forEach(x => x.classList.remove('active'));
+  e.target.classList.add('active');
+  const sec = e.target.closest('.field');
+  const val = parseInt(e.target.textContent);
+  sec.querySelector('.range-input').value = val;
+  sec.querySelector('.range-value').textContent = val + ' שניות';
+}));
+
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openCmdK(); }
+  if (e.key === 'Escape') { closeCmdK(); closeAddVip(); }
+});
+</script>
+
+</body>
+</html>

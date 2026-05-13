@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../widgets/anyskill_logo.dart';
 import '../../widgets/bookings/booking_shared_widgets.dart';
 import '../../widgets/bookings/customer_booking_card.dart';
 import '../../widgets/bookings/history_order_card.dart';
@@ -153,6 +154,12 @@ class _CustomerBookingsTabState extends State<CustomerBookingsTab> {
 
   /// Fallback: when `jobs` collection has no history docs for this customer,
   /// pull from `transactions` to show at least a basic list of payments.
+  ///
+  /// IMPORTANT — never return `_buildEmptyState()` while the streams below
+  /// are still LOADING. Returning the empty-state mid-load causes a visible
+  /// flicker ("אין היסטוריית הזמנות" → list of transactions/empty-state)
+  /// when Firestore later delivers data. We render the shared shimmer until
+  /// at least one of the two stream paths has confirmed there is no data.
   Widget _buildTransactionFallbackHistory() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
@@ -167,7 +174,7 @@ class _CustomerBookingsTabState extends State<CustomerBookingsTab> {
               '[CustomerHistory] Transaction fallback error: ${txSnap.error}');
         }
         if (!txSnap.hasData) {
-          // Try without orderBy (avoids composite index issues)
+          // Composite index might be missing — try without orderBy.
           return StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance
                 .collection('transactions')
@@ -176,6 +183,10 @@ class _CustomerBookingsTabState extends State<CustomerBookingsTab> {
                 .snapshots(),
             builder: (context, txSnap2) {
               if (!txSnap2.hasData) {
+                // Still loading — show shimmer, NOT the empty state.
+                return const BookingsShimmer();
+              }
+              if (txSnap2.data!.docs.isEmpty) {
                 return _buildEmptyState();
               }
               return _buildTransactionList(txSnap2.data!.docs);
@@ -278,7 +289,7 @@ class _CustomerBookingsTabState extends State<CustomerBookingsTab> {
                               revieweeId:
                                   d['expertId']?.toString() ?? '',
                               revieweeName:
-                                  d['expertName']?.toString() ?? 'מומחה',
+                                  d['expertName']?.toString() ?? 'נותן שירות',
                               revieweeAvatar:
                                   d['expertImage']?.toString() ?? '',
                               isClientReview: true,
@@ -299,7 +310,7 @@ class _CustomerBookingsTabState extends State<CustomerBookingsTab> {
                                 '',
                             expertName: (doc.data()
                                         as Map<String, dynamic>)['expertName'] ??
-                                    'מומחה',
+                                    'נותן שירות',
                           ),
                         ),
                       ),
@@ -343,16 +354,14 @@ class _CustomerBookingsTabState extends State<CustomerBookingsTab> {
   }
 
   Widget _buildEmptyState() {
-    final icon = widget.isHistory
-        ? Icons.history_rounded
-        : Icons.home_repair_service_rounded;
-    final title = widget.isHistory
-        ? 'אין היסטוריית הזמנות'
-        : 'יש לך משימה? לנו יש את האדם הנכון בשבילה.';
-    final subtitle = widget.isHistory
-        ? 'הזמנות שהושלמו יופיעו כאן.'
-        : 'אל תתפשר על פחות מהטוב ביותר. בוא נתחיל?';
+    if (widget.isHistory) {
+      return _buildHistoryEmptyState();
+    }
+    return _buildActiveEmptyState();
+  }
 
+  /// History empty-state — message + AnySkill logo below, per product copy.
+  Widget _buildHistoryEmptyState() {
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -363,38 +372,80 @@ class _CustomerBookingsTabState extends State<CustomerBookingsTab> {
               padding: const EdgeInsets.all(24),
               decoration: const BoxDecoration(
                   color: Color(0xFFEEF2FF), shape: BoxShape.circle),
-              child: Icon(icon, size: 54, color: const Color(0xFF6366F1)),
+              child: const Icon(Icons.history_rounded,
+                  size: 54, color: Color(0xFF6366F1)),
             ),
             const SizedBox(height: 20),
-            Text(title,
-                style: const TextStyle(
+            const Text(
+              'כרגע אין היסטוריית הזמנות',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1A1A2E)),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'רק לאחר סיום הזמנה יופיע כאן ההיסטוריה',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: Color(0xFF94A3B8)),
+            ),
+            const SizedBox(height: 32),
+            // AnySkill brand logo below the message — per product copy.
+            const Opacity(
+              opacity: 0.85,
+              child: AnySkillBrandIcon(size: 72),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Active-tab empty-state — kept exactly as today (CTA to search).
+  Widget _buildActiveEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: const BoxDecoration(
+                  color: Color(0xFFEEF2FF), shape: BoxShape.circle),
+              child: const Icon(Icons.home_repair_service_rounded,
+                  size: 54, color: Color(0xFF6366F1)),
+            ),
+            const SizedBox(height: 20),
+            const Text('צריכים שירות? כל מה שתצטרכו תמצאו כאן',
+                textAlign: TextAlign.center,
+                style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
                     color: Color(0xFF1A1A2E))),
             const SizedBox(height: 8),
-            Text(subtitle,
+            const Text('אל תתפשר על פחות מהטוב ביותר. בוא נתחיל?',
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 14, color: Color(0xFF94A3B8))),
-            if (!widget.isHistory) ...[
-              const SizedBox(height: 28),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6366F1),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 28, vertical: 14),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-                icon: const Icon(Icons.search, color: Colors.white),
-                label: const Text('הזמן שירות עכשיו',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15)),
-                onPressed: widget.onGoToSearch,
+            const SizedBox(height: 28),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6366F1),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 28, vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
               ),
-            ],
+              icon: const Icon(Icons.search, color: Colors.white),
+              label: const Text('הזמן שירות עכשיו',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15)),
+              onPressed: widget.onGoToSearch,
+            ),
           ],
         ),
       ),

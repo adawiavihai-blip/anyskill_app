@@ -1,24 +1,34 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'edit_profile_screen.dart';
 import 'provider_registration_wizard_screen.dart';
 import 'terms_of_service_screen.dart';
-import '../widgets/vip_confetti.dart';
+import 'privacy_policy_screen.dart';
+import '../widgets/banners_admin/v3/vip_upgrade_button.dart';
 import '../l10n/app_localizations.dart';
 import '../services/locale_provider.dart';
-import '../services/account_deletion_service.dart';
-import '../services/volunteer_service.dart';
+import '../services/cached_readers.dart';
 import '../widgets/xp_progress_bar.dart';
 import '../widgets/streak_badge.dart';
+import '../widgets/community/heart_display_helper.dart';
+import '../theme/community_theme.dart';
+import '../utils/gold_heart_helper.dart';
+import 'community/feature_flag.dart';
 import '../widgets/anyskill_logo.dart';
-import '../main.dart' show currentAppVersion, rootNavigatorKey;
+import '../main.dart' show currentAppVersion;
+import 'app_feedback_screen.dart';
+import 'account_settings_screen.dart';
 import 'favorites_screen.dart';
+import 'service_history_screen.dart';
 import 'phone_login_screen.dart';
 import '../features/pet_stay/screens/dog_profile_list_screen.dart';
 import '../services/user_roles.dart';
@@ -119,6 +129,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         .doc(authUser.uid)
         .update({'profileImage': photoUrl});
 
+    // §61 invalidation contract: bust the 5-min cache so favorites,
+    // chat header, BookingProfileAvatar etc. see the new avatar
+    // instead of the stale one.
+    CachedReaders.invalidateProvider(authUser.uid);
+
     _syncAttempted = false; // allow re-read on next stream event
 
     if (!mounted) return;
@@ -129,57 +144,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ));
   }
 
-  // ── Email Invoice Preference Toggle ────────────────────────────────────────
-  Widget _buildEmailInvoiceToggle(Map<String, dynamic> data) {
-    // Default: true (new accounts receive invoices by default — backwards compatible)
-    final receiveEmail = data['receiveEmailReceipts'] as bool? ?? true;
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: SwitchListTile.adaptive(
-        value: receiveEmail,
-        onChanged: (val) async {
-          final uid = FirebaseAuth.instance.currentUser?.uid;
-          if (uid == null) return;
-          try {
-            await FirebaseFirestore.instance
-                .collection('users')
-                .doc(uid)
-                .update({'receiveEmailReceipts': val});
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(val
-                    ? AppLocalizations.of(context).profInvoiceEmailOn
-                    : AppLocalizations.of(context).profInvoiceEmailOff),
-                duration: const Duration(seconds: 2),
-              ),
-            );
-          } catch (e) {
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(AppLocalizations.of(context).profSaveError(e.toString()))),
-            );
-          }
-        },
-        activeColor: const Color(0xFF10B981),
-        secondary: const Icon(Icons.receipt_long_rounded, color: Color(0xFF6366F1)),
-        title: Text(
-          AppLocalizations.of(context).profInvoiceEmailTitle,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        subtitle: Text(
-          receiveEmail
-              ? AppLocalizations.of(context).profInvoiceEmailSubOn
-              : AppLocalizations.of(context).profInvoiceEmailSubOff,
-          style: TextStyle(color: Colors.grey[600], fontSize: 12),
-        ),
-      ),
-    );
-  }
+  // Email Invoice + Sound Mute toggles moved to AccountSettingsScreen.
 
   // ── Logout ────────────────────────────────────────────────────────────────
   Future<void> _logout() async {
@@ -301,7 +266,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
-        title: Text(l10n.profileTitle, style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: _userStream,
+          builder: (context, snap) {
+            final data = snap.data?.data() ?? {};
+            final name = (data['name'] as String? ?? '').trim();
+            final greeting = _greetingForNow(l10n);
+            final text = name.isEmpty ? greeting : '$greeting $name';
+            return Text(text,
+                style: const TextStyle(fontWeight: FontWeight.bold));
+          },
+        ),
         centerTitle: false,
         elevation: 0,
         backgroundColor: Colors.white,
@@ -395,6 +370,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           return SingleChildScrollView(
             child: Column(
               children: [
+                // ── VIP upgrade card (provider only — pinned at top) ────────────
+                Padding(
+                  padding: const EdgeInsetsDirectional.fromSTEB(
+                      16, 12, 16, 0),
+                  child: VipUpgradeButton(),
+                ),
                 // ── Airbnb-style specialist header ──────────────────────────────
               Builder(builder: (_) {
                 // Try profileImage first, then fall back to Auth photoURL
@@ -409,14 +390,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 final isVerified  = data['isVerified'] as bool? ?? false;
                 final serviceType = data['serviceType'] as String? ?? '';
                 final aboutMe     = data['aboutMe'] as String? ?? '';
-                final isPromoted  = data['isPromoted'] as bool? ?? false;
-                final expiryTs    = data['promotionExpiryDate'] as Timestamp?;
-                final expiryDate  = expiryTs?.toDate();
-                final now         = DateTime.now();
-                final isVipActive = isPromoted && expiryDate != null && expiryDate.isAfter(now);
+                // ── Legacy VIP fields removed ─────────────────────────────
+                // The bottom VIP "action square" + `_showVipSheet()` + the
+                // `activateVipSubscription` CF used `isPromoted` + 30-day
+                // expiry. That system is being phased out in favor of the
+                // top-of-screen `VipUpgradeButton` (§51 Banners Studio)
+                // which writes to `vip_subscriptions/` and syncs the home
+                // carousel. Two parallel VIP entry points caused a real
+                // double-charge incident — provider paid via both buttons.
+                // See CLAUDE.md §51 follow-up.
                 final videoUrl    = data['verificationVideoUrl'] as String?;
                 final videoApproved = data['videoVerifiedByAdmin'] as bool? ?? false;
                 final hasVerifiedVideo = videoUrl != null && videoUrl.isNotEmpty && videoApproved;
+                // Self-uploaded intro video (max 60s) — what the provider
+                // controls themselves via the upload sheet on this screen.
+                // Separate from `verificationVideoUrl` (admin-uploaded /
+                // verified). When BOTH exist, we prefer the verified one
+                // for the public profile but the provider can play/edit
+                // their own from this screen.
+                final introVideoUrl  = data['introVideoUrl'] as String? ?? '';
+                final hasIntroVideo  = introVideoUrl.isNotEmpty;
+                // The card is "active" (purple icon, opens player) if EITHER
+                // the verified video or the self-uploaded intro video exists.
+                final hasAnyVideo    = hasVerifiedVideo || hasIntroVideo;
+                final playableVideoUrl = hasVerifiedVideo
+                    ? videoUrl
+                    : (hasIntroVideo ? introVideoUrl : null);
 
                 return Column(
                   children: [
@@ -523,22 +522,62 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                             color: const Color(0xFF6366F1).withValues(alpha: 0.5))
                                         : null,
                                   ),
+                                  // Phase C (v15.x): for v2 viewers with
+                                  // an active gold heart, the bottom-end
+                                  // overlay becomes the gold heart per
+                                  // mockup 09. v1 viewers + non-active
+                                  // hearts keep the legacy AnySkill brand
+                                  // icon, untouched.
                                   Positioned(
                                     bottom: 2,
                                     right: 2,
-                                    child: Container(
-                                      width: 28,
-                                      height: 28,
-                                      decoration: BoxDecoration(
-                                        color: Colors.white,
-                                        shape: BoxShape.circle,
-                                        boxShadow: [
-                                          BoxShadow(color: Colors.black.withValues(alpha: 0.14), blurRadius: 5),
-                                        ],
-                                      ),
-                                      padding: const EdgeInsets.all(4),
-                                      child: const AnySkillBrandIcon(size: 20),
-                                    ),
+                                    child: Builder(builder: (_) {
+                                      final viewerUid =
+                                          FirebaseAuth.instance.currentUser?.uid;
+                                      final showGoldHeart =
+                                          isCommunityV2EnabledFor(viewerUid) &&
+                                              GoldHeartHelper
+                                                  .hasActiveFromUserData(data);
+                                      if (showGoldHeart) {
+                                        return Container(
+                                          width: 28,
+                                          height: 28,
+                                          decoration: const BoxDecoration(
+                                            color: Colors.white,
+                                            shape: BoxShape.circle,
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: Color(0x40A87F2A),
+                                                blurRadius: 8,
+                                                offset: Offset(0, 2),
+                                              ),
+                                            ],
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: const Icon(
+                                            Icons.favorite,
+                                            color: CommunityColors.goldHeart,
+                                            size: 16,
+                                          ),
+                                        );
+                                      }
+                                      return Container(
+                                        width: 28,
+                                        height: 28,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          shape: BoxShape.circle,
+                                          boxShadow: [
+                                            BoxShadow(
+                                                color: Colors.black
+                                                    .withValues(alpha: 0.14),
+                                                blurRadius: 5),
+                                          ],
+                                        ),
+                                        padding: const EdgeInsets.all(4),
+                                        child: const AnySkillBrandIcon(size: 20),
+                                      );
+                                    }),
                                   ),
                                 ],
                               ),
@@ -557,9 +596,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ],
 
+                          // ── Phase C (v15.x): gold-heart days-left bar ─────
+                          // Mockup 09 element. Only shown to v2 viewers
+                          // with an active heart — uses
+                          // [GoldHeartHelper.daysUntilExpiry] which honours
+                          // the legacy fallback during the rollout window.
+                          if (isCommunityV2EnabledFor(
+                                  FirebaseAuth.instance.currentUser?.uid) &&
+                              GoldHeartHelper.hasActiveFromUserData(data)) ...[
+                            const SizedBox(height: 14),
+                            _GoldHeartActiveBar(userData: data),
+                          ],
+
                           // ── Community / Volunteer Badge ──────────────────────
-                          if (VolunteerService.hasActiveVolunteerBadge(data) ||
-                              data['volunteerHeart'] == true) ...[
+                          // Phase B (v15.x): viewer-gated. Own profile —
+                          // viewerUid == ownerUid, so the gate behaves as
+                          // expected (whitelisted owner sees v2 logic).
+                          if (shouldShowHeartFor(
+                            viewerUid: FirebaseAuth.instance.currentUser?.uid,
+                            ownerData: data,
+                          )) ...[
                             const SizedBox(height: 12),
                             Builder(builder: (_) {
                               final badges = data['communityBadges'] as List<dynamic>?;
@@ -620,15 +676,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                     const SizedBox(height: 16),
 
-                    // ── Action squares: Gallery + VIP (+ Video if approved) ─────
+                    // ── Action squares: Gallery + Video Intro (side-by-side) ─
+                    //
+                    // Mirrors the public expert profile layout — two equal
+                    // cards in a row so the provider gets visual parity
+                    // with what customers see. Tap the video card to:
+                    //   • play (when a video exists), OR
+                    //   • open the upload sheet (when nothing's uploaded).
+                    // Long-press the video card opens manage sheet
+                    // (replace / delete) — owner-only.
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Row(
                         children: [
-                          // Right square: גלריית עבודות
+                          // Gallery card
                           Expanded(
                             child: InkWell(
-                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => _SpecialistGalleryScreen(uid: user?.uid ?? ''))),
+                              onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => _SpecialistGalleryScreen(
+                                      uid: user?.uid ?? ''),
+                                ),
+                              ),
                               borderRadius: BorderRadius.circular(24),
                               child: Container(
                                 decoration: BoxDecoration(
@@ -638,66 +708,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     BoxShadow(
                                       color: Colors.black.withValues(alpha: 0.07),
                                       blurRadius: 20,
-                                      spreadRadius: 0,
                                       offset: const Offset(0, 6),
                                     ),
                                   ],
                                 ),
-                                padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 28, horizontal: 16),
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const Icon(Icons.photo_library_outlined, size: 32, color: Colors.black),
+                                    const Icon(Icons.photo_library_outlined,
+                                        size: 32, color: Colors.black),
                                     const SizedBox(height: 10),
                                     Text(
-                                      AppLocalizations.of(context).profWorkGallery,
+                                      AppLocalizations.of(context)
+                                          .profWorkGallery,
                                       textAlign: TextAlign.center,
-                                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.black),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          // Left square: VIP
-                          Expanded(
-                            child: InkWell(
-                              onTap: () => _showVipSheet(context, data, l10n),
-                              borderRadius: BorderRadius.circular(24),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: isVipActive ? const Color(0xFFFBBF24) : Colors.white,
-                                  borderRadius: BorderRadius.circular(24),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(alpha: 0.07),
-                                      blurRadius: 20,
-                                      spreadRadius: 0,
-                                      offset: const Offset(0, 6),
-                                    ),
-                                  ],
-                                  border: isVipActive ? null : Border.all(color: Colors.grey.shade200),
-                                ),
-                                padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.workspace_premium_rounded,
-                                      size: 32,
-                                      color: isVipActive ? Colors.white : Colors.amber[700],
-                                    ),
-                                    const SizedBox(height: 10),
-                                    Text(
-                                      isVipActive
-                                          ? AppLocalizations.of(context).profVipActive
-                                          : AppLocalizations.of(context).profJoinVip,
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
+                                      style: const TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
-                                        color: isVipActive ? Colors.white : Colors.black,
+                                        color: Colors.black,
                                       ),
                                     ),
                                   ],
@@ -705,61 +735,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                             ),
                           ),
+                          const SizedBox(width: 14),
+                          // Video Intro card (NEW — provider-controlled upload)
+                          Expanded(
+                            child: _ProviderVideoIntroCard(
+                              uid: user?.uid ?? '',
+                              introVideoUrl: introVideoUrl,
+                              hasVerifiedVideo: hasVerifiedVideo,
+                              verifiedVideoUrl: hasVerifiedVideo ? videoUrl : null,
+                              hasAnyVideo: hasAnyVideo,
+                              playableVideoUrl: playableVideoUrl,
+                            ),
+                          ),
                         ],
                       ),
                     ),
-
-                    // ── Video Intro square (only when approved) ────────────
-                    if (hasVerifiedVideo) ...[
-                      const SizedBox(height: 14),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: InkWell(
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => _VideoIntroScreen(videoUrl: videoUrl),
-                            ),
-                          ),
-                          borderRadius: BorderRadius.circular(24),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-                                begin: Alignment.centerRight,
-                                end: Alignment.centerLeft,
-                              ),
-                              borderRadius: BorderRadius.circular(24),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: const Color(0xFF6366F1).withValues(alpha: 0.25),
-                                  blurRadius: 16,
-                                  offset: const Offset(0, 6),
-                                ),
-                              ],
-                            ),
-                            padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.play_circle_fill_rounded, size: 28, color: Colors.white),
-                                const SizedBox(width: 10),
-                                Text(
-                                  AppLocalizations.of(context).profVideoIntro,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                const Icon(Icons.verified_rounded, size: 16, color: Colors.white70),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
 
                     const SizedBox(height: 20),
                   ],
@@ -788,43 +778,45 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
 
-                // ── My Dogs ───────────────────────────────────────────────
-                const SizedBox(height: 12),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 25),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(15),
-                      border: Border.all(color: Colors.grey.shade200),
-                    ),
-                    child: ListTile(
-                      leading: Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFEEF2FF),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Icon(Icons.pets_rounded,
-                            color: Color(0xFF6366F1)),
+                // ── My Dogs (customers only) ──────────────────────────────
+                if (data['isProvider'] != true && data['isPendingExpert'] != true) ...[
+                  const SizedBox(height: 12),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 25),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(color: Colors.grey.shade200),
                       ),
-                      title: Text(AppLocalizations.of(context).profMyDogs,
-                          style: const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: Text(AppLocalizations.of(context).profMyDogsSubtitle,
-                          style: TextStyle(
-                              color: Colors.grey[600], fontSize: 13)),
-                      trailing: const Icon(Icons.arrow_forward_ios_rounded,
-                          size: 15, color: Colors.grey),
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const DogProfileListScreen(),
+                      child: ListTile(
+                        leading: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEEF2FF),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.pets_rounded,
+                              color: Color(0xFF6366F1)),
+                        ),
+                        title: Text(AppLocalizations.of(context).profMyDogs,
+                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                        subtitle: Text(AppLocalizations.of(context).profMyDogsSubtitle,
+                            style: TextStyle(
+                                color: Colors.grey[600], fontSize: 13)),
+                        trailing: const Icon(Icons.arrow_forward_ios_rounded,
+                            size: 15, color: Colors.grey),
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const DogProfileListScreen(),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
+                ],
 
                 // ── Join as Provider CTA (clients only) ──
                 if (data['isProvider'] != true && data['isPendingExpert'] != true) ...[
@@ -911,7 +903,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       TextButton(
                         onPressed: () => Navigator.push(context,
                           MaterialPageRoute(builder: (_) =>
-                            const TermsOfServiceScreen(showAcceptButton: false))),
+                            const PrivacyPolicyScreen())),
                         child: Text(AppLocalizations.of(context).profPrivacyPolicy,
                           style: const TextStyle(fontSize: 13, color: Color(0xFF6366F1))),
                       ),
@@ -950,10 +942,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   );
                 }),
-                // ── Email Invoice Preference ──────────────────────────────
+                // ── Account Settings ─────────────────────────────────────
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 25),
-                  child: _buildEmailInvoiceToggle(data),
+                  child: OutlinedButton.icon(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const AccountSettingsScreen()),
+                    ),
+                    icon: const Icon(Icons.manage_accounts_rounded,
+                        size: 18, color: Color(0xFF6366F1)),
+                    label: const Text(
+                      'הגדרות חשבון',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF6366F1)),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                      side: const BorderSide(
+                          color: Color(0xFF6366F1), width: 1.5),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 // ── Logout ────────────────────────────────────────────────
@@ -973,17 +985,54 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                // ── Delete Account ────────────────────────────────────────
+                // ── Feedback & Ideas ──────────────────────────────────────
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 25),
                   child: OutlinedButton.icon(
-                    onPressed: () => _showDeleteAccountDialog(context),
-                    icon: const Icon(Icons.delete_forever_rounded, size: 18, color: Colors.red),
-                    label: Text(AppLocalizations.of(context).profDeleteAccount,
-                        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const AppFeedbackScreen()),
+                    ),
+                    icon: const Icon(Icons.auto_awesome_rounded,
+                        size: 18, color: Color(0xFF6366F1)),
+                    label: const Text(
+                      'הצעות ורעיונות לשיפור',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF6366F1)),
+                    ),
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 48),
-                      side: const BorderSide(color: Colors.red, width: 1.5),
+                      side: const BorderSide(
+                          color: Color(0xFF6366F1), width: 1.5),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // ── Terms of Use & Privacy Policy ─────────────────────────
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 25),
+                  child: OutlinedButton.icon(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const TermsOfServiceScreen(
+                              showAcceptButton: false)),
+                    ),
+                    icon: const Icon(Icons.description_outlined,
+                        size: 18, color: Color(0xFF6366F1)),
+                    label: const Text(
+                      'תנאי שימוש ומדיניות הפרטיות',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF6366F1)),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                      side: const BorderSide(
+                          color: Color(0xFF6366F1), width: 1.5),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14)),
                     ),
@@ -1006,6 +1055,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
         },
       ),
     );
+  }
+
+  String _greetingForNow(AppLocalizations l10n) {
+    final h = DateTime.now().hour;
+    if (h >= 5 && h < 12) return l10n.greetingMorning;
+    if (h >= 12 && h < 17) return l10n.greetingAfternoon;
+    if (h >= 17 && h < 21) return l10n.greetingEvening;
+    return l10n.greetingNight;
   }
 
   String _currentLangName(AppLocalizations l10n) {
@@ -1279,7 +1336,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               // Right card: שירות שהתקבל
               Expanded(
                 child: InkWell(
-                  onTap: () {},
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ServiceHistoryScreen(),
+                    ),
+                  ),
                   borderRadius: BorderRadius.circular(24),
                   child: Container(
                     decoration: BoxDecoration(
@@ -1363,11 +1425,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           const SizedBox(height: 24),
 
-          // ── Email Invoice Preference ──────────────────────────────────────
-          _buildEmailInvoiceToggle(data),
-
-          const SizedBox(height: 16),
-
           // ── Language Selector ─────────────────────────────────────────────
           Container(
             decoration: BoxDecoration(
@@ -1388,6 +1445,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           const SizedBox(height: 16),
 
+          // ── Account Settings ─────────────────────────────────────────────
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                  builder: (_) => const AccountSettingsScreen()),
+            ),
+            icon: const Icon(Icons.manage_accounts_rounded,
+                size: 18, color: Color(0xFF6366F1)),
+            label: const Text(
+              'הגדרות חשבון',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, color: Color(0xFF6366F1)),
+            ),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+              side: const BorderSide(color: Color(0xFF6366F1), width: 1.5),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
           // ── Logout ───────────────────────────────────────────────────────
           OutlinedButton.icon(
             onPressed: _logout,
@@ -1406,17 +1486,49 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           const SizedBox(height: 12),
 
-          // ── Delete Account ───────────────────────────────────────────────
+          // ── Feedback & Ideas ───────────────────────────────────────────
           OutlinedButton.icon(
-            onPressed: () => _showDeleteAccountDialog(context),
-            icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-            label: Text(
-              AppLocalizations.of(context).profDeleteAccount,
-              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                  builder: (_) => const AppFeedbackScreen()),
+            ),
+            icon: const Icon(Icons.auto_awesome_rounded,
+                size: 18, color: Color(0xFF6366F1)),
+            label: const Text(
+              'הצעות ורעיונות לשיפור',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF6366F1)),
             ),
             style: OutlinedButton.styleFrom(
               minimumSize: const Size(double.infinity, 48),
-              side: const BorderSide(color: Colors.red, width: 1.5),
+              side:
+                  const BorderSide(color: Color(0xFF6366F1), width: 1.5),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          // ── Terms of Use & Privacy Policy ────────────────────────────────
+          OutlinedButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) =>
+                      const TermsOfServiceScreen(showAcceptButton: false)),
+            ),
+            icon: const Icon(Icons.description_outlined,
+                size: 18, color: Color(0xFF6366F1)),
+            label: const Text(
+              'תנאי שימוש ומדיניות הפרטיות',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, color: Color(0xFF6366F1)),
+            ),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+              side: const BorderSide(color: Color(0xFF6366F1), width: 1.5),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14)),
             ),
@@ -1438,325 +1550,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _showVipSheet(BuildContext context, Map<String, dynamic> data, AppLocalizations l10n) {
-    final balance = (data['balance'] as num? ?? 0).toDouble();
-    final hasBalance = balance >= 99;
-    bool isLoading = false;
+  // _showVipSheet removed — was the bottom legacy VIP entry point that
+  // called `activateVipSubscription` CF (legacy `isPromoted` system).
+  // Replaced by the top-of-profile `VipUpgradeButton` widget which calls
+  // `purchaseVipWithCredits` and syncs the home tab carousel via
+  // `_runVipCarouselSync`. Removing this method also kills the
+  // duplicate-payment bug. See CLAUDE.md §51 follow-up.
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheet) => Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          ),
-          padding: EdgeInsets.fromLTRB(24, 16, 24, 24 + MediaQuery.of(ctx).viewInsets.bottom),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(colors: [Color(0xFFFFB347), Color(0xFFFFCC02)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.star_rounded, color: Colors.white, size: 28),
-                    const SizedBox(width: 10),
-                    Text(l10n.vipSheetHeader, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text("₪", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black87)),
-                  const Text("99", style: TextStyle(fontSize: 48, fontWeight: FontWeight.w900, color: Colors.black87, height: 1)),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 28),
-                    child: Text(l10n.vipPriceMonthly, style: const TextStyle(fontSize: 16, color: Colors.grey)),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                "${l10n.statBalance}: ₪${balance.toStringAsFixed(0)}",
-                style: TextStyle(color: hasBalance ? Colors.green[600] : Colors.red[600], fontWeight: FontWeight.w600, fontSize: 13),
-              ),
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(color: Colors.amber[50], borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.amber.shade200)),
-                child: Column(
-                  children: [
-                    ("🏆", l10n.vipBenefit1),
-                    ("✨", l10n.vipBenefit2),
-                    ("📈", l10n.vipBenefit3),
-                    ("🔥", l10n.vipBenefit4),
-                  ].map((b) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 3),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            Text(b.$2, style: const TextStyle(fontSize: 13)),
-                            const SizedBox(width: 8),
-                            Text(b.$1, style: const TextStyle(fontSize: 14)),
-                          ],
-                        ),
-                      )).toList(),
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: hasBalance ? const Color(0xFFFFC300) : Colors.grey[300],
-                    foregroundColor: hasBalance ? Colors.black87 : Colors.grey[500],
-                    minimumSize: const Size(double.infinity, 58),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    elevation: 0,
-                  ),
-                  onPressed: hasBalance && !isLoading
-                      ? () async {
-                          setSheet(() => isLoading = true);
-                          try {
-                            await FirebaseFunctions.instance.httpsCallable('activateVipSubscription').call();
-                            if (ctx.mounted) Navigator.pop(ctx);
-                            if (context.mounted) {
-                              VipConfetti.show(context);
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                                backgroundColor: const Color(0xFFFFC300),
-                                content: Text(l10n.vipActivationSuccess,
-                                    style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
-                                duration: const Duration(seconds: 4),
-                              ));
-                            }
-                          } catch (e) {
-                            if (ctx.mounted) {
-                              setSheet(() => isLoading = false);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(backgroundColor: Colors.red, content: Text("${l10n.errorGeneric}: $e")),
-                              );
-                            }
-                          }
-                        }
-                      : null,
-                  child: isLoading
-                      ? const SizedBox(width: 22, height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.black87))
-                      : Text(
-                          hasBalance ? l10n.vipActivateButton : l10n.vipInsufficientBalance,
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                ),
-              ),
-              if (!hasBalance) ...[
-                const SizedBox(height: 10),
-                Text(l10n.vipInsufficientTooltip,
-                    style: TextStyle(color: Colors.grey[500], fontSize: 12), textAlign: TextAlign.center),
-              ],
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ── Account Deletion ──────────────────────────────────────────────────────
-
-  /// Single-step deletion dialog — used by the AppBar trash-can icon.
-  /// Visible to ALL user types. Calls _deleteAccount directly on confirm.
-  /// First warning dialog.
-  void _showDeleteAccountDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            Text(AppLocalizations.of(context).profDeleteAccount,
-                style: const TextStyle(
-                    color: Colors.red, fontWeight: FontWeight.bold)),
-            const SizedBox(width: 8),
-            Icon(Icons.warning_amber_rounded, color: Colors.red[700]),
-          ],
-        ),
-        content: Text(
-          AppLocalizations.of(context).profDeleteConfirmBody,
-          textAlign: TextAlign.right,
-          style: const TextStyle(height: 1.5, fontSize: 14),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text(AppLocalizations.of(context).profCancel)),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _showFinalDeleteConfirmation(context);
-            },
-            child: Text(AppLocalizations.of(context).profContinue,
-                style: TextStyle(
-                    color: Colors.red[700], fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Second (final) confirmation dialog with loading state.
-  void _showFinalDeleteConfirmation(BuildContext context) {
-    bool isDeleting = false;   // hoisted so StatefulBuilder sees mutations
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialog) {
-          return AlertDialog(
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Text(AppLocalizations.of(context).profFinalConfirm,
-                    style: const TextStyle(
-                        color: Colors.red, fontWeight: FontWeight.bold)),
-                const SizedBox(width: 8),
-                const Icon(Icons.delete_forever_rounded, color: Colors.red),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  AppLocalizations.of(context).profDeleteFinalBody,
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(height: 1.5, fontSize: 13),
-                ),
-                if (isDeleting) ...[
-                  const SizedBox(height: 20),
-                  const Center(
-                      child: CircularProgressIndicator(color: Colors.red)),
-                ],
-              ],
-            ),
-            actions: isDeleting
-                ? []
-                : [
-                    TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: Text(AppLocalizations.of(context).profCancel)),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                      ),
-                      onPressed: () async {
-                        setDialog(() => isDeleting = true);
-                        await _deleteAccount(ctx);
-                      },
-                      child: Text(AppLocalizations.of(context).profDeletePermanent,
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-          );
-        },
-      ),
-    );
-  }
-
-  /// Runs the full deletion flow via [AccountDeletionService] and handles
-  /// every outcome: success, requires-recent-login, or unexpected error.
-  Future<void> _deleteAccount(BuildContext dialogContext) async {
-    final uid       = user?.uid ?? '';
-    final messenger = ScaffoldMessenger.of(context);
-    if (uid.isEmpty) return;
-
-    final result = await AccountDeletionService.deleteAccount(uid);
-
-    // Always pop the confirmation dialog first.
-    if (dialogContext.mounted) Navigator.pop(dialogContext);
-
-    switch (result.outcome) {
-      case DeletionOutcome.success:
-        // Auth user is gone — navigate to the login screen and clear the stack.
-        rootNavigatorKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const PhoneLoginScreen()),
-          (_) => false,
-        );
-
-      case DeletionOutcome.requiresReauth:
-        // Firebase rejected delete() because the session is too old.
-        // Show an explanatory dialog; user must sign out, re-login, then retry.
-        if (!mounted) return;
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Text(AppLocalizations.of(context).profReauthNeeded,
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(width: 8),
-                const Icon(Icons.lock_outline_rounded, color: Colors.orange),
-              ],
-            ),
-            content: Text(
-              AppLocalizations.of(context).profReauthBody,
-              textAlign: TextAlign.right,
-              style: const TextStyle(height: 1.5, fontSize: 14),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: Text(AppLocalizations.of(context).profCancel),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6366F1),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                ),
-                onPressed: () async {
-                  Navigator.pop(ctx);
-                  await FirebaseAuth.instance.signOut();
-                  rootNavigatorKey.currentState?.pushAndRemoveUntil(
-                    MaterialPageRoute(
-                        builder: (_) => const PhoneLoginScreen()),
-                    (_) => false,
-                  );
-                },
-                child: Text(AppLocalizations.of(context).profLogoutAndReauth),
-              ),
-            ],
-          ),
-        );
-
-      case DeletionOutcome.error:
-        messenger.showSnackBar(SnackBar(
-          content: Text(AppLocalizations.of(context).profDeleteError(result.errorMessage ?? '')),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ));
-    }
-  }
   /// Stat row used in the specialist Airbnb card:
   /// bold number + small coloured icon to its right + grey label below.
   Widget _specialistStat({
@@ -1923,6 +1723,365 @@ class _SpecialistGalleryScreen extends StatelessWidget {
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// Provider-owned video intro card — sits next to the gallery card on the
+// provider's own profile screen.
+//
+// States:
+//   ▸ no video yet            → indigo "+" CTA "הוסף וידאו היכרות"
+//   ▸ self-uploaded intro     → purple play icon, tap to play, long-press
+//                                opens manage sheet (replace / delete)
+//   ▸ admin-verified video    → same as above + verified checkmark badge.
+//                                In this state, "delete" only clears
+//                                `introVideoUrl` — the verified video
+//                                survives until the admin reverifies.
+//
+// Upload contract:
+//   path:     `intro_videos/{uid}/v_{ts}.{ext}`
+//   max:      60 seconds (enforced by ImagePicker.pickVideo.maxDuration)
+//   storage:  ≤ 50 MB (matches storage.rules:65)
+//   firestore: writes `users/{uid}.introVideoUrl` (and timestamps the
+//              upload via `introVideoUploadedAt`)
+//
+// Old uploads on Storage are NOT cleaned up automatically — each save
+// creates a new timestamped file. A future janitor CF can sweep stale
+// `intro_videos/{uid}/v_*` entries that aren't the current
+// `introVideoUrl`. Not critical at our scale.
+// ════════════════════════════════════════════════════════════════════════════
+class _ProviderVideoIntroCard extends StatefulWidget {
+  const _ProviderVideoIntroCard({
+    required this.uid,
+    required this.introVideoUrl,
+    required this.hasVerifiedVideo,
+    required this.verifiedVideoUrl,
+    required this.hasAnyVideo,
+    required this.playableVideoUrl,
+  });
+
+  final String uid;
+  final String introVideoUrl;
+  final bool hasVerifiedVideo;
+  final String? verifiedVideoUrl;
+  final bool hasAnyVideo;
+  final String? playableVideoUrl;
+
+  @override
+  State<_ProviderVideoIntroCard> createState() =>
+      _ProviderVideoIntroCardState();
+}
+
+class _ProviderVideoIntroCardState extends State<_ProviderVideoIntroCard> {
+  bool _busy = false;
+
+  Future<void> _onPrimaryTap() async {
+    if (_busy) return;
+    // Has a video → play it. Empty → start upload.
+    if (widget.hasAnyVideo && widget.playableVideoUrl != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              _VideoIntroScreen(videoUrl: widget.playableVideoUrl!),
+        ),
+      );
+    } else {
+      await _pickAndUpload();
+    }
+  }
+
+  Future<void> _onLongPress() async {
+    // No manage menu when nothing has been uploaded yet.
+    if (!widget.hasAnyVideo) return;
+    await _showManageSheet();
+  }
+
+  Future<void> _showManageSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius:
+            BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                AppLocalizations.of(context).profVideoIntro,
+                textDirection: TextDirection.rtl,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            if (widget.playableVideoUrl != null)
+              ListTile(
+                leading: const Icon(Icons.play_circle_fill_rounded,
+                    color: Color(0xFF6366F1)),
+                title: const Text('נגן וידאו',
+                    textDirection: TextDirection.rtl,
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => _VideoIntroScreen(
+                          videoUrl: widget.playableVideoUrl!),
+                    ),
+                  );
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.cloud_upload_rounded,
+                  color: Color(0xFF6366F1)),
+              title: const Text('החלף וידאו',
+                  textDirection: TextDirection.rtl,
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: const Text('עד 60 שניות',
+                  textDirection: TextDirection.rtl,
+                  style: TextStyle(fontSize: 12)),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                _pickAndUpload();
+              },
+            ),
+            // Allow delete ONLY when there's a self-uploaded video.
+            // The admin-verified one is untouchable from here.
+            if (widget.introVideoUrl.isNotEmpty)
+              ListTile(
+                leading:
+                    const Icon(Icons.delete_outline_rounded, color: Colors.red),
+                title: const Text('מחק וידאו',
+                    textDirection: TextDirection.rtl,
+                    style: TextStyle(
+                        fontWeight: FontWeight.w600, color: Colors.red)),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  _confirmDelete();
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        title: const Text('למחוק את הוידאו?',
+            textDirection: TextDirection.rtl),
+        content: const Text(
+          'הוידאו יוסר מהפרופיל הציבורי שלך. הקובץ עצמו לא יימחק מההיסטוריה ויהיה ניתן להעלות חדש בכל עת.',
+          textDirection: TextDirection.rtl,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: const Text('בטל'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dCtx, true),
+            child: const Text('מחק'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (!mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.uid)
+          .update({
+        'introVideoUrl': FieldValue.delete(),
+        'introVideoUploadedAt': FieldValue.delete(),
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('הוידאו נמחק')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('שגיאה במחיקה: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _pickAndUpload() async {
+    if (widget.uid.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      final XFile? file = await ImagePicker().pickVideo(
+        source: ImageSource.gallery,
+        maxDuration: const Duration(minutes: 1),
+      );
+      if (file == null) {
+        if (mounted) setState(() => _busy = false);
+        return;
+      }
+      final Uint8List bytes = await file.readAsBytes();
+      final ext = _extForName(file.name);
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final ref = FirebaseStorage.instance
+          .ref()
+          .child('intro_videos/${widget.uid}/v_$ts.$ext');
+      final metadata = SettableMetadata(contentType: _mimeForExt(ext));
+      await ref.putData(bytes, metadata);
+      final url = await ref.getDownloadURL();
+
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.uid)
+          .update({
+        'introVideoUrl': url,
+        'introVideoUploadedAt': FieldValue.serverTimestamp(),
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('הוידאו הועלה בהצלחה ✨')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('שגיאה בהעלאה: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  static String _extForName(String name) {
+    final lower = name.toLowerCase();
+    if (lower.endsWith('.mov')) return 'mov';
+    if (lower.endsWith('.webm')) return 'webm';
+    if (lower.endsWith('.m4v')) return 'm4v';
+    return 'mp4';
+  }
+
+  static String _mimeForExt(String ext) {
+    switch (ext) {
+      case 'mov':
+        return 'video/quicktime';
+      case 'webm':
+        return 'video/webm';
+      case 'm4v':
+        return 'video/x-m4v';
+      default:
+        return 'video/mp4';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const purple = Color(0xFF6366F1);
+    final hasVideo = widget.hasAnyVideo;
+    final iconData = hasVideo
+        ? Icons.play_circle_outline_rounded
+        : Icons.video_call_rounded;
+    final iconColor = _busy ? Colors.grey[400]! : purple;
+    final label = hasVideo
+        ? AppLocalizations.of(context).profVideoIntro
+        : 'הוסף וידאו היכרות';
+
+    return InkWell(
+      onTap: _busy ? null : _onPrimaryTap,
+      onLongPress: _busy ? null : _onLongPress,
+      borderRadius: BorderRadius.circular(24),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.07),
+              blurRadius: 20,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        padding:
+            const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                _busy
+                    ? const SizedBox(
+                        width: 32,
+                        height: 32,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2.5, color: purple),
+                      )
+                    : Icon(iconData, size: 32, color: iconColor),
+                if (widget.hasVerifiedVideo && !_busy)
+                  PositionedDirectional(
+                    bottom: -4,
+                    end: -6,
+                    child: Container(
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      padding: const EdgeInsets.all(1),
+                      child: const Icon(Icons.verified_rounded,
+                          size: 14, color: Color(0xFF22C55E)),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: hasVideo ? Colors.black : purple,
+              ),
+            ),
+            if (!hasVideo) ...[
+              const SizedBox(height: 4),
+              const Text(
+                'עד 60 שניות',
+                textAlign: TextAlign.center,
+                style:
+                    TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
 // ── Full-screen video intro player ───────────────────────────────────────────
 class _VideoIntroScreen extends StatefulWidget {
   final String videoUrl;
@@ -1994,6 +2153,81 @@ class _VideoIntroScreenState extends State<_VideoIntroScreen> {
                 ),
               )
             : const CircularProgressIndicator(color: Colors.white),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mockup 09 element: "לב זהב פעיל · עוד X ימים" bar.
+//
+// Rendered above the existing community-badge gradient on the user's own
+// profile, only for v2 viewers with an active gold heart. Visual style
+// matches the gradient gold container in mockup 09 (no progress bar — the
+// progress fraction lives on `MyVolunteeringScreen` per mockup 07).
+// ─────────────────────────────────────────────────────────────────────────────
+class _GoldHeartActiveBar extends StatelessWidget {
+  const _GoldHeartActiveBar({required this.userData});
+  final Map<String, dynamic> userData;
+
+  @override
+  Widget build(BuildContext context) {
+    final daysLeft = GoldHeartHelper.daysUntilExpiryFromUserData(userData);
+    if (daysLeft == null) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0x10A87F2A), // gold @ 6%
+            Color(0x05A87F2A), // gold @ 2%
+          ],
+        ),
+        border: Border.all(
+          color: const Color(0x33A87F2A), // gold @ 20%
+          width: 0.5,
+        ),
+        borderRadius: const BorderRadius.all(CommunityRadius.field),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.favorite,
+            size: 14,
+            color: CommunityColors.goldHeart,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'לב זהב פעיל',
+                  style: TextStyle(
+                    fontFamily: CommunityType.fontFamily,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.1,
+                    color: CommunityColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  'מתנדב/ת פעיל/ה · עוד $daysLeft ימים',
+                  style: const TextStyle(
+                    fontFamily: CommunityType.fontFamily,
+                    fontSize: 11,
+                    color: CommunityColors.textTertiary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

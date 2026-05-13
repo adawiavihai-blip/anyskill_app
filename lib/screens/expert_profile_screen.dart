@@ -2,24 +2,33 @@
 import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'account_settings_screen.dart';
 import 'chat_screen.dart';
 import '../constants/quick_tags.dart';
 import '../services/cancellation_policy_service.dart';
 import '../services/cache_service.dart';
+import '../services/cached_readers.dart';
+import '../services/location_service.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/anyskill_logo.dart';
 import '../widgets/favorite_button.dart';
 import '../services/service_architect.dart';
 import '../models/pricing_model.dart';
 import '../widgets/xp_progress_bar.dart';
+import '../widgets/pro_badge.dart';
+import '../widgets/primary_cta.dart';
 import '../utils/safe_image_provider.dart';
+import '../utils/profile_guard.dart';
+import '../widgets/community/heart_display_helper.dart';
 import '../constants.dart' show appVersion;
 import '../widgets/price_list_widget.dart';
 import '../widgets/provider_category_tags_display.dart';
@@ -30,6 +39,22 @@ import '../features/pet_stay/models/schedule_item.dart';
 import '../features/pet_stay/services/pet_stay_service.dart';
 import '../features/pet_stay/services/schedule_generator.dart';
 import '../features/pet_stay/widgets/dog_picker_section.dart';
+import '../models/massage_profile.dart';
+import '../models/pest_control_profile.dart';
+import '../models/delivery_profile.dart';
+import '../models/cleaning_profile.dart';
+import '../models/handyman_profile.dart';
+import '../models/fitness_trainer_profile.dart';
+import '../models/babysitter_profile.dart';
+import '../models/motorcycle_tow_profile.dart';
+import 'massage/build_your_treatment_block.dart';
+import 'pest_control/pest_booking_block.dart';
+import 'delivery/delivery_booking_block.dart';
+import 'cleaning/cleaning_booking_block.dart';
+import 'handyman/handyman_booking_block.dart';
+import 'fitness_trainer/fitness_trainer_booking_block.dart';
+import 'babysitter/babysitter_booking_block.dart';
+import 'motorcycle_tow/motorcycle_tow_booking_block.dart';
 
 // Brand tokens
 const _kPurple     = Color(0xFF6366F1);
@@ -96,6 +121,12 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   /// booking time. Irrelevant for dog-walker (single session).
   DateTime? _petStayEndDate;
 
+  /// Customer's current GPS position — used to compute distance to the
+  /// provider in the stats column. Seeded from LocationService.cached
+  /// immediately; re-fetched via requestAndGet if null so we don't wait
+  /// on some other screen to have requested permission first.
+  Position? _myPosition;
+
   final List<String> _timeSlots = [
     "08:00", "09:00", "10:00", "11:00",
     "14:00", "15:00", "16:00", "17:00", "18:00", "19:00",
@@ -105,6 +136,54 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   void initState() {
     super.initState();
     initializeDateFormatting('he_IL', null);
+    _initMyPosition();
+    // Flash Auction no longer routes through this screen — it direct-books
+    // via `FlashAuctionService.bookFromOffer` from FlashAuctionOffersScreen.
+    // See CLAUDE.md §57.
+  }
+
+  /// Seed from cache (instant) or request actively with retry. Logs to
+  /// console so you can see in DevTools why distance isn't resolving.
+  /// Retries once after 1.5s if the first attempt returns null — this
+  /// covers the web case where the browser needs a beat to resolve
+  /// permission state on first call.
+  Future<void> _initMyPosition() async {
+    final cached = LocationService.cached;
+    // ignore: avoid_print
+    print('[ExpertProfile/distance] LocationService.cached = '
+        '${cached == null ? "null" : "(${cached.latitude}, ${cached.longitude})"}');
+    if (cached != null) {
+      if (mounted) setState(() => _myPosition = cached);
+      return;
+    }
+    if (!mounted) return;
+    Position? pos;
+    try {
+      pos = await LocationService.requestAndGet(context);
+      // ignore: avoid_print
+      print('[ExpertProfile/distance] requestAndGet (attempt 1) returned = '
+          '${pos == null ? "null" : "(${pos.latitude}, ${pos.longitude})"}');
+    } catch (e) {
+      // ignore: avoid_print
+      print('[ExpertProfile/distance] requestAndGet (attempt 1) threw: $e');
+    }
+
+    // Retry once — sometimes web geolocation needs a beat to resolve state
+    if (pos == null && mounted) {
+      await Future.delayed(const Duration(milliseconds: 1500));
+      if (!mounted) return;
+      try {
+        pos = await LocationService.getIfGranted();
+        // ignore: avoid_print
+        print('[ExpertProfile/distance] getIfGranted (attempt 2) returned = '
+            '${pos == null ? "null (permission denied or service unavailable)" : "(${pos.latitude}, ${pos.longitude})"}');
+      } catch (e) {
+        // ignore: avoid_print
+        print('[ExpertProfile/distance] getIfGranted (attempt 2) threw: $e');
+      }
+    }
+
+    if (mounted && pos != null) setState(() => _myPosition = pos);
   }
 
   /// v10.5.0: Loads user doc + merges listing-specific fields when listingId
@@ -153,7 +232,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     final categoryName = (userData['serviceType'] as String? ?? '').trim();
     if (categoryName.isNotEmpty && categoryName != _lastSchemaCategory) {
       try {
-        final schema = await loadServiceSchemaFor(categoryName);
+        // §61: cached read — 30 min TTL. Schema changes via Categories v3
+        // admin call CachedReaders.invalidateServiceSchema(name) to bust.
+        final schema = await CachedReaders.serviceSchemaForCategory(categoryName);
         if (mounted) {
           setState(() {
             _serviceSchema = schema;
@@ -244,6 +325,14 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     }
 
     if (_isProcessing) return false;
+
+    // ── Profile completeness gate ────────────────────────────────────────
+    // Customer must have name + verified phone + email + profile photo
+    // before any service can be booked. ProfileGuard handles the blocking
+    // dialog and the navigation to Edit Profile when fields are missing.
+    if (!await ProfileGuard.ensureComplete(context)) {
+      return false;
+    }
 
     // ── Anti-fraud: block self-booking ───────────────────────────────────
     final selfUid = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -404,6 +493,72 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
           if (_serviceSchema.priceLocked) 'flagPriceLocked': true,
           if (_serviceSchema.requireVisualDiagnosis)
             'flagRequireVisualDiagnosis': true,
+          if (_massagePreferences != null)
+            'massagePreferences': _massagePreferences!.toMap(),
+          if (_massagePreferences != null)
+            'priceBreakdown': {
+              'basePrice': _massageTotalPrice,
+              'total': totalPrice,
+            },
+          if (_pestControlPreferences != null)
+            'pestControlPreferences': _pestControlPreferences!.toMap(),
+          if (_pestControlPreferences != null)
+            'priceBreakdown': {
+              'basePrice': _pestControlTotalPrice,
+              'total': totalPrice,
+            },
+          if (_deliveryPreferences != null)
+            'deliveryPreferences': _deliveryPreferences!.toMap(),
+          if (_deliveryPreferences != null)
+            'priceBreakdown': {
+              'basePrice': _deliveryTotalPrice,
+              'total': totalPrice,
+            },
+          if (_cleaningPreferences != null)
+            'cleaningPreferences': _cleaningPreferences!.toMap(),
+          if (_cleaningPreferences != null)
+            'priceBreakdown': {
+              'basePrice': _cleaningTotalPrice,
+              'total': totalPrice,
+            },
+          if (_handymanPreferences != null)
+            'handymanPreferences': _handymanPreferences!.toMap(),
+          if (_handymanPreferences != null)
+            'priceBreakdown': {
+              'basePrice': _handymanTotalPrice,
+              'total': totalPrice,
+            },
+          if (_fitnessPackage != null)
+            'fitnessTrainerPreferences': {
+              'packageId': _fitnessPackage!.id,
+              'packageName': _fitnessPackage!.name,
+              'packageType': _fitnessPackage!.type.name,
+              'sessions': _fitnessPackage!.sessions,
+              'durationMinutes': _fitnessPackage!.durationMinutes,
+              'price': _fitnessPackage!.price,
+              if (_fitnessPackage!.discount != null)
+                'discount': _fitnessPackage!.discount,
+              'isPopular': _fitnessPackage!.isPopular,
+            },
+          if (_fitnessPackage != null)
+            'priceBreakdown': {
+              'basePrice': _fitnessTotalPrice,
+              'total': totalPrice,
+            },
+          if (_babysitterPreferences != null)
+            'babysitterPreferences': _babysitterPreferences!.toMap(),
+          if (_babysitterPreferences != null)
+            'priceBreakdown': {
+              'basePrice': _babysitterTotalPrice,
+              'total': totalPrice,
+            },
+          if (_motorcycleTowPreferences != null)
+            'motorcycleTowPreferences': _motorcycleTowPreferences!.toMap(),
+          if (_motorcycleTowPreferences != null)
+            'priceBreakdown': {
+              'basePrice': _motorcycleTowTotalPrice,
+              'total': totalPrice,
+            },
         });
 
         // WRITE: PetStay snapshot + schedule (Pet Stay Tracker v13.0.0).
@@ -650,7 +805,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         'userId': uid,
         'createdAt': FieldValue.serverTimestamp(),
         'priority': 'high',
-        'title': '🔥 לקוח ניסה להזמין מומחה דמו',
+        'title': '🔥 לקוח ניסה להזמין נותן שירות דמו',
         'detail':
             '$customerName רוצה להזמין את ${widget.expertName} ($demoCategory)',
         'expireAt': Timestamp.fromDate(
@@ -1052,6 +1207,96 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Share — lets a customer recommend this provider's profile (WhatsApp +
+  // copy-link). Mirrors profile_screen.dart `_shareProfile` but with text
+  // written from a customer's perspective ("found a great provider..."
+  // instead of the provider promoting themselves).
+  // ─────────────────────────────────────────────────────────────────────────
+
+  void _shareExpertProfile() {
+    final String profileLink =
+        'https://anyskill-6fdf3.web.app/#/expert?id=${widget.expertId}';
+    final String shareText =
+        'מצאתי נותן שירות מעולה ב-AnySkill — ${widget.expertName}. '
+        'כדאי לבדוק את הפרופיל: $profileLink';
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 15),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.all(20.0),
+              // RTL inherited from MaterialApp locale — no need to pass
+              // textDirection (intl import in this file shadows
+              // dart:ui's TextDirection enum).
+              child: Text(
+                'שתף את הפרופיל',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+            ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFF25D366),
+                child: Icon(Icons.chat_bubble_outline,
+                    color: Colors.white, size: 20),
+              ),
+              title: const Text('שתף ב-WhatsApp'),
+              onTap: () async {
+                final messenger = ScaffoldMessenger.of(context);
+                Navigator.pop(sheetCtx);
+                final whatsappUrl =
+                    'https://wa.me/?text=${Uri.encodeComponent(shareText)}';
+                try {
+                  final uri = Uri.parse(whatsappUrl);
+                  if (await canLaunchUrl(uri)) {
+                    await launchUrl(uri,
+                        mode: LaunchMode.externalApplication);
+                  } else {
+                    throw 'Could not launch WhatsApp';
+                  }
+                } catch (_) {
+                  messenger.showSnackBar(const SnackBar(
+                    content: Text('פתיחת WhatsApp נכשלה'),
+                  ));
+                }
+              },
+            ),
+            ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Colors.blue,
+                child: Icon(Icons.copy, color: Colors.white),
+              ),
+              title: const Text('העתק קישור'),
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: profileLink));
+                Navigator.pop(sheetCtx);
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('הקישור הועתק'),
+                ));
+              },
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // UI: Calendar (unchanged logic, updated style)
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -1229,7 +1474,22 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
               final slot       = slots[index];
               final isBooked   = _bookedSlots.contains(slot);
               final isSelected = _selectedTimeSlot == slot;
-              return GestureDetector(
+              // Semantics: time slot chip. Critical because:
+              //   - The visual: a colored pill. Without Semantics, screen
+              //     readers announce ONLY the time string (e.g. "10:00")
+              //     with no hint that it's selectable, booked, or selected.
+              //   - selected state needs to be announced so blind users
+              //     know which one they picked.
+              //   - booked state must be announced so users don't try to
+              //     tap an unavailable slot in vain.
+              return Semantics(
+                button: !isBooked,
+                selected: isSelected,
+                enabled: !isBooked,
+                label: isBooked
+                    ? '$slot — already booked'
+                    : (isSelected ? '$slot, selected' : slot),
+                child: GestureDetector(
                 onTap: isBooked
                     ? null  // tapping a booked slot does nothing
                     : () => setState(() => _selectedTimeSlot = slot),
@@ -1268,6 +1528,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                 fontWeight: FontWeight.bold)),
                   ),
                 ),
+              ),
               );
             },
           ),
@@ -2621,29 +2882,18 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                 ),
               ),
             ],
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                      (sheetBusy || !canConfirm())
-                          ? Colors.grey
-                          : _kPurple,
-                  minimumSize: const Size(double.infinity, 54),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                  elevation: 0),
-              icon: sheetBusy
-                  ? const SizedBox(
-                      width: 18, height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : const Icon(Icons.lock_rounded,
-                      color: Colors.white, size: 18),
-              label: Text(l10n.expertConfirmPaymentButton,
-                  style: const TextStyle(
-                      fontSize: 16,
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold)),
-              onPressed: (sheetBusy || !canConfirm())
+            // The most critical button in the app — Pay & Secure escrows
+            // real money. Migrated to PrimaryCTA in §59 — it has built-in
+            // Semantics (role=button + enabled state + hint), loading spinner,
+            // and disabled-grey treatment, all matching the WCAG/EAA spec.
+            PrimaryCTA(
+              label: l10n.expertConfirmPaymentButton,
+              icon: Icons.lock_rounded,
+              variant: PrimaryCTAVariant.primary,
+              loading: sheetBusy,
+              height: 54,
+              semanticHint: 'Escrows the booking total until job is approved',
+              onPressed: !canConfirm()
                   ? null
                   : () async {
                       setSheetState(() => sheetBusy = true);
@@ -2842,6 +3092,266 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // Section header helper
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ── Massage Treatment Block helpers ────────────────────────────────────
+
+  MassageBookingPreferences? _massagePreferences;
+  double _massageTotalPrice = 0;
+  PestControlBookingPreferences? _pestControlPreferences;
+  double _pestControlTotalPrice = 0;
+  DeliveryBookingPreferences? _deliveryPreferences;
+  double _deliveryTotalPrice = 0;
+  CleaningBookingPreferences? _cleaningPreferences;
+  HandymanBookingPreferences? _handymanPreferences;
+  double _handymanTotalPrice = 0;
+  double _cleaningTotalPrice = 0;
+  PricingPackage? _fitnessPackage;
+  double _fitnessTotalPrice = 0;
+  BabysitterBookingPreferences? _babysitterPreferences;
+  double _babysitterTotalPrice = 0;
+  MotorcycleTowBookingPreferences? _motorcycleTowPreferences;
+  double _motorcycleTowTotalPrice = 0;
+
+  bool _hasMassageProfile(Map<String, dynamic> data) {
+    final serviceType = (data['serviceType'] as String? ?? '').trim();
+    if (!isMassageCategory(serviceType)) return false;
+    final mp = data['massageProfile'] as Map?;
+    return mp != null && (mp['specialties'] as List?)?.isNotEmpty == true;
+  }
+
+  Widget _buildMassageTreatmentBlock(Map<String, dynamic> data) {
+    final mp = MassageProfile.fromMap(
+        Map<String, dynamic>.from(data['massageProfile'] as Map));
+    final providerName = data['name'] as String? ?? '';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: BuildYourTreatmentBlock(
+        massageProfile: mp,
+        providerName: providerName,
+        providerId: widget.expertId,
+        onPreferencesChanged: (prefs) {
+          _massagePreferences = prefs;
+        },
+        onTotalChanged: (total) {
+          setState(() => _massageTotalPrice = total);
+        },
+      ),
+    );
+  }
+
+  bool _hasPestControlProfile(Map<String, dynamic> data) {
+    final serviceType = (data['serviceType'] as String? ?? '').trim();
+    if (!isPestControlCategory(serviceType)) return false;
+    final pp = data['pestControlProfile'] as Map?;
+    return pp != null && (pp['pestTypes'] as List?)?.isNotEmpty == true;
+  }
+
+  Widget _buildPestBookingBlock(Map<String, dynamic> data) {
+    final pp = PestControlProfile.fromMap(
+        Map<String, dynamic>.from(data['pestControlProfile'] as Map));
+    final providerName = data['name'] as String? ?? '';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: PestBookingBlock(
+        pestProfile: pp,
+        providerName: providerName,
+        providerId: widget.expertId,
+        onPreferencesChanged: (prefs) {
+          _pestControlPreferences = prefs;
+        },
+        onTotalChanged: (total) {
+          setState(() => _pestControlTotalPrice = total);
+        },
+      ),
+    );
+  }
+
+  bool _hasDeliveryProfile(Map<String, dynamic> data) {
+    final serviceType = (data['serviceType'] as String? ?? '').trim();
+    if (!isDeliveryCategory(serviceType)) return false;
+    final dp = data['deliveryProfile'] as Map?;
+    return dp != null && (dp['vehicles'] as List?)?.isNotEmpty == true;
+  }
+
+  Widget _buildDeliveryBookingBlock(Map<String, dynamic> data) {
+    final dp = DeliveryProfile.fromMap(
+        Map<String, dynamic>.from(data['deliveryProfile'] as Map));
+    final providerName = data['name'] as String? ?? '';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: DeliveryBookingBlock(
+        expertId: widget.expertId,
+        expertName: providerName,
+        deliveryProfile: dp,
+        onChanged: (prefs, total) {
+          _deliveryPreferences = prefs;
+          if (total != _deliveryTotalPrice) {
+            setState(() => _deliveryTotalPrice = total);
+          }
+        },
+      ),
+    );
+  }
+
+  bool _hasCleaningProfile(Map<String, dynamic> data) {
+    final serviceType = (data['serviceType'] as String? ?? '').trim();
+    if (!isCleaningCategory(serviceType)) return false;
+    final cp = data['cleaningProfile'] as Map?;
+    return cp != null &&
+        ((cp['cleaningTypes'] as List?)?.isNotEmpty == true);
+  }
+
+  bool _hasHandymanProfile(Map<String, dynamic> data) {
+    final serviceType = (data['serviceType'] as String? ?? '').trim();
+    if (!isHandymanCategory(serviceType)) return false;
+    final hp = data['handymanProfile'] as Map?;
+    if (hp == null) return false;
+    final specs = hp['specialties'] as List?;
+    if (specs == null || specs.isEmpty) return false;
+    return specs.whereType<Map>().any((m) => m['active'] == true);
+  }
+
+  Widget _buildHandymanBookingBlock(Map<String, dynamic> data) {
+    final hp = HandymanProfile.fromMap(
+        Map<String, dynamic>.from(data['handymanProfile'] as Map));
+    final providerName = data['name'] as String? ?? '';
+    final providerAvatar = data['profileImage'] as String?;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: HandymanBookingBlock(
+        expertId: widget.expertId,
+        expertName: providerName,
+        expertAvatarUrl: providerAvatar,
+        handymanProfile: hp,
+        onChanged: (prefs, total) {
+          _handymanPreferences = prefs;
+          if (total != _handymanTotalPrice) {
+            setState(() => _handymanTotalPrice = total);
+          }
+        },
+      ),
+    );
+  }
+
+  bool _hasFitnessTrainerProfile(Map<String, dynamic> data) {
+    final serviceType = (data['serviceType'] as String? ?? '').trim();
+    if (!isFitnessTrainerCategory(serviceType)) return false;
+    final fp = data['fitnessTrainerProfile'] as Map?;
+    if (fp == null) return false;
+    final specs = fp['selectedSpecialties'] as List?;
+    return specs != null && specs.isNotEmpty;
+  }
+
+  bool _hasBabysitterProfile(Map<String, dynamic> data) {
+    final serviceType = (data['serviceType'] as String? ?? '').trim();
+    if (!isBabysitterCategory(serviceType)) return false;
+    final bp = data['babysitterProfile'] as Map?;
+    return bp != null;
+  }
+
+  Widget _buildBabysitterBookingBlock(Map<String, dynamic> data) {
+    final bp = BabysitterProfile.fromMap(
+        Map<String, dynamic>.from(data['babysitterProfile'] as Map));
+    final providerName = data['name'] as String? ?? '';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: BabysitterBookingBlock(
+        profile: bp,
+        providerName: providerName,
+        providerId: widget.expertId,
+        onPreferencesChanged: (prefs) {
+          _babysitterPreferences = prefs;
+        },
+        onTotalChanged: (total) {
+          if (total != _babysitterTotalPrice) {
+            setState(() => _babysitterTotalPrice = total);
+          }
+        },
+      ),
+    );
+  }
+
+  bool _hasMotorcycleTowProfile(Map<String, dynamic> data) {
+    final serviceType = (data['serviceType'] as String? ?? '').trim();
+    if (!isMotorcycleTowingCategory(serviceType)) return false;
+    final mp = data['motorcycleTowProfile'] as Map?;
+    if (mp == null) return false;
+    final ids = mp['bikeTypeIds'] as List?;
+    return ids != null && ids.isNotEmpty;
+  }
+
+  Widget _buildMotorcycleTowBookingBlock(Map<String, dynamic> data) {
+    final mp = MotorcycleTowProfile.fromMap(
+        Map<String, dynamic>.from(data['motorcycleTowProfile'] as Map));
+    final providerName = data['name'] as String? ?? '';
+    final providerInitial = providerName.isNotEmpty
+        ? providerName.characters.first
+        : '?';
+    final rating = (data['rating'] as num?)?.toDouble();
+    final reviewsCount = (data['reviewsCount'] as num?)?.toInt();
+    final isOnline = data['isOnline'] == true;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: MotorcycleTowBookingBlock(
+        expertId: widget.expertId,
+        expertName: providerName,
+        expertAvatarInitial: providerInitial,
+        profile: mp,
+        rating: rating,
+        reviewsCount: reviewsCount,
+        isOnline: isOnline,
+        onChanged: (prefs, total) {
+          _motorcycleTowPreferences = prefs;
+          if (total != _motorcycleTowTotalPrice) {
+            setState(() => _motorcycleTowTotalPrice = total);
+          }
+        },
+      ),
+    );
+  }
+
+  Widget _buildFitnessTrainerBookingBlock(Map<String, dynamic> data) {
+    final fp = FitnessTrainerProfile.fromMap(
+        Map<String, dynamic>.from(data['fitnessTrainerProfile'] as Map));
+    final providerName = data['name'] as String? ?? '';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: FitnessTrainerBookingBlock(
+        profile: fp,
+        trainerId: widget.expertId,
+        trainerName: providerName,
+        onPackageSelected: (pkg) {
+          final newTotal = pkg.price.toDouble();
+          _fitnessPackage = pkg;
+          if (newTotal != _fitnessTotalPrice) {
+            setState(() => _fitnessTotalPrice = newTotal);
+          }
+        },
+      ),
+    );
+  }
+
+  Widget _buildCleaningBookingBlock(Map<String, dynamic> data) {
+    final cp = CleaningProfile.fromMap(
+        Map<String, dynamic>.from(data['cleaningProfile'] as Map));
+    final providerName = data['name'] as String? ?? '';
+    final providerAvatar = data['profileImage'] as String?;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: CleaningBookingBlock(
+        expertId: widget.expertId,
+        expertName: providerName,
+        expertAvatarUrl: providerAvatar,
+        cleaningProfile: cp,
+        onChanged: (prefs, total) {
+          _cleaningPreferences = prefs;
+          if (total != _cleaningTotalPrice) {
+            setState(() => _cleaningTotalPrice = total);
+          }
+        },
+      ),
+    );
+  }
+
   Widget _sectionHeader(String title, {Widget? trailing}) => Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: Row(
@@ -2885,7 +3395,13 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     final imgProvider  = safeImageProvider(profileImg);
     final name         = data['name'] as String? ?? widget.expertName;
     final isVerified   = data['isVerified'] == true;
-    final isVolunteer  = data['isVolunteer'] == true || data['volunteerHeart'] == true;
+    // Phase B (v15.x): viewer-gated. v2 viewers see the new 30-day-expiry
+    // semantics; v1 viewers keep the legacy permanent-heart behavior.
+    final isVolunteer  = shouldShowHeartFor(
+      viewerUid: FirebaseAuth.instance.currentUser?.uid,
+      ownerData: data,
+    );
+    final isAnySkillPro = data['isAnySkillPro'] == true;
     final serviceType  = data['serviceType'] as String? ?? '';
     final bio          = data['aboutMe'] as String? ?? data['bio'] as String? ?? '';
     final xp           = (data['xp'] as num? ?? 0).toInt();
@@ -3003,45 +3519,64 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                         );
                       },
                     ),
+                    // ── Distance from customer (km) ────────────────────────
+                    // Uses LocationService.cached (populated on app start via
+                    // LocationService.init + permission flow). Falls back to
+                    // the provider's latitude/longitude fields on the user
+                    // doc. If either side is unknown the row is hidden so
+                    // we don't render "—" noise.
+                    _buildDistanceRow(data),
                   ],
                 ),
               ),
               const SizedBox(width: 16),
-              // ── RIGHT: profile photo + volunteer heart overlay ──────────
-              Stack(
-                clipBehavior: Clip.none,
+              // ── RIGHT: profile photo + volunteer heart overlay + Pro badge ─
+              Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircleAvatar(
-                    radius: 52,
-                    backgroundColor: imgProvider != null
-                        ? _kPurpleSoft
-                        : const Color(0xFFE5E7EB),
-                    backgroundImage: imgProvider,
-                    child: imgProvider != null
-                        ? null
-                        : Text(
-                            name.isNotEmpty ? name[0].toUpperCase() : '?',
-                            style: const TextStyle(
-                                fontSize: 34,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF374151)),
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      CircleAvatar(
+                        radius: 52,
+                        backgroundColor: imgProvider != null
+                            ? _kPurpleSoft
+                            : const Color(0xFFE5E7EB),
+                        backgroundImage: imgProvider,
+                        child: imgProvider != null
+                            ? null
+                            : Text(
+                                name.isNotEmpty ? name[0].toUpperCase() : '?',
+                                style: const TextStyle(
+                                    fontSize: 34,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF374151)),
+                          ),
                       ),
-                  ),
-                  // ── Golden heart overlay for volunteers ──────────────────
-                  if (isVolunteer)
-                    Positioned(
-                      bottom: -2,
-                      right: -2,
-                      child: Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
+                      // ── Golden heart overlay for volunteers ──────────────
+                      if (isVolunteer)
+                        Positioned(
+                          bottom: -2,
+                          right: -2,
+                          child: Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.favorite_rounded,
+                                color: Color(0xFFD4AF37), size: 18),
+                          ),
                         ),
-                        child: const Icon(Icons.favorite_rounded,
-                            color: Color(0xFFD4AF37), size: 18),
-                      ),
-                    ),
+                    ],
+                  ),
+                  // ── AnySkill Pro badge (below the avatar) ────────────────
+                  // Only rendered when the provider meets all 4 criteria.
+                  // Tap opens the 4-criteria explanation bottom sheet.
+                  if (isAnySkillPro) ...[
+                    const SizedBox(height: 10),
+                    const ProBadge(),
+                  ],
                 ],
               ),
             ],
@@ -3092,18 +3627,80 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     );
   }
 
+  /// Distance-from-you stat row under the volunteer counter. Reads the
+  /// customer's position from `_myPosition` (seeded by `_initMyPosition`,
+  /// which requests permission if cache is empty) — NOT from the static
+  /// `LocationService.cached` directly, so this screen owns its own fetch
+  /// lifecycle instead of depending on whichever screen ran first.
+  Widget _buildDistanceRow(Map<String, dynamic> data) {
+    final myPos = _myPosition ?? LocationService.cached;
+    final providerLat = (data['latitude'] as num?)?.toDouble();
+    final providerLng = (data['longitude'] as num?)?.toDouble();
+
+    // ignore: avoid_print
+    print('[ExpertProfile/distance] compute — '
+        'my=${myPos == null ? "null" : "(${myPos.latitude}, ${myPos.longitude})"} '
+        'provider=(${providerLat ?? "null"}, ${providerLng ?? "null"}) '
+        'raw latitude=${data['latitude']} longitude=${data['longitude']}');
+
+    String label;
+    Color color = const Color(0xFF10B981);
+
+    if (myPos == null) {
+      label = 'מחשב מרחק...';
+      color = const Color(0xFF9CA3AF);
+    } else if (providerLat == null || providerLng == null) {
+      label = 'מרחק לא ידוע';
+      color = const Color(0xFF9CA3AF);
+    } else {
+      try {
+        final meters = Geolocator.distanceBetween(
+            myPos.latitude, myPos.longitude, providerLat, providerLng);
+        // ignore: avoid_print
+        print('[ExpertProfile/distance] distanceBetween = '
+            '${meters.toStringAsFixed(0)} m');
+        label = meters < 1000
+            ? 'בשכונתך'
+            : '${(meters / 1000).toStringAsFixed(1)} ק"מ';
+      } catch (e) {
+        // ignore: avoid_print
+        print('[ExpertProfile/distance] distanceBetween threw: $e');
+        label = 'מרחק לא ידוע';
+        color = const Color(0xFF9CA3AF);
+      }
+    }
+
+    return Column(
+      children: [
+        const Divider(height: 20, color: Color(0xFFF3F4F6), thickness: 1),
+        _expertStatRow(
+          label: 'מרחק ממך',
+          value: label,
+          icon: Icons.location_on_rounded,
+          iconColor: color,
+        ),
+      ],
+    );
+  }
+
   Widget _buildActionSquares(BuildContext context, Map<String, dynamic> data) {
     final gallery = (data['gallery'] as List? ?? []).cast<String>();
     final certImage = data['certificationImage'] as String?;
     final hasCert = certImage != null && certImage.isNotEmpty;
 
-    // Video data
+    // Video data — priority order:
+    //   1. admin-verified video (`verificationVideoUrl` + `videoVerifiedByAdmin`)
+    //   2. provider's self-uploaded intro video (`introVideoUrl` — written by
+    //      `_ProviderVideoIntroCard` on the provider's own profile screen)
+    //   3. legacy YouTube link (`videoUrl`)
     final verifiedVideoUrl     = data['verificationVideoUrl'] as String? ?? '';
     final videoVerifiedByAdmin = data['videoVerifiedByAdmin'] as bool? ?? false;
     final hasVerifiedVideo     = videoVerifiedByAdmin && verifiedVideoUrl.isNotEmpty;
+    final introVideoUrl        = data['introVideoUrl'] as String? ?? '';
+    final hasIntroVideo        = introVideoUrl.isNotEmpty;
     final youtubeUrl           = data['videoUrl'] as String? ?? '';
     final videoId              = _extractYouTubeId(youtubeUrl);
-    final hasAnyVideo          = hasVerifiedVideo || videoId != null;
+    final hasAnyVideo          = hasVerifiedVideo || hasIntroVideo || videoId != null;
 
     return Column(
       children: [
@@ -3114,11 +3711,17 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
               child: InkWell(
                 onTap: hasAnyVideo
                     ? () async {
-                        final url = hasVerifiedVideo
-                            ? verifiedVideoUrl
-                            : (youtubeUrl.startsWith('http')
-                                ? youtubeUrl
-                                : 'https://www.youtube.com/watch?v=$videoId');
+                        // Priority: verified > self-uploaded intro > YouTube.
+                        final String url;
+                        if (hasVerifiedVideo) {
+                          url = verifiedVideoUrl;
+                        } else if (hasIntroVideo) {
+                          url = introVideoUrl;
+                        } else {
+                          url = youtubeUrl.startsWith('http')
+                              ? youtubeUrl
+                              : 'https://www.youtube.com/watch?v=$videoId';
+                        }
                         final uri = Uri.parse(url);
                         if (await canLaunchUrl(uri)) launchUrl(uri);
                       }
@@ -3309,6 +3912,30 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         title: Text(widget.expertName,
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
         actions: [
+          // Account Settings entry — visible ONLY when the provider is
+          // viewing their own profile (Roi-style: tapped own avatar from
+          // search/stories and landed here instead of the Profile tab).
+          // Same destination as the Profile-tab button — see CLAUDE.md
+          // (Account Settings section).
+          if ((FirebaseAuth.instance.currentUser?.uid ?? '') ==
+              widget.expertId)
+            IconButton(
+              tooltip: 'הגדרות חשבון',
+              icon: const Icon(Icons.manage_accounts_rounded,
+                  size: 22, color: Color(0xFF6366F1)),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                    builder: (_) => const AccountSettingsScreen()),
+              ),
+            ),
+          // Share: lets a customer recommend this provider to a friend.
+          // Mirrors the WhatsApp + copy-link pattern used by the provider's
+          // own self-share in profile_screen.dart `_shareProfile`.
+          IconButton(
+            tooltip: 'שתף פרופיל',
+            icon: const Icon(Icons.ios_share_rounded, size: 22),
+            onPressed: () => _shareExpertProfile(),
+          ),
           FavoriteButton(providerId: widget.expertId, size: 24),
           const Padding(
             padding: EdgeInsets.only(right: 14),
@@ -3387,10 +4014,47 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                     .isNotEmpty)
                                   const SizedBox(height: 14),
 
+                                // ── Massage: Build Your Treatment ─────────
+                                if (_hasMassageProfile(data))
+                                  _buildMassageTreatmentBlock(data),
+
+                                // ── Pest Control: Build Your Treatment ────
+                                if (_hasPestControlProfile(data))
+                                  _buildPestBookingBlock(data),
+
+                                // ── Delivery: Send With Courier ───────────
+                                if (_hasDeliveryProfile(data))
+                                  _buildDeliveryBookingBlock(data),
+
+                                // ── Cleaning: Custom Clean ─────────────────
+                                if (_hasCleaningProfile(data))
+                                  _buildCleaningBookingBlock(data),
+
+                                // ── Handyman: Let's Fix It Together ────────
+                                if (_hasHandymanProfile(data))
+                                  _buildHandymanBookingBlock(data),
+
+                                // ── Fitness Trainer: Personalized Training ─
+                                if (_hasFitnessTrainerProfile(data))
+                                  _buildFitnessTrainerBookingBlock(data),
+
+                                // ── Babysitter: Smart-billed shift ────────
+                                if (_hasBabysitterProfile(data))
+                                  _buildBabysitterBookingBlock(data),
+
+                                // ── Motorcycle Towing: Tow request ────────
+                                if (_hasMotorcycleTowProfile(data))
+                                  _buildMotorcycleTowBookingBlock(data),
+
                                 // ── Service Menu ───────────────────────────
-                                _sectionHeader(l10n.expertSectionService),
-                                _buildServiceMenu(data, l10n),
-                                const SizedBox(height: 24),
+                                // Hidden for motorcycle towing providers — the
+                                // tow request block above is the only service.
+                                if (!isMotorcycleTowingCategory(
+                                    data['serviceType'] as String?)) ...[
+                                  _sectionHeader(l10n.expertSectionService),
+                                  _buildServiceMenu(data, l10n),
+                                  const SizedBox(height: 24),
+                                ],
 
                                 // ── Price List (category-specific) ────────
                                 if (hasPriceList(data) &&

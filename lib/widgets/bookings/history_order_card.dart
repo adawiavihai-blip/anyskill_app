@@ -23,7 +23,7 @@ class HistoryOrderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final expertId    = job['expertId']   as String? ?? '';
-    final expertName  = job['expertName'] as String? ?? 'מומחה';
+    final expertName  = job['expertName'] as String? ?? 'נותן שירות';
     final status      = job['status']     as String? ?? '';
     final amount      = ((job['totalAmount'] ?? job['totalPaidByCustomer'] ?? 0.0) as num).toDouble();
     final serviceType = job['serviceType'] as String? ?? '';

@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../services/cached_readers.dart';
 
 /// Drop-in AppBar action widget that renders a contextual help icon (?) for
 /// any screen.  The icon and its content are driven entirely by the Firestore
@@ -26,8 +27,11 @@ class _HintIconState extends State<HintIcon> {
     super.initState();
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
-      FirebaseFirestore.instance.collection('users').doc(uid).get().then((snap) {
-        if ((snap.data()?['isAdmin'] == true) && mounted) {
+      // §72: cached read — HintIcon mounts on every admin tab return
+      // (4 screens use it). 5-min cache saves a Firestore round-trip
+      // per tab visit.
+      CachedReaders.providerProfile(uid).then((data) {
+        if ((data['isAdmin'] == true) && mounted) {
           setState(() => _isAdmin = true);
         }
       });

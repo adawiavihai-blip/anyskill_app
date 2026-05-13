@@ -4,11 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../providers/admin_user_detail_provider.dart';
 import '../providers/admin_users_provider.dart';
+import '../services/auth_duplicate_guard.dart';
+import '../services/private_data_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 /// Admin User Detail Screen — full command center for a single user.
@@ -330,8 +332,18 @@ class _AdminUserDetailScreenState
             Icons.person_outline_rounded,
             Column(
               children: [
-                _detailRow('טלפון', phone.isEmpty ? 'לא הוזן' : phone),
-                _detailRow('אימייל', email.isEmpty ? 'לא הוזן' : email),
+                _editableContactRow(
+                  label: 'טלפון',
+                  value: phone,
+                  fieldKey: 'phone',
+                  fieldIcon: Icons.phone_outlined,
+                ),
+                _editableContactRow(
+                  label: 'אימייל',
+                  value: email,
+                  fieldKey: 'email',
+                  fieldIcon: Icons.email_outlined,
+                ),
                 // Provider-only fields
                 if (isProvider) ...[
                   _detailRow('קטגוריה',
@@ -1208,6 +1220,151 @@ class _AdminUserDetailScreenState
 
   // ── Transactions section ───────────────────────────────────────────────
 
+  // Maps the raw English `type` field on a transaction doc to a Hebrew label
+  // an admin can read at a glance. Every type the codebase writes is covered;
+  // an unknown type falls back to "עסקה אחרת" + the raw key as a sub-line.
+  static String _txHebrewType(String type) {
+    switch (type) {
+      // Booking + escrow lifecycle
+      case 'quote_payment': return 'תשלום הצעת מחיר (נעילת אסקרו)';
+      case 'escrow':         return 'נעילת תשלום באסקרו';
+      case 'earning':        return 'קבלת תשלום על עבודה';
+      case 'payment_release':return 'שחרור תשלום למומחה';
+      case 'rebook':         return 'הזמנה חוזרת';
+
+      // Refunds + cancellations
+      case 'refund':                  return 'החזר כספי';
+      case 'cancellation_penalty_fee':return 'דמי ביטול (עמלת פלטפורמה)';
+      case 'monetization_admin_refund':return 'החזר ידני ע״י מנהל';
+
+      // Disputes
+      case 'dispute_resolved':    return 'יישוב מחלוקת';
+      case 'dispute_release_fee': return 'עמלת פלטפורמה — שחרור לאחר מחלוקת';
+      case 'dispute_split_fee':   return 'עמלת פלטפורמה — פיצול לאחר מחלוקת';
+
+      // Wallet credits + adjustments
+      case 'credit':              return 'זיכוי לארנק';
+      case 'admin_credit_grant':  return 'מענק כספי מהנהלה';
+      case 'admin_credit':        return 'זיכוי הנהלה';
+
+      // Withdrawals
+      case 'withdrawal_pending': return 'בקשת משיכה — בהמתנה';
+      case 'withdrawal_request': return 'בקשת משיכה';
+
+      // AnyTasks
+      case 'anytask_escrow_lock':       return 'AnyTasks — נעילת אסקרו';
+      case 'anytask_claimed':           return 'AnyTasks — נלקח ע״י נותן שירות';
+      case 'anytask_proof_submitted':   return 'AnyTasks — הוגשה הוכחת ביצוע';
+      case 'anytask_payment_released':  return 'AnyTasks — שחרור תשלום';
+      case 'anytask_auto_released':     return 'AnyTasks — שחרור אוטומטי (48ש)';
+      case 'anytask_auto_release':      return 'AnyTasks — שחרור אוטומטי';
+      case 'anytask_disputed':          return 'AnyTasks — מחלוקת';
+      case 'anytask_refund':            return 'AnyTasks — החזר כספי';
+      case 'anytask_cancelled':         return 'AnyTasks — בוטל';
+      case 'anytask_suspended':         return 'AnyTasks — הוקפא';
+      case 'anytask_expired':           return 'AnyTasks — פג תוקף';
+      case 'anytask_expired_refund':    return 'AnyTasks — החזר עקב תפוגה';
+      case 'anytask_sla_reminder':      return 'AnyTasks — תזכורת SLA';
+      case 'anytask_sla_returned':      return 'AnyTasks — הוחזר למאגר (SLA)';
+
+      // Misc CFs / system writes
+      case 'ai_lesson':         return 'שיעור AI';
+      case 'ai_coaching':       return 'אימון AI';
+      case 'ai_reengagement_sent':return 'AI — שליחת התראת חזרה';
+      case 'pro_granted':       return 'הענקת תג Pro';
+      case 'streak_milestone':  return 'אבן דרך — רצף יומי';
+      case 'volunteer_xp':      return 'XP — התנדבות';
+      case 'level_up':          return 'עלייה ברמה';
+      case 'certification':     return 'הסמכה';
+      case 'story_upload':      return 'העלאת סטורי';
+      case 'registration':      return 'הרשמה למערכת';
+      case 'account_deleted':   return 'מחיקת חשבון';
+      case 'daily_deal':        return 'דיל יומי';
+      case 'broadcast':         return 'שידור';
+      case 'market_opportunity':return 'הזדמנות שוק';
+      case 'provider_approved': return 'אישור נותן שירות';
+      case '':                  return 'עסקה';
+      default:                  return 'עסקה אחרת';
+    }
+  }
+
+  // Returns (icon, color tint). Color is `null` ⇒ use default direction color.
+  static (IconData, Color?) _txIcon(String type) {
+    if (type.startsWith('anytask_')) {
+      return (Icons.assignment_turned_in_rounded, _kPurple);
+    }
+    switch (type) {
+      case 'admin_credit_grant':
+      case 'admin_credit':
+        return (Icons.card_giftcard_rounded, _kAmber);
+      case 'refund':
+      case 'monetization_admin_refund':
+      case 'anytask_refund':
+      case 'anytask_expired_refund':
+        return (Icons.undo_rounded, _kAmber);
+      case 'withdrawal_request':
+      case 'withdrawal_pending':
+        return (Icons.account_balance_rounded, _kIndigo);
+      case 'dispute_resolved':
+      case 'dispute_release_fee':
+      case 'dispute_split_fee':
+        return (Icons.gavel_rounded, _kAmber);
+      case 'cancellation_penalty_fee':
+        return (Icons.cancel_rounded, _kRed);
+      case 'earning':
+      case 'payment_release':
+      case 'anytask_payment_released':
+      case 'anytask_auto_released':
+        return (Icons.account_balance_wallet_rounded, _kGreen);
+      case 'escrow':
+      case 'quote_payment':
+      case 'anytask_escrow_lock':
+        return (Icons.lock_rounded, _kIndigo);
+      case 'credit':
+        return (Icons.add_circle_rounded, _kGreen);
+      case 'pro_granted':
+        return (Icons.workspace_premium_rounded, _kAmber);
+      default:
+        return (Icons.receipt_long_rounded, null);
+    }
+  }
+
+  // Returns true ⇒ this transaction is money LEAVING the user's wallet
+  // (debit). Handles both legacy senderId/receiverId pattern (positive amount,
+  // direction inferred from party fields) and newer userId pattern (signed
+  // amount, direction inferred from sign).
+  bool _txIsDebit(Map<String, dynamic> tx) {
+    final amount = (tx['amount'] as num? ?? 0).toDouble();
+    final senderId = tx['senderId'] as String?;
+    final receiverId = tx['receiverId'] as String?;
+    if (senderId != null && senderId == widget.userId) return true;
+    if (receiverId != null && receiverId == widget.userId) return false;
+    // userId-pattern: sign tells the story.
+    return amount < 0;
+  }
+
+  // Absolute amount magnitude (always positive for display).
+  double _txAbsAmount(Map<String, dynamic> tx) =>
+      ((tx['amount'] as num? ?? 0).toDouble()).abs();
+
+  // Picks a counter-party display name when one is denormalized on the doc.
+  // Returns empty string when nothing useful is available.
+  String _txCounterParty(Map<String, dynamic> tx) {
+    final isDebit = _txIsDebit(tx);
+    // Sent: prefer receiverName / providerName / expertName.
+    // Received: prefer senderName / clientName / customerName.
+    final List<String> keys = isDebit
+        ? const ['receiverName', 'providerName', 'expertName', 'clientName',
+                 'customerName']
+        : const ['senderName', 'clientName', 'customerName', 'providerName',
+                 'expertName', 'receiverName'];
+    for (final k in keys) {
+      final v = tx[k];
+      if (v is String && v.isNotEmpty) return v;
+    }
+    return '';
+  }
+
   Widget _buildTransactions() {
     final txAsync = ref.watch(userTransactionsProvider(widget.userId));
 
@@ -1219,7 +1376,8 @@ class _AdminUserDetailScreenState
             padding: EdgeInsets.all(20),
             child: Center(
                 child: CircularProgressIndicator(strokeWidth: 2))),
-        error: (e, _) => Text('שגיאה: $e'),
+        error: (e, _) => Text('שגיאה בטעינה: $e',
+            style: const TextStyle(color: _kRed, fontSize: 12)),
         data: (txs) {
           if (txs.isEmpty) {
             return const Padding(
@@ -1228,16 +1386,106 @@ class _AdminUserDetailScreenState
                   style: TextStyle(color: _kMuted, fontSize: 13)),
             );
           }
+
+          // ── Financial summary ────────────────────────────────────────
+          double totalIn = 0;
+          double totalOut = 0;
+          DateTime? firstTs;
+          DateTime? lastTs;
+          final byType = <String, ({int count, double net})>{};
+          for (final tx in txs) {
+            final amt = _txAbsAmount(tx);
+            if (_txIsDebit(tx)) {
+              totalOut += amt;
+            } else {
+              totalIn += amt;
+            }
+            final ts = (tx['timestamp'] as Timestamp?)?.toDate();
+            if (ts != null) {
+              firstTs = (firstTs == null || ts.isBefore(firstTs)) ? ts : firstTs;
+              lastTs = (lastTs == null || ts.isAfter(lastTs)) ? ts : lastTs;
+            }
+            final type = (tx['type'] as String? ?? '').trim();
+            final delta = _txIsDebit(tx) ? -amt : amt;
+            final existing = byType[type];
+            byType[type] = existing == null
+                ? (count: 1, net: delta)
+                : (count: existing.count + 1, net: existing.net + delta);
+          }
+          final net = totalIn - totalOut;
+
+          // Sort types by descending count so the noisy types surface first.
+          final typeEntries = byType.entries.toList()
+            ..sort((a, b) => b.value.count.compareTo(a.value.count));
+
           final display = txs.take(10).toList();
+
           return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              for (final tx in display)
-                _transactionRow(tx),
+              // KPI strip
+              _txKpiStrip(
+                count: txs.length,
+                totalIn: totalIn,
+                totalOut: totalOut,
+                net: net,
+              ),
+              const SizedBox(height: 10),
+
+              // Date range chip
+              if (firstTs != null && lastTs != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.date_range_rounded,
+                          size: 14, color: _kMuted),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          'מ-${_fmt.format(firstTs)}  ·  עד-${_fmt.format(lastTs)}',
+                          style: const TextStyle(
+                              fontSize: 11, color: _kMuted),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Per-type breakdown chips
+              if (typeEntries.isNotEmpty) ...[
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 6),
+                  child: Text('פילוח לפי סוג',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: _kMuted)),
+                ),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final e in typeEntries.take(8))
+                      _txTypeChip(
+                        e.key,
+                        e.value.count,
+                        e.value.net,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                const Divider(height: 1, color: Color(0xFFE5E7EB)),
+                const SizedBox(height: 8),
+              ],
+
+              // Transaction list
+              for (final tx in display) _transactionRow(tx),
               if (txs.length > 10)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(
-                      '+${txs.length - 10} עסקאות נוספות',
+                      '+${txs.length - 10} עסקאות נוספות (מציג 10 ראשונות)',
                       style: const TextStyle(
                           color: _kIndigo,
                           fontSize: 12,
@@ -1250,59 +1498,349 @@ class _AdminUserDetailScreenState
     );
   }
 
-  Widget _transactionRow(Map<String, dynamic> tx) {
-    final amount = (tx['amount'] as num? ?? 0).toDouble();
-    final type = tx['type'] as String? ?? '';
-    final ts = (tx['timestamp'] as Timestamp?)?.toDate();
-    final isSender = tx['senderId'] == widget.userId;
+  Widget _txKpiStrip({
+    required int count,
+    required double totalIn,
+    required double totalOut,
+    required double net,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Row(
+        children: [
+          _txKpi('סה״כ עסקאות', count.toString(), _kIndigo),
+          _txKpiDivider(),
+          _txKpi('זיכויים', '₪${totalIn.toStringAsFixed(2)}', _kGreen),
+          _txKpiDivider(),
+          _txKpi('חיובים', '₪${totalOut.toStringAsFixed(2)}', _kRed),
+          _txKpiDivider(),
+          _txKpi(
+            'יתרה נטו',
+            '${net >= 0 ? '+' : '-'}₪${net.abs().toStringAsFixed(2)}',
+            net >= 0 ? _kGreen : _kRed,
+          ),
+        ],
+      ),
+    );
+  }
 
+  Widget _txKpi(String label, String value, Color color) {
+    return Expanded(
+      child: Column(
+        children: [
+          Text(value,
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: color)),
+          const SizedBox(height: 2),
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 10, color: _kMuted, fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
+  }
+
+  Widget _txKpiDivider() => Container(
+        width: 1,
+        height: 24,
+        margin: const EdgeInsets.symmetric(horizontal: 6),
+        color: const Color(0xFFE5E7EB),
+      );
+
+  Widget _txTypeChip(String rawType, int count, double net) {
+    final (icon, tint) = _txIcon(rawType);
+    final color = tint ?? _kMuted;
+    return Container(
+      padding: const EdgeInsetsDirectional.symmetric(
+          horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            '${_txHebrewType(rawType)} · $count',
+            style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+                color: color),
+          ),
+          if (net != 0) ...[
+            const SizedBox(width: 4),
+            Text(
+              '(${net >= 0 ? '+' : '-'}₪${net.abs().toStringAsFixed(0)})',
+              style: const TextStyle(
+                  fontSize: 10, color: _kMuted, fontWeight: FontWeight.w500),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _transactionRow(Map<String, dynamic> tx) {
+    final amount = _txAbsAmount(tx);
+    final type = (tx['type'] as String? ?? '').trim();
+    final ts = (tx['timestamp'] as Timestamp?)?.toDate();
+    final isDebit = _txIsDebit(tx);
+    final hebType = _txHebrewType(type);
+    final title = (tx['title'] as String? ?? '').trim();
+    final description = (tx['description'] as String? ?? '').trim();
+    final jobId = (tx['jobId'] as String? ?? '').trim();
+    final counterParty = _txCounterParty(tx);
+    final (icon, tint) = _txIcon(type);
+    final dirColor = isDebit ? _kRed : _kGreen;
+    final iconColor = tint ?? dirColor;
+
+    // Choose the most informative primary line:
+    //   1. Hebrew title from the doc (admins gave a useful description)
+    //   2. Hebrew type label
+    final primary = title.isNotEmpty ? title : hebType;
+    // Sub-line shows the type label if it isn't already the primary, plus the
+    // counter-party name if denormalized on the doc.
+    final subParts = <String>[];
+    if (primary != hebType) subParts.add(hebType);
+    if (counterParty.isNotEmpty) subParts.add('עם $counterParty');
+    if (description.isNotEmpty && description != title) {
+      subParts.add(description);
+    }
+
+    return InkWell(
+      onTap: () => _showTxDetails(tx),
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: iconColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Icon(icon, color: iconColor, size: 18),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(primary,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600,
+                          color: _kDark)),
+                  if (subParts.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        subParts.join(' · '),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 11.5, color: _kMuted),
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: Row(
+                      children: [
+                        if (ts != null) ...[
+                          const Icon(Icons.access_time_rounded,
+                              size: 11, color: _kMuted),
+                          const SizedBox(width: 3),
+                          Text(_fmt.format(ts),
+                              style: const TextStyle(
+                                  fontSize: 10.5, color: _kMuted)),
+                        ],
+                        if (jobId.isNotEmpty) ...[
+                          if (ts != null) const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsetsDirectional.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: _kIndigo.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              'הזמנה #${jobId.length > 6 ? jobId.substring(0, 6) : jobId}',
+                              style: const TextStyle(
+                                  fontSize: 10,
+                                  color: _kIndigo,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '${isDebit ? "-" : "+"}₪${amount.toStringAsFixed(2)}',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: dirColor,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Bottom sheet: full transaction details in Hebrew. Useful when an admin
+  // needs the doc id / jobId / raw type for a support escalation.
+  void _showTxDetails(Map<String, dynamic> tx) {
+    final amount = _txAbsAmount(tx);
+    final type = (tx['type'] as String? ?? '').trim();
+    final ts = (tx['timestamp'] as Timestamp?)?.toDate();
+    final isDebit = _txIsDebit(tx);
+    final hebType = _txHebrewType(type);
+    final dirColor = isDebit ? _kRed : _kGreen;
+    final title = (tx['title'] as String? ?? '').trim();
+    final description = (tx['description'] as String? ?? '').trim();
+    final jobId = (tx['jobId'] as String? ?? '').trim();
+    final docId = (tx['id'] as String? ?? '').trim();
+    final senderId = (tx['senderId'] as String? ?? '').trim();
+    final receiverId = (tx['receiverId'] as String? ?? '').trim();
+    final userIdField = (tx['userId'] as String? ?? '').trim();
+    final counterParty = _txCounterParty(tx);
+    final payoutStatus = (tx['payoutStatus'] as String? ?? '').trim();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: dirColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                      isDebit
+                          ? Icons.arrow_upward_rounded
+                          : Icons.arrow_downward_rounded,
+                      color: dirColor),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title.isNotEmpty ? title : hebType,
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${isDebit ? "-" : "+"}₪${amount.toStringAsFixed(2)}',
+                        style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: dirColor),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Divider(height: 1, color: Color(0xFFE5E7EB)),
+            const SizedBox(height: 12),
+            _txDetailRow('סוג עסקה', hebType),
+            if (type.isNotEmpty) _txDetailRow('מזהה סוג (טכני)', type),
+            if (description.isNotEmpty) _txDetailRow('תיאור', description),
+            if (counterParty.isNotEmpty)
+              _txDetailRow(isDebit ? 'נשלח אל' : 'התקבל מ-', counterParty),
+            if (ts != null) _txDetailRow('תאריך', _fmt.format(ts)),
+            if (payoutStatus.isNotEmpty)
+              _txDetailRow('סטטוס תשלום', _payoutStatusHebrew(payoutStatus)),
+            if (jobId.isNotEmpty) _txDetailRow('מזהה הזמנה', jobId),
+            if (senderId.isNotEmpty) _txDetailRow('מזהה שולח', senderId),
+            if (receiverId.isNotEmpty)
+              _txDetailRow('מזהה מקבל', receiverId),
+            if (userIdField.isNotEmpty && senderId.isEmpty && receiverId.isEmpty)
+              _txDetailRow('מזהה משתמש בעסקה', userIdField),
+            if (docId.isNotEmpty) _txDetailRow('מזהה עסקה', docId),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('סגור'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _txDetailRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: isSender
-                  ? _kRed.withValues(alpha: 0.1)
-                  : _kGreen.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              isSender
-                  ? Icons.arrow_upward_rounded
-                  : Icons.arrow_downward_rounded,
-              color: isSender ? _kRed : _kGreen,
-              size: 16,
-            ),
+          SizedBox(
+            width: 110,
+            child: Text(label,
+                style: const TextStyle(
+                    fontSize: 12,
+                    color: _kMuted,
+                    fontWeight: FontWeight.w500)),
           ),
-          const SizedBox(width: 10),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(type.isEmpty ? 'עסקה' : type,
-                    style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w600)),
-                if (ts != null)
-                  Text(_fmt.format(ts),
-                      style: const TextStyle(
-                          fontSize: 11, color: _kMuted)),
-              ],
-            ),
-          ),
-          Text(
-            '${isSender ? "-" : "+"}₪${amount.toStringAsFixed(2)}',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: isSender ? _kRed : _kGreen,
+            child: SelectableText(
+              value,
+              style: const TextStyle(
+                  fontSize: 12.5,
+                  color: _kDark,
+                  fontWeight: FontWeight.w600),
             ),
           ),
         ],
       ),
     );
+  }
+
+  static String _payoutStatusHebrew(String s) {
+    switch (s) {
+      case 'pending':   return 'ממתין';
+      case 'paid':      return 'שולם';
+      case 'failed':    return 'נכשל';
+      case 'processing':return 'בעיבוד';
+      case 'released':  return 'שוחרר';
+      case 'refunded':  return 'הוחזר';
+      default:          return s;
+    }
   }
 
   // ── Audit log section ──────────────────────────────────────────────────
@@ -1440,6 +1978,287 @@ class _AdminUserDetailScreenState
                   fontWeight: FontWeight.w600,
                   color: _kDark)),
         ],
+      ),
+    );
+  }
+
+  /// Tappable contact-row: shows phone/email with a pencil icon that opens
+  /// the edit dialog. Admin-only — admin rule on `users/{uid}` covers writes
+  /// to fields in the owner-blocklist (e.g. `phone`).
+  Widget _editableContactRow({
+    required String label,
+    required String value,
+    required String fieldKey,
+    required IconData fieldIcon,
+  }) {
+    final empty = value.isEmpty;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _showEditContactDialog(
+          fieldKey: fieldKey,
+          label: label,
+          current: value,
+        ),
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding:
+              const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+          child: Row(
+            children: [
+              Icon(fieldIcon, size: 14, color: _kMuted),
+              const SizedBox(width: 6),
+              Text(label,
+                  style: const TextStyle(fontSize: 13, color: _kMuted)),
+              const Spacer(),
+              Flexible(
+                child: Text(
+                  empty ? 'לא הוזן' : value,
+                  textAlign: TextAlign.end,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: empty ? _kMuted : _kDark,
+                    fontStyle: empty ? FontStyle.italic : FontStyle.normal,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Icon(Icons.edit_rounded, size: 14, color: _kIndigo),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Admin edit dialog for `phone` or `email` on the user doc.
+  ///
+  /// Writes to BOTH `users/{uid}.{field}` (covered by `isAdmin()` rule bypass
+  /// — `phone` is in the owner-blocklist) AND `users/{uid}/private/identity`
+  /// (dual-write per CLAUDE.md §11 v12.2.0). For email changes runs the
+  /// §20 AuthDuplicateGuard.findConflict pre-check.
+  ///
+  /// Note for the admin: this does NOT change Firebase Auth's phoneNumber/
+  /// email — only the Firestore profile data. Phone-OTP login still goes to
+  /// whatever number is on the Auth account.
+  void _showEditContactDialog({
+    required String fieldKey,
+    required String label,
+    required String current,
+  }) {
+    final ctrl = TextEditingController(text: current);
+    final formKey = GlobalKey<FormState>();
+    final isEmail = fieldKey == 'email';
+    bool submitting = false;
+    String? errorText;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(isEmail ? Icons.email_rounded : Icons.phone_rounded,
+                  color: _kIndigo, size: 20),
+              const SizedBox(width: 8),
+              Text('עריכת $label'),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 360),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Form(
+                  key: formKey,
+                  child: TextFormField(
+                    controller: ctrl,
+                    autofocus: true,
+                    enabled: !submitting,
+                    keyboardType: isEmail
+                        ? TextInputType.emailAddress
+                        : TextInputType.phone,
+                    textDirection: TextDirection.ltr,
+                    decoration: InputDecoration(
+                      hintText: isEmail
+                          ? 'name@example.com'
+                          : '+972501234567',
+                      hintTextDirection: TextDirection.ltr,
+                      border: const OutlineInputBorder(),
+                      errorText: errorText,
+                    ),
+                    validator: (v) {
+                      final s = (v ?? '').trim();
+                      if (s.isEmpty) return 'שדה חובה';
+                      if (isEmail) {
+                        if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+                            .hasMatch(s)) {
+                          return 'אימייל לא תקין';
+                        }
+                      } else {
+                        final digits = s.replaceAll(RegExp(r'[^0-9]'), '');
+                        if (digits.length < 7) {
+                          return 'מספר טלפון לא תקין (לפחות 7 ספרות)';
+                        }
+                      }
+                      return null;
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: _kAmber.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color: _kAmber.withValues(alpha: 0.25)),
+                  ),
+                  child: const Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.info_outline_rounded,
+                          size: 14, color: _kAmber),
+                      SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'שינוי פרטי קשר בפרופיל בלבד. אינו משנה את חשבון ה-Authentication '
+                          '(התחברות OTP / אימייל לא תושפע).',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: _kAmber,
+                              height: 1.4),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: submitting ? null : () => Navigator.pop(ctx),
+              child: const Text('ביטול'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _kIndigo,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: submitting
+                  ? null
+                  : () async {
+                      if (!(formKey.currentState?.validate() ?? false)) {
+                        return;
+                      }
+                      final rawValue = ctrl.text.trim();
+                      final newValue =
+                          isEmail ? rawValue.toLowerCase() : rawValue;
+
+                      // No-op shortcut — same value as current.
+                      if (newValue == current) {
+                        Navigator.pop(ctx);
+                        return;
+                      }
+
+                      // Capture both BEFORE any await so we don't need to
+                      // read from `context` / `ctx` post-async (lint).
+                      final messenger = ScaffoldMessenger.of(context);
+                      final dialogNavigator = Navigator.of(ctx);
+
+                      setSt(() {
+                        submitting = true;
+                        errorText = null;
+                      });
+
+                      // Anti-duplicate email guard (CLAUDE.md §20).
+                      if (isEmail) {
+                        final conflictUid =
+                            await AuthDuplicateGuard.findConflict(
+                          currentUid: widget.userId,
+                          email: newValue,
+                        );
+                        if (conflictUid != null) {
+                          setSt(() {
+                            submitting = false;
+                            errorText =
+                                'האימייל הזה כבר משויך למשתמש אחר';
+                          });
+                          return;
+                        }
+                      }
+
+                      try {
+                        // 1) Main user doc — admin rule bypasses
+                        //    owner-blocklist for `phone`.
+                        await ref
+                            .read(adminUsersRepositoryProvider)
+                            .updateUser(widget.userId, {
+                          fieldKey: newValue,
+                        });
+
+                        // 2) Dual-write to private/identity (§11).
+                        if (isEmail) {
+                          await PrivateDataService.writeContactData(
+                            widget.userId,
+                            email: newValue,
+                          );
+                        } else {
+                          await PrivateDataService.writeContactData(
+                            widget.userId,
+                            phone: newValue,
+                          );
+                        }
+
+                        // 3) Audit log — PII value NOT included in the
+                        //    action message (admin can correlate via the
+                        //    user doc).
+                        final data = ref
+                                .read(userDetailProvider(widget.userId))
+                                .value ??
+                            <String, dynamic>{};
+                        final name =
+                            (data['name'] as String?) ?? 'משתמש';
+                        await _logAuditAction(
+                          isEmail ? 'עדכון אימייל' : 'עדכון טלפון',
+                          name,
+                        );
+
+                        if (!mounted) return;
+                        dialogNavigator.pop();
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: Text(isEmail
+                                ? 'אימייל עודכן בהצלחה'
+                                : 'מספר טלפון עודכן בהצלחה'),
+                            backgroundColor: _kGreen,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      } catch (e) {
+                        setSt(() {
+                          submitting = false;
+                          errorText = 'שגיאה: $e';
+                        });
+                      }
+                    },
+              child: submitting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Text('שמור'),
+            ),
+          ],
+        ),
       ),
     );
   }

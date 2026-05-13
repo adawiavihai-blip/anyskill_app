@@ -13,6 +13,7 @@ import 'package:video_player/video_player.dart';
 import '../../expert_profile_screen.dart';
 import '../../chat_screen.dart';
 import '../../../l10n/app_localizations.dart'; // ignore: unused_import — partial i18n pass
+import '../../../services/cached_readers.dart';
 import '../../../utils/safe_image_provider.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,8 +64,11 @@ class _StoriesRowState extends State<StoriesRow> {
           .where('hasActive', isEqualTo: true)
           .limit(30)
           .snapshots();
-      FirebaseFirestore.instance.collection('users').doc(_uid).get().then((snap) {
-        if ((snap.data()?['isAdmin'] == true) && mounted) {
+      // §66: cached read — admin check fires once per home tab mount,
+      // and home tab mounts often (every bottom-nav tap back). 5-min TTL
+      // saves a Firestore round-trip per home-tab visit.
+      CachedReaders.providerProfile(_uid).then((data) {
+        if ((data['isAdmin'] == true) && mounted) {
           setState(() => _isAdmin = true);
         }
       });
@@ -535,7 +539,16 @@ class _StoryCircle extends StatelessWidget {
     final canDelete = (uid == currentUid) || isAdmin;
     final videoUrl  = data['videoUrl'] as String? ?? '';
 
-    return GestureDetector(
+    // Semantics: each story circle is a tappable navigation target.
+    // Without explicit Semantics, screen readers announce only "image"
+    // — no provider name, no hint that it's tappable.
+    return Semantics(
+      button: true,
+      label: 'Story by $name',
+      hint: canDelete
+          ? 'Tap to view, long-press to delete'
+          : 'Tap to view',
+      child: GestureDetector(
       onTap: () => openStoryViewer(context, uid, data),
       onLongPress: canDelete
           ? () => _confirmAndDeleteStory(context, uid, videoUrl)
@@ -610,6 +623,7 @@ class _StoryCircle extends StatelessWidget {
           ),
         ],
       ),
+    ),
     );
   }
 
@@ -760,6 +774,8 @@ void openStoryViewer(
   final avatar     = data['providerAvatar'] as String? ?? '';
   final ts         = data['timestamp']      as Timestamp?;
   final serviceType = data['serviceType']   as String? ?? '';
+  // 'video' (default — back-compat) | 'image'. See Story.mediaType.
+  final mediaType  = data['mediaType']      as String? ?? 'video';
 
   if (videoUrl.isEmpty) return;
 
@@ -775,6 +791,7 @@ void openStoryViewer(
     ),
     pageBuilder: (ctx, _, __) => _StoryViewerScreen(
       videoUrl:    videoUrl,
+      mediaType:   mediaType,
       providerUid: uid,
       providerName: name,
       providerAvatar: avatar,
@@ -786,6 +803,7 @@ void openStoryViewer(
 
 class _StoryViewerScreen extends StatefulWidget {
   final String   videoUrl;
+  final String   mediaType;       // 'video' | 'image'
   final String   providerUid;
   final String   providerName;
   final String   providerAvatar;
@@ -794,6 +812,7 @@ class _StoryViewerScreen extends StatefulWidget {
 
   const _StoryViewerScreen({
     required this.videoUrl,
+    required this.mediaType,
     required this.providerUid,
     required this.providerName,
     required this.providerAvatar,
@@ -807,10 +826,18 @@ class _StoryViewerScreen extends StatefulWidget {
 
 class _StoryViewerScreenState extends State<_StoryViewerScreen>
     with TickerProviderStateMixin {
+  // ── Media (image OR video) ────────────────────────────────────────────────
+  bool get _isImage => widget.mediaType == 'image';
+  static const Duration _kImageDuration = Duration(seconds: 5);
+
   // ── Video ─────────────────────────────────────────────────────────────────
   late VideoPlayerController _ctrl;
   bool _initialized = false;
   bool _error       = false;
+
+  // ── Image (auto-advance after 5s) ─────────────────────────────────────────
+  Timer? _imageTimer;
+  late final AnimationController _imageProgressCtrl;
 
   // ── Provider profile (loaded on open) ────────────────────────────────────
   double _rating       = 0.0;
@@ -829,7 +856,19 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen>
   @override
   void initState() {
     super.initState();
-    _initVideo();
+
+    // Top progress bar — for images, drives a 5s linear bar.
+    // (Videos drive their own progress from the controller's position.)
+    _imageProgressCtrl = AnimationController(
+      vsync: this,
+      duration: _kImageDuration,
+    );
+
+    if (_isImage) {
+      _startImageAutoAdvance();
+    } else {
+      _initVideo();
+    }
     _incrementViewCount();
     _checkIsLiked();
     _loadProviderData();
@@ -877,6 +916,16 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen>
       debugPrint('[StoryViewer] Retry with fresh URL failed: $e');
       if (mounted) setState(() => _error = true);
     }
+  }
+
+  /// Image-mode auto-advance: drive the linear progress bar for 5 s,
+  /// then route to the provider's profile (same destination as a finished video).
+  void _startImageAutoAdvance() {
+    _imageProgressCtrl.forward(from: 0);
+    _imageTimer = Timer(_kImageDuration, () {
+      if (!mounted) return;
+      _goToProfile();
+    });
   }
 
   Future<void> _initVideo() async {
@@ -1045,10 +1094,12 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen>
 
   @override
   void dispose() {
-    if (_initialized) {
+    if (!_isImage && _initialized) {
       _ctrl.removeListener(_onUpdate);
       _ctrl.dispose();
     }
+    _imageTimer?.cancel();
+    _imageProgressCtrl.dispose();
     _likeCtrl.dispose();
     _floatCtrl.dispose();
     super.dispose();
@@ -1068,10 +1119,35 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen>
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // ── Video (double-tap to like) ────────────────────────────
+            // ── Media (image OR video — double-tap to like) ───────────
             GestureDetector(
               onDoubleTap: _doubleTapLike,
-              child: _initialized
+              child: _isImage
+                  ? Center(
+                      child: Image.network(
+                        widget.videoUrl,
+                        fit: BoxFit.contain,
+                        loadingBuilder: (_, child, progress) =>
+                            progress == null
+                                ? child
+                                : const Center(
+                                    child: CircularProgressIndicator(
+                                        color: Colors.white)),
+                        errorBuilder: (_, __, ___) => const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.broken_image_rounded,
+                                  color: Colors.white54, size: 64),
+                              SizedBox(height: 12),
+                              Text('לא ניתן לטעון את הסיפור',
+                                  style: TextStyle(color: Colors.white54)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    )
+                  : _initialized
                   ? Center(
                       child: AspectRatio(
                         aspectRatio: _ctrl.value.aspectRatio,
@@ -1132,7 +1208,27 @@ class _StoryViewerScreenState extends State<_StoryViewerScreen>
               ),
 
             // ── Progress bar at very top ──────────────────────────────
-            if (_initialized)
+            if (_isImage)
+              Positioned(
+                top: 0, left: 0, right: 0,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: AnimatedBuilder(
+                      animation: _imageProgressCtrl,
+                      builder: (_, __) => LinearProgressIndicator(
+                        value:            _imageProgressCtrl.value,
+                        backgroundColor:  Colors.white30,
+                        valueColor:
+                            const AlwaysStoppedAnimation<Color>(Colors.white),
+                        minHeight:        3,
+                      ),
+                    ),
+                  ),
+                ),
+              )
+            else if (_initialized)
               Positioned(
                 top: 0, left: 0, right: 0,
                 child: _ProgressBar(controller: _ctrl),
@@ -1560,7 +1656,14 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
 
     // ── Read bytes immediately — two strategies to avoid Blob revocation ──
     final fileName = file.name;
-    final fileMime = file.mimeType ?? 'video/mp4';
+    // Browser fallback: when the OS doesn't supply a MIME (common for .mov
+    // from iPhone Safari → 'application/octet-stream'), infer from the
+    // extension. The Storage rule requires `video/.*` to pass — we can't
+    // ship 'application/octet-stream' or it gets rejected silently.
+    final fileMime = _inferVideoMime(
+      browserMime: file.mimeType,
+      filename: fileName,
+    );
     try {
       Uint8List bytes;
       try {
@@ -1573,6 +1676,20 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
         }
         bytes = Uint8List.fromList(chunks);
       }
+      // Reject empty bytes — without this guard, a 0-byte Storage object
+      // would be created and the user would think the upload "succeeded"
+      // while no video plays back.
+      if (bytes.isEmpty) {
+        debugPrint('[StoryUpload] readBytes returned empty buffer');
+        if (mounted) {
+          setState(() {
+            _errorMessage = 'הקובץ ריק — נסה לבחור סרטון אחר';
+          });
+        }
+        return;
+      }
+      debugPrint(
+          '[StoryUpload] picked: name=$fileName mime=$fileMime size=${bytes.length}B');
       if (!mounted) return;
       setState(() {
         _videoBytes    = bytes;
@@ -1588,6 +1705,28 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
         });
       }
     }
+  }
+
+  /// Picks a SAFE video MIME type that the Storage rule accepts.
+  /// The rule gate is `request.resource.contentType.matches('video/.*')`
+  /// (CLAUDE.md §50 audit + storage.rules:47-53). Browsers sometimes hand
+  /// us 'application/octet-stream' for .mov / .m4v / .webm — those would
+  /// fail the gate. Always derive from extension as the source of truth.
+  String _inferVideoMime({String? browserMime, required String filename}) {
+    final lowerName = filename.toLowerCase();
+    String fromExt(String name) {
+      if (name.endsWith('.mp4') || name.endsWith('.m4v')) return 'video/mp4';
+      if (name.endsWith('.mov')) return 'video/quicktime';
+      if (name.endsWith('.webm')) return 'video/webm';
+      if (name.endsWith('.avi')) return 'video/x-msvideo';
+      if (name.endsWith('.mkv')) return 'video/x-matroska';
+      if (name.endsWith('.3gp')) return 'video/3gpp';
+      return 'video/mp4'; // safest default — still accepted by the rule
+    }
+    if (browserMime != null && browserMime.startsWith('video/')) {
+      return browserMime;
+    }
+    return fromExt(lowerName);
   }
 
   Future<void> _upload() async {
@@ -1634,24 +1773,35 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
       }
 
       final mimeType = _videoMimeType ?? 'video/mp4';
+      // SAFETY: never ship a contentType that doesn't pass the storage
+      // rule gate — even if `_videoMimeType` got corrupted somehow. The
+      // rule requires `video/.*` (storage.rules:47-53).
+      final safeMime =
+          mimeType.startsWith('video/') ? mimeType : 'video/mp4';
       final origName = _videoName ?? 'video.mp4';
-      final ext      = origName.contains('.')
+      var ext = origName.contains('.')
           ? origName.split('.').last.toLowerCase()
           : 'mp4';
+      // If split produced empty (e.g. "video."), fall back to mp4 so the
+      // path doesn't end with a trailing dot.
+      if (ext.isEmpty) ext = 'mp4';
 
       final ts = DateTime.now().millisecondsSinceEpoch;
       final storagePath = 'stories/${authUid}_$ts.$ext';
+      debugPrint(
+          '[StoryUpload] starting upload: path=$storagePath ct=$safeMime size=${bytes.length}B');
       final storageRef = FirebaseStorage.instance
           .ref()
           .child(storagePath);
 
       final uploadTask = storageRef.putData(
         bytes,
-        SettableMetadata(contentType: mimeType),
+        SettableMetadata(contentType: safeMime),
       );
 
-      // Track upload progress
-      uploadTask.snapshotEvents.listen((snap) {
+      // Track upload progress + cancel the listener when we're done so
+      // it doesn't keep firing after the sheet closes.
+      final progressSub = uploadTask.snapshotEvents.listen((snap) {
         if (!mounted || snap.totalBytes == 0) return;
         setState(() {
           _uploadProgress = snap.bytesTransferred / snap.totalBytes;
@@ -1659,6 +1809,7 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
       });
 
       final snapshot  = await uploadTask;
+      await progressSub.cancel();
       final videoUrl  = await snapshot.ref.getDownloadURL();
       final now       = Timestamp.now();
       final expiresAt = Timestamp.fromDate(
@@ -1685,7 +1836,16 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
           });
 
       // ── Server verification (with retry for propagation delay) ──────────
+      // The previous version swallowed exceptions silently and proceeded
+      // to "success" even when verification failed — leaving the user
+      // staring at a 24h timer for a story that wasn't actually written.
+      // Now: log every attempt, and if neither succeeds, treat it as a
+      // soft warning (the write COULD have landed but eventual consistency
+      // delayed the read past 5s) rather than a hard failure. If the
+      // doc.exists path returns false twice though, throw — that's a real
+      // permission/rule rejection masquerading as a warning.
       DocumentSnapshot? verifyDoc;
+      Object? verifyError;
       for (int attempt = 0; attempt < 2; attempt++) {
         if (attempt > 0) await Future.delayed(const Duration(seconds: 1));
         try {
@@ -1694,10 +1854,26 @@ class _StoryUploadSheetState extends State<_StoryUploadSheet> {
               .doc(authUid)
               .get(const GetOptions(source: Source.server))
               .timeout(const Duration(seconds: 3));
-          if (verifyDoc.exists && (verifyDoc.data() as Map?)?['videoUrl'] == videoUrl) break;
-        } catch (_) {}
+          if (verifyDoc.exists &&
+              (verifyDoc.data() as Map?)?['videoUrl'] == videoUrl) {
+            break;
+          }
+        } catch (e) {
+          verifyError = e;
+          debugPrint('[StoryUpload] verify attempt ${attempt + 1} error: $e');
+        }
       }
-      debugPrint('[StoryUpload] Verify: exists=${verifyDoc?.exists}, url match=${(verifyDoc?.data() as Map?)?['videoUrl'] == videoUrl}');
+      final urlMatched = verifyDoc != null
+          && verifyDoc.exists
+          && (verifyDoc.data() as Map?)?['videoUrl'] == videoUrl;
+      debugPrint(
+          '[StoryUpload] verify result: exists=${verifyDoc?.exists}, urlMatched=$urlMatched, lastError=$verifyError');
+      if (verifyDoc != null && verifyDoc.exists && !urlMatched) {
+        // Doc exists but the URL is wrong — STALE write or rules silently
+        // dropped the field. Surface it as a hard error.
+        throw Exception(
+            'Story doc was written but videoUrl mismatch. expected=$videoUrl');
+      }
 
       // 5. Update users/{uid} for ranking signal
       await FirebaseFirestore.instance

@@ -19,6 +19,8 @@ library;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
+import 'cached_readers.dart';
+
 /// Result of a cancellation penalty calculation.
 class CancellationPenalty {
   /// Hebrew description of the penalty for the warning dialog.
@@ -192,6 +194,9 @@ class AnytaskCancellationService {
 
       await batch.commit();
 
+      // §61 invalidation — cancellation score / fraudFlags changed in batch.
+      CachedReaders.invalidateProvider(userId);
+
       // ── Check if provider should be suspended ──────────────────────
       if (penalty.checkSuspension) {
         await _checkAndSuspend(userId);
@@ -225,6 +230,7 @@ class AnytaskCancellationService {
         'anytaskSuspendedUntil':  Timestamp.fromDate(suspendUntil),
         'anytaskSuspensionCount': FieldValue.increment(1),
       });
+      CachedReaders.invalidateProvider(userId); // §61
 
       // Notify provider
       await _db.collection('notifications').add({
@@ -257,6 +263,7 @@ class AnytaskCancellationService {
       await _db.collection('users').doc(userId).update({
         'anytaskCancellationScore': newScore,
       });
+      CachedReaders.invalidateProvider(userId); // §61
     } catch (e) {
       debugPrint('[AnytaskCancellation] recoverScore error: $e');
     }

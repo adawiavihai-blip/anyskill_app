@@ -102,6 +102,32 @@ class AnyTaskService {
     });
   }
 
+  /// Customer-side edit. Allowed ONLY while the task is `open` — once a
+  /// provider has been selected (in_progress+) the underlying details are
+  /// frozen. Firestore rules enforce the field allowlist independently, so
+  /// this just layers a pre-flight status check + a domain error code.
+  ///
+  /// Accepted fields (match the allowlist in firestore.rules):
+  ///   title, description, deadline, locationFrom, locationTo,
+  ///   imageUrl, proofText.
+  /// Any other key in `updates` will be rejected by Firestore rules and
+  /// bubble up as `permission-denied`.
+  Future<void> updateTask(
+      String taskId, Map<String, dynamic> updates) async {
+    if (updates.isEmpty) return;
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(_tasks.doc(taskId));
+      if (!snap.exists) {
+        throw StateError('task-not-found');
+      }
+      final status = snap.data()?['status'];
+      if (status != 'open') {
+        throw StateError('task-not-editable');
+      }
+      tx.update(_tasks.doc(taskId), updates);
+    });
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // RESPONSES
   // ═══════════════════════════════════════════════════════════════

@@ -17,6 +17,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../services/dog_walk_service.dart';
+import '../widgets/wolt_tile_layer.dart';
 
 class WalkRouteScreen extends StatelessWidget {
   final String walkId;
@@ -138,11 +139,7 @@ class WalkRouteScreen extends StatelessWidget {
                     ),
                   ),
                   children: [
-                    TileLayer(
-                      urlTemplate:
-                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'com.anyskill.app',
-                    ),
+                    WoltTileLayer.forContext(context),
                     PolylineLayer(
                       polylines: [
                         Polyline(

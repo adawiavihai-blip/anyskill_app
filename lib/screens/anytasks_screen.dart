@@ -1,7 +1,7 @@
 /// AnyTasks 3.0 — Main Screen
 ///
 /// Two-tab layout (follows CommunityHubScreen pattern):
-///   Tab 1: "גלה משימות" — Browse open tasks with category filter chips
+///   Tab 1: "חפש משימות" — Browse open tasks with category filter chips
 ///   Tab 2: "המשימות שלי" — Tasks I posted + tasks I claimed
 library;
 
@@ -26,9 +26,9 @@ class AnytasksScreen extends StatefulWidget {
 
 class _AnytasksScreenState extends State<AnytasksScreen>
     with SingleTickerProviderStateMixin {
-  static const _kIndigo  = Color(0xFF6366F1);
-  static const _kDark    = Color(0xFF1A1A2E);
-  static const _kMuted   = Color(0xFF6B7280);
+  static const _kIndigo = Color(0xFF6366F1);
+  static const _kDark = Color(0xFF1A1A2E);
+  static const _kMuted = Color(0xFF6B7280);
   static const _kScaffold = Color(0xFFF4F7F9);
 
   late final TabController _tabCtrl;
@@ -92,26 +92,26 @@ class _AnytasksScreenState extends State<AnytasksScreen>
           indicatorWeight: 3,
           labelColor: _kIndigo,
           unselectedLabelColor: _kMuted,
-          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-          tabs: const [
-            Tab(text: 'גלה משימות'),
-            Tab(text: 'המשימות שלי'),
-          ],
+          labelStyle: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+          ),
+          tabs: const [Tab(text: 'חפש משימות'), Tab(text: 'המשימות שלי')],
         ),
       ),
       body: TabBarView(
         controller: _tabCtrl,
-        children: [
-          _buildBrowseTab(),
-          _buildMyTasksTab(),
-        ],
+        children: [_buildBrowseTab(), _buildMyTasksTab()],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _openPostScreen,
         backgroundColor: _kIndigo,
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add_rounded, size: 22),
-        label: const Text('פרסם משימה', style: TextStyle(fontWeight: FontWeight.bold)),
+        label: const Text(
+          'פרסם משימה',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
       ),
     );
   }
@@ -131,8 +131,12 @@ class _AnytasksScreenState extends State<AnytasksScreen>
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             children: [
               _filterChip('הכל', null),
-              ..._categories.map((c) =>
-                  _filterChip(c['nameHe'] as String? ?? '', c['id'] as String?)),
+              ..._categories.map(
+                (c) => _filterChip(
+                  c['nameHe'] as String? ?? '',
+                  c['id'] as String?,
+                ),
+              ),
             ],
           ),
         ),
@@ -152,10 +156,11 @@ class _AnytasksScreenState extends State<AnytasksScreen>
               final docs = snap.data!.docs;
 
               // Filter out own tasks (creator shouldn't see their own in browse)
-              final filtered = docs.where((d) {
-                final data = d.data() as Map<String, dynamic>? ?? {};
-                return data['creatorId'] != _uid;
-              }).toList();
+              final filtered =
+                  docs.where((d) {
+                    final data = d.data() as Map<String, dynamic>? ?? {};
+                    return data['creatorId'] != _uid;
+                  }).toList();
 
               if (filtered.isEmpty) {
                 return _emptyState(
@@ -225,7 +230,11 @@ class _AnytasksScreenState extends State<AnytasksScreen>
             padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Text(
               'משימות שאני מבצע',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _kDark),
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: _kDark,
+              ),
             ),
           ),
         ),
@@ -237,14 +246,19 @@ class _AnytasksScreenState extends State<AnytasksScreen>
               if (!snap.hasData) {
                 return const Padding(
                   padding: EdgeInsets.all(16),
-                  child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                  child: Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                 );
               }
 
               final docs = snap.data!.docs;
               if (docs.isEmpty) {
                 return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                   child: Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -255,7 +269,10 @@ class _AnytasksScreenState extends State<AnytasksScreen>
                       children: [
                         Icon(Icons.inbox_rounded, color: _kMuted, size: 20),
                         SizedBox(width: 10),
-                        Text('אין משימות פעילות', style: TextStyle(color: _kMuted, fontSize: 13)),
+                        Text(
+                          'אין משימות פעילות',
+                          style: TextStyle(color: _kMuted, fontSize: 13),
+                        ),
                       ],
                     ),
                   ),
@@ -263,14 +280,15 @@ class _AnytasksScreenState extends State<AnytasksScreen>
               }
 
               return Column(
-                children: docs.map((d) {
-                  final task = AnyTask.fromFirestore(d);
-                  return AnytaskCard(
-                    task: task,
-                    showCreator: true,
-                    onTap: () => _openDetail(task.id),
-                  );
-                }).toList(),
+                children:
+                    docs.map((d) {
+                      final task = AnyTask.fromFirestore(d);
+                      return AnytaskCard(
+                        task: task,
+                        showCreator: true,
+                        onTap: () => _openDetail(task.id),
+                      );
+                    }).toList(),
               );
             },
           ),
@@ -282,7 +300,11 @@ class _AnytasksScreenState extends State<AnytasksScreen>
             padding: EdgeInsets.fromLTRB(16, 20, 16, 8),
             child: Text(
               'משימות שפרסמתי',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _kDark),
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: _kDark,
+              ),
             ),
           ),
         ),
@@ -294,7 +316,9 @@ class _AnytasksScreenState extends State<AnytasksScreen>
               if (!snap.hasData) {
                 return const Padding(
                   padding: EdgeInsets.all(16),
-                  child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                  child: Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                 );
               }
 
@@ -308,14 +332,15 @@ class _AnytasksScreenState extends State<AnytasksScreen>
               }
 
               return Column(
-                children: docs.map((d) {
-                  final task = AnyTask.fromFirestore(d);
-                  return AnytaskCard(
-                    task: task,
-                    showCreator: false,
-                    onTap: () => _openDetail(task.id),
-                  );
-                }).toList(),
+                children:
+                    docs.map((d) {
+                      final task = AnyTask.fromFirestore(d);
+                      return AnytaskCard(
+                        task: task,
+                        showCreator: false,
+                        onTap: () => _openDetail(task.id),
+                      );
+                    }).toList(),
               );
             },
           ),
@@ -346,7 +371,11 @@ class _AnytasksScreenState extends State<AnytasksScreen>
             const SizedBox(height: 16),
             Text(
               title,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _kDark),
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: _kDark,
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 6),

@@ -456,21 +456,25 @@ class _GlobalSearchBarState extends State<GlobalSearchBar>
 
               // ── Text field ──────────────────────────────────────────────
               Expanded(
-                child: TextField(
-                  controller: _ctrl,
-                  focusNode: _focus,
-                  textAlign: TextAlign.start,
-                  textAlignVertical: TextAlignVertical.center,
-                  style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w400),
-                  onChanged: _onTextChanged,
-                  decoration: InputDecoration(
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-                    hintText: l10n.searchPlaceholder,
-                    hintStyle: TextStyle(
-                      color: Colors.grey[400],
-                      fontSize: 14,
-                      fontWeight: FontWeight.w400,
+                child: Semantics(
+                  textField: true,
+                  label: l10n.searchPlaceholder,
+                  child: TextField(
+                    controller: _ctrl,
+                    focusNode: _focus,
+                    textAlign: TextAlign.start,
+                    textAlignVertical: TextAlignVertical.center,
+                    style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w400),
+                    onChanged: _onTextChanged,
+                    decoration: InputDecoration(
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                      hintText: l10n.searchPlaceholder,
+                      hintStyle: TextStyle(
+                        color: Colors.grey[400],
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                      ),
                     ),
                   ),
                 ),
@@ -675,7 +679,7 @@ class _FilterSheetState extends State<_FilterSheet> {
           const SizedBox(height: 20),
 
           // ── Expert Level ─────────────────────────────────────────────
-          const Text('רמת מומחה',
+          const Text('רמת נותן שירות',
               style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
           const SizedBox(height: 10),
           Wrap(
@@ -702,7 +706,7 @@ class _FilterSheetState extends State<_FilterSheet> {
               onChanged: (v) => setState(() => _availableNow = v),
               title: const Text('זמין עכשיו',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-              subtitle: Text('הצג רק מומחים מחוברים',
+              subtitle: Text('הצג רק נותני שירות מחוברים',
                   style: TextStyle(fontSize: 12, color: Colors.grey[500])),
               activeColor: _kGreen,
               contentPadding: EdgeInsets.zero,

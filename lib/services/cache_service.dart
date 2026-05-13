@@ -81,19 +81,31 @@ class CacheService {
   ///
   /// Returns an empty map `{}` when the document does not exist, so callers
   /// can always do `data['field'] ?? fallback` without null guards.
+  ///
+  /// **Testing hook (§71)**: pass a `db` instance (e.g. `FakeFirebaseFirestore`)
+  /// to inject a fake. Defaults to `FirebaseFirestore.instance` for prod.
   static Future<Map<String, dynamic>> getDoc(
     String collection,
     String docId, {
     Duration ttl = kUserProfile,
     /// Force a fresh read even if cache is warm (e.g., after mutation)
     bool forceRefresh = false,
+    FirebaseFirestore? db,
   }) async {
+    // Audit fix (post-§75): empty docId would cause Firestore SDK to
+    // throw "A document path must be a non-empty string". Defensive
+    // early-return — every consumer that called .doc('') (e.g.
+    // BookingProfileAvatar with a stale uid) now gets an empty map
+    // instead of a crash.
+    if (docId.isEmpty) return const <String, dynamic>{};
+
     final key = '$collection/$docId';
     if (!forceRefresh) {
       final cached = get<Map<String, dynamic>>(key);
       if (cached != null) return cached;
     }
-    final snap = await FirebaseFirestore.instance
+    final firestore = db ?? FirebaseFirestore.instance;
+    final snap = await firestore
         .collection(collection)
         .doc(docId)
         .get();
@@ -108,10 +120,14 @@ class CacheService {
   /// support `getAll` but the reads are pipelined over one HTTP/2 connection).
   ///
   /// Returns a map of `docId → data`.
+  ///
+  /// **Testing hook (§74)**: pass `db` to inject a fake. Same pattern as
+  /// [getDoc] (§71). Defaults to `FirebaseFirestore.instance` for prod.
   static Future<Map<String, Map<String, dynamic>>> getDocs(
     String collection,
     List<String> docIds, {
     Duration ttl = kUserProfile,
+    FirebaseFirestore? db,
   }) async {
     final result = <String, Map<String, dynamic>>{};
     final cold   = <String>[];
@@ -128,7 +144,7 @@ class CacheService {
 
     // Fetch cold docs in parallel (up to 10 concurrent)
     final futures = cold.map((id) async {
-      final data = await getDoc(collection, id, ttl: ttl);
+      final data = await getDoc(collection, id, ttl: ttl, db: db);
       result[id] = data;
     });
     await Future.wait(futures);

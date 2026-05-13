@@ -73,7 +73,7 @@ class _CustomerBookingCardState extends State<CustomerBookingCard>
 
   Future<void> _sendTip(BuildContext context, double tipAmount) async {
     final expertId   = widget.job['expertId']   as String? ?? '';
-    final expertName = widget.job['expertName'] as String? ?? 'מומחה';
+    final expertName = widget.job['expertName'] as String? ?? 'נותן שירות';
     if (expertId.isEmpty || widget.currentUserId.isEmpty) return;
 
     final confirm = await showDialog<bool>(
@@ -133,7 +133,7 @@ class _CustomerBookingCardState extends State<CustomerBookingCard>
     final job         = widget.job;
     final status      = job['status'] as String? ?? '';
     final expertId    = job['expertId']   as String? ?? '';
-    final expertName  = job['expertName'] as String? ?? 'מומחה';
+    final expertName  = job['expertName'] as String? ?? 'נותן שירות';
     final expertPhone = job['expertPhone'] as String? ?? '';
     final amount      = (job['totalAmount'] ??
             job['totalPaidByCustomer'] ??
@@ -295,7 +295,7 @@ class _CustomerBookingCardState extends State<CustomerBookingCard>
                               color: Color(0xFF3B82F6))),
                       const SizedBox(width: 6),
                       const Expanded(
-                        child: Text('המומחה בדרך אליך',
+                        child: Text('נותן השירות בדרך אליך',
                             style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
@@ -304,8 +304,18 @@ class _CustomerBookingCardState extends State<CustomerBookingCard>
                     ]),
                     const SizedBox(height: 10),
                     // Inline live travel map — streams provider's GPS via
-                    // LiveLocationService and renders a pulsing dot.
-                    LiveTravelMap(providerUid: expertId),
+                    // LiveLocationService and renders a pulsing dot. The
+                    // pickup + destination markers come from the job doc
+                    // (motorcycleTowPreferences for tow flow / clientLat-Lng
+                    // for legacy bookings) so the customer sees their trip
+                    // context even before the provider's GPS arrives.
+                    LiveTravelMap(
+                      providerUid: expertId,
+                      pickupLat: _readPickupLat(job),
+                      pickupLng: _readPickupLng(job),
+                      dropoffLat: _readDropoffLat(job),
+                      dropoffLng: _readDropoffLng(job),
+                    ),
                   ],
                 ),
               ),
@@ -869,4 +879,66 @@ class BookingStepIndicator extends StatelessWidget {
       }),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Job-doc coordinate readers — used by the LiveTravelMap above so the
+// customer sees pickup + destination pins even before the provider's GPS
+// arrives. Sources, in priority order:
+//   1. motorcycleTowPreferences.{pickup,dropoff}{Lat,Lng}  (flash auction)
+//   2. babysitterPreferences.verifiedAddress.{latitude,longitude}
+//   3. clientLat / clientLng (legacy top-level — used by older bookings)
+// Each reader returns null when nothing is set.
+// ─────────────────────────────────────────────────────────────────────────
+
+double? _readPickupLat(Map<String, dynamic> job) {
+  final mtp = job['motorcycleTowPreferences'];
+  if (mtp is Map) {
+    final v = (mtp['pickupLat'] as num?)?.toDouble();
+    if (v != null) return v;
+  }
+  final bp = job['babysitterPreferences'];
+  if (bp is Map) {
+    final va = bp['verifiedAddress'];
+    if (va is Map) {
+      final v = (va['latitude'] as num?)?.toDouble();
+      if (v != null) return v;
+    }
+  }
+  return (job['clientLat'] as num?)?.toDouble();
+}
+
+double? _readPickupLng(Map<String, dynamic> job) {
+  final mtp = job['motorcycleTowPreferences'];
+  if (mtp is Map) {
+    final v = (mtp['pickupLng'] as num?)?.toDouble();
+    if (v != null) return v;
+  }
+  final bp = job['babysitterPreferences'];
+  if (bp is Map) {
+    final va = bp['verifiedAddress'];
+    if (va is Map) {
+      final v = (va['longitude'] as num?)?.toDouble();
+      if (v != null) return v;
+    }
+  }
+  return (job['clientLng'] as num?)?.toDouble();
+}
+
+double? _readDropoffLat(Map<String, dynamic> job) {
+  final mtp = job['motorcycleTowPreferences'];
+  if (mtp is Map) {
+    final v = (mtp['dropoffLat'] as num?)?.toDouble();
+    if (v != null) return v;
+  }
+  return null;
+}
+
+double? _readDropoffLng(Map<String, dynamic> job) {
+  final mtp = job['motorcycleTowPreferences'];
+  if (mtp is Map) {
+    final v = (mtp['dropoffLng'] as num?)?.toDouble();
+    if (v != null) return v;
+  }
+  return null;
 }

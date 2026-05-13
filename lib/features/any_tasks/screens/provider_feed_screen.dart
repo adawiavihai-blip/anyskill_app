@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import '../models/any_task.dart';
 import '../services/any_task_service.dart';
 import '../theme/any_tasks_palette.dart';
+import '../widgets/deadline_badge.dart';
 import 'provider_task_detail_screen.dart';
 
 class ProviderFeedScreen extends StatelessWidget {
@@ -305,6 +306,8 @@ class _ProviderTaskCard extends StatelessWidget {
                         label: 'Escrow',
                         bg: TasksPalette.bgPrimary,
                         fg: TasksPalette.textSecondary),
+                    if (task.deadline != null)
+                      DeadlineBadge(deadline: task.deadline),
                   ],
                 ),
                 const SizedBox(height: 12),

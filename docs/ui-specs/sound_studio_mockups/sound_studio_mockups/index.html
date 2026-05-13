@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>סטודיו צלילים — מסך 1</title>
+<link rel="stylesheet" href="assets/styles.css">
+<style>
+  /* Screen 1 specific */
+  .health-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
+    border: 0.5px solid var(--border-light);
+    margin-bottom: 24px;
+  }
+
+  .event-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
+    border: 0.5px solid var(--border-light);
+    padding: 18px 20px;
+    transition: all 0.2s ease;
+    cursor: pointer;
+  }
+
+  .event-row:hover {
+    border-color: var(--border-medium);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .event-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .event-info { flex: 1; min-width: 0; }
+  .event-name { font-size: 15px; font-weight: 500; margin-bottom: 2px; display: flex; align-items: center; gap: 8px; }
+  .event-desc { font-size: 12px; color: var(--text-tertiary); }
+
+  .sound-selector {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: filter 0.15s ease;
+    border: none;
+    font-family: inherit;
+  }
+
+  .sound-selector:hover { filter: brightness(0.95); }
+
+  .play-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+
+  .play-btn:hover { transform: scale(1.05); }
+  .play-btn:active { transform: scale(0.95); }
+  .play-btn.playing { background: var(--color-primary) !important; color: white !important; }
+
+  .footer-cta {
+    margin-top: 24px;
+    padding: 18px 22px;
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
+    border: 0.5px solid var(--border-light);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .footer-cta-text { display: flex; align-items: center; gap: 12px; }
+
+  /* Dropdown */
+  .dropdown-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    background: var(--bg-surface);
+    border: 0.5px solid var(--border-medium);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: 6px;
+    min-width: 220px;
+    z-index: 100;
+    display: none;
+  }
+
+  .dropdown-menu.open { display: block; }
+
+  .dropdown-item {
+    width: 100%;
+    text-align: right;
+    padding: 8px 12px;
+    font-size: 13px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .dropdown-item:hover { background: var(--bg-muted); }
+  .dropdown-item.selected { background: var(--color-primary-light); color: var(--color-primary-dark); font-weight: 500; }
+
+  .sound-selector-wrapper { position: relative; }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--text-primary);
+    color: white;
+    padding: 12px 20px;
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    box-shadow: var(--shadow-lg);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 200;
+  }
+
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Tabs -->
+  <nav class="tabs">
+    <button class="tab active">סטודיו</button>
+    <a href="library.html" class="tab" style="text-decoration: none;">ספרייה</a>
+    <a href="analytics.html" class="tab" style="text-decoration: none;">אנליטיקס</a>
+    <a href="logs.html" class="tab" style="text-decoration: none;">לוג מערכת</a>
+  </nav>
+
+  <!-- Header -->
+  <header class="page-header">
+    <div>
+      <h1 class="page-title">איזה צליל מתנגן ומתי</h1>
+      <p class="page-subtitle">בחר אירוע, בחר צליל. השינוי נכנס לתוקף מיד אצל כל המשתמשים.</p>
+    </div>
+  </header>
+
+  <!-- Health bar -->
+  <div class="health-bar">
+    <span class="status-dot green pulse"></span>
+    <span style="font-size: 13px; font-weight: 500;">המערכת פעילה</span>
+    <span style="color: var(--text-tertiary);">·</span>
+    <span style="font-size: 13px; color: var(--text-secondary);">4 מתוך 5 אירועים ממופים</span>
+    <span style="margin-right: auto; font-size: 12px; color: var(--text-tertiary);" id="last-sync">סנכרון אחרון לפני 3 שניות</span>
+  </div>
+
+  <!-- Event rows -->
+  <div class="event-rows" id="events-list">
+    <!-- Populated by JS -->
+  </div>
+
+  <!-- AI suggestion CTA -->
+  <div class="footer-cta">
+    <div class="footer-cta-text">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2" stroke-linecap="round"><path d="M12 2l2 7h7l-5.5 4 2 7L12 16l-5.5 4 2-7L3 9h7z"/></svg>
+      <div>
+        <div style="font-size: 13px; font-weight: 500;">לא בטוח איזה צליל הכי מתאים?</div>
+        <div style="font-size: 12px; color: var(--text-tertiary); margin-top: 2px;">AI יציע התאמות לפי פסיכואקוסטיקה והתנהגות משתמשים</div>
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="getAISuggestions()">קבל הצעות AI ←</button>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ============================
+  // STATE
+  // ============================
+  const SOUNDS = {
+    wealthCrystal: { name: 'Wealth Crystal', color: 'purple', file: 'wealth_crystal.mp3' },
+    solutionSnap: { name: 'Solution Snap', color: 'blue', file: 'solution_snap.mp3' },
+    opportunityPulse: { name: 'Opportunity Pulse', color: 'green', file: 'opportunity_pulse.mp3' },
+    growthAscend: { name: 'Growth Ascend', color: 'amber', file: 'growth_ascend.mp3' },
+    none: { name: 'ללא צליל', color: 'gray', file: null }
+  };
+
+  const EVENTS = [
+    {
+      id: 'onPaymentSuccess',
+      title: 'תשלום שוחרר',
+      desc: 'כשאסקרו משחרר תשלום למשתמש',
+      sound: 'wealthCrystal'
+    },
+    {
+      id: 'onAiMatchFound',
+      title: 'התאמת AI נמצאה',
+      desc: 'כשהאלגוריתם מצא שידוך מתאים',
+      sound: 'solutionSnap'
+    },
+    {
+      id: 'onNewOpportunity',
+      title: 'הזדמנות עבודה חדשה',
+      desc: 'כשמופיע ג\'וב מתאים לפרופיל',
+      sound: 'opportunityPulse'
+    },
+    {
+      id: 'onCourseCompleted',
+      title: 'קורס הושלם',
+      desc: 'כשמשתמש סיים קורס וקיבל XP',
+      sound: 'growthAscend'
+    },
+    {
+      id: 'onLogin',
+      title: 'כניסת משתמש',
+      desc: 'פתיחת אפליקציה תכופה — שקט עדיף',
+      sound: 'none',
+      silentByDesign: true
+    }
+  ];
+
+  // ============================
+  // RENDER
+  // ============================
+  function render() {
+    const container = document.getElementById('events-list');
+    container.innerHTML = EVENTS.map(event => {
+      const sound = SOUNDS[event.sound];
+      const isNone = event.sound === 'none';
+      const colorClass = `avatar-${sound.color}`;
+      const pillColorClass = isNone ? 'pill-gray' : `pill-${sound.color === 'purple' ? 'primary' : sound.color}`;
+
+      return `
+        <div class="event-row fade-in" data-event-id="${event.id}">
+          ${isNone ? `
+            <div class="avatar avatar-gray">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5L6 9H2v6h4l5 4V5zM23 9l-6 6M17 9l6 6"/></svg>
+            </div>
+          ` : `
+            <button class="play-btn avatar ${colorClass}" onclick="event.stopPropagation(); playSound('${event.sound}', this)" aria-label="השמע ${sound.name}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+          `}
+          <div class="event-info">
+            <div class="event-name">
+              ${event.title}
+              ${event.silentByDesign ? '<span class="pill pill-gray" style="font-weight: 400;">שקט מכוון</span>' : ''}
+            </div>
+            <div class="event-desc">${event.desc}</div>
+          </div>
+          <div class="sound-selector-wrapper">
+            <button class="sound-selector ${pillColorClass}" onclick="event.stopPropagation(); toggleDropdown('${event.id}')">
+              <span class="status-dot ${isNone ? 'gray' : ''}" style="${isNone ? '' : `background: var(--color-${sound.color === 'purple' ? 'primary' : sound.color})`}"></span>
+              <span style="font-size: 13px; font-weight: 500;">${sound.name}</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="dropdown-menu" id="dropdown-${event.id}">
+              ${Object.entries(SOUNDS).map(([key, s]) => `
+                <button class="dropdown-item ${key === event.sound ? 'selected' : ''}" onclick="changeSoundForEvent('${event.id}', '${key}')">
+                  ${key === 'none'
+                    ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5L6 9H2v6h4l5 4V5zM23 9l-6 6M17 9l6 6"/></svg>'
+                    : `<span class="status-dot" style="background: var(--color-${s.color === 'purple' ? 'primary' : s.color})"></span>`
+                  }
+                  <span>${s.name}</span>
+                </button>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // ============================
+  // INTERACTIONS
+  // ============================
+  let currentlyPlaying = null;
+
+  function playSound(soundKey, btn) {
+    if (currentlyPlaying) currentlyPlaying.classList.remove('playing');
+    btn.classList.add('playing');
+    currentlyPlaying = btn;
+
+    showToast(`▶ משמיע: ${SOUNDS[soundKey].name}`);
+
+    // Stop visual after 1.2s
+    setTimeout(() => {
+      btn.classList.remove('playing');
+      if (currentlyPlaying === btn) currentlyPlaying = null;
+    }, 1200);
+  }
+
+  function toggleDropdown(eventId) {
+    const dropdown = document.getElementById(`dropdown-${eventId}`);
+    document.querySelectorAll('.dropdown-menu').forEach(d => {
+      if (d !== dropdown) d.classList.remove('open');
+    });
+    dropdown.classList.toggle('open');
+  }
+
+  function changeSoundForEvent(eventId, soundKey) {
+    const event = EVENTS.find(e => e.id === eventId);
+    if (!event) return;
+
+    event.sound = soundKey;
+    if (soundKey === 'none') event.silentByDesign = true;
+    else delete event.silentByDesign;
+
+    render();
+    showToast(`✓ ${event.title} ← ${SOUNDS[soundKey].name}`);
+    updateSyncTime();
+  }
+
+  function getAISuggestions() {
+    showToast('🤖 AI מנתח את המיפוי הנוכחי...');
+  }
+
+  function showToast(message) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2500);
+  }
+
+  function updateSyncTime() {
+    document.getElementById('last-sync').textContent = 'סנכרון אחרון: עכשיו';
+  }
+
+  // Close dropdowns on outside click
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.sound-selector-wrapper')) {
+      document.querySelectorAll('.dropdown-menu').forEach(d => d.classList.remove('open'));
+    }
+  });
+
+  render();
+</script>
+</body>
+</html>

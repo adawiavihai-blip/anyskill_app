@@ -5,7 +5,7 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/cached_readers.dart';
 import '../../utils/safe_image_provider.dart';
 
 // ── Profile avatar ─────────────────────────────────────────────────────────
@@ -20,11 +20,17 @@ class BookingProfileAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<DocumentSnapshot>(
-      future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
+    // §67: cached read — 5min TTL via CachedReaders (§61). This widget
+    // is the booking-card avatar across 6 screens (service history list +
+    // detail, customer booking cards, expert job cards, history order
+    // cards, transaction history). Each screen renders many cards per
+    // mount, so the cascade savings are large: ~10-15 user reads per
+    // screen mount × 30 mounts/day → cached after the first card per
+    // unique provider in a session.
+    return FutureBuilder<Map<String, dynamic>>(
+      future: CachedReaders.providerProfile(uid),
       builder: (context, snap) {
-        final data =
-            snap.data?.data() as Map<String, dynamic>? ?? {};
+        final data = snap.data ?? const <String, dynamic>{};
         final url = data['profileImage'] as String?;
         final img = safeImageProvider(url);
         return CircleAvatar(

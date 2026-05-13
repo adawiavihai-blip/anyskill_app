@@ -12,6 +12,7 @@ import '../sub_category_screen.dart';
 import '../notifications_screen.dart';
 import '../expert_profile_screen.dart';
 import '../help_center_screen.dart';
+import '../../services/cached_readers.dart';
 import '../../services/category_service.dart';
 import '../../services/visual_fetcher_service.dart';
 import '../../widgets/category_image_card.dart';
@@ -246,11 +247,10 @@ class _SearchPageState extends State<SearchPage> {
   void initState() {
     super.initState();
     _loadProviderStatus();
-    // Load admin flag from Firestore (one-time cached read)
+    // §69: cached read — admin flag check on every search page mount.
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
-      FirebaseFirestore.instance.collection('users').doc(uid).get().then((snap) {
-        final data = snap.data() ?? {};
+      CachedReaders.providerProfile(uid).then((data) {
         if (data['isAdmin'] == true && mounted) {
           setState(() => _cachedIsAdmin = true);
         }
@@ -272,10 +272,11 @@ class _SearchPageState extends State<SearchPage> {
   Future<void> _loadProviderStatus() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
-    final doc = await FirebaseFirestore.instance
-        .collection('users').doc(uid).get();
+    // §69: cached read — combined with the admin check above, two reads
+    // become one network round-trip + one cache hit per page mount.
+    final data = await CachedReaders.providerProfile(uid);
     if (!mounted) return;
-    final isProvider = (doc.data() ?? {})['isProvider'] as bool? ?? false;
+    final isProvider = data['isProvider'] as bool? ?? false;
     if (isProvider != _isProvider) setState(() => _isProvider = isProvider);
   }
 

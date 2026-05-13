@@ -62,7 +62,24 @@ class VaultService {
     final start = periodStart(period);
     return _db
         .collection('platform_earnings')
-        .where('timestamp', isGreaterThan: Timestamp.fromDate(start))
+        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .limit(500)
+        .snapshots()
+        .map((s) => s.docs.map((d) {
+              final data = d.data();
+              data['id'] = d.id;
+              return data;
+            }).toList());
+  }
+
+  /// Stream platform earnings between [start] (inclusive) and [end] (exclusive).
+  /// Used for the custom-date selector in the Vault dashboard.
+  static Stream<List<Map<String, dynamic>>> streamEarningsForRange(
+      DateTime start, DateTime end) {
+    return _db
+        .collection('platform_earnings')
+        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('timestamp', isLessThan: Timestamp.fromDate(end))
         .limit(500)
         .snapshots()
         .map((s) => s.docs.map((d) {
@@ -85,6 +102,28 @@ class VaultService {
       data['id'] = d.id;
       return data;
     }).toList();
+  }
+
+  /// Stream the latest [limit] transactions between [start] (inclusive)
+  /// and [end] (exclusive). Used by the Vault "recent transactions" section
+  /// when a specific date or period is selected.
+  static Stream<List<Map<String, dynamic>>> streamTransactionsForRange(
+    DateTime start,
+    DateTime end, {
+    int limit = 50,
+  }) {
+    return _db
+        .collection('transactions')
+        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('timestamp', isLessThan: Timestamp.fromDate(end))
+        .orderBy('timestamp', descending: true)
+        .limit(limit)
+        .snapshots()
+        .map((s) => s.docs.map((d) {
+              final data = d.data();
+              data['id'] = d.id;
+              return data;
+            }).toList());
   }
 
   // ── Transactions ───────────────────────────────────────────────────────────

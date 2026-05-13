@@ -17,6 +17,7 @@ class AdminVaultTab extends StatefulWidget {
 
 class _AdminVaultTabState extends State<AdminVaultTab> {
   String _period = 'month';
+  DateTime? _customDate; // when set, overrides _period and shows a single day
   Timer? _clockTimer;
   String _clock = '';
 
@@ -31,6 +32,8 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
   Map<String, int> _counts = {};
 
   bool _loaded = false;
+  bool _refreshing = false; // true while a period switch is mid-flight
+  Timer? _watchdog; // forces _loaded=true if streams don't fire within 3s
 
   StreamSubscription? _settingsSub;
   StreamSubscription? _earningsSub;
@@ -52,6 +55,7 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
   @override
   void dispose() {
     _clockTimer?.cancel();
+    _watchdog?.cancel();
     _settingsSub?.cancel();
     _earningsSub?.cancel();
     _activeJobsSub?.cancel();
@@ -65,23 +69,90 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
     setState(() => _clock = DateFormat('HH:mm:ss', 'he').format(DateTime.now()));
   }
 
+  // ── Period / Range helpers ────────────────────────────────────────────────
+  //
+  // The Vault dashboard supports two filtering modes:
+  //  1. Preset periods (day/week/month/year) → range starts at the matching
+  //     period boundary and ends "now".
+  //  2. Custom date (single day picked from the calendar) → range is the full
+  //     local-time day [00:00, 24:00).
+  //
+  // _currentRange / _previousRange centralise the math so every stream and
+  // builder reads from the same source of truth, fixing the bug where the
+  // period selector appeared to "do nothing" because some sections cached
+  // values from the prior period.
+
+  bool get _isCustom => _customDate != null;
+
+  ({DateTime start, DateTime end}) get _currentRange {
+    if (_customDate != null) {
+      final d = _customDate!;
+      final start = DateTime(d.year, d.month, d.day);
+      return (start: start, end: start.add(const Duration(days: 1)));
+    }
+    final start = VaultService.periodStart(_period);
+    // Pad slightly so a stream filter using strict-greater-than still picks up
+    // the freshest doc that fires AT exactly "now".
+    final end = DateTime.now().add(const Duration(minutes: 1));
+    return (start: start, end: end);
+  }
+
+  ({DateTime start, DateTime end}) get _previousRange {
+    if (_customDate != null) {
+      final yesterday = _customDate!.subtract(const Duration(days: 1));
+      final start =
+          DateTime(yesterday.year, yesterday.month, yesterday.day);
+      return (start: start, end: start.add(const Duration(days: 1)));
+    }
+    final start = VaultService.previousPeriodStart(_period);
+    final end = VaultService.periodStart(_period);
+    return (start: start, end: end);
+  }
+
   void _setupStreams() {
     _settingsSub?.cancel();
     _earningsSub?.cancel();
     _activeJobsSub?.cancel();
     _txSub?.cancel();
     _feedSub?.cancel();
+    _watchdog?.cancel();
+
+    final cur = _currentRange;
+
+    // Watchdog — force _loaded=true after 3s even if the earnings stream
+    // never fires (cold Firestore start, network blip, empty collection on
+    // first launch). Without this the user sees an infinite spinner.
+    _watchdog = Timer(const Duration(seconds: 3), () {
+      if (mounted && (!_loaded || _refreshing)) {
+        setState(() {
+          _loaded = true;
+          _refreshing = false;
+        });
+      }
+    });
 
     _settingsSub = VaultService.streamAdminSettings().listen((d) {
       if (mounted) setState(() => _adminSettings = d);
     });
 
-    _earningsSub = VaultService.streamEarnings(_period).listen((d) {
+    _earningsSub =
+        VaultService.streamEarningsForRange(cur.start, cur.end).listen((d) {
       if (mounted) {
         setState(() {
           _currentEarnings = d;
           _loaded = true;
+          _refreshing = false;
         });
+        _watchdog?.cancel();
+      }
+    }, onError: (e) {
+      debugPrint('[Vault] earnings stream error: $e');
+      if (mounted) {
+        setState(() {
+          _loaded = true;
+          _refreshing = false;
+        });
+        _watchdog?.cancel();
       }
     });
 
@@ -89,9 +160,22 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
       if (mounted) setState(() => _activeJobs = d);
     });
 
-    _txSub = VaultService.streamRecentTransactions(limit: 20).listen((d) {
-      if (mounted) setState(() => _recentTx = d);
-    });
+    // Recent transactions: when a custom date or non-default period is
+    // selected, scope the list to that range so "all the info for that day"
+    // really means that day.
+    if (_isCustom || _period != 'month') {
+      _txSub = VaultService.streamTransactionsForRange(
+        cur.start,
+        cur.end,
+        limit: 20,
+      ).listen((d) {
+        if (mounted) setState(() => _recentTx = d);
+      }, onError: (e) => debugPrint('[Vault] tx range stream error: $e'));
+    } else {
+      _txSub = VaultService.streamRecentTransactions(limit: 20).listen((d) {
+        if (mounted) setState(() => _recentTx = d);
+      }, onError: (e) => debugPrint('[Vault] tx stream error: $e'));
+    }
 
     _feedSub = VaultService.streamActivityFeed(limit: 15).listen((d) {
       if (mounted) setState(() => _activityFeed = d);
@@ -102,10 +186,10 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
 
   Future<void> _loadPreviousPeriod() async {
     try {
-      final start = VaultService.previousPeriodStart(_period);
-      final end = VaultService.periodStart(_period);
-      final prev = await VaultService.getEarningsForRange(start, end);
-      if (mounted) setState(() => _prevEarnings = prev);
+      final prev = _previousRange;
+      final docs =
+          await VaultService.getEarningsForRange(prev.start, prev.end);
+      if (mounted) setState(() => _prevEarnings = docs);
     } catch (_) {}
   }
 
@@ -123,12 +207,68 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
   }
 
   void _onPeriodChanged(String p) {
-    if (p == _period) return;
+    if (p == _period && _customDate == null) return;
     setState(() {
       _period = p;
-      _loaded = false;
+      _customDate = null;
+      _refreshing = true; // optimistic — keep existing data visible
     });
     _setupStreams();
+  }
+
+  Future<void> _pickCustomDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _customDate ?? now,
+      firstDate: DateTime(now.year - 5),
+      lastDate: now,
+      locale: const Locale('he'),
+      helpText: 'בחר/י תאריך לצפייה',
+      cancelText: 'ביטול',
+      confirmText: 'אישור',
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: Theme.of(ctx).colorScheme.copyWith(
+                primary: _purple,
+                onPrimary: Colors.white,
+              ),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _customDate = DateTime(picked.year, picked.month, picked.day);
+      _refreshing = true;
+    });
+    _setupStreams();
+  }
+
+  void _clearCustomDate() {
+    if (_customDate == null) return;
+    setState(() {
+      _customDate = null;
+      _refreshing = true;
+    });
+    _setupStreams();
+  }
+
+  String get _activeRangeLabel {
+    if (_customDate != null) {
+      return DateFormat('dd/MM/yyyy', 'he').format(_customDate!);
+    }
+    switch (_period) {
+      case 'day':
+        return 'היום';
+      case 'week':
+        return 'השבוע';
+      case 'month':
+        return 'החודש';
+      case 'year':
+        return 'השנה';
+    }
+    return '';
   }
 
   // ── Palette ────────────────────────────────────────────────────────────────
@@ -164,33 +304,51 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
                   _setupStreams();
                   await _loadOnce();
                 },
-                child: ListView(
-                  padding: const EdgeInsets.all(16),
+                child: Column(
                   children: [
-                    _buildHeader(),
-                    const SizedBox(height: 12),
-                    _buildTicker(),
-                    const SizedBox(height: 16),
-                    _buildBalanceAndHealth(),
-                    const SizedBox(height: 16),
-                    _buildMetricsGrid(),
-                    const SizedBox(height: 16),
-                    _buildLiveMonitor(),
-                    const SizedBox(height: 16),
-                    _buildRevenueChart(),
-                    const SizedBox(height: 16),
-                    _buildCategoryAndWaterfall(),
-                    const SizedBox(height: 16),
-                    _buildPeakHours(),
-                    const SizedBox(height: 16),
-                    _buildTopProviders(),
-                    const SizedBox(height: 16),
-                    _buildRecentTransactions(),
-                    const SizedBox(height: 16),
-                    _buildActivityFeed(),
-                    const SizedBox(height: 16),
-                    _buildQuickActions(),
-                    const SizedBox(height: 32),
+                    // Thin progress strip — visible while a period switch is
+                    // mid-flight. Replaces the full-screen blocker spinner so
+                    // users can still see (and trust) the existing data while
+                    // new data is fetched in the background.
+                    if (_refreshing)
+                      const SizedBox(
+                        height: 2,
+                        child: LinearProgressIndicator(
+                          valueColor: AlwaysStoppedAnimation(_purple),
+                          backgroundColor: Color(0xFFEEEDFE),
+                        ),
+                      ),
+                    Expanded(
+                      child: ListView(
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          _buildHeader(),
+                          const SizedBox(height: 12),
+                          _buildTicker(),
+                          const SizedBox(height: 16),
+                          _buildBalanceAndHealth(),
+                          const SizedBox(height: 16),
+                          _buildMetricsGrid(),
+                          const SizedBox(height: 16),
+                          _buildLiveMonitor(),
+                          const SizedBox(height: 16),
+                          _buildRevenueChart(),
+                          const SizedBox(height: 16),
+                          _buildCategoryAndWaterfall(),
+                          const SizedBox(height: 16),
+                          _buildPeakHours(),
+                          const SizedBox(height: 16),
+                          _buildTopProviders(),
+                          const SizedBox(height: 16),
+                          _buildRecentTransactions(),
+                          const SizedBox(height: 16),
+                          _buildActivityFeed(),
+                          const SizedBox(height: 16),
+                          _buildQuickActions(),
+                          const SizedBox(height: 32),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -203,29 +361,133 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
   // ═══════════════════════════════════════════════════════════════════════════
 
   Widget _buildHeader() {
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(Icons.lock_rounded, color: _purple, size: 22),
-        const SizedBox(width: 8),
-        const Text(
-          'AnySkill Vault',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w800,
-            color: _dark,
+        // Row 1 — title + live indicator + clock
+        Row(
+          children: [
+            const Icon(Icons.lock_rounded, color: _purple, size: 22),
+            const SizedBox(width: 8),
+            const Text(
+              'AnySkill Vault',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                color: _dark,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _pulseDot(),
+            const Spacer(),
+            Text(_clock,
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[600])),
+          ],
+        ),
+        const SizedBox(height: 10),
+        // Row 2 — period toolbar (wraps on narrow widths so all controls stay
+        // tappable; this was the original bug — Spacer + selector overflowed
+        // the AppBar Row on tablet widths and clipped the buttons).
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            _periodSelector(),
+            _calendarButton(),
+            if (_customDate != null) _selectedDateChip(),
+            _activeRangeBadge(),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _calendarButton() {
+    final active = _customDate != null;
+    return Material(
+      color: active ? _purple : Colors.white,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: _pickCustomDate,
+        child: Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+                color: active ? _purple : Colors.grey.shade200),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.calendar_today_rounded,
+                  size: 14,
+                  color: active ? Colors.white : Colors.grey[700]),
+              const SizedBox(width: 6),
+              Text(
+                active ? 'תאריך נבחר' : 'תאריך מסוים',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: active ? Colors.white : Colors.grey[700],
+                ),
+              ),
+            ],
           ),
         ),
-        const SizedBox(width: 8),
-        _pulseDot(),
-        const Spacer(),
-        Text(_clock,
-            style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[600])),
-        const SizedBox(width: 12),
-        _periodSelector(),
-      ],
+      ),
+    );
+  }
+
+  Widget _selectedDateChip() {
+    final label = DateFormat('dd/MM/yyyy', 'he').format(_customDate!);
+    return InkWell(
+      onTap: _clearCustomDate,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: _purpleBg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: _purple.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.event_rounded, size: 14, color: _purpleText),
+            const SizedBox(width: 6),
+            Text(label,
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: _purpleText)),
+            const SizedBox(width: 6),
+            Icon(Icons.close_rounded, size: 14, color: _purpleText),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _activeRangeBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        'מציג: $_activeRangeLabel',
+        style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[700]),
+      ),
     );
   }
 
@@ -254,24 +516,33 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: Colors.grey.shade200),
       ),
+      padding: const EdgeInsets.all(2),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: List.generate(4, (i) {
-          final sel = _period == periods[i];
-          return GestureDetector(
-            onTap: () => _onPeriodChanged(periods[i]),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: sel ? _purple : Colors.transparent,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                labels[i],
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: sel ? Colors.white : Colors.grey[600],
+          // A preset is "selected" only when no custom date is overriding it,
+          // so the user always sees an honest reflection of what the data
+          // below is filtered by.
+          final sel = _customDate == null && _period == periods[i];
+          return Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => _onPeriodChanged(periods[i]),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: sel ? _purple : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  labels[i],
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: sel ? Colors.white : Colors.grey[700],
+                  ),
                 ),
               ),
             ),
@@ -417,7 +688,8 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
                         'עמלה: ${(feePct * 100).toStringAsFixed(0)}%', _blue),
                     const SizedBox(width: 8),
                     _miniPill(
-                        'תקופה: ₪${currentRev.toStringAsFixed(0)}', _green),
+                        '$_activeRangeLabel: ₪${currentRev.toStringAsFixed(0)}',
+                        _green),
                   ],
                 ),
               ],
@@ -871,12 +1143,15 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
 
   Widget _buildRevenueChart() {
     final daily = VaultService.dailyBreakdown(_currentEarnings);
+    final chartTitle = _isCustom
+        ? 'גרף הכנסות · ${DateFormat('dd/MM/yyyy', 'he').format(_customDate!)}'
+        : 'גרף הכנסות · $_activeRangeLabel';
     if (daily.isEmpty) {
       return _card(
         child: Column(
           children: [
-            const Text('גרף הכנסות',
-                style: TextStyle(
+            Text(chartTitle,
+                style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
                     color: _dark)),
@@ -902,8 +1177,8 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('גרף הכנסות',
-              style: TextStyle(
+          Text(chartTitle,
+              style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
                   color: _dark)),
@@ -1365,12 +1640,17 @@ class _AdminVaultTabState extends State<AdminVaultTab> {
             children: [
               const Icon(Icons.receipt_long_rounded, color: _blue, size: 18),
               const SizedBox(width: 6),
-              const Text('עסקאות אחרונות',
-                  style: TextStyle(
+              Expanded(
+                child: Text(
+                  _isCustom || _period != 'month'
+                      ? 'עסקאות · $_activeRangeLabel'
+                      : 'עסקאות אחרונות',
+                  style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
-                      color: _dark)),
-              const Spacer(),
+                      color: _dark),
+                ),
+              ),
               Text('${_recentTx.length}',
                   style: TextStyle(
                       fontSize: 12,

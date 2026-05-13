@@ -28,6 +28,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/cancellation_policy_service.dart';
+import '../../widgets/wolt_tile_layer.dart';
 import '../../services/live_location_service.dart';
 import '../../utils/safe_image_provider.dart';
 import '../chat_screen.dart';
@@ -527,13 +528,7 @@ class _LiveMapState extends State<_LiveMap> {
                     InteractiveFlag.doubleTapZoom),
           ),
           children: [
-            TileLayer(
-              urlTemplate:
-                  'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-              subdomains: const ['a', 'b', 'c', 'd'],
-              userAgentPackageName: 'com.anyskill.app',
-              retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
-            ),
+            WoltTileLayer.forContext(context),
             if (polyline != null)
               PolylineLayer(polylines: [
                 Polyline(

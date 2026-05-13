@@ -5,6 +5,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import '../l10n/app_localizations.dart';
 import '../utils/input_sanitizer.dart';
+import '../utils/error_mapper.dart';
 import 'price_settings_screen.dart';
 import 'dart:convert';
 import 'dart:async';
@@ -12,17 +13,36 @@ import 'dart:typed_data';
 import '../services/category_service.dart';
 import '../services/cancellation_policy_service.dart';
 import '../widgets/category_specs_widget.dart';
+import '../services/cached_readers.dart';
 import '../constants/quick_tags.dart';
 import '../widgets/category_tags_selector.dart';
 import '../widgets/price_list_widget.dart';
 import '../services/provider_listing_service.dart';
 import '../services/view_mode_service.dart';
+import '../services/private_data_service.dart';
+import '../main.dart' show PhoneCollectionScreen;
 import '../utils/safe_image_provider.dart';
 import '../features/pet_stay/models/dog_profile.dart';
 import '../features/pet_stay/services/dog_profile_service.dart';
 import '../features/pet_stay/screens/dog_profile_builder_screen.dart';
 import '../features/pet_stay/screens/dog_profile_list_screen.dart';
 import 'identity_onboarding_screen.dart';
+import '../models/massage_profile.dart';
+import '../models/pest_control_profile.dart';
+import '../models/delivery_profile.dart';
+import '../models/cleaning_profile.dart';
+import '../models/handyman_profile.dart';
+import '../models/fitness_trainer_profile.dart';
+import '../models/babysitter_profile.dart';
+import '../models/motorcycle_tow_profile.dart';
+import 'massage/massage_settings_block.dart';
+import 'pest_control/pest_control_settings_block.dart';
+import 'delivery/delivery_settings_block.dart';
+import 'cleaning/cleaning_settings_block.dart';
+import 'handyman/handyman_settings_block.dart';
+import 'fitness_trainer/fitness_trainer_settings_block.dart';
+import 'babysitter/babysitter_settings_block.dart';
+import 'motorcycle_tow/motorcycle_tow_settings_block.dart';
 
 class EditProfileScreen extends StatefulWidget {
   final Map<String, dynamic> userData;
@@ -44,10 +64,16 @@ class EditProfileScreen extends StatefulWidget {
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
   late TextEditingController _nameController;
+  late TextEditingController _emailController;
   late TextEditingController _aboutController;
   late TextEditingController _priceController;
   late TextEditingController _taxIdController;
   late TextEditingController _videoUrlController;
+
+  /// True when the user signed in with Google or Apple — in that case the
+  /// email comes from Firebase Auth (authoritative) and the field renders
+  /// read-only. Phone-OTP signups can still type/edit a email by hand.
+  bool _emailLockedFromAuth = false;
 
   String? _selectedMainCatId; // doc ID of selected main category
   String? _selectedSubCatId; // doc ID of selected sub-category (nullable)
@@ -58,7 +84,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Map<String, dynamic> _categoryDetails = {};
   Map<String, dynamic> _priceList = {};
 
-  int? _responseTimeMinutes;
+  // `_responseTimeMinutes` (manual chip selector) was removed — replaced by
+  // the auto-computed `avgResponseMinutes` field (set by the
+  // `computeResponseTimeOnMessage` CF from real chat timestamps).
   String _cancellationPolicy = 'flexible';
   Set<String> _selectedQuickTags = {};
   Set<String> _selectedCategoryTags = {};
@@ -67,6 +95,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   /// values are `{"from": "09:00", "to": "17:00"}`.
   /// Empty map = "all hours" (legacy behaviour — no restrictions).
   Map<int, Map<String, String>> _workingHours = {};
+
+  MassageProfile _massageProfile = const MassageProfile();
+  PestControlProfile _pestControlProfile = const PestControlProfile();
+  DeliveryProfile _deliveryProfile = const DeliveryProfile();
+  CleaningProfile _cleaningProfile = const CleaningProfile();
+  HandymanProfile _handymanProfile = const HandymanProfile();
+  FitnessTrainerProfile _fitnessTrainerProfile = const FitnessTrainerProfile();
+  BabysitterProfile _babysitterProfile = const BabysitterProfile();
+  MotorcycleTowProfile _motorcycleTowProfile = const MotorcycleTowProfile();
 
   static List<String> _dayNames(BuildContext ctx) {
     final l = AppLocalizations.of(ctx);
@@ -96,6 +133,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   List<Map<String, dynamic>> _categories = [];
   late StreamSubscription<List<Map<String, dynamic>>> _categorySub;
+  // True once the CategoryService.stream() has delivered at least one
+  // snapshot (or hit `onError`). Used to swap the perpetual spinner for
+  // a friendly fallback state (read-only saved-selection card or empty
+  // hint), per the §10 stream-error-resilience rule.
+  bool _categoriesStreamFired = false;
 
   // v10.3.2: Active listing tracking
   String? _activeListingId;
@@ -148,11 +190,44 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       _phoneDisplay = FirebaseAuth.instance.currentUser?.phoneNumber ?? '';
     }
 
+    // Email: 3-tier resolution
+    //   1. Firebase Auth email (authoritative when signed in via Google/Apple)
+    //   2. Firestore-stored email (the user's last saved value)
+    //   3. Empty (phone-OTP user that hasn't filled email yet)
+    //
+    // Detect Google/Apple via providerData. When present, the field is locked
+    // (the auth provider is the source of truth) AND we autosave the value to
+    // Firestore + private/identity if Firestore is missing or out-of-sync.
+    final authUser = FirebaseAuth.instance.currentUser;
+    final firestoreEmail = (widget.userData['email'] as String? ?? '').trim();
+    final providerIds =
+        authUser?.providerData.map((p) => p.providerId).toList() ?? const [];
+    final isSocialSignIn = providerIds.contains('google.com') ||
+        providerIds.contains('apple.com');
+    final authEmail = (authUser?.email ?? '').trim();
+
+    String initialEmail;
+    if (isSocialSignIn && authEmail.isNotEmpty) {
+      initialEmail = authEmail;
+      _emailLockedFromAuth = true;
+      // Auto-sync to Firestore the FIRST time we see a Google/Apple user
+      // whose Firestore record is empty or outdated. Fire-and-forget.
+      if (firestoreEmail != authEmail && authUser != null) {
+        // ignore: discarded_futures
+        _autoSaveSocialEmail(authUser.uid, authEmail);
+      }
+    } else {
+      initialEmail = firestoreEmail;
+      _emailLockedFromAuth = false;
+    }
+    _emailController = TextEditingController(text: initialEmail);
+
     _isCustomer = widget.userData['isCustomer'] ?? true;
     _isProvider = widget.userData['isProvider'] ?? false;
     _isVolunteer = widget.userData['isVolunteer'] ?? false;
     _isPendingExpert = widget.userData['isPendingExpert'] ?? false;
-    _responseTimeMinutes = widget.userData['responseTimeMinutes'] as int?;
+    // `responseTimeMinutes` no longer hydrated — replaced by auto-computed
+    // `avgResponseMinutes` (see CF `computeResponseTimeOnMessage`).
     _cancellationPolicy =
         widget.userData['cancellationPolicy'] as String? ?? 'flexible';
 
@@ -170,56 +245,160 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       }
     }
 
-    _categorySub = CategoryService.stream().listen((cats) {
+    final rawMassage = widget.userData['massageProfile'] as Map<String, dynamic>?;
+    if (rawMassage != null) {
+      _massageProfile = MassageProfile.fromMap(rawMassage);
+    }
+    final rawPest = widget.userData['pestControlProfile'] as Map<String, dynamic>?;
+    if (rawPest != null) {
+      _pestControlProfile = PestControlProfile.fromMap(rawPest);
+    }
+    final rawDelivery = widget.userData['deliveryProfile'] as Map<String, dynamic>?;
+    if (rawDelivery != null) {
+      _deliveryProfile = DeliveryProfile.fromMap(rawDelivery);
+    }
+    final rawHandyman = widget.userData['handymanProfile'] as Map<String, dynamic>?;
+    if (rawHandyman != null) {
+      _handymanProfile = HandymanProfile.fromMap(rawHandyman);
+    }
+    final rawCleaning = widget.userData['cleaningProfile'] as Map<String, dynamic>?;
+    if (rawCleaning != null) {
+      _cleaningProfile = CleaningProfile.fromMap(rawCleaning);
+    }
+    final rawFitness = widget.userData['fitnessTrainerProfile'] as Map<String, dynamic>?;
+    if (rawFitness != null) {
+      _fitnessTrainerProfile = FitnessTrainerProfile.fromMap(rawFitness);
+    }
+    final rawBabysitter = widget.userData['babysitterProfile'] as Map<String, dynamic>?;
+    if (rawBabysitter != null) {
+      _babysitterProfile = BabysitterProfile.fromMap(rawBabysitter);
+    }
+    final rawMotorcycleTow =
+        widget.userData['motorcycleTowProfile'] as Map<String, dynamic>?;
+    if (rawMotorcycleTow != null) {
+      _motorcycleTowProfile = MotorcycleTowProfile.fromMap(rawMotorcycleTow);
+    }
+
+    // HARD TIMEOUT — safety net.
+    Future.delayed(const Duration(seconds: 6), () {
       if (!mounted) return;
-      final mains =
-          cats.where((c) => (c['parentId'] as String? ?? '').isEmpty).toList();
-      // v13.3.0: prefer the active listing's serviceType over the user
-      // doc's — ensures dual-identity providers see the right category
-      // resolved when they switch identities.
-      final serviceType = _activeListingServiceType.isNotEmpty
-          ? _activeListingServiceType
-          : widget.userData['serviceType'] as String?;
-
-      // Resolve existing serviceType into main-category ID + optional sub-category ID
-      final subMatch = cats.firstWhere(
-        (c) =>
-            c['name'] == serviceType &&
-            (c['parentId'] as String? ?? '').isNotEmpty,
-        orElse: () => <String, dynamic>{},
-      );
-      String? mainId, subId;
-      if (subMatch.isNotEmpty) {
-        subId = subMatch['id'] as String?;
-        mainId = subMatch['parentId'] as String?;
-      } else {
-        final mainMatch = mains.firstWhere(
-          (c) => c['name'] == serviceType,
-          orElse: () => <String, dynamic>{},
-        );
-        mainId = mainMatch.isNotEmpty ? mainMatch['id'] as String? : null;
-      }
-
-      final subs =
-          mainId != null
-              ? cats.where((c) => c['parentId'] == mainId).toList()
-              : <Map<String, dynamic>>[];
-
-      setState(() {
-        _categories = cats;
-        _mainCategories = mains;
-        _selectedMainCatId = _selectedMainCatId ?? mainId;
-        _subCategories = subs;
-        _selectedSubCatId = _selectedSubCatId ?? subId;
-      });
-      // Load v2 schema for the resolved category. `serviceType` always
-      // holds the most specific name (sub-category if one is set, else
-      // parent), which is exactly what the schema is keyed by.
-      final resolvedCatName = widget.userData['serviceType'] as String? ?? '';
-      if (resolvedCatName.isNotEmpty && _serviceSchema.isEmpty) {
-        _loadV2SchemaFor(resolvedCatName);
+      if (!_categoriesStreamFired) {
+        debugPrint(
+            '[EditProfile] Categories stream did not fire in 6s — forcing fallback');
+        setState(() => _categoriesStreamFired = true);
       }
     });
+
+    // ONE-SHOT FAST FETCH — guarantees the dropdowns have data ASAP.
+    // The .snapshots() stream below provides live updates, but its first
+    // snapshot can lag (post-nuclear-purge cold network, IndexedDB-less
+    // Firestore web reads, etc.). A direct .get() typically completes in
+    // <500ms and gives us a populated dropdown immediately. The stream
+    // takes over for any subsequent updates.
+    // ignore: discarded_futures
+    _oneshotLoadCategories();
+
+    _categorySub =
+        CategoryService.stream().listen(_applyCategoriesSnapshot, onError: (e) {
+      if (!mounted) return;
+      debugPrint('[EditProfile] CategoryService stream error: $e');
+      if (!_categoriesStreamFired) {
+        setState(() => _categoriesStreamFired = true);
+      }
+    });
+  }
+
+  /// One-shot fetch of categories — backup for the snapshot stream.
+  Future<void> _oneshotLoadCategories() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('categories')
+          .limit(100)
+          .get()
+          .timeout(const Duration(seconds: 5));
+      if (!mounted) return;
+      final cats =
+          snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+      if (cats.isEmpty) return;
+      _applyCategoriesSnapshot(cats);
+      debugPrint(
+          '[EditProfile] One-shot categories loaded: ${cats.length} docs');
+    } catch (e) {
+      debugPrint('[EditProfile] One-shot categories fetch failed: $e');
+      // Don't flip _categoriesStreamFired here — let the snapshot stream
+      // OR the 6s timeout do it. We want to keep the stream's authoritative
+      // result winning if it eventually arrives.
+    }
+  }
+
+  /// Shared logic for processing a categories snapshot (used by both the
+  /// snapshot stream and the one-shot get). Idempotent — safe to call
+  /// multiple times.
+  void _applyCategoriesSnapshot(List<Map<String, dynamic>> cats) {
+    if (!mounted) return;
+    if (!_categoriesStreamFired) _categoriesStreamFired = true;
+    final mains =
+        cats.where((c) => (c['parentId'] as String? ?? '').isEmpty).toList();
+    // v13.3.0: prefer the active listing's serviceType over the user
+    // doc's — ensures dual-identity providers see the right category
+    // resolved when they switch identities.
+    final serviceType = _activeListingServiceType.isNotEmpty
+        ? _activeListingServiceType
+        : widget.userData['serviceType'] as String?;
+
+    // Resolve existing serviceType into main-category ID + optional sub-category ID
+    final subMatch = cats.firstWhere(
+      (c) =>
+          c['name'] == serviceType &&
+          (c['parentId'] as String? ?? '').isNotEmpty,
+      orElse: () => <String, dynamic>{},
+    );
+    String? mainId, subId;
+    if (subMatch.isNotEmpty) {
+      subId = subMatch['id'] as String?;
+      mainId = subMatch['parentId'] as String?;
+    } else {
+      final mainMatch = mains.firstWhere(
+        (c) => c['name'] == serviceType,
+        orElse: () => <String, dynamic>{},
+      );
+      mainId = mainMatch.isNotEmpty ? mainMatch['id'] as String? : null;
+      // Self-heal: providers who registered through the buggy
+      // provider_registration_screen path landed with `serviceType`
+      // == parent name and `subCategory` filled separately.
+      if (mainId != null) {
+        final savedSub =
+            (widget.userData['subCategory'] as String? ?? '').trim();
+        if (savedSub.isNotEmpty) {
+          final fallbackSub = cats.firstWhere(
+            (c) =>
+                c['name'] == savedSub &&
+                (c['parentId'] as String? ?? '') == mainId,
+            orElse: () => <String, dynamic>{},
+          );
+          if (fallbackSub.isNotEmpty) {
+            subId = fallbackSub['id'] as String?;
+          }
+        }
+      }
+    }
+
+    final subs = mainId != null
+        ? cats.where((c) => c['parentId'] == mainId).toList()
+        : <Map<String, dynamic>>[];
+
+    setState(() {
+      _categories = cats;
+      _mainCategories = mains;
+      _selectedMainCatId = _selectedMainCatId ?? mainId;
+      _subCategories = subs;
+      _selectedSubCatId = _selectedSubCatId ?? subId;
+    });
+    // Load v2 schema for the resolved category.
+    final resolvedCatName = widget.userData['serviceType'] as String? ?? '';
+    if (resolvedCatName.isNotEmpty && _serviceSchema.isEmpty) {
+      _loadV2SchemaFor(resolvedCatName);
+    }
   }
 
   /// Loads the v2 [ServiceSchema] for the given category name and merges
@@ -228,7 +407,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _loadV2SchemaFor(String categoryName) async {
     if (categoryName.trim().isEmpty) return;
     try {
-      final schema = await loadServiceSchemaFor(categoryName);
+      // §61: cached read — 30 min TTL.
+      final schema = await CachedReaders.serviceSchemaForCategory(categoryName);
       if (!mounted) return;
       setState(() {
         _serviceSchema = schema;
@@ -252,11 +432,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   void dispose() {
     _categorySub.cancel();
     _nameController.dispose();
+    _emailController.dispose();
     _aboutController.dispose();
     _priceController.dispose();
     _taxIdController.dispose();
     _videoUrlController.dispose();
     super.dispose();
+  }
+
+  /// One-shot autosave for Google/Apple users whose email isn't yet
+  /// mirrored in Firestore. Writes to BOTH the main user doc AND
+  /// `private/identity` per the dual-write rule (CLAUDE.md §11).
+  /// Fire-and-forget — silent failure is OK because the next save tap
+  /// will re-attempt via the regular `_saveProfile` path.
+  Future<void> _autoSaveSocialEmail(String uid, String email) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .set({'email': email}, SetOptions(merge: true));
+      await PrivateDataService.writeContactData(uid, email: email);
+    } catch (_) {
+      // Silent — user-facing save flow will retry on next "save" tap.
+    }
   }
 
   /// v10.3.2: Load all listings for this user and apply identity-specific
@@ -323,6 +521,78 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   /// Resolves listing's serviceType → (mainCatId, subCatId) against the
   /// loaded categories, and re-loads the v2 schema so the pricing fields
   /// re-render with the correct category-specific UI.
+  bool _isMassageSubCategory() {
+    if (_selectedSubCatId == null) return false;
+    final subName = _subCategories
+        .where((c) => c['id'] == _selectedSubCatId)
+        .map((c) => c['name'] as String? ?? '')
+        .firstOrNull ?? '';
+    return isMassageCategory(subName);
+  }
+
+  bool _isPestControlSubCategory() {
+    if (_selectedSubCatId == null) return false;
+    final subName = _subCategories
+        .where((c) => c['id'] == _selectedSubCatId)
+        .map((c) => c['name'] as String? ?? '')
+        .firstOrNull ?? '';
+    return isPestControlCategory(subName);
+  }
+
+  bool _isDeliverySubCategory() {
+    if (_selectedSubCatId == null) return false;
+    final subName = _subCategories
+        .where((c) => c['id'] == _selectedSubCatId)
+        .map((c) => c['name'] as String? ?? '')
+        .firstOrNull ?? '';
+    return isDeliveryCategory(subName);
+  }
+
+  bool _isCleaningSubCategory() {
+    if (_selectedSubCatId == null) return false;
+    final subName = _subCategories
+        .where((c) => c['id'] == _selectedSubCatId)
+        .map((c) => c['name'] as String? ?? '')
+        .firstOrNull ?? '';
+    return isCleaningCategory(subName);
+  }
+
+  bool _isBabysitterSubCategory() {
+    if (_selectedSubCatId == null) return false;
+    final subName = _subCategories
+        .where((c) => c['id'] == _selectedSubCatId)
+        .map((c) => c['name'] as String? ?? '')
+        .firstOrNull ?? '';
+    return isBabysitterCategory(subName);
+  }
+
+  bool _isHandymanSubCategory() {
+    if (_selectedSubCatId == null) return false;
+    final subName = _subCategories
+        .where((c) => c['id'] == _selectedSubCatId)
+        .map((c) => c['name'] as String? ?? '')
+        .firstOrNull ?? '';
+    return isHandymanCategory(subName);
+  }
+
+  bool _isFitnessTrainerSubCategory() {
+    if (_selectedSubCatId == null) return false;
+    final subName = _subCategories
+        .where((c) => c['id'] == _selectedSubCatId)
+        .map((c) => c['name'] as String? ?? '')
+        .firstOrNull ?? '';
+    return isFitnessTrainerCategory(subName);
+  }
+
+  bool _isMotorcycleTowingSubCategory() {
+    if (_selectedSubCatId == null) return false;
+    final subName = _subCategories
+        .where((c) => c['id'] == _selectedSubCatId)
+        .map((c) => c['name'] as String? ?? '')
+        .firstOrNull ?? '';
+    return isMotorcycleTowingCategory(subName);
+  }
+
   void _applyListingCategoryFromServiceType(String serviceType) {
     final subMatch = _categories.firstWhere(
       (c) =>
@@ -358,19 +628,42 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _pickProfileImage() async {
-    final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 300,
-      maxHeight: 300,
-      imageQuality: 50,
-    );
+    // Wrapped in try/catch (Law 10 §9b) — image_picker can throw on web
+    // (HEIC images on iOS Safari, file-permission denials, focus-loss),
+    // and a silent throw left users tapping the avatar with no feedback.
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? image = await picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 300,
+        maxHeight: 300,
+        imageQuality: 50,
+      );
+      if (image == null) return; // user cancelled
 
-    if (image != null) {
-      Uint8List imageBytes = await image.readAsBytes();
+      final Uint8List imageBytes = await image.readAsBytes();
+      // image_picker returns JPEG by default; claim the correct MIME so
+      // downstream decoders that strict-check the data URI don't reject.
+      final encoded = base64Encode(imageBytes);
+      // Hard guard against the Firestore 1 MB document size limit. With
+      // 300×300 + quality 50 the encoded blob is normally ~10-20 KB, but
+      // raw web uploads on some Safari builds skip the resize step.
+      if (encoded.length > 800 * 1024) {
+        if (!mounted) return;
+        messenger.showSnackBar(const SnackBar(
+          content: Text('התמונה גדולה מדי — בחר/י תמונה קטנה יותר'),
+          backgroundColor: Color(0xFFEF4444),
+        ));
+        return;
+      }
+      if (!mounted) return;
       setState(() {
-        _profileImageUrl = "data:image/png;base64,${base64Encode(imageBytes)}";
+        _profileImageUrl = 'data:image/jpeg;base64,$encoded';
       });
+    } catch (e) {
+      if (!mounted) return;
+      ErrorMapper.show(context, e);
     }
   }
 
@@ -404,6 +697,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         }
 
         if (mounted) setState(() => _galleryImages.add(encoded));
+      } catch (e) {
+        if (mounted) ErrorMapper.show(context, e);
       } finally {
         if (mounted) setState(() => _isLoading = false);
       }
@@ -424,6 +719,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         final Uint8List imageBytes = await image.readAsBytes();
         final String encoded = base64Encode(imageBytes);
         if (mounted) setState(() => _certificationImage = encoded);
+      } catch (e) {
+        if (mounted) ErrorMapper.show(context, e);
       } finally {
         if (mounted) setState(() => _isLoading = false);
       }
@@ -472,6 +769,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'verificationVideoUrl': downloadUrl,
         'videoVerifiedByAdmin': false,
       });
+      // §61 invalidation contract
+      CachedReaders.invalidateProvider(uid);
 
       if (mounted) {
         setState(() => _verificationVideoUrl = downloadUrl);
@@ -549,6 +848,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       return;
     }
 
+    // ── Validate Email ──────────────────────────────────────────────────────
+    // Email is OPTIONAL for phone-OTP users (they can leave it blank). When
+    // provided, it must look like a real address. Google/Apple users have a
+    // locked field whose value comes from Firebase Auth — we still validate
+    // for safety, but it should never fail in that path.
+    final rawEmail = _emailController.text.trim();
+    String? safeEmail;
+    if (rawEmail.isNotEmpty) {
+      // Permissive RFC-style check — same shape as login_screen / onboarding.
+      final ok = RegExp(r"^[\w.\-+]+@[\w\-]+\.[\w\-.]+$").hasMatch(rawEmail);
+      if (!ok) {
+        _validationError(l10n.errorInvalidEmail);
+        return;
+      }
+      safeEmail = rawEmail.toLowerCase();
+    }
+
     // ── Sanitize & validate About/Bio (provider only) ────────────────────────
     SanitizeResult? aboutResult;
     if (_isProvider) {
@@ -603,14 +919,131 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         _validationError(l10n.validationCategoryRequired);
         return;
       }
-      final price = double.tryParse(_priceController.text.trim());
-      if (price == null) {
-        _validationError(l10n.validationPriceInvalid);
-        return;
+      // The legacy "מחיר לשעה" field is HIDDEN for sub-categories that own
+      // their own CSM-driven pricing (motorcycle towing has base price +
+      // per-km + night/emergency surcharges declared in its block). If we
+      // ran the price validation here for those providers, _priceController
+      // would still hold "0" (default init from widget.userData) and the
+      // `price <= 0` check would block the save with "המחיר חייב להיות חיובי"
+      // — a confusing dead-end since there's no field for the user to fix.
+      if (!_isMotorcycleTowingSubCategory()) {
+        final price = double.tryParse(_priceController.text.trim());
+        if (price == null) {
+          _validationError(l10n.validationPriceInvalid);
+          return;
+        }
+        if (price <= 0) {
+          _validationError(l10n.validationPricePositive);
+          return;
+        }
       }
-      if (price <= 0) {
-        _validationError(l10n.validationPricePositive);
-        return;
+
+      if (_isMassageSubCategory()) {
+        if (_massageProfile.specialties.isEmpty) {
+          _validationError('בחרי לפחות סוג טיפול אחד');
+          return;
+        }
+        final locs = _massageProfile.serviceLocations;
+        if (!locs.home.enabled && !locs.clinic.enabled) {
+          _validationError('בחרי לפחות מיקום אחד (בית או קליניקה)');
+          return;
+        }
+        if (locs.clinic.enabled && locs.clinic.address.trim().isEmpty) {
+          _validationError('הזיני כתובת לקליניקה');
+          return;
+        }
+        if (_massageProfile.durations.where((d) => d.enabled).isEmpty) {
+          _validationError('בחרי לפחות משך טיפול אחד');
+          return;
+        }
+      }
+
+      if (_isPestControlSubCategory()) {
+        if (_pestControlProfile.pestTypes.isEmpty) {
+          _validationError('בחר לפחות סוג מזיק אחד');
+          return;
+        }
+        if (_pestControlProfile.treatmentMethods.isEmpty) {
+          _validationError('בחר לפחות שיטת טיפול אחת');
+          return;
+        }
+      }
+
+      if (_isDeliverySubCategory()) {
+        if (_deliveryProfile.vehicles.isEmpty) {
+          _validationError('בחר לפחות רכב אחד פעיל (קטנוע / רכב)');
+          return;
+        }
+        if (_deliveryProfile.deliveryTypes.isEmpty) {
+          _validationError('בחר לפחות סוג משלוח אחד');
+          return;
+        }
+      }
+
+      if (_isCleaningSubCategory()) {
+        final v = _cleaningProfile.verifications;
+        if (!v.idVerified) {
+          _validationError('נדרשת תעודת זהות מאומתת');
+          return;
+        }
+        if (!v.backgroundChecked) {
+          _validationError('נדרשת בדיקת רקע');
+          return;
+        }
+        if (v.referencesCount < 3) {
+          _validationError('נדרשים לפחות 3 ממליצים מאומתים');
+          return;
+        }
+        if (_cleaningProfile.cleaningTypes.isEmpty) {
+          _validationError('בחרי לפחות סוג נקיון אחד');
+          return;
+        }
+        if (_cleaningProfile.baseChecklist.isEmpty) {
+          _validationError('בנייה לפחות קטגוריה אחת ב-Checklist');
+          return;
+        }
+      }
+
+      if (_isHandymanSubCategory()) {
+        if (!_handymanProfile.verifications.backgroundCheck.verified) {
+          _validationError('נדרשת בדיקת רקע מאושרת');
+          return;
+        }
+        if (!_handymanProfile.specialties.any((s) => s.active)) {
+          _validationError('בחר לפחות תחום התמחות אחד');
+          return;
+        }
+      }
+
+      if (_isFitnessTrainerSubCategory()) {
+        if (_fitnessTrainerProfile.selectedSpecialties.isEmpty) {
+          _validationError('בחרי לפחות התמחות אחת (עד 5)');
+          return;
+        }
+        if (_fitnessTrainerProfile.packages.isEmpty) {
+          _validationError('הוסיפי לפחות חבילת אימונים אחת');
+          return;
+        }
+        if (_fitnessTrainerProfile.locations.isEmpty) {
+          _validationError('בחרי לפחות מיקום אימון אחד (בית / פארק / חדר כושר)');
+          return;
+        }
+      }
+
+      if (_isMotorcycleTowingSubCategory()) {
+        if (!_motorcycleTowProfile.hasBikeTypes) {
+          _validationError('בחר לפחות סוג אופנוע אחד שאתה גורר');
+          return;
+        }
+        if (!_motorcycleTowProfile.hasPricing) {
+          _validationError('הזן מחיר בסיס ומחיר לק"מ');
+          return;
+        }
+        if (!_motorcycleTowProfile.hasServiceArea) {
+          _validationError(
+              'הגדר אזור פעילות (כתובת בסיס + רדיוס או פוליגון)');
+          return;
+        }
       }
     }
 
@@ -620,6 +1053,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final messenger = ScaffoldMessenger.of(context);
     final savedSuccess = l10n.saveSuccess;
     String saveErrMsg(Object e) => l10n.saveError('$e');
+
+    // Defensive guard — should never happen since the screen is only reached
+    // when a Firebase Auth user exists, but a stale FutureBuilder could race.
+    if (uid == null || uid.isEmpty) {
+      setState(() => _isLoading = false);
+      messenger.showSnackBar(SnackBar(content: Text(saveErrMsg('not-signed-in'))));
+      return;
+    }
 
     try {
       // Resolve the most-specific category name (sub → main → null)
@@ -654,11 +1095,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // when update() receives a null value.  Omitting the key is the correct
       // approach for optional fields; use FieldValue.delete() only when you
       // explicitly want to remove an existing field.
+      // NOTE: `phone` + `phoneVerifiedAt` are intentionally NOT in this
+      // payload. They are written exclusively by the OTP-link flow
+      // (PhoneCollectionScreen) so the rules can enforce a one-shot
+      // first-time-only write. Edit profile must never re-save the phone.
       final Map<String, dynamic> payload = {
         'name': safeName, // ← sanitized
         'isCustomer': _isCustomer,
         'isProvider': _isProvider,
-        if (_phoneDisplay.isNotEmpty) 'phone': _phoneDisplay,
+        if (safeEmail != null && safeEmail.isNotEmpty) 'email': safeEmail,
         if (_profileImageUrl != null) 'profileImage': _profileImageUrl,
         if (_isProvider && serviceTypeName != null)
           'serviceType': serviceTypeName
@@ -677,7 +1122,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // Provider-only fields — all values are sanitized results from above
       if (_isProvider) {
         payload['isVolunteer'] = _isVolunteer;
-        payload['pricePerHour'] = double.tryParse(_priceController.text) ?? 0.0;
+        // For motorcycle towing the legacy "מחיר לשעה" field is hidden in
+        // the UI (CSM owns pricing). Mirror the CSM's base price into the
+        // legacy `pricePerHour` field so search cards + sort-by-price flows
+        // still have a sensible value to display.
+        if (_isMotorcycleTowingSubCategory()) {
+          payload['pricePerHour'] = _motorcycleTowProfile.pricing.basePrice;
+        } else {
+          payload['pricePerHour'] =
+              double.tryParse(_priceController.text) ?? 0.0;
+        }
         payload['aboutMe'] = aboutResult!.value; // ← sanitized
         payload['gallery'] = _galleryImages;
         if (_certificationImage != null) {
@@ -688,9 +1142,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         payload['categoryTags'] = _selectedCategoryTags.toList();
         payload['cancellationPolicy'] = _cancellationPolicy;
         payload['videoUrl'] = videoUrlResult?.value ?? ''; // ← sanitized
-        if (_responseTimeMinutes != null) {
-          payload['responseTimeMinutes'] = _responseTimeMinutes;
-        }
+        // Response time is now computed automatically by the
+        // `computeResponseTimeOnMessage` CF; the manual setter was
+        // removed (UX bug — providers shouldn't declare their own SLAs).
+        // We intentionally do NOT write `responseTimeMinutes` here so the
+        // CF-managed `avgResponseMinutes` stays authoritative.
         // Weekly working hours (convert Map<int,...> → Map<String,...> for Firestore)
         if (_workingHours.isNotEmpty) {
           payload['workingHours'] = {
@@ -698,6 +1154,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           };
         } else {
           payload['workingHours'] = FieldValue.delete();
+        }
+        if (_isMassageSubCategory() && _massageProfile.specialties.isNotEmpty) {
+          payload['massageProfile'] = _massageProfile.toMap();
+        }
+        if (_isPestControlSubCategory() && _pestControlProfile.pestTypes.isNotEmpty) {
+          payload['pestControlProfile'] = _pestControlProfile.toMap();
+        }
+        if (_isDeliverySubCategory() && _deliveryProfile.vehicles.isNotEmpty) {
+          payload['deliveryProfile'] = _deliveryProfile.toMap();
+        }
+        if (_isCleaningSubCategory() &&
+            _cleaningProfile.cleaningTypes.isNotEmpty) {
+          payload['cleaningProfile'] = _cleaningProfile.toMap();
+        }
+        if (_isHandymanSubCategory() &&
+            _handymanProfile.specialties.any((s) => s.active)) {
+          payload['handymanProfile'] = _handymanProfile.toMap();
+        }
+        if (_isFitnessTrainerSubCategory() &&
+            _fitnessTrainerProfile.selectedSpecialties.isNotEmpty) {
+          payload['fitnessTrainerProfile'] = _fitnessTrainerProfile.toMap();
+        }
+        if (_isBabysitterSubCategory()) {
+          payload['babysitterProfile'] = _babysitterProfile.toMap();
+        }
+        if (_isMotorcycleTowingSubCategory() &&
+            _motorcycleTowProfile.bikeTypeIds.isNotEmpty) {
+          payload['motorcycleTowProfile'] = _motorcycleTowProfile.toMap();
         }
         // Dynamic v2 service schema values: fields + _bundles + _surcharge.
         // We always write the map (even empty) so deletes propagate too.
@@ -708,13 +1192,38 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         }
       }
 
+      // Use set(merge:true) instead of update() so this also works for the
+      // edge case where the user doc doesn't yet exist (a brand-new phone-OTP
+      // signup whose role-selection sheet write was lost mid-flow). With
+      // update() Firestore returns permission-denied because the rule's
+      // `request.resource.data.diff(resource.data)` errors when resource.data
+      // is null. set(merge:true) routes through the create rule when the
+      // doc is missing, and through the update rule when it already exists.
       await FirebaseFirestore.instance
           .collection('users')
           .doc(uid)
-          .update(payload);
+          .set(payload, SetOptions(merge: true));
+
+      // CLAUDE.md §61 invalidation contract: every mutation of a cached
+      // entity MUST invalidate so other screens (favorites §63, chat §66,
+      // BookingProfileAvatar §67) re-read the new profileImage / name /
+      // category instead of serving the 5-min cached copy.
+      CachedReaders.invalidateProvider(uid);
+
+      // CLAUDE.md §11 — dual-write contact email to private/identity.
+      // Phone is no longer mirrored here because PhoneCollectionScreen owns
+      // the phone field end-to-end (writes both main doc and private/identity
+      // when OTP succeeds, and edits are blocked thereafter).
+      if (safeEmail != null) {
+        try {
+          await PrivateDataService.writeContactData(uid, email: safeEmail);
+        } catch (e) {
+          debugPrint('[EditProfile] writeContactData error: $e');
+        }
+      }
 
       // v10.1.0: Dual-write — sync identity-specific fields to provider_listings
-      if (_isProvider && uid != null) {
+      if (_isProvider) {
         try {
           await _syncToProviderListing(uid, payload, serviceTypeName, parentCategoryName);
         } catch (e) {
@@ -1015,6 +1524,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (payload.containsKey('categoryDetails')) listingUpdate['categoryDetails'] = payload['categoryDetails'];
     if (payload.containsKey('priceList')) listingUpdate['priceList'] = payload['priceList'];
     if (payload.containsKey('isVolunteer')) listingUpdate['isVolunteer'] = payload['isVolunteer'];
+    if (payload.containsKey('massageProfile')) listingUpdate['massageProfile'] = payload['massageProfile'];
+    if (payload.containsKey('pestControlProfile')) listingUpdate['pestControlProfile'] = payload['pestControlProfile'];
+    if (payload.containsKey('deliveryProfile')) listingUpdate['deliveryProfile'] = payload['deliveryProfile'];
+    if (payload.containsKey('cleaningProfile')) listingUpdate['cleaningProfile'] = payload['cleaningProfile'];
+    if (payload.containsKey('handymanProfile')) listingUpdate['handymanProfile'] = payload['handymanProfile'];
+    if (payload.containsKey('fitnessTrainerProfile')) listingUpdate['fitnessTrainerProfile'] = payload['fitnessTrainerProfile'];
+    if (payload.containsKey('babysitterProfile')) listingUpdate['babysitterProfile'] = payload['babysitterProfile'];
+    if (payload.containsKey('motorcycleTowProfile')) listingUpdate['motorcycleTowProfile'] = payload['motorcycleTowProfile'];
 
     // Remove FieldValue.delete() entries — can't write them to a doc that may not have the field
     listingUpdate.removeWhere((_, v) => v is FieldValue);
@@ -1033,12 +1550,109 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  /// Pushes the OTP-link flow when the user has no verified phone yet.
+  /// Re-loads the user doc on success so `_phoneDisplay` flips from empty
+  /// to the new verified number without leaving the screen.
+  Future<void> _addPhoneFlow() async {
+    final navigator = Navigator.of(context);
+    await navigator.push(
+      MaterialPageRoute(
+        builder: (_) => PhoneCollectionScreen(
+          existingData: widget.userData,
+          showSkipButton: false, // mandatory completion
+          onSuccess: () {
+            // Pop back to edit profile.
+            if (navigator.canPop()) navigator.pop();
+          },
+        ),
+      ),
+    );
+    // Re-read the user doc so the new phone shows immediately.
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || !mounted) return;
+    try {
+      final fresh = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get();
+      final phone = (fresh.data()?['phone'] as String? ?? '').trim();
+      if (phone.isNotEmpty && mounted) {
+        setState(() => _phoneDisplay = phone);
+      }
+    } catch (e) {
+      debugPrint('[EditProfile] Phone refresh failed: $e');
+    }
+  }
+
   Widget _buildLockedPhoneField() {
+    // No phone yet → show an actionable "Add Phone" CTA. After OTP-link the
+    // value comes back via `_addPhoneFlow` and this collapses to the locked
+    // display below.
+    if (_phoneDisplay.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: [
+              const Icon(Icons.phone_rounded, size: 14, color: Color(0xFF6366F1)),
+              const SizedBox(width: 4),
+              Text(
+                AppLocalizations.of(context).editPhoneLabel,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          InkWell(
+            onTap: _addPhoneFlow,
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsetsDirectional.fromSTEB(16, 13, 16, 13),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEEF2FF),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF6366F1), width: 1.2),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.add_circle_rounded,
+                      size: 18, color: Color(0xFF6366F1)),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'הוסף מספר טלפון ואמת אותו',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF6366F1),
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.arrow_back_ios_rounded,
+                      size: 13, color: Color(0xFF6366F1)),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Padding(
+            padding: EdgeInsetsDirectional.only(start: 4),
+            child: Text(
+              'הוספת מספר חובה. תקבל קוד SMS לאימות. לאחר השמירה לא ניתן לשנות — צוות AnySkill בלבד.',
+              style: TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+          ),
+        ],
+      );
+    }
+
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
-          mainAxisAlignment: MainAxisAlignment.end,
+          mainAxisAlignment: MainAxisAlignment.start,
           children: [
             const Icon(Icons.lock_rounded, size: 13, color: Color(0xFF6366F1)),
             const SizedBox(width: 4),
@@ -1061,25 +1675,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             children: [
               Expanded(
                 child: Text(
-                  _phoneDisplay.isEmpty ? '—' : _phoneDisplay,
+                  _phoneDisplay,
                   textAlign: TextAlign.right,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 15,
-                    color:
-                        _phoneDisplay.isEmpty
-                            ? Colors.grey[400]
-                            : Colors.black87,
+                    color: Colors.black87,
                   ),
                 ),
               ),
               const SizedBox(width: 8),
-              Icon(
+              const Icon(
                 Icons.phone_rounded,
                 size: 17,
-                color:
-                    _phoneDisplay.isEmpty
-                        ? Colors.grey[400]
-                        : const Color(0xFF6366F1),
+                color: Color(0xFF6366F1),
               ),
             ],
           ),
@@ -1090,6 +1698,96 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           child: Text(
             AppLocalizations.of(context).editPhoneVerified,
             style: const TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Editable email field — or a locked Google/Apple display when the user
+  /// signed in via a social provider (in that case the email is authoritative
+  /// and cannot be changed inside the app).
+  Widget _buildEmailField(AppLocalizations l10n) {
+    if (_emailLockedFromAuth) {
+      // Locked state — mirrors `_buildLockedPhoneField` design language but
+      // shows a Google-icon hint instead of the lock icon.
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: [
+              const Icon(Icons.lock_rounded,
+                  size: 13, color: Color(0xFF6366F1)),
+              const SizedBox(width: 4),
+              Text(
+                l10n.loginEmail,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F7FF),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _emailController.text.isEmpty ? '—' : _emailController.text,
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: _emailController.text.isEmpty
+                          ? Colors.grey[400]
+                          : Colors.black87,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Icon(
+                  Icons.alternate_email_rounded,
+                  size: 17,
+                  color: Color(0xFF6366F1),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Align(
+            alignment: AlignmentDirectional.centerEnd,
+            child: Text(
+              'מסונכרן אוטומטית מחשבון Google / Apple',
+              style: TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Editable state — phone-OTP user can type their own email.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          l10n.loginEmail,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: _emailController,
+          textAlign: TextAlign.start,
+          keyboardType: TextInputType.emailAddress,
+          autocorrect: false,
+          decoration: const InputDecoration(
+            hintText: 'name@example.com',
+            prefixIcon: Icon(Icons.alternate_email_rounded,
+                size: 18, color: Color(0xFF6366F1)),
           ),
         ),
       ],
@@ -1139,108 +1837,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
-  Widget _buildApplyToBeExpertButton() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: GestureDetector(
-        onTap: _showExpertApplicationForm,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-            ),
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF6366F1).withValues(alpha: 0.3),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.work_outline_rounded, color: Colors.white, size: 22),
-              const SizedBox(width: 10),
-              Text(
-                AppLocalizations.of(context).editBecomeProvider,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showExpertApplicationForm() async {
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder:
-          (_) => _ExpertApplicationSheet(
-            mainCategories: _mainCategories,
-            onSubmit: _submitExpertApplication,
-          ),
-    );
-  }
-
-  Future<void> _submitExpertApplication({
-    required String category,
-    required String taxId,
-    required String aboutMe,
-  }) async {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return;
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final batch = FirebaseFirestore.instance.batch();
-      batch.update(FirebaseFirestore.instance.collection('users').doc(uid), {
-        'isPendingExpert': true,
-        'expertApplicationData': {
-          'category': category,
-          'taxId': taxId,
-          'aboutMe': aboutMe,
-          'submittedAt': FieldValue.serverTimestamp(),
-        },
-      });
-      batch.set(FirebaseFirestore.instance.collection('activity_log').doc(), {
-        'type': 'expert_application',
-        'userId': uid,
-        'userName': widget.userData['name'] ?? '',
-        'category': category,
-        'priority': 'high',
-        'timestamp': FieldValue.serverTimestamp(),
-        'message': AppLocalizations.of(context).editApplicationMessage((widget.userData['name'] as String?) ?? uid),
-        'expireAt': Timestamp.fromDate(
-            DateTime.now().add(const Duration(days: 30))),
-      });
-      await batch.commit();
-      if (mounted) {
-        setState(() => _isPendingExpert = true);
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('✅ הבקשה שלך נשלחה! נחזור אליך בקרוב.'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        messenger.showSnackBar(
-          SnackBar(content: Text(AppLocalizations.of(context).editGenericError(e.toString())), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1272,14 +1868,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         // v12.7.0 — View-mode toggle.
                         //  Provider → 2 chips (נותן שירות / לקוח)
                         //  Admin    → 3 chips (ניהול / נותן שירות / לקוח)
-                        if (_isProvider || widget.userData['isAdmin'] == true)
+                        //  Support agent → toggle hidden (dedicated workspace)
+                        if ((_isProvider || _hasAdminPrivilege()) &&
+                            !_isSupportAgent()) ...[
                           _buildViewModeToggleCard(context),
-                        if (_isProvider || widget.userData['isAdmin'] == true)
                           const SizedBox(height: 16),
-                        // ── Dogs (customers only — private, owner-only view) ──
-                        if (!_isProvider) ...[
-                          _buildMyDogsSection(context),
-                          const SizedBox(height: 18),
                         ],
                         // --- תמונת פרופיל ---
                         Center(
@@ -1344,9 +1937,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         ),
                         const SizedBox(height: 24),
 
-                        Text(
-                          l10n.profileFieldName,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          child: Text(
+                            l10n.profileFieldName,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
                         ),
                         TextField(
                           controller: _nameController,
@@ -1361,7 +1957,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         // ── Phone — verified, read-only ──────────────────────────
                         _buildLockedPhoneField(),
 
+                        const SizedBox(height: 20),
+
+                        // ── Email ────────────────────────────────────────────────
+                        _buildEmailField(l10n),
+
                         const SizedBox(height: 25),
+
+                        // ── Dogs (customers only — private, owner-only view) ──
+                        if (!_isProvider) ...[
+                          _buildMyDogsSection(context),
+                          const SizedBox(height: 18),
+                        ],
 
                         Text(
                           l10n.profileFieldRole,
@@ -1407,9 +2014,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             ],
                           )
                         else if (_isPendingExpert)
-                          _buildPendingExpertBanner()
-                        else
-                          _buildApplyToBeExpertButton(),
+                          _buildPendingExpertBanner(),
 
                         // ── Volunteer toggle (providers only) ────────────────────
                         if (_isProvider) ...[
@@ -1495,20 +2100,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 6),
-                          // Show a spinner until the CategoryService stream delivers
-                          // the first batch.  An empty-items DropdownButtonFormField is
-                          // visually non-responsive on Flutter Web.
-                          if (_mainCategories.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 12),
-                              child: Center(
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              ),
-                            )
-                          else
-                            DropdownButtonFormField<String>(
+                          // ALWAYS render the dropdown structure — never swap it
+                          // out for a fallback card. When items are loading
+                          // (one-shot get + stream both pending), show an
+                          // inline spinner + "טוען..." text INSIDE the hint
+                          // area so the user knows to wait. The `onChanged`
+                          // is null while empty → Flutter renders the dropdown
+                          // as disabled (clearly non-interactive), avoiding
+                          // the previous bug where the user tapped an empty
+                          // dropdown and nothing happened.
+                          DropdownButtonFormField<String>(
                               isExpanded:
                                   true, // ← required on Web; without it the tap
                               //   target collapses to 0 in RTL columns
@@ -1518,10 +2119,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                       )
                                       ? _selectedMainCatId
                                       : null,
-                              hint: Text(
-                                l10n.profileFieldCategoryMainHint,
-                                textAlign: TextAlign.right,
-                              ),
+                              hint: _mainCategories.isEmpty
+                                  ? _buildLoadingHint(
+                                      l10n.profileFieldCategoryMainHint)
+                                  : Text(
+                                      l10n.profileFieldCategoryMainHint,
+                                      textAlign: TextAlign.right,
+                                    ),
                               items:
                                   _mainCategories
                                       .map(
@@ -1534,7 +2138,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                         ),
                                       )
                                       .toList(),
-                              onChanged: (val) {
+                              // Disable taps while empty — Flutter shows a
+                              // greyed dropdown so the user knows it's a
+                              // loading state (not a "broken" widget).
+                              onChanged: _mainCategories.isEmpty ? null : (val) {
                                 setState(() {
                                   _selectedMainCatId = val;
                                   _selectedSubCatId = null;
@@ -1618,6 +2225,90 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                               ),
                             ),
                           ],
+
+                          // ── Massage Settings Block (only for massage sub-category) ──
+                          if (_isMassageSubCategory()) ...[
+                            const SizedBox(height: 16),
+                            MassageSettingsBlock(
+                              initialProfile: _massageProfile,
+                              onChanged: (profile) {
+                                _massageProfile = profile;
+                              },
+                            ),
+                          ],
+
+                          // ── Pest Control Settings Block (only for pest control sub-category) ──
+                          if (_isPestControlSubCategory()) ...[
+                            const SizedBox(height: 16),
+                            PestControlSettingsBlock(
+                              initialProfile: _pestControlProfile,
+                              onChanged: (profile) {
+                                _pestControlProfile = profile;
+                              },
+                            ),
+                          ],
+
+                          if (_isDeliverySubCategory()) ...[
+                            const SizedBox(height: 16),
+                            DeliverySettingsBlock(
+                              initialProfile: _deliveryProfile,
+                              onChanged: (profile) {
+                                _deliveryProfile = profile;
+                              },
+                            ),
+                          ],
+
+                          if (_isCleaningSubCategory()) ...[
+                            const SizedBox(height: 16),
+                            CleaningSettingsBlock(
+                              initialProfile: _cleaningProfile,
+                              providerId: FirebaseAuth.instance.currentUser?.uid,
+                              onChanged: (profile) {
+                                _cleaningProfile = profile;
+                              },
+                            ),
+                          ],
+
+                          if (_isHandymanSubCategory()) ...[
+                            const SizedBox(height: 16),
+                            HandymanSettingsBlock(
+                              initialProfile: _handymanProfile,
+                              onChanged: (profile) {
+                                _handymanProfile = profile;
+                              },
+                            ),
+                          ],
+
+                          if (_isFitnessTrainerSubCategory()) ...[
+                            const SizedBox(height: 16),
+                            FitnessTrainerSettingsBlock(
+                              initialProfile: _fitnessTrainerProfile,
+                              onChanged: (profile) {
+                                _fitnessTrainerProfile = profile;
+                              },
+                            ),
+                          ],
+
+                          if (_isBabysitterSubCategory()) ...[
+                            const SizedBox(height: 16),
+                            BabysitterSettingsBlock(
+                              initialProfile: _babysitterProfile,
+                              onChanged: (profile) {
+                                _babysitterProfile = profile;
+                              },
+                            ),
+                          ],
+
+                          if (_isMotorcycleTowingSubCategory()) ...[
+                            const SizedBox(height: 16),
+                            MotorcycleTowSettingsBlock(
+                              initialProfile: _motorcycleTowProfile,
+                              onChanged: (profile) {
+                                _motorcycleTowProfile = profile;
+                              },
+                            ),
+                          ],
+
                           const SizedBox(height: 20),
 
                           // ── Tax ID ──────────────────────────────────────────────
@@ -1701,126 +2392,141 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           ),
                           const SizedBox(height: 20),
 
-                          // ── Price Settings shortcut ────────────────────────────
-                          GestureDetector(
-                            onTap:
-                                () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder:
-                                        (_) => PriceSettingsScreen(
-                                          userData: {
-                                            ...widget.userData,
-                                            // Pass the live price the user may have typed
-                                            'pricePerHour':
-                                                double.tryParse(
-                                                  _priceController.text.trim(),
-                                                ) ??
-                                                widget
-                                                    .userData['pricePerHour'] ??
-                                                100.0,
-                                          },
-                                        ),
+                          // ── Price Settings + per-hour field ───────────────────
+                          // Hidden for sub-categories that own their own pricing
+                          // editor (e.g. Motorcycle Towing CSM §55 — base price,
+                          // included km, per-km, night/emergency surcharge are
+                          // declared inside the CSM block above). Showing the
+                          // legacy "₪/hour" field on top of that would be
+                          // confusing + irrelevant.
+                          if (!_isMotorcycleTowingSubCategory()) ...[
+                            GestureDetector(
+                              onTap:
+                                  () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder:
+                                          (_) => PriceSettingsScreen(
+                                            userData: {
+                                              ...widget.userData,
+                                              // Pass the live price the user may have typed
+                                              'pricePerHour':
+                                                  double.tryParse(
+                                                    _priceController.text.trim(),
+                                                  ) ??
+                                                  widget
+                                                      .userData['pricePerHour'] ??
+                                                  100.0,
+                                            },
+                                          ),
+                                    ),
                                   ),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 14,
                                 ),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 14,
-                              ),
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [
-                                    Color(0xFF6366F1),
-                                    Color(0xFF8B5CF6),
+                                decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                    colors: [
+                                      Color(0xFF6366F1),
+                                      Color(0xFF8B5CF6),
+                                    ],
+                                  ),
+                                  borderRadius: BorderRadius.circular(14),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: const Color(
+                                        0xFF6366F1,
+                                      ).withValues(alpha: 0.3),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 4),
+                                    ),
                                   ],
                                 ),
-                                borderRadius: BorderRadius.circular(14),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: const Color(
-                                      0xFF6366F1,
-                                    ).withValues(alpha: 0.3),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.arrow_back_ios_new_rounded,
-                                        color: Colors.white70,
-                                        size: 14,
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        AppLocalizations.of(context).editAdvancedSettings,
-                                        style: const TextStyle(
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.arrow_back_ios_new_rounded,
                                           color: Colors.white70,
-                                          fontSize: 12,
+                                          size: 14,
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                  Row(
-                                    children: [
-                                      Text(
-                                        AppLocalizations.of(context).editPricingSettings,
-                                        style: const TextStyle(
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          AppLocalizations.of(context).editAdvancedSettings,
+                                          style: const TextStyle(
+                                            color: Colors.white70,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    Row(
+                                      children: [
+                                        Text(
+                                          AppLocalizations.of(context).editPricingSettings,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 15,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        const Icon(
+                                          Icons.price_change_outlined,
                                           color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 15,
+                                          size: 20,
                                         ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      const Icon(
-                                        Icons.price_change_outlined,
-                                        color: Colors.white,
-                                        size: 20,
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 16),
-
-                          Text(
-                            l10n.profileFieldPrice,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          TextField(
-                            controller: _priceController,
-                            keyboardType: TextInputType.number,
-                            textAlign: TextAlign.start,
-                            decoration: InputDecoration(
-                              hintText: l10n.profileFieldPriceHint,
+                            const SizedBox(height: 16),
+                            Text(
+                              l10n.profileFieldPrice,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold),
                             ),
-                          ),
+                            TextField(
+                              controller: _priceController,
+                              keyboardType: TextInputType.number,
+                              textAlign: TextAlign.start,
+                              decoration: InputDecoration(
+                                hintText: l10n.profileFieldPriceHint,
+                              ),
+                            ),
+                          ],
 
                           // ── v2 Service Schema (fields + bundles + surcharge + deposit) ──
-                          if (!_serviceSchema.isEmpty)
-                            DynamicServiceSchemaForm(
-                              key: ValueKey(
-                                  'svc_schema_${_selectedSubCatId ?? _selectedMainCatId ?? ''}'),
-                              schema: _serviceSchema,
-                              initialValues: _categoryDetails,
-                              onChanged: (vals) => _categoryDetails = vals,
-                            )
-                          else if (_categorySchema.isNotEmpty)
-                            // Legacy v1 fallback (only fires for categories
-                            // whose serviceSchema is still in List shape).
-                            DynamicSchemaForm(
-                              schema: _categorySchema,
-                              initialValues: _categoryDetails,
-                              onChanged: (vals) => _categoryDetails = vals,
-                            ),
+                          // Hidden for motorcycle towing — the CSM block above
+                          // already declares "תעריף קריאה" + "תעריף לשעת עבודה"
+                          // + night/emergency surcharges. Showing the schema
+                          // form here would render duplicate inputs for the
+                          // same data and confuse the provider.
+                          if (!_isMotorcycleTowingSubCategory()) ...[
+                            if (!_serviceSchema.isEmpty)
+                              DynamicServiceSchemaForm(
+                                key: ValueKey(
+                                    'svc_schema_${_selectedSubCatId ?? _selectedMainCatId ?? ''}'),
+                                schema: _serviceSchema,
+                                initialValues: _categoryDetails,
+                                onChanged: (vals) => _categoryDetails = vals,
+                              )
+                            else if (_categorySchema.isNotEmpty)
+                              // Legacy v1 fallback (only fires for categories
+                              // whose serviceSchema is still in List shape).
+                              DynamicSchemaForm(
+                                schema: _categorySchema,
+                                initialValues: _categoryDetails,
+                                onChanged: (vals) => _categoryDetails = vals,
+                              ),
+                          ],
 
                           // ── Structured price list (category-specific) ──
                           if (hasPriceList(widget.userData))
@@ -1830,76 +2536,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                               onChanged: (val) => _priceList = val,
                             ),
 
-                          const SizedBox(height: 20),
-                          Text(
-                            l10n.profileFieldResponseTime,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            l10n.profileFieldResponseTimeHint,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: Wrap(
-                              spacing: 8,
-                              runSpacing: 6,
-                              children: [
-                                for (final minutes in [5, 10, 15, 30, 60])
-                                  GestureDetector(
-                                    onTap:
-                                        () => setState(
-                                          () =>
-                                              _responseTimeMinutes =
-                                                  _responseTimeMinutes ==
-                                                          minutes
-                                                      ? null
-                                                      : minutes,
-                                        ),
-                                    child: AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 150,
-                                      ),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 14,
-                                        vertical: 8,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            _responseTimeMinutes == minutes
-                                                ? const Color(0xFF6366F1)
-                                                : Colors.white,
-                                        borderRadius: BorderRadius.circular(20),
-                                        border: Border.all(
-                                          color:
-                                              _responseTimeMinutes == minutes
-                                                  ? const Color(0xFF6366F1)
-                                                  : Colors.grey.shade300,
-                                        ),
-                                      ),
-                                      child: Text(
-                                        minutes == 60
-                                            ? l10n.timeOneHour
-                                            : '~$minutesד\'',
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          color:
-                                              _responseTimeMinutes == minutes
-                                                  ? Colors.white
-                                                  : Colors.grey[700],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
+                          // Response time used to be a manual chip selector
+                          // here. Removed — the value is now computed
+                          // automatically by the `computeResponseTimeOnMessage`
+                          // Cloud Function from real chat timestamps, and
+                          // written to `users/{uid}.avgResponseMinutes`. The
+                          // public profile / search cards still read that
+                          // field; only the manual setter is gone.
                         ],
 
                         // ── Provider-only fields ──────────────────────────────────
@@ -2522,13 +3165,89 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
+  // `_buildSavedCategoryFallback` was removed in v10.5.5. It replaced the
+  // dropdown with a read-only card while the CategoryService stream loaded
+  // — but this also hid the sub-category dropdown (gated on
+  // `_subCategories.isNotEmpty`), leaving the user unable to pick a sub.
+  // The dropdowns now ALWAYS render directly; empty-items handling +
+  // the 6s timeout safety net in initState replace the fallback.
+
+  /// Inline hint widget shown inside a dropdown while its items are still
+  /// loading. Renders a small spinner + "טוען..." + the regular hint so
+  /// the user immediately knows the dropdown is a loading-state rather
+  /// than a broken empty box.
+  Widget _buildLoadingHint(String hintText) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        Flexible(
+          child: Text(
+            hintText,
+            textAlign: TextAlign.right,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Color(0xFF6B7280)),
+          ),
+        ),
+        const SizedBox(width: 8),
+        const SizedBox(
+          width: 14,
+          height: 14,
+          child: CircularProgressIndicator(strokeWidth: 1.5),
+        ),
+      ],
+    );
+  }
+
+  // Defense-in-depth per CLAUDE.md §50: only treat the user as admin when
+  // the `isAdmin: true` flag is corroborated by an admin role field. A
+  // stale `isAdmin: true` on its own (without `role == 'admin'` and
+  // without `'admin'` in `roles[]`) is rejected. Legacy users predating
+  // the role fields still pass through (no role field at all → trust the
+  // flag, matches existing behavior).
+  bool _hasAdminPrivilege() {
+    final hasAdminFlag = widget.userData['isAdmin'] == true;
+    if (!hasAdminFlag) return false;
+    final role = widget.userData['role'] as String?;
+    final rolesList =
+        (widget.userData['roles'] as List?)?.cast<dynamic>() ?? const [];
+    final hasRoleField = role != null || rolesList.isNotEmpty;
+    if (!hasRoleField) return true; // legacy users — trust the bool
+    return role == 'admin' || rolesList.contains('admin');
+  }
+
+  // Support agents have a dedicated workspace (SupportDashboardScreen,
+  // CLAUDE.md §4.8) and shouldn't see the "switch hats" toggle at all.
+  bool _isSupportAgent() {
+    final role = widget.userData['role'] as String?;
+    final rolesList =
+        (widget.userData['roles'] as List?)?.cast<dynamic>() ?? const [];
+    return role == 'support_agent' || rolesList.contains('support_agent');
+  }
+
   // v12.7.0: View-mode toggle card.
   //  - Non-admin provider: 2 chips (נותן שירות / לקוח)
   //  - Admin: 3 chips     (ניהול / נותן שירות / לקוח)
+  //
+  // Defense-in-depth per CLAUDE.md §50: admin chip is gated by `_hasAdminPrivilege`,
+  // which requires `isAdmin == true` AND a corroborating role field. A stale
+  // `isAdmin: true` without a matching `role`/`roles[]` entry is rejected, so
+  // a regular provider can never see admin-only options.
   Widget _buildViewModeToggleCard(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final isAdmin = widget.userData['isAdmin'] == true;
-    final current = ViewModeService.instance.mode;
+    final isAdmin = _hasAdminPrivilege();
+    var current = ViewModeService.instance.mode;
+
+    // Auto-correct a stuck `providerOnly` mode for non-admins. This can
+    // happen if an admin previously switched into provider-preview mode
+    // and was later demoted — their stored mode would otherwise leave
+    // no chip selected (admin chip hidden, provider chip checks
+    // ViewMode.normal). Reset to `normal` so the provider chip lights up.
+    if (!isAdmin && current == ViewMode.providerOnly) {
+      // ignore: discarded_futures
+      ViewModeService.instance
+          .setMode(uid: uid, mode: ViewMode.normal);
+      current = ViewMode.normal;
+    }
 
     Future<void> apply(ViewMode target, String successMsg) async {
       await ViewModeService.instance.setMode(uid: uid, mode: target);
@@ -2725,7 +3444,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     child: Text(AppLocalizations.of(context).editShowAll,
                         style: const TextStyle(
                             fontSize: 12,
-                            color: Color(0xFF6366F1),
+                            color: Color(0xFF1A1A2E),
                             fontWeight: FontWeight.w700)),
                   ),
               ]),
@@ -2873,228 +3592,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         );
       },
     );
-  }
-}
-
-// ── Expert Application Bottom Sheet ─────────────────────────────────────────
-class _ExpertApplicationSheet extends StatefulWidget {
-  final List<Map<String, dynamic>> mainCategories;
-  final Future<void> Function({
-    required String category,
-    required String taxId,
-    required String aboutMe,
-  })
-  onSubmit;
-
-  const _ExpertApplicationSheet({
-    required this.mainCategories,
-    required this.onSubmit,
-  });
-
-  @override
-  State<_ExpertApplicationSheet> createState() =>
-      _ExpertApplicationSheetState();
-}
-
-class _ExpertApplicationSheetState extends State<_ExpertApplicationSheet> {
-  String? _selectedCategory;
-  final _taxIdCtrl = TextEditingController();
-  final _aboutCtrl = TextEditingController();
-  bool _submitting = false;
-
-  @override
-  void dispose() {
-    _taxIdCtrl.dispose();
-    _aboutCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      initialChildSize: 0.85,
-      minChildSize: 0.5,
-      maxChildSize: 0.95,
-      builder:
-          (_, scrollCtrl) => Container(
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            child: ListView(
-              controller: scrollCtrl,
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
-              children: [
-                // Drag handle
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                // Header
-                Text(
-                  AppLocalizations.of(context).editApplyAsProvider,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  AppLocalizations.of(context).editApplyDesc,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-                ),
-                const SizedBox(height: 24),
-
-                // Category
-                Text(
-                  AppLocalizations.of(context).editServiceFieldLabel,
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 6),
-                DropdownButtonFormField<String>(
-                  value: _selectedCategory,
-                  hint: Text(AppLocalizations.of(context).editChooseField, textAlign: TextAlign.right),
-                  decoration: InputDecoration(
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 14,
-                    ),
-                  ),
-                  items:
-                      widget.mainCategories.map((cat) {
-                        return DropdownMenuItem<String>(
-                          value: cat['name'] as String,
-                          child: Text(cat['name'] as String),
-                        );
-                      }).toList(),
-                  onChanged: (val) => setState(() => _selectedCategory = val),
-                ),
-                const SizedBox(height: 16),
-
-                // Tax / ID
-                Text(
-                  AppLocalizations.of(context).editIdNumberLabel,
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: _taxIdCtrl,
-                  keyboardType: TextInputType.number,
-                  textAlign: TextAlign.right,
-                  decoration: InputDecoration(
-                    hintText: AppLocalizations.of(context).editIdNumberHint,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // About Me
-                Text(
-                  AppLocalizations.of(context).editAboutYouLabel,
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: _aboutCtrl,
-                  maxLines: 4,
-                  textAlign: TextAlign.right,
-                  decoration: InputDecoration(
-                    hintText: AppLocalizations.of(context).editAboutYouHint,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 28),
-
-                // Submit
-                ElevatedButton(
-                  onPressed: _submitting ? null : _handleSubmit,
-                  style: ElevatedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 54),
-                    backgroundColor: const Color(0xFF6366F1),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child:
-                      _submitting
-                          ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2,
-                            ),
-                          )
-                          : Text(
-                            AppLocalizations.of(context).editSubmitApplication,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                ),
-              ],
-            ),
-          ),
-    );
-  }
-
-  Future<void> _handleSubmit() async {
-    if (_selectedCategory == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(AppLocalizations.of(context).editChooseFieldError),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-    if (_taxIdCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(AppLocalizations.of(context).editEnterIdError),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-    if (_aboutCtrl.text.trim().length < 20) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(AppLocalizations.of(context).editAboutMinChars),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-    setState(() => _submitting = true);
-    try {
-      await widget.onSubmit(
-        category: _selectedCategory!,
-        taxId: _taxIdCtrl.text.trim(),
-        aboutMe: _aboutCtrl.text.trim(),
-      );
-      if (mounted) Navigator.pop(context);
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
   }
 }
 

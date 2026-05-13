@@ -1221,7 +1221,7 @@ class _SignUpScreenState extends State<SignUpScreen>
 
                 // Slogan
                 const Text(
-                  'המומחים שחיפשת, במרחק קליק ✨',
+                  'נותני השירות שחיפשת, במרחק קליק ✨',
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: Colors.white,
@@ -1315,7 +1315,7 @@ class _SignUpScreenState extends State<SignUpScreen>
               : _RoleHint(
                   key:  const ValueKey('customer'),
                   icon: Icons.bolt_rounded,
-                  text: 'מצאו מומחים, הזמינו שירותים, ושלמו בבטחה',
+                  text: 'מצאו נותני שירות, הזמינו שירותים, ושלמו בבטחה',
                 ),
         ),
       ],

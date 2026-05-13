@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'cached_readers.dart';
+
 /// v10.1.0: Dual-Identity Provider Listing Service
 ///
 /// Manages the `provider_listings` collection — each doc represents one
@@ -135,6 +137,7 @@ class ProviderListingService {
       'listingIds': listingIds,
       'activeIdentityCount': listingIds.length,
     });
+    CachedReaders.invalidateProvider(uid); // §61
 
     return ref.id;
   }
@@ -195,6 +198,7 @@ class ProviderListingService {
       'listingIds': listingIds,
       'activeIdentityCount': listingIds.length,
     });
+    CachedReaders.invalidateProvider(uid); // §61
   }
 
   // ── Migration ───────────────────────────────────────────────────────────

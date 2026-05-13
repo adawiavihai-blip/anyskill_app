@@ -2,8 +2,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import '../services/review_service.dart';
+import '../services/cached_readers.dart';
+import '../utils/safe_image_provider.dart';
 
 class ReviewScreen extends StatefulWidget {
   final String jobId;
@@ -32,6 +33,12 @@ class _ReviewScreenState extends State<ReviewScreen> {
   bool _submitting = false;
   bool _submitted  = false;
 
+  /// Cached one-shot fetch of the reviewee's user doc so the hero-card
+  /// avatar shows the real profile image (the widget prop is often empty
+  /// — see provider_tasks_tab.dart / customer_bookings_tab.dart callers
+  /// passing `revieweeAvatar: ''`).
+  Future<Map<String, dynamic>>? _revieweeFuture;
+
   /// Criteria when a CUSTOMER reviews an EXPERT (isClientReview == true)
   static const _clientCategories = [
     ('professional',  'מקצועיות',             Icons.workspace_premium_rounded),
@@ -56,6 +63,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
     super.initState();
     // Initialize rating keys based on the review direction
     _ratings = {for (final c in _categories) c.$1: 0};
+    if (widget.revieweeId.isNotEmpty) {
+      _revieweeFuture = CachedReaders.providerProfile(widget.revieweeId);
+    }
   }
 
   @override
@@ -113,7 +123,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         title: Text(
-          widget.isClientReview ? 'דרג את המומחה' : 'דרג את הלקוח',
+          widget.isClientReview ? 'דרג את נותן השירות' : 'דרג את הלקוח',
           style: const TextStyle(
             color:      Color(0xFF1A1A2E),
             fontWeight: FontWeight.bold,
@@ -215,7 +225,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
             controller: _publicCtrl,
             label:      '💬 חוות דעת פומבית',
             hint:       widget.isClientReview
-                ? 'ספר על החוויה שלך עם המומחה... (אופציונלי)'
+                ? 'ספר על החוויה שלך עם נותן השירות... (אופציונלי)'
                 : 'ספר על החוויה שלך עם הלקוח... (אופציונלי)',
             maxLines:   4,
             bgColor:    Colors.white,
@@ -249,7 +259,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   child: Text(
                     widget.isClientReview
                         ? 'חוות דעתך תפורסם רק לאחר שגם הצד השני ישתף חוות דעתו, או לאחר 7 ימים.'
-                        : 'הדירוג שלך בונה את המוניטין של הלקוח ועוזר למומחים אחרים. יפורסם לאחר שגם הלקוח ישתף חוות דעת, או לאחר 7 ימים.',
+                        : 'הדירוג שלך בונה את המוניטין של הלקוח ועוזר לנותני השירות אחרים. יפורסם לאחר שגם הלקוח ישתף חוות דעת, או לאחר 7 ימים.',
                     textAlign: TextAlign.right,
                     style: const TextStyle(
                       fontSize: 13,
@@ -291,7 +301,28 @@ class _ReviewScreenState extends State<ReviewScreen> {
                     ),
                   ),
                 ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 8),
+          // Skip — for users who don't want to rate right now.
+          // The job's `providerReviewShown` / customer-side equivalent has
+          // already been stamped before this screen opened (see provider_tasks_tab.dart
+          // line 112), so popping here won't re-trigger the prompt.
+          Center(
+            child: TextButton(
+              onPressed: _submitting ? null : () => Navigator.pop(context),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF6B7280),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              ),
+              child: const Text(
+                'דילוג',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
         ],
       ),
     );
@@ -299,8 +330,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
 
   // ── Hero card ──────────────────────────────────────────────────────────────
   Widget _buildHeroCard() {
-    final hasAvatar = widget.revieweeAvatar.startsWith('http');
-    final initials  = widget.revieweeName.isNotEmpty
+    final initials = widget.revieweeName.isNotEmpty
         ? widget.revieweeName[0].toUpperCase()
         : '?';
 
@@ -312,22 +342,30 @@ class _ReviewScreenState extends State<ReviewScreen> {
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            CircleAvatar(
-              radius:          40,
-              backgroundColor: const Color(0xFFEEF2FF),
-              backgroundImage: hasAvatar
-                  ? CachedNetworkImageProvider(widget.revieweeAvatar)
-                  : null,
-              child: hasAvatar
-                  ? null
-                  : Text(
-                      initials,
-                      style: const TextStyle(
-                        fontSize:   28,
-                        fontWeight: FontWeight.bold,
-                        color:      Color(0xFF6366F1),
-                      ),
-                    ),
+            FutureBuilder<Map<String, dynamic>>(
+              future: _revieweeFuture,
+              builder: (context, snap) {
+                // Prefer the freshly-fetched profileImage; fall back to the
+                // widget prop (older callers pass a URL directly).
+                final fetched = snap.data?['profileImage']?.toString() ?? '';
+                final raw     = fetched.isNotEmpty ? fetched : widget.revieweeAvatar;
+                final provider = safeImageProvider(raw);
+                return CircleAvatar(
+                  radius:          40,
+                  backgroundColor: const Color(0xFFEEF2FF),
+                  backgroundImage: provider,
+                  child: provider == null
+                      ? Text(
+                          initials,
+                          style: const TextStyle(
+                            fontSize:   28,
+                            fontWeight: FontWeight.bold,
+                            color:      Color(0xFF6366F1),
+                          ),
+                        )
+                      : null,
+                );
+              },
             ),
             const SizedBox(height: 12),
             Text(
@@ -346,7 +384,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(
-                widget.isClientReview ? 'מומחה' : 'לקוח',
+                widget.isClientReview ? 'נותן שירות' : 'לקוח',
                 style: const TextStyle(
                   fontSize:   12,
                   fontWeight: FontWeight.w600,

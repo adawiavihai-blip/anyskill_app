@@ -1,0 +1,35 @@
+{
+  "//": "Lighthouse CI configuration for AnySkill PWA. Auto-runs in CI on every push to master/staging — see .github/workflows/ci.yml `lighthouse` job. Catches performance, accessibility, SEO, and best-practices regressions before deploy.",
+  "//budgets": "Initial budgets are intentionally LENIENT. Flutter Web is heavy (canvaskit ~24MB), so perf scores around 30-50 are normal. Tighten over time as we optimize.",
+  "ci": {
+    "collect": {
+      "url": ["http://localhost:5000/"],
+      "numberOfRuns": 3,
+      "settings": {
+        "preset": "desktop",
+        "//desktopPreset": "desktop is more forgiving for Flutter Web than mobile (mobile = thermal throttling sim + slow CPU emulation)",
+        "chromeFlags": "--no-sandbox --headless=new"
+      }
+    },
+    "assert": {
+      "assertions": {
+        "//": "Lower thresholds = warning. Higher = error. Tighten as we improve.",
+        "categories:performance":      ["warn", { "minScore": 0.30 }],
+        "categories:accessibility":    ["warn", { "minScore": 0.70 }],
+        "categories:best-practices":   ["warn", { "minScore": 0.80 }],
+        "categories:seo":              ["warn", { "minScore": 0.70 }],
+
+        "//hardErrors": "These are catastrophic regressions — fail the build:",
+        "errors-in-console":           ["error", { "maxLength": 5 }],
+        "no-vulnerable-libraries":     "error",
+        "is-on-https":                 "off",
+        "uses-https":                  "off",
+        "//offNotes": "is-on-https/uses-https are off because we serve over localhost in CI. They will pass on the actual deploy."
+      }
+    },
+    "upload": {
+      "//": "Use temporary public storage so reports are visible from PR comments without requiring our own LHCI server. Reports auto-delete after 7 days.",
+      "target": "temporary-public-storage"
+    }
+  }
+}

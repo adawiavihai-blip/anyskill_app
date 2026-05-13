@@ -9,6 +9,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../../../screens/notifications_screen.dart';
+import '../../../services/cached_readers.dart';
 import '../models/any_task.dart';
 import '../services/any_task_service.dart';
 import '../theme/any_tasks_palette.dart';
@@ -153,7 +155,12 @@ class _BellWithBadge extends StatelessWidget {
           clipBehavior: Clip.none,
           children: [
             IconButton(
-              onPressed: () {},
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const NotificationsScreen(),
+                ),
+              ),
               icon: const Icon(Icons.notifications_none_rounded,
                   color: TasksPalette.textPrimary, size: 22),
             ),
@@ -238,10 +245,12 @@ class _StatsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
+    // §66: cached read — provider returns to this hub many times per day,
+    // monthly stats don't change minute-to-minute.
+    return FutureBuilder<Map<String, dynamic>>(
+      future: CachedReaders.providerProfile(uid),
       builder: (context, snap) {
-        final d = snap.data?.data() ?? {};
+        final d = snap.data ?? const <String, dynamic>{};
         final earnings =
             (d['monthlyEarnings'] as num?)?.toInt() ?? 0;
         final completed = (d['orderCount'] as num?)?.toInt() ?? 0;
@@ -314,10 +323,13 @@ class _LevelCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
+    // §66: cached read — same uid as the stats card above; if both render
+    // on the same hub mount, the second one returns from the in-memory
+    // cache in <1ms.
+    return FutureBuilder<Map<String, dynamic>>(
+      future: CachedReaders.providerProfile(uid),
       builder: (context, snap) {
-        final d = snap.data?.data() ?? {};
+        final d = snap.data ?? const <String, dynamic>{};
         final name = (d['name'] ?? 'נותן שירות').toString();
         final image = d['profileImage']?.toString();
         final rating = (d['rating'] as num?)?.toDouble() ?? 0.0;
@@ -390,7 +402,7 @@ class _LevelCard extends StatelessWidget {
               Row(
                 children: [
                   const Expanded(
-                    child: Text('עוד 2 משימות לרמת מומחה',
+                    child: Text('עוד 2 משימות לרמת נותן שירות',
                         style: TextStyle(
                             fontSize: 11,
                             color: TasksPalette.textSecondary)),
@@ -415,7 +427,7 @@ class _LevelCard extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               const Text(
-                'כמעט שם! רמת מומחה פותחת badge מיוחד + חשיפה מוגברת',
+                'כמעט שם! רמת נותן שירות פותחת badge מיוחד + חשיפה מוגברת',
                 style: TextStyle(
                     fontSize: 10, color: TasksPalette.clientPrimary),
               ),
@@ -433,7 +445,7 @@ class _LevelCard extends StatelessWidget {
                       bg: TasksPalette.providerLight,
                       fg: TasksPalette.successGreen),
                   _BadgeChip(
-                      label: 'מומחה איסוף',
+                      label: 'נותן שירות איסוף',
                       bg: TasksPalette.escrowBlueLight,
                       fg: TasksPalette.escrowBlue),
                 ],

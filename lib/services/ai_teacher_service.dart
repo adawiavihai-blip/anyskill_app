@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'cached_readers.dart';
 
 /// Service for managing the AI Teacher (Alex) profile data in Firestore.
 /// All profile settings are stored in `ai_teachers/alex` so the admin
@@ -174,6 +175,9 @@ class AiTeacherService {
           'timestamp':    FieldValue.serverTimestamp(),
         });
       });
+
+      // §61 invalidation — balance changed
+      CachedReaders.invalidateProvider(userId);
 
       return null; // success
     } on Exception catch (e) {

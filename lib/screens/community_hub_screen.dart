@@ -8,10 +8,12 @@ import 'package:latlong2/latlong.dart';
 
 import 'package:intl/intl.dart';
 
+import '../services/cached_readers.dart';
 import '../services/community_hub_service.dart';
 import '../services/location_service.dart';
 import '../utils/image_compressor.dart';
 import '../utils/safe_image_provider.dart';
+import '../widgets/wolt_tile_layer.dart';
 import 'chat_screen.dart';
 import 'phone_login_screen.dart';
 
@@ -88,9 +90,10 @@ class _CommunityHubScreenState extends State<CommunityHubScreen>
       return;
     }
     try {
-      final doc = await _db.collection('users').doc(user.uid).get();
+      // §69: cached read — community hub is opened multiple times per session,
+      // user volunteer/profile state changes rarely.
+      final data = await CachedReaders.providerProfile(user.uid);
       if (!mounted) return;
-      final data = doc.data() ?? {};
       setState(() {
         _isVolunteer = data['isVolunteer'] == true;
         _userName = (data['name'] as String?) ?? '';
@@ -123,6 +126,8 @@ class _CommunityHubScreenState extends State<CommunityHubScreen>
       await _db.collection('users').doc(user.uid).update({
         'isVolunteer': newVal,
       });
+      CachedReaders.invalidateProvider(user.uid); // §61
+
       if (!mounted) return;
       setState(() => _isVolunteer = newVal);
 
@@ -1945,9 +1950,7 @@ class _CommunityHubScreenState extends State<CommunityHubScreen>
             FlutterMap(
               options: MapOptions(initialCenter: center, initialZoom: 13),
               children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                ),
+                WoltTileLayer.build(),
                 MarkerLayer(markers: markers),
               ],
             ),

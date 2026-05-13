@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/category_service.dart';
 import '../services/ai_schema_service.dart';
 import '../services/cache_service.dart';
+import '../services/cached_readers.dart';
 import '../services/schema_migration_service.dart';
 import '../services/category_tags_service.dart';
 import '../widgets/category_specs_widget.dart';
@@ -363,6 +364,11 @@ class _AdminCatalogTabState extends State<AdminCatalogTab> {
         }
         for (final doc in snap.docs) {
           await doc.reference.update(entry.value);
+          // §61: bust the schema cache for this category name so callers
+          // see the new flags within the next read instead of waiting up
+          // to 30 minutes for the natural TTL.
+          CachedReaders.invalidateServiceSchema(entry.key);
+          CachedReaders.invalidateCategory(entry.key);
           results.add('✅ "${entry.key}" — קטגוריה עודכנה');
         }
       } catch (e) {

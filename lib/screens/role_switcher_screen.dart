@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../services/cached_readers.dart';
 import '../services/user_roles.dart';
 import '../utils/safe_image_provider.dart';
 import 'home_screen.dart';
@@ -10,7 +11,7 @@ import 'support/support_dashboard_screen.dart';
 /// Phase 1 — role switcher.
 ///
 /// Shown after sign-in when the user holds more than one role, OR reached
-/// manually from the profile menu ("החלף תפקיד"). On selection it writes
+/// manually from the profile menu ("החלף שירות"). On selection it writes
 /// `users/{uid}.activeRole` and pops — the caller (AuthWrapper /
 /// OnboardingGate) re-renders and routes to the matching home.
 class RoleSwitcherScreen extends StatefulWidget {
@@ -41,17 +42,17 @@ class _RoleSwitcherScreenState extends State<RoleSwitcherScreen> {
 
     setState(() => _saving = true);
     try {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .update({'activeRole': role});
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'activeRole': role,
+      });
+      CachedReaders.invalidateProvider(uid); // §61
       if (!mounted) return;
       _exitTo(role);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('שגיאה בהחלפת תפקיד: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('שגיאה בהחלפת שירות: $e')));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -74,9 +75,10 @@ class _RoleSwitcherScreenState extends State<RoleSwitcherScreen> {
       nav.pop(role);
       return;
     }
-    final next = role == UserRoles.supportAgent
-        ? const SupportDashboardScreen()
-        : const HomeScreen();
+    final next =
+        role == UserRoles.supportAgent
+            ? const SupportDashboardScreen()
+            : const HomeScreen();
     nav.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => next),
       (r) => false,
@@ -97,7 +99,7 @@ class _RoleSwitcherScreenState extends State<RoleSwitcherScreen> {
         elevation: 0,
         automaticallyImplyLeading: widget.allowBack,
         title: const Text(
-          'בחר תפקיד',
+          'בחר שירות',
           style: TextStyle(
             color: Color(0xFF1A1A2E),
             fontWeight: FontWeight.w700,
@@ -106,10 +108,8 @@ class _RoleSwitcherScreenState extends State<RoleSwitcherScreen> {
         iconTheme: const IconThemeData(color: Color(0xFF1A1A2E)),
       ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .snapshots(),
+        stream:
+            FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
         builder: (context, snap) {
           if (!snap.hasData) {
             return const Center(child: CircularProgressIndicator());
@@ -131,25 +131,28 @@ class _RoleSwitcherScreenState extends State<RoleSwitcherScreen> {
                       CircleAvatar(
                         radius: 44,
                         backgroundColor: const Color(0xFFE0E7FF),
-                        backgroundImage:
-                            safeImageProvider(data['profileImage'] as String?),
-                        child: safeImageProvider(
-                                    data['profileImage'] as String?) ==
-                                null
-                            ? Text(
-                                (data['name'] as String? ??
-                                        user?.email ??
-                                        '?')
-                                    .characters
-                                    .first
-                                    .toUpperCase(),
-                                style: const TextStyle(
-                                  fontSize: 30,
-                                  fontWeight: FontWeight.w800,
-                                  color: Color(0xFF6366F1),
-                                ),
-                              )
-                            : null,
+                        backgroundImage: safeImageProvider(
+                          data['profileImage'] as String?,
+                        ),
+                        child:
+                            safeImageProvider(
+                                      data['profileImage'] as String?,
+                                    ) ==
+                                    null
+                                ? Text(
+                                  (data['name'] as String? ??
+                                          user?.email ??
+                                          '?')
+                                      .characters
+                                      .first
+                                      .toUpperCase(),
+                                  style: const TextStyle(
+                                    fontSize: 30,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF6366F1),
+                                  ),
+                                )
+                                : null,
                       ),
                       const SizedBox(height: 16),
                       Text(
@@ -202,11 +205,9 @@ class _RoleSwitcherScreenState extends State<RoleSwitcherScreen> {
                         accent: const Color(0xFF8B5CF6),
                         badge: null,
                         enabled: roles.has(UserRoles.supportAgent),
-                        active:
-                            roles.activeRole == UserRoles.supportAgent,
+                        active: roles.activeRole == UserRoles.supportAgent,
                         saving: _saving,
-                        onTap: () =>
-                            _select(UserRoles.supportAgent, roles),
+                        onTap: () => _select(UserRoles.supportAgent, roles),
                       ),
                       const SizedBox(height: 12),
                       _RoleCard(
@@ -237,7 +238,7 @@ class _RoleSwitcherScreenState extends State<RoleSwitcherScreen> {
 
                       const SizedBox(height: 20),
                       const Text(
-                        'אפשר להחליף תפקיד בכל זמן מתפריט הפרופיל.',
+                        'אפשר להחליף שירות בכל זמן מתפריט הפרופיל.',
                         style: TextStyle(
                           fontSize: 12,
                           color: Color(0xFF9CA3AF),
@@ -284,9 +285,10 @@ class _RoleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bg = enabled ? Colors.white : const Color(0xFFF3F4F6);
-    final borderColor = active
-        ? accent
-        : (enabled ? const Color(0xFFE5E7EB) : const Color(0xFFE5E7EB));
+    final borderColor =
+        active
+            ? accent
+            : (enabled ? const Color(0xFFE5E7EB) : const Color(0xFFE5E7EB));
     final titleColor =
         enabled ? const Color(0xFF1A1A2E) : const Color(0xFF9CA3AF);
     final subColor =
@@ -304,10 +306,7 @@ class _RoleCard extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: borderColor,
-                width: active ? 2 : 1,
-              ),
+              border: Border.all(color: borderColor, width: active ? 2 : 1),
             ),
             child: Row(
               children: [
@@ -341,7 +340,9 @@ class _RoleCard extends StatelessWidget {
                             const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 2),
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: accent,
                                 borderRadius: BorderRadius.circular(8),
@@ -372,17 +373,16 @@ class _RoleCard extends StatelessWidget {
                       const SizedBox(height: 2),
                       Text(
                         subtitle,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: subColor,
-                        ),
+                        style: TextStyle(fontSize: 13, color: subColor),
                       ),
                     ],
                   ),
                 ),
                 if (enabled && !active)
-                  const Icon(Icons.chevron_left_rounded,
-                      color: Color(0xFF9CA3AF)),
+                  const Icon(
+                    Icons.chevron_left_rounded,
+                    color: Color(0xFF9CA3AF),
+                  ),
               ],
             ),
           ),

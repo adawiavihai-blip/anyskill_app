@@ -2,14 +2,14 @@
 ///
 /// Live GPS tracking for dog walking jobs. Workflow:
 ///
-///   1. Provider taps **"התחל הליכון"** in their job card.
+///   1. Provider taps **"התחל טיול"** in their job card.
 ///      → [DogWalkService.startWalk] creates a `dog_walks/{walkId}` doc
 ///        and starts a `Geolocator.getPositionStream` listener.
 ///
 ///   2. Every position update (default: 10 m delta) is appended to the
 ///      doc's `path` array as `{lat, lng, t}`.
 ///
-///   3. Provider taps **"סיים הליכון"**.
+///   3. Provider taps **"סיים טיול"**.
 ///      → [DogWalkService.endWalk] flushes the buffer, computes total
 ///        distance + duration, posts a chat system message + a customer
 ///        notification with a Google Static Maps URL of the route.
@@ -47,16 +47,16 @@ class DogWalkPoint {
   });
 
   Map<String, dynamic> toMap() => {
-        'lat': lat,
-        'lng': lng,
-        't': Timestamp.fromDate(timestamp),
-      };
+    'lat': lat,
+    'lng': lng,
+    't': Timestamp.fromDate(timestamp),
+  };
 
   factory DogWalkPoint.fromMap(Map<String, dynamic> m) => DogWalkPoint(
-        lat: (m['lat'] as num).toDouble(),
-        lng: (m['lng'] as num).toDouble(),
-        timestamp: (m['t'] as Timestamp).toDate(),
-      );
+    lat: (m['lat'] as num).toDouble(),
+    lng: (m['lng'] as num).toDouble(),
+    timestamp: (m['t'] as Timestamp).toDate(),
+  );
 }
 
 class DogWalkService {
@@ -65,11 +65,11 @@ class DogWalkService {
   // ── Persistent state keys (SharedPreferences) ─────────────────────────
   // These survive app close / tab refresh and let us resume an interrupted
   // walk on the next mount. See [tryResumeActiveWalk].
-  static const _kPrefsActiveWalkId    = 'dog_walk.activeWalkId';
-  static const _kPrefsActiveJobId     = 'dog_walk.activeJobId';
-  static const _kPrefsActiveCustomerId   = 'dog_walk.activeCustomerId';
+  static const _kPrefsActiveWalkId = 'dog_walk.activeWalkId';
+  static const _kPrefsActiveJobId = 'dog_walk.activeJobId';
+  static const _kPrefsActiveCustomerId = 'dog_walk.activeCustomerId';
   static const _kPrefsActiveCustomerName = 'dog_walk.activeCustomerName';
-  static const _kPrefsActiveProviderId   = 'dog_walk.activeProviderId';
+  static const _kPrefsActiveProviderId = 'dog_walk.activeProviderId';
   static const _kPrefsActiveProviderName = 'dog_walk.activeProviderName';
 
   /// Active stream subscription — held by the singleton so the buttons
@@ -232,7 +232,7 @@ class DogWalkService {
     required String providerName,
   }) async {
     if (_activeSub != null) {
-      throw StateError('הליכון כבר בתהליך — סיים אותו לפני שתתחיל חדש');
+      throw StateError('טיול כבר התחיל — סיים אותו לפני שתתחיל חדש');
     }
 
     // Permission + location service checks
@@ -256,7 +256,9 @@ class DogWalkService {
     if (perm == LocationPermission.whileInUse) {
       try {
         await Geolocator.requestPermission();
-      } catch (_) {/* user can grant later */}
+      } catch (_) {
+        /* user can grant later */
+      }
     }
 
     final startedAt = DateTime.now();
@@ -312,16 +314,19 @@ class DogWalkService {
 
   static void _onPositionUpdate(Position pos) {
     if (_activeWalkId == null) return;
-    _buffer.add(DogWalkPoint(
-      lat: pos.latitude,
-      lng: pos.longitude,
-      timestamp: DateTime.now(),
-    ));
+    _buffer.add(
+      DogWalkPoint(
+        lat: pos.latitude,
+        lng: pos.longitude,
+        timestamp: DateTime.now(),
+      ),
+    );
     // Flush every 30 seconds OR every 5 points to keep Firestore writes
     // economical without losing fidelity.
-    final since = _lastFlushAt == null
-        ? Duration.zero
-        : DateTime.now().difference(_lastFlushAt!);
+    final since =
+        _lastFlushAt == null
+            ? Duration.zero
+            : DateTime.now().difference(_lastFlushAt!);
     if (_buffer.length >= 5 || since.inSeconds >= 30) {
       _flushBuffer();
     }
@@ -350,9 +355,7 @@ class DogWalkService {
   /// Stops the active walk, writes a final flush, computes summary stats,
   /// and posts a system chat message to the customer with a route map URL.
   /// Returns the [WalkSummary] for UI display.
-  static Future<WalkSummary?> endWalk({
-    required String chatRoomId,
-  }) async {
+  static Future<WalkSummary?> endWalk({required String chatRoomId}) async {
     final walkId = _activeWalkId;
     if (walkId == null || _activeSub == null) {
       return null; // nothing to end
@@ -369,10 +372,11 @@ class DogWalkService {
       return null;
     }
     final data = snap.data()!;
-    final pathRaw = (data['path'] as List? ?? [])
-        .whereType<Map<String, dynamic>>()
-        .map(DogWalkPoint.fromMap)
-        .toList();
+    final pathRaw =
+        (data['path'] as List? ?? [])
+            .whereType<Map<String, dynamic>>()
+            .map(DogWalkPoint.fromMap)
+            .toList();
 
     final endedAt = DateTime.now();
     final startedAt = (data['startedAt'] as Timestamp).toDate();
@@ -408,14 +412,11 @@ class DogWalkService {
     // Post a system message to the chat room
     try {
       final auth = FirebaseAuth.instance.currentUser;
-      await _db
-          .collection('chats')
-          .doc(chatRoomId)
-          .collection('messages')
-          .add({
+      await _db.collection('chats').doc(chatRoomId).collection('messages').add({
         'senderId': auth?.uid ?? '',
         'senderName': data['providerName'] ?? '',
-        'message': '🐕 ההליכון הסתיים!\n'
+        'message':
+            '🐕 הטיול הסתיים!\n'
             'מרחק: ${(distanceM / 1000).toStringAsFixed(2)} ק"מ\n'
             'משך: ${_formatDuration(durationSec)}',
         'type': 'walk_summary',
@@ -432,7 +433,7 @@ class DogWalkService {
     try {
       await _db.collection('notifications').add({
         'userId': data['customerId'],
-        'title': '🐕 ההליכון הסתיים',
+        'title': '🐕 הטיול הסתיים',
         'body': 'הצפה לסיכום עם מפת המסלול',
         'type': 'walk_summary',
         'walkId': walkId,
@@ -476,7 +477,9 @@ class DogWalkService {
     _activeWalkId = null;
     _activeJobId = null;
     await _clearActiveFromPrefs();
-    debugPrint('[DogWalk] ✅ ended walk $walkId — ${summary.distanceMeters.round()}m');
+    debugPrint(
+      '[DogWalk] ✅ ended walk $walkId — ${summary.distanceMeters.round()}m',
+    );
     return summary;
   }
 
@@ -556,15 +559,15 @@ class DogWalkService {
             .doc(chatRoomId)
             .collection('messages')
             .add({
-          'senderId': FirebaseAuth.instance.currentUser?.uid ?? '',
-          'senderName': providerName ?? '',
-          'message': type == 'pee' ? '💧 הכלב עשה פיפי' : '💩 הכלב עשה קקי',
-          'type': 'pet_marker',
-          'markerType': type,
-          'walkId': walkId,
-          'timestamp': FieldValue.serverTimestamp(),
-          'isRead': false,
-        });
+              'senderId': FirebaseAuth.instance.currentUser?.uid ?? '',
+              'senderName': providerName ?? '',
+              'message': type == 'pee' ? '💧 הכלב עשה פיפי' : '💩 הכלב עשה קקי',
+              'type': 'pet_marker',
+              'markerType': type,
+              'walkId': walkId,
+              'timestamp': FieldValue.serverTimestamp(),
+              'isRead': false,
+            });
       } catch (e) {
         debugPrint('[DogWalk] marker chat post failed: $e');
       }
@@ -576,7 +579,7 @@ class DogWalkService {
         await _db.collection('notifications').add({
           'userId': customerId,
           'title': type == 'pee' ? '💧 פיפי סומן' : '💩 קקי סומן',
-          'body': 'סומן במהלך ההליכון',
+          'body': 'סומן במהלך הטיול',
           'type': 'pet_marker',
           'markerType': type,
           'walkId': walkId,
@@ -738,12 +741,13 @@ class DogWalkService {
     const fallback = 15.0;
     if (jobId == null || jobId.isEmpty) return fallback;
     try {
-      final snap = await _db
-          .collection('jobs')
-          .doc(jobId)
-          .collection('petStay')
-          .doc('data')
-          .get();
+      final snap =
+          await _db
+              .collection('jobs')
+              .doc(jobId)
+              .collection('petStay')
+              .doc('data')
+              .get();
       if (!snap.exists) return fallback;
       final snapshot = snap.data()?['dogSnapshot'] as Map?;
       final w = (snapshot?['weightKg'] as num?)?.toDouble();

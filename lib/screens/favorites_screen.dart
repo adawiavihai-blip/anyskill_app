@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../services/cached_readers.dart';
 import '../services/favorites_service.dart';
 import '../widgets/favorite_button.dart';
+import '../widgets/search_card_price_pill.dart';
 import 'expert_profile_screen.dart';
 
 class FavoritesScreen extends StatelessWidget {
@@ -53,7 +54,7 @@ class FavoritesScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'לחץ על הלב ❤️ בפרופיל מומחה כדי לשמור אותו כאן',
+                    'לחץ על הלב ❤️ בפרופיל נותן שירות כדי לשמור אותו כאן',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 14, color: Colors.grey[400]),
                   ),
@@ -78,8 +79,11 @@ class _FavoriteCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<DocumentSnapshot>(
-      future: FirebaseFirestore.instance.collection('users').doc(providerId).get(),
+    // §63 / §61: cached read (5-min TTL). Replaces raw Firestore .get()
+    // so a tab-switch back to Favorites within 5 minutes returns the
+    // user docs from memory in <1ms instead of N network round-trips.
+    return FutureBuilder<Map<String, dynamic>>(
+      future: CachedReaders.providerProfile(providerId),
       builder: (context, snap) {
         if (!snap.hasData) {
           return const SizedBox(
@@ -87,8 +91,8 @@ class _FavoriteCard extends StatelessWidget {
             child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
           );
         }
-        final data     = (snap.data?.data() as Map<String, dynamic>?) ?? {};
-        final name     = data['name']        as String? ?? 'מומחה';
+        final data     = snap.data ?? const <String, dynamic>{};
+        final name     = data['name']        as String? ?? 'נותן שירות';
         final category = data['serviceType'] as String? ?? '';
         final imgUrl   = data['profileImage'] as String? ?? '';
         final rating   = (data['rating'] as num?)?.toDouble() ?? 0.0;
@@ -169,6 +173,16 @@ class _FavoriteCard extends StatelessWidget {
                             const Icon(Icons.star, size: 14, color: Color(0xFFFBBF24)),
                           ],
                         ),
+                      // §63: pricing transparency on the favorite card.
+                      // Async wrapper resolves the v2 schema per provider
+                      // (cached 30 min via CachedReaders §61) so deposit /
+                      // price-locked / bundle / surcharge badges appear
+                      // beneath the price.
+                      const SizedBox(height: 6),
+                      AsyncProviderPricePill(
+                        userData: data,
+                        dense: true,
+                      ),
                     ],
                   ),
                 ),

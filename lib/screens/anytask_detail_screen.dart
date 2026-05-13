@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import '../models/anytask.dart';
 import '../services/anytask_service.dart';
 import '../services/anytask_category_service.dart';
+import '../services/cached_readers.dart';
 import '../widgets/anytask_status_badge.dart';
 import '../widgets/anytask_proof_sheet.dart';
 import 'chat_screen.dart';
@@ -42,9 +43,8 @@ class _AnytaskDetailScreenState extends State<AnytaskDetailScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    final userDoc = await FirebaseFirestore.instance
-        .collection('users').doc(user.uid).get();
-    final userData = userDoc.data() ?? {};
+    // §69: cached read — same provider claims many tasks per session.
+    final userData = await CachedReaders.providerProfile(user.uid);
 
     setState(() => _acting = true);
     final err = await AnytaskService.claimTask(

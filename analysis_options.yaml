@@ -9,6 +9,13 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  # docs/ui-specs/** contains spec dart files (mockups, references) that
+  # are not part of the build. Excluding them keeps `flutter analyze` clean
+  # while preserving the spec history.
+  exclude:
+    - "docs/**"
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`

@@ -424,6 +424,39 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatListTitle => 'Messages';
 
   @override
+  String get postJobStoryTitle => 'Want more jobs like this?';
+
+  @override
+  String get postJobStorySubtitle => 'Share the result as a Story 🎬 and reach more customers';
+
+  @override
+  String get postJobStoryPhotoBtn => '📷 Photo';
+
+  @override
+  String get postJobStoryVideoBtn => '🎥 Video';
+
+  @override
+  String get postJobStoryLater => 'Maybe later';
+
+  @override
+  String get postJobStoryUploading => 'Uploading to Story...';
+
+  @override
+  String get postJobStorySuccess => '✨ Your Story is live! Visible for 24 hours';
+
+  @override
+  String get postJobStoryFileTooLarge => 'File too large (max 50MB)';
+
+  @override
+  String get postJobStorySourceTitle => 'Pick a source';
+
+  @override
+  String get postJobStorySourceGallery => 'Gallery';
+
+  @override
+  String get postJobStorySourceCamera => 'Camera';
+
+  @override
   String get expertSectionAbout => 'About';
 
   @override
@@ -985,6 +1018,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get vipBenefit4 => 'Premium support';
+
+  @override
+  String get vipBenefit5 => 'Featured in the AnySkill VIP providers banner';
 
   @override
   String withdrawMinBalance(int amount) {
@@ -2287,6 +2323,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get profInvoiceEmailSubOff => 'You won\'t receive email invoices';
 
   @override
+  String get profInvoiceEmailNeedsEmail => 'An email address is required to receive invoices — tap to add one';
+
+  @override
+  String get profInvoiceEmailSkipped => 'No email added — invoice emails stay off';
+
+  @override
   String get profSyncGooglePhoto => 'Sync photo from Google';
 
   @override
@@ -2420,14 +2462,25 @@ class AppLocalizationsEn extends AppLocalizations {
   String get homeMicroTasks => 'Micro-tasks — earn quickly';
 
   @override
+  String get anyTasksBannerProviderTitle => 'Open tasks';
+
+  @override
+  String get anyTasksBannerProviderSub => 'Pick jobs & earn more right now';
+
+  @override
+  String get anyTasksBannerCustomerTitle => 'Post a task';
+
+  @override
+  String get anyTasksBannerCustomerSub => 'Find a pro in minutes';
+
+  @override
   String get anyTasksBannerTag => 'Tasks';
 
   @override
-  String get anyTasksBannerDescription =>
-      'Got a task? Post it with your budget — providers will reach out.';
+  String get anyTasksBannerDescription => 'Got a task? Post it with your budget — providers will reach out.';
 
   @override
-  String get homeCommunityTitle => 'Giving from the heart';
+  String get homeCommunityTitle => 'Community';
 
   @override
   String get homeCommunitySlogan => 'One skill, one heart';
@@ -2599,8 +2652,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatQuoteExpiry24h => '24 hours';
 
   @override
-  String get chatQuoteValidation =>
-      'Enter a valid price with a discount smaller than it';
+  String get chatQuoteValidation => 'Enter a valid price with a discount smaller than it';
 
   @override
   String get chatQuoteSendOffer => 'Send offer to customer';
@@ -2636,8 +2688,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatQuoteDeclineConfirm => 'Decline this offer?';
 
   @override
-  String get chatQuoteExpiredError =>
-      'Offer expired — please ask the provider for a new one';
+  String get chatQuoteExpiredError => 'Offer expired — please ask the provider for a new one';
 
   @override
   String get chatSettingsTitle => 'Chat settings';
@@ -2827,6 +2878,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get catMapView => 'Map view';
+
+  @override
+  String get catMapButtonShort => 'Map';
 
   @override
   String get catListView => 'List view';
@@ -3494,4 +3548,196 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get phoneLoginBecomeProvider => 'Earn with AnySkill →';
+
+  @override
+  String get massageSettingsBannerTitle => 'Massage-specific settings';
+
+  @override
+  String get massageSettingsBannerDesc => 'Clients will only see what you mark here';
+
+  @override
+  String get massageSpecialtiesTitle => 'Massage types I offer';
+
+  @override
+  String get massageLocationsTitle => 'Where do you give treatments';
+
+  @override
+  String get massageAddOnsTitle => 'Add-ons I offer';
+
+  @override
+  String get massageDurationsTitle => 'Treatment durations & prices';
+
+  @override
+  String get massagePackagesTitle => 'Discount packages';
+
+  @override
+  String get massagePreferencesTitle => 'Preferences & service';
+
+  @override
+  String get massageBuildTreatmentTitle => 'Build your treatment';
+
+  @override
+  String get massageSectionType => 'Massage type';
+
+  @override
+  String get massageSectionLocation => 'Where?';
+
+  @override
+  String get massageSectionDuration => 'Duration';
+
+  @override
+  String get massageSectionPressure => 'Pressure level';
+
+  @override
+  String get massageSectionFocusAreas => 'Where does it hurt?';
+
+  @override
+  String get massageSectionAddOns => 'Add-ons';
+
+  @override
+  String get massageSectionPackages => 'Discount packages';
+
+  @override
+  String get massageSectionAmbiance => 'Ambiance';
+
+  @override
+  String get massageSectionNotes => 'Additional notes';
+
+  @override
+  String get massagePressureLight => 'Light';
+
+  @override
+  String get massagePressureMedium => 'Medium';
+
+  @override
+  String get massagePressureStrong => 'Strong';
+
+  @override
+  String get massageMusicCalm => 'Calm';
+
+  @override
+  String get massageMusicNature => 'Nature';
+
+  @override
+  String get massageMusicClassical => 'Classical';
+
+  @override
+  String get massageMusicSilent => 'Silent';
+
+  @override
+  String get massageConvChatty => 'Love to chat';
+
+  @override
+  String get massageConvMinimal => 'Minimal';
+
+  @override
+  String get massageSummaryTotal => 'Total';
+
+  @override
+  String get massageSummaryDuration => 'Total duration';
+
+  @override
+  String get massageTrustSignal => 'Secure payment · Free cancellation up to 24h before';
+
+  @override
+  String get pestSettingsBannerTitle => 'Pest Control Settings';
+
+  @override
+  String get pestSettingsBannerDesc => 'Clients will only see what you mark here · EPA license required';
+
+  @override
+  String get pestLicensesTitle => 'Required Licenses';
+
+  @override
+  String get pestLicensesWarning => 'Required by law - verification needed before profile approval';
+
+  @override
+  String get pestTypesTitle => 'Pest types I handle';
+
+  @override
+  String get pestTypesHelper => 'Clients will see your selection';
+
+  @override
+  String get pestMethodsTitle => 'My treatment methods';
+
+  @override
+  String get pestAvailabilityTitle => 'Availability & Response';
+
+  @override
+  String get pestEmergencyLabel => 'Emergency service';
+
+  @override
+  String get pestEmergencyDesc => 'Within one hour - additional fee';
+
+  @override
+  String get pest247Label => 'Available 24/7';
+
+  @override
+  String get pestPricingTitle => 'Transparent pricing';
+
+  @override
+  String get pestPricingSubtitle => 'Clients trust clear pricing';
+
+  @override
+  String get pestWarrantyTitle => 'Warranty & Service';
+
+  @override
+  String get pestWarrantyBasic => 'Basic warranty';
+
+  @override
+  String get pestDigitalReport => 'Automatic digital report';
+
+  @override
+  String get pestBeforeAfterPhotos => 'Before/after photos';
+
+  @override
+  String get pestPackagesTitle => 'Maintenance packages';
+
+  @override
+  String get pestPackagesHint => 'Recurring revenue · Returning clients';
+
+  @override
+  String get pestInstructionsTitle => 'Post-treatment instructions';
+
+  @override
+  String get pestInstructionsSubtitle => 'Auto-translated for clients';
+
+  @override
+  String get pestInstructionsQuick => 'Quick instructions (mark relevant ones)';
+
+  @override
+  String get pestInstructionsCustom => 'Additional custom instructions';
+
+  @override
+  String get pestClientBlockTitle => 'Build your treatment';
+
+  @override
+  String get pestClientAiTitle => 'Don\'t know what it is?';
+
+  @override
+  String get pestClientAiSubtitle => 'Take a photo and AI will identify in 2 seconds';
+
+  @override
+  String get pestClientAiCapture => 'Capture now';
+
+  @override
+  String get pestClientAiUpload => 'Upload photo';
+
+  @override
+  String get pestClientInstructionsTitle => 'What to know before';
+
+  @override
+  String get pestClientInstructionsAcknowledge => 'I\'ve read and understood - I confirm the instructions';
+
+  @override
+  String get pestClientBookNow => 'Book now';
+
+  @override
+  String get pestClientTrustPayment => 'Pay after';
+
+  @override
+  String get pestClientTrustReport => 'Digital report';
+
+  @override
+  String get pestClientTrustCancel => 'Free cancellation';
 }

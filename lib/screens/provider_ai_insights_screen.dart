@@ -339,9 +339,47 @@ class _ProviderAiInsightsScreenState
               ),
             ],
           ),
+          // ── "חבר Pro מאז ..." (Phase 2) ─────────────────────────────────
+          // Shown only when actively Pro AND we have a grant timestamp.
+          // The timestamp refreshes on every new grant — see
+          // pro_service.js :: evaluateProStatus.
+          if (m.isAnySkillPro && m.anySkillProGrantedAt != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.workspace_premium_rounded,
+                      color: Colors.white, size: 14),
+                  const SizedBox(width: 6),
+                  Text(
+                    'חבר Pro מאז ${_formatGrantedDate(m.anySkillProGrantedAt!)}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  // Formats DateTime as DD/MM/YYYY in Hebrew locale (matches the app's
+  // date convention — see CLAUDE.md §9 RTL standards).
+  String _formatGrantedDate(DateTime dt) {
+    final dd = dt.day.toString().padLeft(2, '0');
+    final mm = dt.month.toString().padLeft(2, '0');
+    return '$dd/$mm/${dt.year}';
   }
 
   // ── Single criterion card ─────────────────────────────────────────────────

@@ -357,7 +357,7 @@ class _AdminBrandAssetsTabState extends State<AdminBrandAssetsTab> {
                       )
                     : const AnySkillBrandIcon(size: 20),
                 const SizedBox(width: 10),
-                Text('חפש מומחה...', style: TextStyle(color: Colors.grey[400], fontSize: 14)),
+                Text('חפש נותן שירות...', style: TextStyle(color: Colors.grey[400], fontSize: 14)),
               ],
             ),
           ),

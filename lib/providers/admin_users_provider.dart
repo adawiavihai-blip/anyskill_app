@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../repositories/admin_users_repository.dart';
@@ -9,7 +10,7 @@ part 'admin_users_provider.g.dart';
 // ── Repository provider (singleton — survives tab switches) ──────────────────
 
 @Riverpod(keepAlive: true)
-AdminUsersRepository adminUsersRepository(AdminUsersRepositoryRef ref) {
+AdminUsersRepository adminUsersRepository(Ref ref) {
   debugPrint('[Riverpod] AdminUsersRepository created');
   return AdminUsersRepository();
 }

@@ -17,9 +17,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 class CredentialsService {
   CredentialsService._();
 
-  static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
-  );
+  // EncryptedSharedPreferences is deprecated by Google's Jetpack Security lib
+  // and will be removed in flutter_secure_storage v11. Defaults are now safe.
+  static const _storage = FlutterSecureStorage();
 
   static const _kEmail    = 'anyskill_rm_email';
   static const _kPassword = 'anyskill_rm_password';

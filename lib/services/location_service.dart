@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'permission_service.dart';
+// Conditional import: stub on native, real JS-interop impl on web.
+import '_web_geo_stub.dart' if (dart.library.js_interop) '_web_geo_web.dart'
+    as web_geo;
 
 class LocationService {
   LocationService._();
@@ -37,83 +41,174 @@ class LocationService {
     }
   }
 
-  // ── Permission-aware request (shows premium dialog ONCE) ──────────────────
-  /// Shows our premium in-app dialog before the OS prompt — but only once.
-  /// Subsequent calls respect the stored answer from SharedPreferences:
-  ///   granted → silently get position (no dialog)
-  ///   denied  → return null immediately (no dialog, no OS prompt)
+  // ── Permission-aware request (OS-first, stored answer second) ─────────────
+  /// Strategy: the OS/browser is the source of truth. A stored "denied" from
+  /// our in-app dialog should only prevent us from re-prompting — it must
+  /// never block us when the user has since granted at the browser level.
+  /// On web, when geolocator silently returns null, we fall through to a
+  /// direct JS-interop call to `navigator.geolocation.getCurrentPosition`.
+  ///
+  /// All logging uses raw `print` (not `debugPrint`) because debugPrint is
+  /// stripped by dart2js in release web builds, which would hide exactly
+  /// the diagnostics we need when the field reports a bug.
   static Future<Position?> requestAndGet(BuildContext context) async {
+    // ignore: avoid_print
+    print('[LocationService] requestAndGet: ENTRY (kIsWeb=$kIsWeb cached=${_cached != null})');
     if (_cached != null) return _cached;
 
-    // ── 1. Check locally-stored answer ─────────────────────────────────────
+    // ── 1. OS is source of truth — check it first ──────────────────────────
+    LocationPermission osPerm;
+    try {
+      osPerm = await Geolocator.checkPermission();
+      // ignore: avoid_print
+      print('[LocationService] OS checkPermission = $osPerm');
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('[LocationService] checkPermission THREW: $e\n$st');
+      osPerm = LocationPermission.denied;
+    }
+
+    if (osPerm == LocationPermission.whileInUse ||
+        osPerm == LocationPermission.always) {
+      // Browser/OS says YES. Heal stored state if it was stale and fetch.
+      await PermissionService.saveLocationStatus(PermissionService.granted);
+      final pos = await _fetchPosition();
+      // ignore: avoid_print
+      print('[LocationService] OS granted → _fetchPosition = '
+          '${pos == null ? "null" : "(${pos.latitude}, ${pos.longitude})"}');
+      if (pos != null) return pos;
+
+      // Geolocator returned null even though OS said yes → web bug. Fall
+      // through to direct JS interop.
+      if (kIsWeb) {
+        // ignore: avoid_print
+        print('[LocationService] Geolocator returned null with OS=granted → trying JS interop fallback');
+        final webPos = await web_geo.webGetCurrentPositionDirect();
+        if (webPos != null) {
+          _cached = webPos;
+          // ignore: avoid_print
+          print('[LocationService] JS interop fallback succeeded: (${webPos.latitude}, ${webPos.longitude})');
+          return webPos;
+        }
+        // ignore: avoid_print
+        print('[LocationService] JS interop fallback also returned null');
+      }
+      return null;
+    }
+
+    // ── 2. OS has NOT granted — consult stored memory ──────────────────────
     final stored = await PermissionService.getLocationStatus();
+    // ignore: avoid_print
+    print('[LocationService] OS=$osPerm stored=$stored');
 
     if (stored == PermissionService.denied) {
-      // User already said no — respect it, never re-prompt.
-      return null;
-    }
-
-    if (stored == PermissionService.granted) {
-      // Previously granted — verify OS hasn't revoked it (silent check).
-      final perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.whileInUse ||
-          perm == LocationPermission.always) {
-        return _fetchPosition();
+      // User explicitly said no to our dialog — respect it, never re-prompt.
+      // BUT: on web we still try the direct JS path, because the browser
+      // permission UI is what the user controls — if they granted it there
+      // we should honor that even if our Dart-side checkPermission lies.
+      if (kIsWeb) {
+        // ignore: avoid_print
+        print('[LocationService] stored=denied + web → trying JS interop as final attempt');
+        final webPos = await web_geo.webGetCurrentPositionDirect();
+        if (webPos != null) {
+          _cached = webPos;
+          await PermissionService.saveLocationStatus(PermissionService.granted);
+          // ignore: avoid_print
+          print('[LocationService] JS interop recovered: (${webPos.latitude}, ${webPos.longitude}) — healing stored to granted');
+          return webPos;
+        }
       }
-      // OS permission was revoked — update local record and fail silently.
-      await PermissionService.saveLocationStatus(PermissionService.denied);
-      debugPrint('LocationService: OS revoked location permission — failing silently');
+      // ignore: avoid_print
+      print('[LocationService] stored=denied AND OS=$osPerm AND JS fallback failed → returning null');
       return null;
     }
 
-    // ── 2. Never asked yet — check current OS status ────────────────────────
-    final perm = await Geolocator.checkPermission();
-
-    if (perm == LocationPermission.deniedForever) {
+    if (osPerm == LocationPermission.deniedForever) {
       await PermissionService.saveLocationStatus(PermissionService.denied);
-      debugPrint('LocationService: location permanently denied — failing silently');
+      // ignore: avoid_print
+      print('[LocationService] deniedForever → returning null');
       return null;
     }
 
-    if (perm == LocationPermission.whileInUse ||
-        perm == LocationPermission.always) {
-      // OS already granted (e.g. from location_module or a previous install).
-      await PermissionService.saveLocationStatus(PermissionService.granted);
-      return _fetchPosition();
-    }
-
-    // ── 3. Show our branded in-app dialog (the only time we ever show it) ───
+    // ── 3. Never asked yet — show our branded in-app dialog ────────────────
     if (!context.mounted) return null;
     final proceed = await _showPermissionDialog(context);
 
     if (!proceed) {
-      // User tapped "לא עכשיו" — store denied so we never show the dialog again.
       await PermissionService.saveLocationStatus(PermissionService.denied);
       return null;
     }
 
-    // ── 4. User agreed — now ask the OS ─────────────────────────────────────
+    // ── 4. User agreed — now ask the OS ────────────────────────────────────
     final granted = await Geolocator.requestPermission();
+    // ignore: avoid_print
+    print('[LocationService] requestPermission returned = $granted');
 
     if (granted == LocationPermission.whileInUse ||
         granted == LocationPermission.always) {
       await PermissionService.saveLocationStatus(PermissionService.granted);
-      return _fetchPosition();
+      final pos = await _fetchPosition();
+      if (pos != null) return pos;
+      // Same fallback — geolocator may still return null on web.
+      if (kIsWeb) {
+        final webPos = await web_geo.webGetCurrentPositionDirect();
+        if (webPos != null) {
+          _cached = webPos;
+          return webPos;
+        }
+      }
+      return null;
     }
 
-    // OS denied (or permanently denied) — fail silently
     await PermissionService.saveLocationStatus(PermissionService.denied);
-    debugPrint('LocationService: OS denied location (deniedForever=${ granted == LocationPermission.deniedForever}) — failing silently');
+    // ignore: avoid_print
+    print('[LocationService] OS denied (deniedForever=${granted == LocationPermission.deniedForever}) → null');
     return null;
   }
 
   /// Gets position only if permission is already granted — no dialog.
+  /// On web, falls through to direct JS interop when geolocator silently
+  /// returns null even with permission granted.
   static Future<Position?> getIfGranted() async {
+    // ignore: avoid_print
+    print('[LocationService] getIfGranted: ENTRY (kIsWeb=$kIsWeb cached=${_cached != null})');
     if (_cached != null) return _cached;
-    final perm = await Geolocator.checkPermission();
+    LocationPermission perm;
+    try {
+      perm = await Geolocator.checkPermission();
+      // ignore: avoid_print
+      print('[LocationService] getIfGranted: OS = $perm');
+    } catch (e) {
+      // ignore: avoid_print
+      print('[LocationService] getIfGranted: checkPermission threw: $e');
+      perm = LocationPermission.denied;
+    }
     if (perm != LocationPermission.whileInUse &&
-        perm != LocationPermission.always) { return null; }
-    return _fetchPosition();
+        perm != LocationPermission.always) {
+      // On web, the Permissions API in some browsers reports denied/prompt
+      // even when the user has actually allowed access. Try JS interop
+      // anyway — if the browser blocks, it'll surface PERMISSION_DENIED.
+      if (kIsWeb) {
+        // ignore: avoid_print
+        print('[LocationService] getIfGranted: OS=$perm on web → trying JS interop');
+        final webPos = await web_geo.webGetCurrentPositionDirect();
+        if (webPos != null) {
+          _cached = webPos;
+          return webPos;
+        }
+      }
+      return null;
+    }
+    final pos = await _fetchPosition();
+    if (pos != null) return pos;
+    if (kIsWeb) {
+      // ignore: avoid_print
+      print('[LocationService] getIfGranted: geolocator returned null with OS=granted → JS interop');
+      final webPos = await web_geo.webGetCurrentPositionDirect();
+      if (webPos != null) _cached = webPos;
+      return webPos;
+    }
+    return null;
   }
 
   // ── v9.9.0: Provider location broadcasting ─────────────────────────────────
@@ -216,19 +311,57 @@ class LocationService {
   }
 
   // ── Internal ───────────────────────────────────────────────────────────────
+  /// Fetches a fresh position via the geolocator package. Discriminates
+  /// between exception types so we can see the actual reason in the
+  /// console (LocationServiceDisabledException, PermissionDeniedException,
+  /// TimeoutException, etc.) instead of a generic "fetch failed".
+  ///
+  /// Falls back to `getLastKnownPosition` if the live fix fails. The web
+  /// JS-interop fallback lives in the callers (`requestAndGet` /
+  /// `getIfGranted`) — this method stays geolocator-only.
   static Future<Position?> _fetchPosition() async {
+    // ignore: avoid_print
+    print('[LocationService] _fetchPosition: calling Geolocator.getCurrentPosition (timeLimit 15s)');
     try {
       final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 8),
+          timeLimit: Duration(seconds: 15),
         ),
       );
       _cached = pos;
+      // ignore: avoid_print
+      print('[LocationService] _fetchPosition: success (${pos.latitude}, ${pos.longitude})');
       return pos;
-    } catch (_) {
-      return null;
+    } on LocationServiceDisabledException catch (e) {
+      // ignore: avoid_print
+      print('[LocationService] _fetchPosition: LocationServiceDisabledException — $e (location services off in OS)');
+    } on PermissionDeniedException catch (e) {
+      // ignore: avoid_print
+      print('[LocationService] _fetchPosition: PermissionDeniedException — $e (browser/OS denied)');
+    } on TimeoutException catch (e) {
+      // ignore: avoid_print
+      print('[LocationService] _fetchPosition: TimeoutException — $e (no fix within 15s)');
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('[LocationService] _fetchPosition: unexpected error — $e\n$st');
     }
+    // Try last-known as a final fallback
+    try {
+      final last = await Geolocator.getLastKnownPosition();
+      if (last != null) {
+        _cached = last;
+        // ignore: avoid_print
+        print('[LocationService] _fetchPosition: using getLastKnownPosition (${last.latitude}, ${last.longitude})');
+        return last;
+      }
+      // ignore: avoid_print
+      print('[LocationService] _fetchPosition: getLastKnownPosition returned null');
+    } catch (e2) {
+      // ignore: avoid_print
+      print('[LocationService] _fetchPosition: getLastKnownPosition threw: $e2');
+    }
+    return null;
   }
 
   // ── Premium permission dialog ──────────────────────────────────────────────

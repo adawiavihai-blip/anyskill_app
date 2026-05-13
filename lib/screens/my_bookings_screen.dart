@@ -132,8 +132,8 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                 unselectedLabelStyle:
                     const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
                 tabs: _isProvider
-                    ? const [Tab(text: 'משימות שלי'), Tab(text: 'יומן'), Tab(text: 'היסטוריה')]
-                    : const [Tab(text: 'פעילות'), Tab(text: 'היסטוריה')],
+                    ? const [Tab(text: 'הזמנות פעילות'), Tab(text: 'יומן'), Tab(text: 'היסטוריה')]
+                    : const [Tab(text: 'הזמנות פעילות'), Tab(text: 'היסטוריה')],
               ),
             ),
           ),

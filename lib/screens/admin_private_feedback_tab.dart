@@ -114,7 +114,7 @@ class AdminPrivateFeedbackTab extends StatelessWidget {
                                 size: 14, color: Color(0xFFFBBF24)),
                             const SizedBox(width: 8),
                             Text(
-                              isClientReview ? 'לקוח→מומחה' : 'מומחה→לקוח',
+                              isClientReview ? 'לקוח→נותן שירות' : 'נותן שירות→לקוח',
                               style: const TextStyle(
                                   fontSize: 11, color: Colors.grey),
                             ),

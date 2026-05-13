@@ -6,6 +6,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../models/story.dart';
+import '../services/cached_readers.dart';
 
 /// Handles ALL Firebase operations for the Stories system.
 ///
@@ -82,6 +83,9 @@ class StoryRepository {
   /// Full upload pipeline: Storage → Firestore → verify → user flags → XP.
   ///
   /// [videoBytes] must be pre-read (no Blob URL dependency).
+  /// [mediaType] is 'video' (default) or 'image'. Image stories auto-advance
+  /// after 5s in the viewer; video stories play to natural end. Field name
+  /// stays `videoUrl` for back-compat — see Story.mediaType.
   /// [onProgress] fires with 0.0–1.0 during the Storage upload.
   ///
   /// Returns the created [Story] on success.
@@ -90,6 +94,7 @@ class StoryRepository {
     required Uint8List videoBytes,
     required String fileName,
     required String mimeType,
+    String mediaType = 'video',
     void Function(double)? onProgress,
   }) async {
     final authUid = _uid;
@@ -145,6 +150,7 @@ class StoryRepository {
       viewCount:      0,
       likeCount:      0,
       likedBy:        const [],
+      mediaType:      mediaType,
     );
 
     await _db.collection('stories').doc(authUid).set(story.toJson());
@@ -160,6 +166,7 @@ class StoryRepository {
       'hasActiveStory': true,
       'storyTimestamp': Timestamp.fromDate(now),
     });
+    CachedReaders.invalidateProvider(authUid); // §61
 
     // 6. XP + activity log (fire-and-forget)
     _functions
@@ -203,6 +210,7 @@ class StoryRepository {
       'hasActiveStory': false,
       'storyTimestamp': null,
     });
+    CachedReaders.invalidateProvider(storyUid); // §61
   }
 
   // ── Engagement ────────────────────────────────────────────────────────

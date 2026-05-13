@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 import '../utils/safe_image_provider.dart';
 import '../services/navigation_launcher_service.dart';
 import '../theme/app_theme.dart';
+import 'wolt_tile_layer.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // AnySkill Provider Map View — v9.9.0
@@ -219,13 +220,7 @@ class _ProvidersMapViewState extends State<ProvidersMapView>
             },
           ),
           children: [
-            TileLayer(
-              urlTemplate: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-              subdomains: const ['a', 'b', 'c', 'd'],
-              retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
-              userAgentPackageName: 'com.anyskill.app',
-              maxZoom: 19,
-            ),
+            WoltTileLayer.forContext(context, maxZoom: 19),
 
             // Radius circle
             if (widget.userLocation != null)

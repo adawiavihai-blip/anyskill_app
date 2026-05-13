@@ -1,15 +1,29 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'cached_readers.dart';
 
 /// Manages AnySkill Pro status.
 ///
 /// Firestore:
 ///   system_settings/pro  — thresholds doc
 ///   users/{uid}          — isAnySkillPro: bool, proManualOverride: bool,
+///                          anySkillProGrantedAt: Timestamp,
 ///                          avgResponseMinutes: int (optional, default = fast)
+///
+/// v15.x Phase 1 note: the `isAnySkillPro`, `proManualOverride`, and
+/// `anySkillProGrantedAt` fields are blocked from owner writes by
+/// firestore.rules. `checkAndRefreshProStatus` now delegates to a Cloud
+/// Function (`evaluateMyProStatus` / `evaluateProStatusAsAdmin`) which
+/// runs with the Admin SDK and bypasses the rule. The manual-override
+/// admin actions (`setManualOverride`, `clearManualOverride`) keep
+/// writing directly — they work because the admin's `|| isAdmin()`
+/// rule clause grants full write access.
 class ProService {
   ProService._();
 
-  static final _db = FirebaseFirestore.instance;
+  static final _db        = FirebaseFirestore.instance;
+  static final _functions = FirebaseFunctions.instance;
 
   // ── Thresholds ────────────────────────────────────────────────────────────
 
@@ -46,64 +60,50 @@ class ProService {
 
   // ── Eligibility check ─────────────────────────────────────────────────────
 
-  /// Evaluates [uid] against current thresholds and writes `isAnySkillPro`
-  /// back to the user document. Returns the computed value.
-  /// Skips the write (and returns current value) when admin has manually overridden.
+  /// Delegates Pro evaluation to the server. The client no longer writes
+  /// `isAnySkillPro` directly — firestore.rules block owner writes on
+  /// that field. Instead:
+  ///
+  ///   * uid == current-user  → calls `evaluateMyProStatus` (no params).
+  ///   * uid != current-user  → calls `evaluateProStatusAsAdmin({targetUid})`
+  ///                            (server-checks admin role).
+  ///
+  /// Returns the evaluated badge state. Throws FirebaseFunctionsException
+  /// on permission/rate-limit failures so the caller can surface a toast.
+  /// Empty uid short-circuits to `false` like the legacy API.
   static Future<bool> checkAndRefreshProStatus(String uid) async {
     if (uid.isEmpty) return false;
 
-    final results = await Future.wait([
-      _db.collection('users').doc(uid).get(),
-      fetchThresholds(),
-      _countCompletedOrders(uid),
-      _countRecentExpertCancellations(uid),
-    ]);
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    final isSelf     = currentUid != null && currentUid == uid;
 
-    final userData = (results[0] as DocumentSnapshot).data()
-            as Map<String, dynamic>? ??
-        {};
-    final thresholds    = results[1] as Map<String, dynamic>;
-    final completedCnt  = results[2] as int;
-    final cancelCnt     = results[3] as int;
-
-    // Admin manual override — don't touch the flag
-    if (userData['proManualOverride'] == true) {
-      return userData['isAnySkillPro'] == true;
-    }
-
-    final rating            = (userData['rating']              as num?)?.toDouble() ?? 0.0;
-    final avgResponseMins   = (userData['avgResponseMinutes']  as num?)?.toInt()    ?? 0;
-    final minRating         = thresholds['minRating']          as double;
-    final minOrders         = thresholds['minOrders']          as int;
-    final maxResponseMins   = thresholds['maxResponseMinutes'] as int;
-
-    // avgResponseMinutes == 0 → no data yet → don't penalise
-    final responseOk = avgResponseMins == 0 || avgResponseMins <= maxResponseMins;
-
-    final isPro = rating >= minRating &&
-        completedCnt >= minOrders &&
-        responseOk &&
-        cancelCnt == 0;
-
-    await _db.collection('users').doc(uid).update({'isAnySkillPro': isPro});
-    return isPro;
+    final callable = _functions.httpsCallable(
+      isSelf ? 'evaluateMyProStatus' : 'evaluateProStatusAsAdmin',
+    );
+    final res = await callable.call(isSelf ? null : {'targetUid': uid});
+    final data = (res.data as Map?)?.cast<String, dynamic>() ?? const {};
+    return data['isPro'] == true;
   }
 
   // ── Manual override ───────────────────────────────────────────────────────
 
   /// Admin grants or revokes Pro manually. Sets `proManualOverride: true` so
   /// the automatic check won't overwrite the decision.
-  static Future<void> setManualOverride(String uid, {required bool isPro}) =>
-      _db.collection('users').doc(uid).update({
-        'isAnySkillPro':      isPro,
-        'proManualOverride':  true,
-      });
+  static Future<void> setManualOverride(String uid, {required bool isPro}) async {
+    await _db.collection('users').doc(uid).update({
+      'isAnySkillPro':      isPro,
+      'proManualOverride':  true,
+    });
+    CachedReaders.invalidateProvider(uid); // §61
+  }
 
   /// Removes the manual override so automatic checks resume.
-  static Future<void> clearManualOverride(String uid) =>
-      _db.collection('users').doc(uid).update({
-        'proManualOverride': false,
-      });
+  static Future<void> clearManualOverride(String uid) async {
+    await _db.collection('users').doc(uid).update({
+      'proManualOverride': false,
+    });
+    CachedReaders.invalidateProvider(uid); // §61
+  }
 
   // ── Provider metrics snapshot ─────────────────────────────────────────────
 
@@ -130,6 +130,7 @@ class ProService {
       recentCancellations:    cancelCnt,
       isManualOverride:       userData['proManualOverride']  == true,
       isAnySkillPro:          userData['isAnySkillPro']      == true,
+      anySkillProGrantedAt:   (userData['anySkillProGrantedAt'] as Timestamp?)?.toDate(),
       thresholdMinRating:     thresholds['minRating']        as double,
       thresholdMinOrders:     thresholds['minOrders']        as int,
       thresholdMaxResponseMins: thresholds['maxResponseMinutes'] as int,
@@ -172,15 +173,18 @@ class ProService {
 // ── Provider metrics snapshot ─────────────────────────────────────────────────
 
 class ProMetrics {
-  final double rating;
-  final int    avgResponseMinutes;
-  final int    completedOrders;
-  final int    recentCancellations;
-  final bool   isManualOverride;
-  final bool   isAnySkillPro;
-  final double thresholdMinRating;
-  final int    thresholdMinOrders;
-  final int    thresholdMaxResponseMins;
+  final double    rating;
+  final int       avgResponseMinutes;
+  final int       completedOrders;
+  final int       recentCancellations;
+  final bool      isManualOverride;
+  final bool      isAnySkillPro;
+  /// When the badge was granted (null if never held). Refreshed on every
+  /// new grant — historical grants live in `admin_audit_log.previousGrantedAt`.
+  final DateTime? anySkillProGrantedAt;
+  final double    thresholdMinRating;
+  final int       thresholdMinOrders;
+  final int       thresholdMaxResponseMins;
 
   const ProMetrics({
     required this.rating,
@@ -189,6 +193,7 @@ class ProMetrics {
     required this.recentCancellations,
     required this.isManualOverride,
     required this.isAnySkillPro,
+    this.anySkillProGrantedAt,
     required this.thresholdMinRating,
     required this.thresholdMinOrders,
     required this.thresholdMaxResponseMins,

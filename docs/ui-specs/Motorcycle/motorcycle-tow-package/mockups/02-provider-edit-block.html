@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Provider Edit - בלוק עריכה לנותן שירות</title>
+<style>
+  :root {
+    --purple-900: #26215C;
+    --purple-700: #3C3489;
+    --purple-500: #534AB7;
+    --purple-300: #7F77DD;
+    --purple-200: #CECBF6;
+    --purple-50: #EEEDFE;
+    --green-700: #0F6E56;
+    --green-500: #1D9E75;
+    --green-300: #5DCAA5;
+    --green-50: #E1F5EE;
+    --amber-800: #854F0B;
+    --amber-600: #BA7517;
+    --amber-50: #FAEEDA;
+    --bg-primary: #FFFFFF;
+    --bg-secondary: #F5F4EE;
+    --text-primary: #2C2C2A;
+    --text-secondary: #5F5E5A;
+    --text-tertiary: #888780;
+    --border-tertiary: #E8E6DD;
+    --border-secondary: #D3D1C7;
+    --switch-off: #D3D1C7;
+  }
+  * { box-sizing: border-box; }
+  body { direction: rtl; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg-secondary); color: var(--text-primary); margin: 0; padding: 20px; }
+  .container { max-width: 600px; margin: 0 auto; }
+
+  /* Page header */
+  .page-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 0.5px solid var(--border-tertiary); }
+  .page-back { width: 32px; height: 32px; border-radius: 8px; background: var(--bg-secondary); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .page-back svg { width: 14px; height: 14px; stroke: var(--text-primary); fill: none; stroke-width: 2; }
+  .page-title { flex: 1; }
+  .page-title h2 { font-size: 16px; font-weight: 500; margin: 0; }
+  .page-title p { font-size: 12px; color: var(--text-secondary); margin: 2px 0 0; }
+  .save-status { font-size: 11px; color: var(--green-500); display: flex; align-items: center; gap: 4px; }
+  .save-status svg { width: 11px; height: 11px; stroke: var(--green-500); fill: none; stroke-width: 2.5; }
+
+  /* Category */
+  .cat-selector { background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 12px; padding: 14px; margin-bottom: 8px; }
+  .cat-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; }
+  .cat-row:not(:last-child) { border-bottom: 0.5px solid var(--border-tertiary); }
+  .cat-label-block { display: flex; align-items: center; gap: 10px; }
+  .cat-icon { width: 36px; height: 36px; border-radius: 8px; background: var(--purple-50); display: flex; align-items: center; justify-content: center; }
+  .cat-icon svg { width: 18px; height: 18px; stroke: var(--purple-500); fill: none; stroke-width: 2; }
+  .cat-text { font-size: 13px; }
+  .cat-text .lbl { color: var(--text-tertiary); font-size: 11px; margin-bottom: 1px; }
+  .cat-text .val { font-weight: 500; }
+  .cat-edit { font-size: 12px; color: var(--purple-500); cursor: pointer; font-weight: 500; }
+
+  /* Intro */
+  .block-intro { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--purple-50); border-radius: 8px; margin: 12px 0 8px; font-size: 12px; color: var(--purple-700); }
+  .block-intro svg { width: 14px; height: 14px; stroke: var(--purple-500); fill: none; stroke-width: 2; flex-shrink: 0; }
+
+  /* The block */
+  .block { background: var(--bg-primary); border: 1px solid var(--purple-300); border-radius: 12px; margin-bottom: 12px; overflow: hidden; }
+  .block-header { background: var(--purple-50); padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 0.5px solid var(--purple-200); }
+  .block-header-left { display: flex; align-items: center; gap: 10px; }
+  .block-header-icon { width: 28px; height: 28px; border-radius: 6px; background: var(--purple-500); display: flex; align-items: center; justify-content: center; }
+  .block-header-icon svg { width: 14px; height: 14px; stroke: white; fill: none; stroke-width: 2; }
+  .block-title { font-size: 13px; font-weight: 500; color: var(--purple-900); margin: 0; }
+  .block-sub { font-size: 11px; color: var(--purple-500); margin: 1px 0 0; }
+  .completion { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--purple-500); font-weight: 500; }
+  .completion-bar { width: 60px; height: 4px; background: var(--purple-200); border-radius: 2px; overflow: hidden; }
+  .completion-fill { height: 100%; background: var(--purple-500); border-radius: 2px; }
+
+  .block-body { padding: 16px; }
+
+  /* Section */
+  .section { padding: 14px 0; border-bottom: 0.5px solid var(--border-tertiary); }
+  .section:first-child { padding-top: 0; }
+  .section:last-child { padding-bottom: 0; border-bottom: none; }
+  .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .section-title { font-size: 14px; font-weight: 500; margin: 0; display: flex; align-items: center; gap: 8px; }
+  .section-title .num { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; background: var(--bg-secondary); border-radius: 50%; font-size: 11px; color: var(--text-secondary); font-weight: 500; }
+  .section-title.done .num { background: var(--green-500); color: white; }
+  .section-title.done .num svg { width: 10px; height: 10px; stroke: white; fill: none; stroke-width: 2.5; }
+  .section-required { font-size: 10px; color: var(--amber-600); background: var(--amber-50); padding: 2px 6px; border-radius: 4px; font-weight: 500; }
+  .section-desc { font-size: 12px; color: var(--text-secondary); margin: 0 0 10px; line-height: 1.5; }
+
+  /* Form */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .field { margin-bottom: 10px; }
+  .label { display: block; font-size: 12px; font-weight: 500; margin-bottom: 5px; }
+  .input { width: 100%; padding: 9px 11px; border: 0.5px solid var(--border-secondary); border-radius: 8px; background: var(--bg-primary); font-size: 13px; box-sizing: border-box; font-family: inherit; }
+  .input-with-suffix { position: relative; }
+  .input-suffix { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--text-tertiary); pointer-events: none; }
+  .input-with-suffix input { padding-left: 32px; }
+  .hint { font-size: 11px; color: var(--text-tertiary); margin-top: 4px; }
+
+  /* Bike cards (provider - select only) */
+  .bike-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .bike-card { position: relative; padding: 0; background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 8px; cursor: pointer; transition: all 0.15s; overflow: hidden; }
+  .bike-card:hover { border-color: var(--border-secondary); transform: translateY(-1px); }
+  .bike-card.on { border-color: var(--purple-300); border-width: 1px; box-shadow: 0 0 0 1px var(--purple-300); }
+  .bike-image-area { position: relative; aspect-ratio: 4/3; width: 100%; background: var(--bg-secondary); overflow: hidden; }
+  .bike-image-area img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .bike-card.on .bike-image-area::after { content: ''; position: absolute; inset: 0; background: rgba(83,74,183,0.08); pointer-events: none; }
+  .bike-info { padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 6px; background: var(--bg-primary); }
+  .bike-card.on .bike-info { background: var(--purple-50); }
+  .bike-label { font-size: 12px; font-weight: 500; color: var(--text-primary); }
+  .bike-card.on .bike-label { color: var(--purple-700); }
+  .bike-toggle-mini { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--border-secondary); background: var(--bg-primary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .bike-card.on .bike-toggle-mini { background: var(--purple-500); border-color: var(--purple-500); }
+  .bike-toggle-mini svg { width: 11px; height: 11px; stroke: white; fill: none; stroke-width: 3; display: none; }
+  .bike-card.on .bike-toggle-mini svg { display: block; }
+
+  /* Toggle row */
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; gap: 12px; border-bottom: 0.5px solid var(--border-tertiary); }
+  .toggle-row:last-child { border-bottom: none; }
+  .toggle-text { flex: 1; min-width: 0; }
+  .toggle-text .lbl { font-size: 13px; font-weight: 500; }
+  .toggle-text .sub { font-size: 11px; color: var(--text-tertiary); margin-top: 2px; line-height: 1.4; }
+  .switch { position: relative; width: 36px; height: 20px; background: var(--switch-off); border-radius: 999px; cursor: pointer; transition: background 0.2s; flex-shrink: 0; }
+  .switch.on { background: var(--purple-500); }
+  .switch::after { content: ''; position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; background: white; border-radius: 50%; transition: transform 0.2s; }
+  .switch.on::after { transform: translateX(-16px); }
+
+  /* Pills */
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill { display: inline-flex; align-items: center; gap: 4px; padding: 7px 11px; border-radius: 999px; font-size: 12px; font-weight: 500; background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); cursor: pointer; transition: all 0.15s; }
+  .pill.on { background: var(--purple-50); border-color: var(--purple-300); color: var(--purple-700); }
+  .pill svg { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 2.5; opacity: 0; transition: opacity 0.15s; }
+  .pill.on svg { opacity: 1; }
+
+  /* Night surcharge */
+  .night-row { background: var(--bg-secondary); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .night-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 10px; }
+  .night-label-block { flex: 1; }
+  .night-title { font-size: 13px; font-weight: 500; margin: 0; display: flex; align-items: center; gap: 6px; }
+  .night-title svg { width: 14px; height: 14px; stroke: var(--purple-500); fill: none; stroke-width: 2; }
+  .night-sub { font-size: 11px; color: var(--text-tertiary); margin: 2px 0 0; }
+  .night-percent { width: 90px; }
+  .night-times { display: flex; align-items: center; gap: 8px; padding-top: 10px; border-top: 0.5px solid var(--border-tertiary); flex-wrap: wrap; }
+  .night-times-label { font-size: 11px; color: var(--text-secondary); font-weight: 500; }
+  .time-input { width: 80px; padding: 7px 10px; border: 0.5px solid var(--border-secondary); border-radius: 6px; background: var(--bg-primary); font-size: 13px; font-weight: 500; font-family: inherit; box-sizing: border-box; text-align: center; }
+  .time-arrow { color: var(--text-tertiary); font-size: 14px; }
+
+  /* Service area */
+  .area-tabs { display: flex; gap: 4px; padding: 4px; background: var(--bg-secondary); border-radius: 8px; margin-bottom: 12px; width: fit-content; }
+  .area-tab { padding: 6px 12px; font-size: 12px; font-weight: 500; border: none; background: transparent; cursor: pointer; border-radius: 6px; color: var(--text-secondary); display: flex; align-items: center; gap: 5px; font-family: inherit; }
+  .area-tab.active { background: var(--bg-primary); color: var(--text-primary); box-shadow: 0 0 0 0.5px var(--border-tertiary); }
+  .area-tab svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; }
+  .area-pane { display: none; }
+  .area-pane.active { display: block; }
+  .map-wrap { position: relative; border-radius: 8px; overflow: hidden; border: 0.5px solid var(--border-tertiary); margin-bottom: 10px; }
+  .map { height: 240px; background: var(--green-50); position: relative; }
+  .map-bg { width: 100%; height: 100%; }
+  .map-tools { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .map-tool { background: white; padding: 7px 10px; border-radius: 6px; border: 0.5px solid var(--border-tertiary); font-size: 11px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 5px; }
+  .map-tool.active { background: var(--purple-500); color: white; border-color: var(--purple-500); }
+  .map-tool svg { width: 12px; height: 12px; fill: none; stroke-width: 2; stroke: currentColor; }
+  .map-zoom { position: absolute; bottom: 8px; left: 8px; display: flex; flex-direction: column; gap: 0; background: white; border-radius: 6px; border: 0.5px solid var(--border-tertiary); overflow: hidden; }
+  .map-zoom div { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; font-weight: 500; color: var(--text-primary); }
+  .map-zoom div + div { border-top: 0.5px solid var(--border-tertiary); }
+  .map-search { position: absolute; top: 8px; left: 8px; right: 90px; }
+  .map-search input { width: 100%; padding: 7px 10px 7px 30px; background: white; border: 0.5px solid var(--border-tertiary); border-radius: 6px; font-size: 12px; box-sizing: border-box; font-family: inherit; }
+  .map-search svg { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); width: 12px; height: 12px; stroke: var(--text-tertiary); fill: none; stroke-width: 2; }
+  .map-legend { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--bg-secondary); border-top: 0.5px solid var(--border-tertiary); font-size: 12px; }
+  .map-legend-stat { display: flex; align-items: center; gap: 6px; }
+  .map-legend-stat .dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(83,74,183,0.3); border: 1.5px solid var(--purple-500); }
+  .map-legend-clear { color: var(--purple-500); cursor: pointer; font-weight: 500; }
+  .range-row { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .range-row input[type="range"] { flex: 1; }
+  .range-out { font-size: 13px; font-weight: 500; min-width: 70px; padding: 6px 10px; background: var(--purple-50); border-radius: 6px; color: var(--purple-700); text-align: center; }
+  .polygon-help { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: var(--amber-50); border-radius: 8px; margin-bottom: 10px; font-size: 12px; color: var(--amber-800); line-height: 1.4; }
+  .polygon-help svg { width: 14px; height: 14px; stroke: var(--amber-600); fill: none; stroke-width: 2; flex-shrink: 0; margin-top: 1px; }
+  .polygon-help b { font-weight: 500; }
+
+  /* Preview + Save */
+  .preview-cta { background: var(--bg-secondary); border: 0.5px solid var(--border-tertiary); border-radius: 8px; padding: 12px; display: flex; align-items: center; gap: 10px; margin: 12px 0; cursor: pointer; }
+  .preview-cta svg { width: 18px; height: 18px; stroke: var(--purple-500); fill: none; stroke-width: 2; flex-shrink: 0; }
+  .preview-text { flex: 1; font-size: 12px; }
+  .preview-text .t { font-weight: 500; }
+  .preview-text .s { color: var(--text-tertiary); font-size: 11px; }
+
+  .save-bar { display: grid; grid-template-columns: auto 1fr; gap: 8px; padding: 12px; background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 12px; position: sticky; bottom: 12px; }
+  .save-secondary { padding: 10px 14px; background: transparent; border: 0.5px solid var(--border-secondary); border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit; }
+  .save-primary { padding: 10px; background: var(--purple-500); color: white; border: none; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; font-family: inherit; }
+  .save-primary svg { width: 14px; height: 14px; stroke: white; fill: none; stroke-width: 2.5; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="page-header">
+    <div class="page-back"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></div>
+    <div class="page-title">
+      <h2>עריכת פרופיל נותן שירות</h2>
+      <p>סיגלית מלסה · גרר אופנועים</p>
+    </div>
+    <div class="save-status">
+      <svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>נשמר אוטומטית
+    </div>
+  </div>
+
+  <div class="cat-selector">
+    <div class="cat-row">
+      <div class="cat-label-block">
+        <div class="cat-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
+        <div class="cat-text"><div class="lbl">קטגוריה ראשית</div><div class="val">שירותי רכב ותחבורה</div></div>
+      </div>
+      <span class="cat-edit">שנה</span>
+    </div>
+    <div class="cat-row">
+      <div class="cat-label-block">
+        <div class="cat-icon"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 18L11 9h6l1 9"/></svg></div>
+        <div class="cat-text"><div class="lbl">תת-קטגוריה</div><div class="val">גרר אופנועים</div></div>
+      </div>
+      <span class="cat-edit">שנה</span>
+    </div>
+  </div>
+
+  <div class="block-intro">
+    <svg viewBox="0 0 24 24"><path d="M12 2 L4 6 v6 c0 5 3.5 9 8 10 4.5-1 8-5 8-10 V6 z"/><path d="M9 12 l2 2 4-4"/></svg>
+    בחרת "גרר אופנועים" — הוספנו לך בלוק חכם ייעודי. מלא אותו פעם אחת והכל יתעדכן אוטומטית בפרופיל הציבורי שלך.
+  </div>
+
+  <div class="block">
+    <div class="block-header">
+      <div class="block-header-left">
+        <div class="block-header-icon"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 18L11 9h6l1 9"/></svg></div>
+        <div><p class="block-title">הגדרות גרר אופנועים</p><p class="block-sub">פרטי השירות שיוצגו ללקוחות</p></div>
+      </div>
+      <div class="completion"><div class="completion-bar"><div class="completion-fill" style="width: 100%;"></div></div><span>100%</span></div>
+    </div>
+
+    <div class="block-body">
+
+      <!-- Section 1: Bike types -->
+      <div class="section">
+        <div class="section-head">
+          <h3 class="section-title done"><span class="num"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>סוגי אופנועים שאתה גורר</h3>
+          <span class="section-required">חובה</span>
+        </div>
+        <p class="section-desc">סמן את כל הסוגים שיש לך ציוד מתאים לטפל בהם. הלקוח יראה רק את אלו שתסמן.</p>
+        <div class="bike-grid" id="bikes">
+          <div class="bike-card on" data-bike="sport"><div class="bike-image-area"><img src="https://images.unsplash.com/photo-1568772585407-9361f9bf3a87?w=400&h=300&fit=crop"/></div><div class="bike-info"><span class="bike-label">ספורט</span><div class="bike-toggle-mini"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div></div></div>
+          <div class="bike-card on" data-bike="cruiser"><div class="bike-image-area"><img src="https://images.unsplash.com/photo-1558981403-c5f9899a28bc?w=400&h=300&fit=crop"/></div><div class="bike-info"><span class="bike-label">קרוזר</span><div class="bike-toggle-mini"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div></div></div>
+          <div class="bike-card on" data-bike="adventure"><div class="bike-image-area"><img src="https://images.unsplash.com/photo-1599819811279-d5ad9cccf838?w=400&h=300&fit=crop"/></div><div class="bike-info"><span class="bike-label">אדוונצ'ר</span><div class="bike-toggle-mini"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div></div></div>
+          <div class="bike-card on" data-bike="scooter"><div class="bike-image-area"><img src="https://images.unsplash.com/photo-1591216105232-d23bea36b827?w=400&h=300&fit=crop"/></div><div class="bike-info"><span class="bike-label">קטנוע</span><div class="bike-toggle-mini"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div></div></div>
+          <div class="bike-card" data-bike="offroad"><div class="bike-image-area"><img src="https://images.unsplash.com/photo-1547549082-6bc09f2049ae?w=400&h=300&fit=crop"/></div><div class="bike-info"><span class="bike-label">אופנועי שטח</span><div class="bike-toggle-mini"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div></div></div>
+          <div class="bike-card" data-bike="vintage"><div class="bike-image-area"><img src="https://images.unsplash.com/photo-1609630875171-b1321377ee65?w=400&h=300&fit=crop"/></div><div class="bike-info"><span class="bike-label">וינטג'</span><div class="bike-toggle-mini"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div></div></div>
+        </div>
+      </div>
+
+      <!-- Section 2: Pricing -->
+      <div class="section">
+        <div class="section-head">
+          <h3 class="section-title done"><span class="num"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>תמחור</h3>
+          <span class="section-required">חובה</span>
+        </div>
+        <p class="section-desc">המחירים יוצגו ללקוח בשקיפות מלאה. תוכל לעדכן בכל עת.</p>
+        <div class="grid-2">
+          <div class="field">
+            <label class="label">מחיר בסיס</label>
+            <div class="input-with-suffix"><span class="input-suffix">₪</span><input type="number" class="input" value="180"/></div>
+            <div class="hint">מינימום קריאה (כולל 10 ק"מ ראשונים)</div>
+          </div>
+          <div class="field">
+            <label class="label">מחיר לק"מ נוסף</label>
+            <div class="input-with-suffix"><span class="input-suffix">₪</span><input type="number" class="input" value="4.5" step="0.5"/></div>
+            <div class="hint">מעבר ל-10 ק"מ הראשונים</div>
+          </div>
+        </div>
+
+        <div class="night-row">
+          <div class="night-header">
+            <div class="night-label-block">
+              <p class="night-title"><svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>תוספת לילה / שבת</p>
+              <p class="night-sub">תופעל אוטומטית בשעות שתגדיר ובשבתות</p>
+            </div>
+            <div class="night-percent"><div class="input-with-suffix"><span class="input-suffix">%</span><input type="number" class="input" value="25"/></div></div>
+          </div>
+          <div class="night-times">
+            <span class="night-times-label">שעות לילה:</span>
+            <span style="font-size: 11px; color: var(--text-tertiary);">מ-</span>
+            <input type="time" class="time-input" value="22:00"/>
+            <span class="time-arrow">←</span>
+            <span style="font-size: 11px; color: var(--text-tertiary);">עד</span>
+            <input type="time" class="time-input" value="06:00"/>
+          </div>
+        </div>
+
+        <div class="field" style="margin-bottom: 0;">
+          <label class="label">תוספת חירום מיידי</label>
+          <div class="input-with-suffix"><span class="input-suffix">%</span><input type="number" class="input" value="50" style="max-width: 140px;"/></div>
+          <div class="hint">לקריאות עם דרישת הגעה מתחת ל-30 דקות</div>
+        </div>
+      </div>
+
+      <!-- Section 3: Equipment -->
+      <div class="section">
+        <div class="section-head"><h3 class="section-title done"><span class="num"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>ציוד ושיטת גרירה</h3></div>
+        <p class="section-desc">בחר את הציוד והשיטות שברשותך. זה בונה אמון אצל לקוחות שמבינים באופנועים.</p>
+        <div class="toggle-row"><div class="toggle-text"><div class="lbl">משאית פלטה (Flatbed)</div><div class="sub">השיטה הכי בטוחה — האופנוע מורם לחלוטין מהקרקע</div></div><div class="switch on" data-switch></div></div>
+        <div class="toggle-row"><div class="toggle-text"><div class="lbl">עריסת גלגל קדמי (Wheel Cradle)</div><div class="sub">לאופנועי ספורט עם פיירינג נמוך</div></div><div class="switch on" data-switch></div></div>
+        <div class="toggle-row"><div class="toggle-text"><div class="lbl">רצועות בד רכות (Soft Straps)</div><div class="sub">לא פוגעות בכרום, צבע ופיירינג</div></div><div class="switch on" data-switch></div></div>
+        <div class="toggle-row"><div class="toggle-text"><div class="lbl">כננת חשמלית</div><div class="sub">לאופנועים עם מנוע תקוע או גיר נעול</div></div><div class="switch on" data-switch></div></div>
+        <div class="toggle-row"><div class="toggle-text"><div class="lbl">דולי עגלה (Tow Dolly)</div><div class="sub">למרחקים קצרים — גלגל אחורי על הכביש</div></div><div class="switch" data-switch></div></div>
+      </div>
+
+      <!-- Section 4: Cases -->
+      <div class="section">
+        <div class="section-head"><h3 class="section-title done"><span class="num"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>סוגי קריאות שאתה מטפל בהן</h3></div>
+        <p class="section-desc">סמן את כל המקרים שאתה מוכן לקבל.</p>
+        <div class="pills" id="cases-pills">
+          <div class="pill on" data-pill><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>תאונות דרכים</div>
+          <div class="pill on" data-pill><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>תקלות מנוע</div>
+          <div class="pill on" data-pill><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>פנצ'ר</div>
+          <div class="pill on" data-pill><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>מצבר מת</div>
+          <div class="pill on" data-pill><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>גרירה מתוכננת</div>
+          <div class="pill on" data-pill><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>חילוץ משטח/בוץ</div>
+          <div class="pill" data-pill><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>דלק שגוי</div>
+          <div class="pill" data-pill><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>נעילת מפתחות</div>
+          <div class="pill" data-pill><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>העברה בין-עירונית</div>
+        </div>
+      </div>
+
+      <!-- Section 5: Service area -->
+      <div class="section">
+        <div class="section-head"><h3 class="section-title done"><span class="num"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>אזור פעילות</h3></div>
+        <p class="section-desc">הגדר איפה אתה עובד — ברדיוס מהבסיס, או צייר אזור מדויק על המפה.</p>
+        <div class="area-tabs">
+          <button class="area-tab active" data-mode="radius"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>רדיוס מהבסיס</button>
+          <button class="area-tab" data-mode="polygon"><svg viewBox="0 0 24 24"><path d="M5 5l14 2-2 14L3 19z"/></svg>ציור אזור על המפה</button>
+        </div>
+        <div class="area-pane active" data-pane="radius">
+          <div class="field"><label class="label">כתובת בסיס</label><input type="text" class="input" value="פתח תקווה, גוש דן"/></div>
+          <div class="field"><label class="label">רדיוס שירות מהבסיס</label><div class="range-row"><input type="range" min="5" max="200" value="50" id="radius-input" step="5"/><span class="range-out" id="radius-out">50 ק"מ</span></div></div>
+          <div class="map-wrap">
+            <div class="map">
+              <svg class="map-bg" viewBox="0 0 400 240" preserveAspectRatio="xMidYMid slice">
+                <rect width="400" height="240" fill="#E1F5EE"/>
+                <path d="M0 80 L400 90" stroke="#C5E8DA" stroke-width="12"/>
+                <path d="M0 160 L400 150" stroke="#C5E8DA" stroke-width="10"/>
+                <path d="M120 0 L130 240" stroke="#C5E8DA" stroke-width="14"/>
+                <path d="M280 0 L290 240" stroke="#C5E8DA" stroke-width="10"/>
+                <text x="60" y="50" font-size="9" fill="#5F5E5A">תל אביב</text>
+                <text x="200" y="120" font-size="11" fill="#3C3489" font-weight="500">פתח תקווה</text>
+                <text x="320" y="200" font-size="9" fill="#5F5E5A">ראש העין</text>
+                <text x="40" y="200" font-size="9" fill="#5F5E5A">חולון</text>
+                <text x="320" y="60" font-size="9" fill="#5F5E5A">הרצליה</text>
+                <circle cx="225" cy="135" r="85" fill="rgba(83,74,183,0.18)" stroke="#534AB7" stroke-width="2"/>
+                <circle cx="225" cy="135" r="6" fill="#534AB7" stroke="white" stroke-width="2"/>
+              </svg>
+              <div class="map-search"><input type="text" placeholder="חפש כתובת או עיר..."/><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></div>
+              <div class="map-zoom"><div>+</div><div>−</div></div>
+            </div>
+            <div class="map-legend"><div class="map-legend-stat"><span class="dot"></span><span>אזור שירות · ~7,800 קמ"ר</span></div><span style="color: var(--text-tertiary); font-size: 11px;">~12 ערים בכיסוי</span></div>
+          </div>
+        </div>
+        <div class="area-pane" data-pane="polygon">
+          <div class="polygon-help"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg><div><b>איך זה עובד:</b> לחץ על המפה כדי להוסיף נקודות. כל נקודה תחבר את האזור שאתה רוצה לכסות. בסוף לחץ "סיים ציור".</div></div>
+          <div class="map-wrap">
+            <div class="map">
+              <svg class="map-bg" viewBox="0 0 400 240" preserveAspectRatio="xMidYMid slice">
+                <rect width="400" height="240" fill="#E1F5EE"/>
+                <polygon points="80,80 180,60 290,90 320,170 220,200 110,180" fill="rgba(83,74,183,0.18)" stroke="#534AB7" stroke-width="2"/>
+                <circle cx="80" cy="80" r="5" fill="white" stroke="#534AB7" stroke-width="2"/>
+                <circle cx="180" cy="60" r="5" fill="white" stroke="#534AB7" stroke-width="2"/>
+                <circle cx="290" cy="90" r="5" fill="white" stroke="#534AB7" stroke-width="2"/>
+                <circle cx="320" cy="170" r="5" fill="white" stroke="#534AB7" stroke-width="2"/>
+                <circle cx="220" cy="200" r="5" fill="white" stroke="#534AB7" stroke-width="2"/>
+                <circle cx="110" cy="180" r="5" fill="white" stroke="#534AB7" stroke-width="2"/>
+                <circle cx="225" cy="135" r="6" fill="#1D9E75" stroke="white" stroke-width="2"/>
+              </svg>
+              <div class="map-tools"><div class="map-tool active"><svg viewBox="0 0 24 24"><path d="M12 19l7-7 3 3-7 7H12v-3z"/></svg>צייר</div><div class="map-tool"><svg viewBox="0 0 24 24"><path d="M3 6h18M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>נקה</div></div>
+              <div class="map-zoom"><div>+</div><div>−</div></div>
+            </div>
+            <div class="map-legend"><div class="map-legend-stat"><span class="dot"></span><span>אזור מצויר · 6 נקודות · ~4,200 קמ"ר</span></div><span class="map-legend-clear">סיים ציור ✓</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 6: Smart features -->
+      <div class="section">
+        <div class="section-head"><h3 class="section-title"><span class="num">6</span>תכונות חכמות</h3></div>
+        <p class="section-desc">שירותים שמבדילים אותך — מומלץ להפעיל את כולם.</p>
+        <div class="toggle-row"><div class="toggle-text"><div class="lbl">תמונות "לפני/אחרי" אוטומטיות</div><div class="sub">המערכת תזכיר לך לצלם בכל גרירה — מגן עליך מפני תלונות</div></div><div class="switch on" data-switch></div></div>
+        <div class="toggle-row"><div class="toggle-text"><div class="lbl">הצעת מחיר מיידית</div><div class="sub">מחושבת אוטומטית מהמחירים שמילאת למעלה</div></div><div class="switch on" data-switch></div></div>
+        <div class="toggle-row"><div class="toggle-text"><div class="lbl">צ'אט פנימי עם הלקוח</div><div class="sub">תקשורת מאובטחת — בלי לחשוף מספר טלפון</div></div><div class="switch on" data-switch></div></div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="preview-cta">
+    <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+    <div class="preview-text"><div class="t">תצוגה מקדימה — איך הלקוח יראה את זה</div><div class="s">בדוק איך הפרטים נראים בפרופיל הציבורי לפני שמירה</div></div>
+    <span style="font-size: 16px; color: var(--text-secondary);">←</span>
+  </div>
+
+  <div class="save-bar">
+    <button class="save-secondary">ביטול</button>
+    <button class="save-primary"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>שמור ופרסם בפרופיל</button>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('[data-switch]').forEach(s => s.addEventListener('click', () => s.classList.toggle('on')));
+  document.querySelectorAll('#bikes [data-bike]').forEach(c => c.addEventListener('click', () => c.classList.toggle('on')));
+  document.querySelectorAll('#cases-pills [data-pill]').forEach(p => p.addEventListener('click', () => p.classList.toggle('on')));
+  const r = document.getElementById('radius-input');
+  const ro = document.getElementById('radius-out');
+  if (r && ro) r.addEventListener('input', () => ro.textContent = r.value + ' ק"מ');
+  document.querySelectorAll('.area-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.area-tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.area-pane').forEach(x => x.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelector(`[data-pane="${tab.dataset.mode}"]`).classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>

@@ -13,6 +13,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../utils/error_mapper.dart';
 import '../models/any_task.dart';
 import '../models/task_response.dart';
 import '../services/any_task_service.dart';
@@ -138,17 +139,28 @@ class _ProviderTaskDetailScreenState extends State<ProviderTaskDetailScreen> {
       Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
+      // Domain-specific errors thrown by AnyTaskService.submitResponse tx.
+      // For anything else (Firestore permission-denied, network, unknown)
+      // fall through to ErrorMapper (Law 10) → friendly Hebrew + support link.
       final err = e.toString();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(err.contains('task-not-open')
-              ? 'המשימה כבר לא פתוחה'
-              : err.contains('self-response-not-allowed')
-                  ? 'לא ניתן להציע למשימה שלך'
-                  : 'שגיאה: $e'),
-          backgroundColor: TasksPalette.danger,
-        ),
-      );
+      String? domainMsg;
+      if (err.contains('task-not-open')) {
+        domainMsg = 'המשימה כבר לא פתוחה — מישהו אחר תפס אותה';
+      } else if (err.contains('self-response-not-allowed')) {
+        domainMsg = 'לא ניתן להציע על משימה שלך';
+      } else if (err.contains('task-not-found')) {
+        domainMsg = 'המשימה לא נמצאה — ייתכן שהלקוח הסיר אותה';
+      }
+      if (domainMsg != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(domainMsg),
+            backgroundColor: TasksPalette.danger,
+          ),
+        );
+      } else {
+        ErrorMapper.show(context, e);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

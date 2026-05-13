@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>לוג מערכת — מסך 4</title>
+<link rel="stylesheet" href="assets/styles.css">
+<style>
+  .health-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .health-card {
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
+    border: 0.5px solid var(--border-light);
+    padding: 16px;
+  }
+
+  .health-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  .health-card-label { font-size: 11px; color: var(--text-secondary); }
+  .health-card-value { font-size: 15px; font-weight: 500; }
+
+  .filter-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .filter-label { font-size: 12px; color: var(--text-tertiary); }
+
+  .chip {
+    padding: 6px 14px;
+    font-size: 12px;
+    background: transparent;
+    color: var(--text-secondary);
+    border: 0.5px solid var(--border-light);
+    border-radius: 18px;
+    transition: all 0.15s ease;
+  }
+
+  .chip:hover { border-color: var(--border-medium); color: var(--text-primary); }
+  .chip.active {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-strong);
+    font-weight: 500;
+  }
+
+  .timeline {
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
+    border: 0.5px solid var(--border-light);
+    overflow: hidden;
+  }
+
+  .log-entry {
+    display: flex;
+    gap: 14px;
+    padding: 16px 22px;
+    border-bottom: 0.5px solid var(--border-light);
+    transition: background 0.15s ease;
+  }
+
+  .log-entry:hover { background: var(--bg-page); }
+  .log-entry:last-child { border-bottom: none; }
+
+  .log-icon-wrapper {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .log-content { flex: 1; min-width: 0; }
+  .log-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+  }
+
+  .log-title { font-size: 14px; font-weight: 500; }
+  .log-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+  .log-meta {
+    text-align: left;
+    flex-shrink: 0;
+    min-width: 120px;
+  }
+
+  .log-time { font-size: 12px; color: var(--text-secondary); }
+  .log-actor { font-size: 11px; color: var(--text-tertiary); margin-top: 2px; font-family: var(--font-mono); }
+
+  .load-more-wrapper {
+    margin-top: 20px;
+    text-align: center;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--text-primary);
+    color: white;
+    padding: 12px 20px;
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    box-shadow: var(--shadow-lg);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 200;
+  }
+
+  .toast.show { opacity: 1; }
+
+  @media (max-width: 768px) {
+    .health-grid { grid-template-columns: repeat(2, 1fr); }
+    .log-meta { min-width: auto; }
+    .log-entry { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Tabs -->
+  <nav class="tabs">
+    <a href="index.html" class="tab" style="text-decoration: none;">סטודיו</a>
+    <a href="library.html" class="tab" style="text-decoration: none;">ספרייה</a>
+    <a href="analytics.html" class="tab" style="text-decoration: none;">אנליטיקס</a>
+    <button class="tab active">לוג מערכת</button>
+  </nav>
+
+  <!-- Header -->
+  <header class="page-header">
+    <div>
+      <h1 class="page-title">היסטוריה ובריאות מערכת</h1>
+      <p class="page-subtitle">שינויים, שגיאות, ודיאגנוסטיקה כשמשהו לא עובד</p>
+    </div>
+    <button class="btn btn-secondary" onclick="exportLog()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+      יצא לוג
+    </button>
+  </header>
+
+  <!-- System health -->
+  <div class="health-grid">
+    <div class="health-card">
+      <div class="health-card-header">
+        <span class="status-dot green pulse"></span>
+        <span class="health-card-label">AudioService</span>
+      </div>
+      <div class="health-card-value">פעיל</div>
+    </div>
+    <div class="health-card">
+      <div class="health-card-header">
+        <span class="status-dot green"></span>
+        <span class="health-card-label">Pre-buffering</span>
+      </div>
+      <div class="health-card-value">4/4 טעונים</div>
+    </div>
+    <div class="health-card">
+      <div class="health-card-header">
+        <span class="status-dot green"></span>
+        <span class="health-card-label">iOS Unlock</span>
+      </div>
+      <div class="health-card-value">משוחרר</div>
+    </div>
+    <div class="health-card">
+      <div class="health-card-header">
+        <span class="status-dot amber"></span>
+        <span class="health-card-label">Firestore Sync</span>
+      </div>
+      <div class="health-card-value">השהייה 3 שנ'</div>
+    </div>
+  </div>
+
+  <!-- Filter bar -->
+  <div class="filter-bar" id="filter-bar">
+    <span class="filter-label">סנן:</span>
+    <button class="chip active" data-filter="all">הכל</button>
+    <button class="chip" data-filter="change">שינויים</button>
+    <button class="chip" data-filter="error">שגיאות</button>
+    <button class="chip" data-filter="warning">אזהרות</button>
+    <button class="chip" data-filter="upload">העלאות</button>
+    <button class="chip" data-filter="system">מערכת</button>
+  </div>
+
+  <!-- Timeline -->
+  <div class="timeline" id="timeline"></div>
+
+  <!-- Load more -->
+  <div class="load-more-wrapper">
+    <button class="btn btn-secondary" onclick="loadMore()">טען עוד 20 רשומות</button>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ============================
+  // DATA
+  // ============================
+  const LOG_TYPES = {
+    change: { color: '#534AB7', bg: '#EEEDFE', label: 'שינוי', pillClass: 'pill-primary',
+              icon: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>' },
+    upload: { color: '#0F6E56', bg: '#E1F5EE', label: 'העלאה', pillClass: 'pill-green',
+              icon: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>' },
+    warning: { color: '#854F0B', bg: '#FAEEDA', label: 'אזהרה', pillClass: 'pill-amber',
+               icon: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>' },
+    system: { color: '#185FA5', bg: '#E6F1FB', label: 'מערכת', pillClass: 'pill-blue',
+              icon: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>' },
+    error: { color: '#A32D2D', bg: '#FCEBEB', label: 'שגיאה', pillClass: 'pill-red',
+             icon: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>' }
+  };
+
+  const LOGS = [
+    {
+      type: 'change',
+      title: 'מיפוי אירוע עודכן',
+      desc: '<span style="color: var(--text-primary);">onPaymentSuccess</span> שונה מ-Wealth Crystal ל-Crystal Bell',
+      time: 'לפני 12 דקות',
+      actor: 'admin@app.com'
+    },
+    {
+      type: 'upload',
+      title: 'צליל חדש הועלה',
+      desc: '<span style="color: var(--text-primary);">crystal_bell.mp3</span> נוסף לספרייה · 41 KB · 528 Hz',
+      time: 'לפני 14 דקות',
+      actor: 'admin@app.com'
+    },
+    {
+      type: 'warning',
+      title: 'השתקות גבוהות מהרגיל',
+      desc: 'Solution Snap הושתק ע״י 4.2% מהמשתמשים — מעל ממוצע',
+      time: 'לפני שעה',
+      actor: 'מערכת'
+    },
+    {
+      type: 'system',
+      title: 'סנכרון Firestore הצליח',
+      desc: 'app_settings/event_sounds עודכן בכל הלקוחות',
+      time: 'לפני שעתיים',
+      actor: 'מערכת'
+    },
+    {
+      type: 'error',
+      title: 'Pre-buffering נכשל',
+      desc: 'טעינה ראשונית של opportunity_pulse.mp3 כשלה · נסיון חוזר הצליח',
+      time: 'לפני 4 שעות',
+      actor: 'לקוח Web'
+    },
+    {
+      type: 'change',
+      title: 'עוצמת ברירת מחדל שונתה',
+      desc: 'עוצמת השמעה גלובלית הועלתה מ-65% ל-75%',
+      time: 'לפני יום',
+      actor: 'admin@app.com'
+    },
+    {
+      type: 'system',
+      title: 'iOS Audio Context שוחרר',
+      desc: 'pointer-down ראשון זוהה · השמעה אפשרית בכל הסשן',
+      time: 'לפני יומיים',
+      actor: 'לקוח iOS Safari'
+    }
+  ];
+
+  let activeFilter = 'all';
+
+  // ============================
+  // RENDER
+  // ============================
+  function renderTimeline() {
+    const container = document.getElementById('timeline');
+    const filtered = activeFilter === 'all'
+      ? LOGS
+      : LOGS.filter(l => l.type === activeFilter);
+
+    if (filtered.length === 0) {
+      container.innerHTML = `<div style="padding: 60px 20px; text-align: center; color: var(--text-tertiary);">אין רשומות בקטגוריה זו</div>`;
+      return;
+    }
+
+    container.innerHTML = filtered.map(log => {
+      const t = LOG_TYPES[log.type];
+      return `
+        <div class="log-entry fade-in">
+          <div class="log-icon-wrapper" style="background: ${t.bg};">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${t.color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${t.icon}</svg>
+          </div>
+          <div class="log-content">
+            <div class="log-header">
+              <span class="log-title">${log.title}</span>
+              <span class="pill ${t.pillClass}">${t.label}</span>
+            </div>
+            <p class="log-desc">${log.desc}</p>
+          </div>
+          <div class="log-meta">
+            <div class="log-time">${log.time}</div>
+            <div class="log-actor">${log.actor}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // ============================
+  // INTERACTIONS
+  // ============================
+  document.getElementById('filter-bar').addEventListener('click', (e) => {
+    if (!e.target.classList.contains('chip')) return;
+    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+    e.target.classList.add('active');
+    activeFilter = e.target.dataset.filter;
+    renderTimeline();
+  });
+
+  function exportLog() { showToast('📥 מייצא לוג כ-CSV...'); }
+  function loadMore() { showToast('📜 טוען רשומות נוספות...'); }
+
+  function showToast(message) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2500);
+  }
+
+  renderTimeline();
+</script>
+</body>
+</html>

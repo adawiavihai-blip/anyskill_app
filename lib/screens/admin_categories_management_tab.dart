@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/category_service.dart';
-import '../services/visual_fetcher_service.dart';
-import 'pending_categories_screen.dart';
 
 /// Self-contained Categories Management tab extracted from AdminScreen.
 /// Owns its own state for image refresh, counter reset, and category CRUD.
@@ -16,78 +14,10 @@ class AdminCategoriesManagementTab extends StatefulWidget {
 
 class _AdminCategoriesManagementTabState
     extends State<AdminCategoriesManagementTab> {
-  bool _refreshingImages   = false;
-  bool _fixingImages       = false;
-  bool _resettingCounters  = false;
-  int  _fixImagesDone      = 0;
-  int  _fixImagesTotal     = 0;
-
   /// Formats raw click counts for compact display: 1 234 -> "1.2k", < 1 000 -> "$n".
   static String _fmtClicks(int n) {
     if (n >= 1000) return '${(n / 1000).toStringAsFixed(n >= 10000 ? 0 : 1)}k';
     return '$n';
-  }
-
-  /// Resets clickCount to 0 on every category document in a single batch.
-  Future<void> _resetPopularityCounters(
-      List<Map<String, dynamic>> allCats) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(children: [
-          Icon(Icons.restart_alt_rounded, color: Colors.orange),
-          SizedBox(width: 8),
-          Text('איפוס מונים', style: TextStyle(fontSize: 17)),
-        ]),
-        content: const Text(
-          'פעולה זו תאפס את מונה הלחיצות של כל הקטגוריות ל-0.\n'
-          'הדירוג הדינמי יתחיל מחדש.\n\n'
-          'האם אתה בטוח?',
-          textAlign: TextAlign.right,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('ביטול', style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('אפס', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    setState(() => _resettingCounters = true);
-    try {
-      final db    = FirebaseFirestore.instance;
-      final batch = db.batch();
-      for (final cat in allCats) {
-        batch.update(
-          db.collection('categories').doc(cat['id'] as String),
-          {'clickCount': 0},
-        );
-      }
-      await batch.commit();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          backgroundColor: Color(0xFF22C55E),
-          behavior: SnackBarBehavior.floating,
-          content: Text('מוני הפופולריות אופסו בהצלחה'),
-        ));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(backgroundColor: Colors.red, content: Text('שגיאה: $e')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _resettingCounters = false);
-    }
   }
 
   /// Top-5 leaderboard card shown at the top of the categories tab.
@@ -348,21 +278,6 @@ class _AdminCategoriesManagementTabState
                 onPressed: () => _showCategoryDialog(existingCount: cats.length),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 46),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  side: const BorderSide(color: Color(0xFF6366F1)),
-                ),
-                icon: const Icon(Icons.auto_awesome_rounded, color: Color(0xFF6366F1)),
-                label: const Text("קטגוריות ממתינות לאישור AI",
-                    style: TextStyle(color: Color(0xFF6366F1), fontWeight: FontWeight.bold)),
-                onPressed: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const PendingCategoriesScreen())),
-              ),
-            ),
             // ── AI Auto-Created Categories Log ──────────────────────────
             StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
@@ -436,148 +351,8 @@ class _AdminCategoriesManagementTabState
                 );
               },
             ),
-            // ── Refresh Category Images ──────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0EA5E9),
-                  minimumSize: const Size(double.infinity, 46),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  elevation: 0,
-                ),
-                icon: _refreshingImages
-                    ? const SizedBox(
-                        width: 18, height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.image_search_rounded, color: Colors.white),
-                label: Text(
-                  _refreshingImages ? 'מרענן תמונות...' : 'רענן תמונות קטגוריה',
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.bold),
-                ),
-                onPressed: _refreshingImages
-                    ? null
-                    : () async {
-                        final messenger = ScaffoldMessenger.of(context);
-                        setState(() => _refreshingImages = true);
-                        try {
-                          await VisualFetcherService.forceRefreshAll();
-                          messenger.showSnackBar(const SnackBar(
-                            backgroundColor: Color(0xFF22C55E),
-                            behavior: SnackBarBehavior.floating,
-                            content: Text(
-                              'תמונות הקטגוריות עודכנו בהצלחה',
-                              style: TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                          ));
-                        } catch (e) {
-                          messenger.showSnackBar(SnackBar(
-                            backgroundColor: Colors.red,
-                            content: Text('שגיאה: $e'),
-                          ));
-                        } finally {
-                          if (mounted) setState(() => _refreshingImages = false);
-                        }
-                      },
-              ),
-            ),
-            // ── Fix All Images (unique, no duplicates) ───────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFDC2626),
-                  minimumSize: const Size(double.infinity, 50),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  elevation: 0,
-                ),
-                icon: _fixingImages
-                    ? const SizedBox(
-                        width: 18, height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.auto_fix_high_rounded, color: Colors.white),
-                label: Text(
-                  _fixingImages
-                      ? 'מתקן תמונות... $_fixImagesDone/$_fixImagesTotal'
-                      : 'תקן כל התמונות (ייחודי)',
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                ),
-                onPressed: (_fixingImages || _refreshingImages)
-                    ? null
-                    : () async {
-                        final messenger = ScaffoldMessenger.of(context);
-                        setState(() {
-                          _fixingImages   = true;
-                          _fixImagesDone  = 0;
-                          _fixImagesTotal = 0;
-                        });
-                        try {
-                          await VisualFetcherService.fixAllImages(
-                            onProgress: (done, total) {
-                              if (mounted) {
-                                setState(() {
-                                  _fixImagesDone  = done;
-                                  _fixImagesTotal = total;
-                                });
-                              }
-                            },
-                          );
-                          messenger.showSnackBar(const SnackBar(
-                            backgroundColor: Color(0xFF22C55E),
-                            behavior: SnackBarBehavior.floating,
-                            content: Text(
-                              'כל תמונות הקטגוריות עודכנו בהצלחה!',
-                              style: TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                          ));
-                        } catch (e) {
-                          messenger.showSnackBar(SnackBar(
-                            backgroundColor: Colors.red,
-                            content: Text('שגיאה: $e'),
-                          ));
-                        } finally {
-                          if (mounted) setState(() => _fixingImages = false);
-                        }
-                      },
-              ),
-            ),
             // ── Popularity Leaderboard ──────────────────────────────────────
             _buildPopularityLeaderboard(mainCats),
-
-            // ── Reset Counters button ───────────────────────────────────────
-            if (cats.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 44),
-                    foregroundColor: Colors.orange,
-                    side: const BorderSide(color: Colors.orange),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                  icon: _resettingCounters
-                      ? const SizedBox(
-                          width: 16, height: 16,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.orange))
-                      : const Icon(Icons.restart_alt_rounded),
-                  label: Text(
-                    _resettingCounters
-                        ? 'מאפס...'
-                        : 'אפס מוני פופולריות',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  onPressed:
-                      _resettingCounters ? null : () => _resetPopularityCounters(cats),
-                ),
-              ),
 
             if (!snapshot.hasData)
               const Expanded(child: Center(child: CircularProgressIndicator()))

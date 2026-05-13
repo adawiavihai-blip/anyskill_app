@@ -66,7 +66,7 @@ class BookingActions {
       error = await PaymentModule.releaseEscrowFundsWithError(
         jobId: jobId,
         expertId: jobData['expertId'] ?? '',
-        expertName: jobData['expertName'] ?? 'מומחה',
+        expertName: jobData['expertName'] ?? 'נותן שירות',
         customerName: jobData['customerName'] ?? 'לקוח',
         totalAmount: amount,
       );
@@ -118,7 +118,7 @@ class BookingActions {
           builder: (_) => ReviewScreen(
             jobId: jobId,
             revieweeId: jobData['expertId']?.toString() ?? '',
-            revieweeName: jobData['expertName']?.toString() ?? 'מומחה',
+            revieweeName: jobData['expertName']?.toString() ?? 'נותן שירות',
             revieweeAvatar: jobData['expertImage']?.toString() ?? '',
             isClientReview: true,
           ),
@@ -182,12 +182,12 @@ class BookingActions {
         await chatRef.collection('messages').add({
           'senderId': 'system',
           'message':
-              '✅ המומחה סיים את העבודה! לחץ על "אשר ושחרר" כדי לשחרר את התשלום.',
+              '✅ נותן השירות סיים את העבודה! לחץ על "אשר ושחרר" כדי לשחרר את התשלום.',
           'type': 'text',
           'timestamp': FieldValue.serverTimestamp(),
         });
         await chatRef.set({
-          'lastMessage': '✅ המומחה סיים את העבודה!',
+          'lastMessage': '✅ נותן השירות סיים את העבודה!',
           'lastMessageTime': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       }
@@ -265,7 +265,7 @@ class BookingActions {
                   const SizedBox(height: 12),
                   Text(
                     'תקבל בחזרה: ₪${refund.toStringAsFixed(0)}\n'
-                    'ישולם למומחה: ₪${penalty.toStringAsFixed(0)} (בניכוי עמלה)',
+                    'ישולם לנותן השירות: ₪${penalty.toStringAsFixed(0)} (בניכוי עמלה)',
                     textAlign: TextAlign.center,
                     style: const TextStyle(fontSize: 13),
                   ),
@@ -515,7 +515,7 @@ class BookingActions {
                     TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             const SizedBox(height: 20),
             _detailRow(Icons.tag, 'מזהה הזמנה', jobId),
-            _detailRow(Icons.person_outline, 'מומחה',
+            _detailRow(Icons.person_outline, 'נותן שירות',
                 job['expertName'] ?? '—'),
             _detailRow(
                 Icons.person_2_outlined, 'לקוח', job['customerName'] ?? '—'),

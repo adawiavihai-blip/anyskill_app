@@ -270,11 +270,262 @@ class _AdminProTabState extends State<AdminProTab> {
           const SizedBox(height: 16),
           _buildOverrideCard(),
           const SizedBox(height: 16),
+          _buildRecentTransitionsCard(),
+          const SizedBox(height: 16),
           _buildProListCard(),
           const SizedBox(height: 32),
         ],
       ),
     );
+  }
+
+  // ── Section 3: Recent Pro transitions (last 7 days) ──────────────────────
+  // Phase 2 v15.x — streams admin_audit_log filtered to action in
+  // [pro_granted, pro_revoked]. Filter on action runs client-side so we
+  // don't need a new composite index — a single-field range on createdAt
+  // is auto-indexed by Firestore.
+
+  Widget _buildRecentTransitionsCard() {
+    final cutoff = Timestamp.fromDate(
+      DateTime.now().subtract(const Duration(days: 7)),
+    );
+    return Card(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _sectionHeader(
+              Icons.timeline_rounded,
+              'תנועות Pro ב-7 ימים אחרונים',
+            ),
+            const Divider(height: 24),
+            StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('admin_audit_log')
+                  .where('createdAt', isGreaterThanOrEqualTo: cutoff)
+                  .orderBy('createdAt', descending: true)
+                  .limit(100)
+                  .snapshots(),
+              builder: (context, snap) {
+                if (snap.hasError) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      'שגיאה בטעינה: ${snap.error}',
+                      style: const TextStyle(color: Colors.red, fontSize: 13),
+                    ),
+                  );
+                }
+                if (!snap.hasData) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Center(
+                      child: SizedBox(
+                        width: 18, height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2, color: _primary,
+                        ),
+                      ),
+                    ),
+                  );
+                }
+                final docs = snap.data!.docs.where((d) {
+                  final action = d.data()['action'] as String? ?? '';
+                  return action == 'pro_granted' || action == 'pro_revoked';
+                }).toList();
+
+                if (docs.isEmpty) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      'אין תנועות Pro בשבוע האחרון.',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                    ),
+                  );
+                }
+
+                int grantCnt  = 0;
+                int revokeCnt = 0;
+                for (final d in docs) {
+                  if (d.data()['action'] == 'pro_granted')  grantCnt++;
+                  if (d.data()['action'] == 'pro_revoked') revokeCnt++;
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // KPI strip
+                    Row(
+                      children: [
+                        _proKpiPill(
+                          icon:  Icons.trending_up_rounded,
+                          color: _gold,
+                          label: 'הוענקו',
+                          value: '$grantCnt',
+                        ),
+                        const SizedBox(width: 10),
+                        _proKpiPill(
+                          icon:  Icons.trending_down_rounded,
+                          color: Colors.redAccent,
+                          label: 'הוסרו',
+                          value: '$revokeCnt',
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    // Recent rows (cap at 10 for screen real estate; full
+                    // history available via the Watchtower / audit log tab).
+                    ...docs.take(10).map(_recentTransitionRow),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _proKpiPill({
+    required IconData icon,
+    required Color color,
+    required String label,
+    required String value,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withValues(alpha: 0.25)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: TextStyle(
+                          fontSize: 11, color: Colors.grey[700])),
+                  Text(value,
+                      style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: color)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _recentTransitionRow(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+    final d            = doc.data();
+    final isGrant      = d['action'] == 'pro_granted';
+    final name         = (d['targetUserName'] as String?) ?? d['targetUserId'] as String? ?? '—';
+    final source       = (d['source'] as String?) ?? '';
+    final reason       = (d['revocationReason'] as String?) ?? '';
+    final createdAt    = (d['createdAt'] as Timestamp?)?.toDate();
+    final timeStr      = createdAt == null ? '' : _shortTime(createdAt);
+
+    final color  = isGrant ? const Color(0xFF10B981) : Colors.redAccent;
+    final emoji  = isGrant ? '🏆' : '💙';
+    final label  = isGrant ? 'הוענק תג Pro' : 'הוסר תג Pro';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.grey[50],
+          borderRadius: BorderRadius.circular(10),
+          border: Border(
+            right: BorderSide(color: color, width: 3),
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(emoji, style: const TextStyle(fontSize: 18)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      Text(
+                        timeStr,
+                        style: TextStyle(
+                            fontSize: 11, color: Colors.grey[500]),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    isGrant ? '$label · מקור: ${_sourceHe(source)}'
+                            : '$label · ${reason.isNotEmpty ? _shortReason(reason) : _sourceHe(source)}',
+                    style: TextStyle(
+                        fontSize: 11, color: Colors.grey[700]),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _shortTime(DateTime t) {
+    final now = DateTime.now();
+    final diff = now.difference(t);
+    if (diff.inMinutes < 1)  return 'עכשיו';
+    if (diff.inMinutes < 60) return 'לפני ${diff.inMinutes} דק׳';
+    if (diff.inHours   < 24) return 'לפני ${diff.inHours} שע׳';
+    if (diff.inDays    <  7) return 'לפני ${diff.inDays} ימים';
+    return '${t.day}/${t.month}/${t.year}';
+  }
+
+  String _sourceHe(String src) {
+    switch (src) {
+      case 'auto':            return 'אוטומטי';
+      case 'cron':            return 'סריקה תקופתית';
+      case 'callable_self':   return 'רענון על-ידי הספק';
+      case 'callable_admin':  return 'הופעל ע״י אדמין';
+      default:                return src;
+    }
+  }
+
+  /// Truncates the raw revocation reason ("rating_below_threshold (current=4.5, ...)")
+  /// to a one-line Hebrew summary for the admin row.
+  String _shortReason(String raw) {
+    if (raw.startsWith('expert_cancellation_30d'))   return 'ביטול ב-30 ימים';
+    if (raw.startsWith('rating_below_threshold'))    return 'דירוג מתחת לסף';
+    if (raw.startsWith('insufficient_orders'))       return 'מתחת לסף עסקאות';
+    if (raw.startsWith('slow_response'))             return 'זמן תגובה איטי';
+    return raw.length > 40 ? '${raw.substring(0, 40)}…' : raw;
   }
 
   // ── Section 1: Thresholds ─────────────────────────────────────────────────

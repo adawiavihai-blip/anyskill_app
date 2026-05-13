@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flash Auction — זרימת הלקוח</title>
+<style>
+  :root {
+    --purple-900: #26215C; --purple-700: #3C3489; --purple-500: #534AB7;
+    --purple-300: #7F77DD; --purple-200: #CECBF6; --purple-50: #EEEDFE;
+    --green-700: #0F6E56; --green-500: #1D9E75; --green-300: #5DCAA5; --green-50: #E1F5EE;
+    --amber-800: #854F0B; --amber-600: #BA7517; --amber-50: #FAEEDA;
+    --red-700: #791F1F; --red-500: #A32D2D; --red-50: #FCEBEB;
+    --bg-primary: #FFFFFF; --bg-secondary: #F5F4EE;
+    --text-primary: #2C2C2A; --text-secondary: #5F5E5A; --text-tertiary: #888780;
+    --border-tertiary: #E8E6DD; --border-secondary: #D3D1C7;
+  }
+  * { box-sizing: border-box; }
+  body { direction: rtl; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg-secondary); color: var(--text-primary); margin: 0; padding: 20px; }
+  .container { max-width: 480px; margin: 0 auto; }
+
+  .screen { background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 12px; margin-bottom: 16px; overflow: hidden; }
+  .back { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 0.5px solid var(--border-tertiary); }
+  .back-btn { width: 28px; height: 28px; border-radius: 8px; background: var(--bg-secondary); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .back-btn svg { width: 14px; height: 14px; stroke: var(--text-primary); fill: none; stroke-width: 2; }
+  .back-title { font-size: 14px; font-weight: 500; flex: 1; }
+  .body { padding: 14px; }
+
+  .section-divider { display: flex; align-items: center; gap: 10px; margin: 22px 0 12px; padding: 0 4px; }
+  .section-num { width: 26px; height: 26px; border-radius: 50%; background: var(--purple-500); color: white; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; flex-shrink: 0; }
+  .section-title { font-size: 13px; font-weight: 500; }
+  .section-sub { font-size: 11px; color: var(--text-tertiary); margin-top: 1px; }
+  .section-divider::after { content: ''; flex: 1; height: 1px; background: linear-gradient(to right, transparent, var(--border-tertiary), transparent); }
+
+  .urgency-banner { display: flex; align-items: center; gap: 10px; padding: 12px; background: var(--red-50); border: 0.5px solid #F7C1C1; border-radius: 8px; margin-bottom: 14px; }
+  .urgency-icon { width: 36px; height: 36px; border-radius: 50%; background: var(--red-500); display: flex; align-items: center; justify-content: center; flex-shrink: 0; position: relative; }
+  .urgency-icon::before { content: ''; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid var(--red-500); opacity: 0.4; animation: pulse 1.5s ease-out infinite; }
+  @keyframes pulse { 0% { transform: scale(0.95); opacity: 0.5; } 100% { transform: scale(1.3); opacity: 0; } }
+  .urgency-icon svg { width: 18px; height: 18px; stroke: white; fill: none; stroke-width: 2.5; }
+  .urgency-text .t { font-size: 13px; font-weight: 500; color: var(--red-700); }
+  .urgency-text .s { font-size: 11px; color: var(--red-500); margin-top: 2px; }
+
+  .q-title { font-size: 16px; font-weight: 500; margin: 0 0 4px; }
+  .q-sub { font-size: 12px; color: var(--text-secondary); margin: 0 0 12px; }
+
+  .issue-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+  .issue { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 8px; background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 8px; cursor: pointer; }
+  .issue.on { border-color: var(--purple-500); background: var(--purple-50); }
+  .issue svg { width: 22px; height: 22px; stroke: var(--purple-500); fill: none; stroke-width: 1.8; }
+  .issue-name { font-size: 12px; font-weight: 500; }
+  .issue.on .issue-name { color: var(--purple-700); }
+
+  .safety { display: flex; align-items: center; gap: 10px; padding: 11px; background: var(--amber-50); border: 0.5px solid #FAC775; border-radius: 8px; margin-bottom: 12px; cursor: pointer; }
+  .safety svg { width: 18px; height: 18px; stroke: var(--amber-600); fill: none; stroke-width: 2; flex-shrink: 0; }
+  .safety-title { font-size: 12px; font-weight: 500; color: var(--amber-800); }
+  .safety-sub { font-size: 11px; color: var(--amber-600); margin-top: 1px; }
+
+  .map { position: relative; height: 200px; background: var(--green-50); border-radius: 8px; overflow: hidden; }
+  .map svg { width: 100%; height: 100%; }
+  .pin { position: absolute; width: 28px; height: 28px; border-radius: 50%; border: 3px solid white; display: flex; align-items: center; justify-content: center; transform: translate(50%, -50%); cursor: grab; box-shadow: 0 2px 6px rgba(0,0,0,0.2); }
+  .pin.from { background: var(--green-500); top: 55%; right: 35%; }
+  .pin.to { background: var(--purple-500); top: 30%; right: 70%; }
+  .pin svg { width: 12px; height: 12px; stroke: white; fill: white; stroke-width: 2; }
+
+  .map-search { position: absolute; top: 8px; left: 8px; right: 56px; }
+  .map-search input { width: 100%; padding: 9px 12px 9px 32px; background: white; border: 0.5px solid var(--border-tertiary); border-radius: 8px; font-size: 12px; box-sizing: border-box; font-family: inherit; }
+  .map-search svg { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); width: 13px; height: 13px; stroke: var(--text-tertiary); fill: none; stroke-width: 2; }
+
+  .locate-btn { position: absolute; top: 8px; left: 8px; width: 36px; height: 36px; background: white; border: 0.5px solid var(--border-tertiary); border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .locate-btn svg { width: 14px; height: 14px; stroke: var(--purple-500); fill: none; stroke-width: 2; }
+
+  .map-mode-toggle { position: absolute; bottom: 10px; right: 10px; left: 10px; display: flex; gap: 4px; padding: 4px; background: white; border: 0.5px solid var(--border-tertiary); border-radius: 8px; }
+  .map-mode { flex: 1; padding: 6px 10px; font-size: 11px; font-weight: 500; text-align: center; cursor: pointer; border-radius: 5px; color: var(--text-secondary); display: flex; align-items: center; justify-content: center; gap: 4px; }
+  .map-mode svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; }
+  .map-mode.on { background: var(--purple-500); color: white; }
+
+  .map-tip { display: flex; align-items: flex-start; gap: 6px; padding: 8px 10px; background: var(--purple-50); border-radius: 6px; font-size: 11px; color: var(--purple-700); margin-top: 8px; line-height: 1.4; }
+  .map-tip svg { width: 12px; height: 12px; stroke: var(--purple-500); fill: none; stroke-width: 2; flex-shrink: 0; margin-top: 1px; }
+  .map-tip b { font-weight: 500; }
+
+  .loc-row { display: flex; align-items: center; gap: 10px; padding: 11px; background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 8px; margin-top: 8px; }
+  .loc-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .loc-dot.from { background: var(--green-500); }
+  .loc-dot.to { background: var(--purple-500); }
+  .loc-text { flex: 1; font-size: 12px; }
+  .loc-text .lbl { font-size: 10px; color: var(--text-tertiary); }
+  .loc-text .val { font-weight: 500; }
+  .loc-edit { font-size: 11px; color: var(--purple-500); font-weight: 500; cursor: pointer; }
+
+  .photos-header { display: flex; align-items: center; justify-content: space-between; margin: 14px 0 6px; }
+  .photos-title { font-size: 12px; font-weight: 500; }
+  .photos-optional { font-size: 10px; color: var(--green-500); background: var(--green-50); padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+  .photos { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .photo-slot { aspect-ratio: 1; border: 1px dashed var(--border-secondary); border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; cursor: pointer; background: var(--bg-secondary); }
+  .photo-slot svg { width: 16px; height: 16px; stroke: var(--purple-500); fill: none; stroke-width: 1.8; }
+  .photo-slot .label { font-size: 9px; color: var(--text-secondary); }
+  .photo-hint { font-size: 11px; color: var(--text-tertiary); margin: 8px 0 0; line-height: 1.4; }
+
+  .cta-bar { padding: 12px 14px; border-top: 0.5px solid var(--border-tertiary); }
+  .cta-primary { width: 100%; padding: 12px; background: var(--purple-500); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; font-family: inherit; }
+  .cta-primary svg { width: 14px; height: 14px; stroke: white; fill: none; stroke-width: 2; }
+
+  .search-screen { padding: 20px 14px; text-align: center; }
+  .radar { position: relative; width: 180px; height: 180px; margin: 0 auto 20px; }
+  .radar-circle { position: absolute; inset: 0; border-radius: 50%; border: 1px solid var(--purple-200); }
+  .radar-circle.r1 { animation: radar 2s ease-out infinite; }
+  .radar-circle.r2 { animation: radar 2s ease-out 0.66s infinite; }
+  .radar-circle.r3 { animation: radar 2s ease-out 1.33s infinite; }
+  @keyframes radar { 0% { transform: scale(0.3); opacity: 0; } 30% { opacity: 1; } 100% { transform: scale(1); opacity: 0; } }
+  .radar-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 50px; height: 50px; border-radius: 50%; background: var(--purple-500); display: flex; align-items: center; justify-content: center; z-index: 2; }
+  .radar-center svg { width: 24px; height: 24px; stroke: white; fill: none; stroke-width: 2; }
+  .radar-dot { position: absolute; width: 10px; height: 10px; border-radius: 50%; background: var(--green-500); border: 2px solid white; }
+  .search-title { font-size: 17px; font-weight: 500; margin: 0 0 4px; }
+  .search-sub { font-size: 12px; color: var(--text-secondary); margin: 0 0 16px; }
+  .search-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding: 10px; background: var(--bg-secondary); border-radius: 8px; }
+  .search-stat .v { font-size: 16px; font-weight: 500; color: var(--purple-500); }
+  .search-stat .l { font-size: 10px; color: var(--text-secondary); margin-top: 1px; }
+
+  .offer-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--purple-50); border-bottom: 0.5px solid var(--purple-200); }
+  .offer-count { font-size: 13px; font-weight: 500; color: var(--purple-700); }
+  .offer-timer { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 500; color: var(--purple-500); }
+  .offer-timer svg { width: 12px; height: 12px; stroke: var(--purple-500); fill: none; stroke-width: 2; }
+
+  .offer-list { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .existing-card { background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 12px; overflow: hidden; cursor: pointer; }
+  .existing-card.recommended { border: 1px solid var(--green-500); }
+  .card-recommend-tag { padding: 6px 12px; background: var(--green-500); color: white; font-size: 10px; font-weight: 500; text-align: center; }
+  .card-body { padding: 12px; display: flex; gap: 12px; }
+  .card-avatar { width: 52px; height: 52px; border-radius: 50%; background: linear-gradient(135deg, var(--purple-500), var(--purple-300)); display: flex; align-items: center; justify-content: center; color: white; font-weight: 500; font-size: 16px; flex-shrink: 0; }
+  .card-info { flex: 1; min-width: 0; }
+  .card-name { font-size: 14px; font-weight: 500; margin: 0 0 2px; }
+  .card-cat { font-size: 11px; color: var(--text-secondary); margin: 0 0 4px; }
+  .card-stats { display: flex; gap: 10px; font-size: 11px; color: var(--text-secondary); flex-wrap: wrap; align-items: center; }
+  .card-rating { color: var(--amber-600); }
+  .card-verified { color: var(--green-500); display: inline-flex; align-items: center; gap: 3px; }
+  .card-verified svg { width: 11px; height: 11px; stroke: var(--green-500); fill: none; stroke-width: 2.5; }
+  .card-auction-strip { padding: 10px 12px; background: var(--bg-secondary); border-top: 0.5px solid var(--border-tertiary); display: flex; align-items: center; gap: 12px; }
+  .card-auction-stat { flex: 1; }
+  .card-auction-label { font-size: 10px; color: var(--text-tertiary); }
+  .card-auction-value { font-size: 14px; font-weight: 500; margin-top: 1px; }
+  .card-auction-value.eta { color: var(--green-500); }
+  .card-auction-value.price { color: var(--purple-700); }
+  .card-action { padding: 8px 14px; background: var(--purple-500); color: white; border: none; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; font-family: inherit; }
+  .existing-card.recommended .card-action { background: var(--green-500); }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="section-divider">
+    <div class="section-num">1</div>
+    <div><div class="section-title">אבחון תקלה</div><div class="section-sub">מה קרה לאופנוע</div></div>
+  </div>
+
+  <div class="screen">
+    <div class="back"><div class="back-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></div><div class="back-title">מצא גרר דחוף</div></div>
+    <div class="body">
+      <div class="urgency-banner">
+        <div class="urgency-icon"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg></div>
+        <div class="urgency-text"><div class="t">מצב חירום פעיל</div><div class="s">המערכת תשלח התראה לכל הגרריסטים ברדיוס</div></div>
+      </div>
+      <h3 class="q-title">מה קרה לאופנוע?</h3>
+      <p class="q-sub">בחר את התקלה — זה יעזור לגרריסט להגיע מוכן</p>
+      <div class="issue-grid">
+        <div class="issue on"><svg viewBox="0 0 24 24"><path d="M14 6l-3 3-2-2-7 7v4h4l7-7-2-2 3-3"/></svg><span class="issue-name">תקלת מנוע</span></div>
+        <div class="issue"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg><span class="issue-name">תאונה</span></div>
+        <div class="issue"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg><span class="issue-name">פנצ'ר</span></div>
+        <div class="issue"><svg viewBox="0 0 24 24"><path d="M5 8h14v10H5zM8 4h2M14 4h2M9 12h6"/></svg><span class="issue-name">מצבר מת</span></div>
+        <div class="issue"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg><span class="issue-name">גלגלים נעולים</span></div>
+        <div class="issue"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg><span class="issue-name">אחר</span></div>
+      </div>
+      <div class="safety">
+        <svg viewBox="0 0 24 24"><path d="M12 2 L4 6 v6 c0 5 3.5 9 8 10 4.5-1 8-5 8-10 V6 z"/><path d="M9 12 l2 2 4-4"/></svg>
+        <div style="flex:1;"><div class="safety-title">אתה במקום בטוח?</div><div class="safety-sub">אם לא — לחץ לקבלת הנחיות בטיחות</div></div>
+        <span style="font-size: 16px; color: var(--amber-600);">←</span>
+      </div>
+    </div>
+    <div class="cta-bar"><button class="cta-primary">המשך<svg viewBox="0 0 24 24"><path d="M19 12H5M12 5l-7 7 7 7"/></svg></button></div>
+  </div>
+
+  <div class="section-divider">
+    <div class="section-num">2</div>
+    <div><div class="section-title">מיקום ותיעוד</div><div class="section-sub">סמן על המפה או הקלד כתובת (כמו וולט)</div></div>
+  </div>
+
+  <div class="screen">
+    <div class="back"><div class="back-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></div><div class="back-title">איפה אתה — ולאן?</div></div>
+    <div class="body">
+      <div class="map">
+        <svg viewBox="0 0 380 200" preserveAspectRatio="xMidYMid slice">
+          <rect width="380" height="200" fill="#E1F5EE"/>
+          <path d="M0 70 L380 80" stroke="#9FE1CB" stroke-width="13"/>
+          <path d="M0 130 L380 125" stroke="#9FE1CB" stroke-width="11"/>
+          <path d="M120 0 L130 200" stroke="#9FE1CB" stroke-width="14"/>
+          <path d="M280 0 L290 200" stroke="#9FE1CB" stroke-width="11"/>
+          <text x="60" y="40" font-size="9" fill="#5F5E5A">תל אביב</text>
+          <text x="200" y="100" font-size="11" fill="#3C3489" font-weight="500">פתח תקווה</text>
+          <path d="M250 90 Q200 105 165 110 T100 130" stroke="#534AB7" stroke-width="3" fill="none" stroke-dasharray="5 3"/>
+          <text x="180" y="155" font-size="10" fill="#0F6E56" font-weight="500">~8.4 ק"מ</text>
+        </svg>
+        <div class="locate-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></div>
+        <div class="map-search"><input type="text" placeholder="חפש כתובת או סמן על המפה"/><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></div>
+        <div class="pin from"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/></svg></div>
+        <div class="pin to"><svg viewBox="0 0 24 24"><path d="M12 2C8 2 5 5 5 9c0 5 7 13 7 13s7-8 7-13c0-4-3-7-7-7z"/></svg></div>
+        <div class="map-mode-toggle">
+          <span class="map-mode on"><svg viewBox="0 0 24 24"><path d="M12 2C8 2 5 5 5 9c0 5 7 13 7 13s7-8 7-13c0-4-3-7-7-7z"/></svg>סמן על המפה</span>
+          <span class="map-mode"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 11l-5 5-5-5M12 4v12"/></svg>הקלד כתובת</span>
+        </div>
+      </div>
+      <div class="map-tip">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+        <span><b>טיפ:</b> גרור את הסיכה הירוקה למיקום שלך, ואת הסגולה ליעד. תוכל גם להקליד כתובת.</span>
+      </div>
+      <div class="loc-row"><div class="loc-dot from"></div><div class="loc-text"><div class="lbl">מיקום הגרירה</div><div class="val">רחוב יגאל אלון 94, תל אביב</div></div><span class="loc-edit">שנה</span></div>
+      <div class="loc-row"><div class="loc-dot to"></div><div class="loc-text"><div class="lbl">לאן (יעד)</div><div class="val">מוסך הצפון, רמת גן</div></div><span class="loc-edit">שנה</span></div>
+      <div class="photos-header"><span class="photos-title">תמונות של האופנוע</span><span class="photos-optional">מומלץ</span></div>
+      <div class="photos">
+        <div class="photo-slot"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span class="label">הוסף</span></div>
+        <div class="photo-slot"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span class="label">הוסף</span></div>
+        <div class="photo-slot"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span class="label">הוסף</span></div>
+        <div class="photo-slot"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span class="label">הוסף</span></div>
+      </div>
+      <p class="photo-hint">תיעוד מקדים מגן עליך מטענות על נזקים. אפשר לדלג ולשלוח בלי תמונות.</p>
+    </div>
+    <div class="cta-bar"><button class="cta-primary">שדר את הקריאה לגרריסטים<svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button></div>
+  </div>
+
+  <div class="section-divider">
+    <div class="section-num">3</div>
+    <div><div class="section-title">המתנה להצעות</div><div class="section-sub">המערכת שולחת לגרריסטים</div></div>
+  </div>
+
+  <div class="screen">
+    <div class="search-screen">
+      <div class="radar">
+        <div class="radar-circle r1"></div><div class="radar-circle r2"></div><div class="radar-circle r3"></div>
+        <div class="radar-center"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 18L11 9h6l1 9"/></svg></div>
+        <div class="radar-dot" style="top: 30%; right: 25%;"></div>
+        <div class="radar-dot" style="top: 60%; right: 75%;"></div>
+        <div class="radar-dot" style="top: 75%; right: 35%;"></div>
+      </div>
+      <h3 class="search-title">מחפשים גרריסט</h3>
+      <p class="search-sub">בדרך כלל אנחנו מוצאים תוך 60–90 שניות</p>
+      <div class="search-stats">
+        <div class="search-stat"><div class="v">8</div><div class="l">גרריסטים קיבלו</div></div>
+        <div class="search-stat"><div class="v">3</div><div class="l">בודקים עכשיו</div></div>
+        <div class="search-stat"><div class="v">5 ק"מ</div><div class="l">רדיוס</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-divider">
+    <div class="section-num">4</div>
+    <div><div class="section-title">הצעות מגרריסטים</div><div class="section-sub">כרטיסי פרופיל קיימים + ETA + מחיר</div></div>
+  </div>
+
+  <div class="screen">
+    <div class="offer-header">
+      <span class="offer-count">3 הצעות הגיעו</span>
+      <span class="offer-timer"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>47 שניות נותרו</span>
+    </div>
+    <div class="offer-list">
+      <div class="existing-card recommended">
+        <div class="card-recommend-tag">★ המומלץ ביותר — מחיר טוב + הגעה מהירה</div>
+        <div class="card-body">
+          <div class="card-avatar">סמ</div>
+          <div class="card-info">
+            <p class="card-name">סיגלית מלסה</p>
+            <p class="card-cat">גרר אופנועים · 12 שנות ניסיון</p>
+            <div class="card-stats"><span class="card-rating">★ 4.7</span><span>·</span><span>148 גרירות</span><span>·</span><span class="card-verified"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>מאומתת</span></div>
+          </div>
+        </div>
+        <div class="card-auction-strip">
+          <div class="card-auction-stat"><div class="card-auction-label">זמן הגעה</div><div class="card-auction-value eta">12 דקות</div></div>
+          <div class="card-auction-stat"><div class="card-auction-label">מחיר סופי</div><div class="card-auction-value price">₪307</div></div>
+          <button class="card-action">בחר →</button>
+        </div>
+      </div>
+      <div class="existing-card">
+        <div class="card-body">
+          <div class="card-avatar" style="background: linear-gradient(135deg, #BA7517, #D89540);">דכ</div>
+          <div class="card-info">
+            <p class="card-name">דני כהן</p>
+            <p class="card-cat">גרר אופנועים · 18 שנות ניסיון</p>
+            <div class="card-stats"><span class="card-rating">★ 4.9</span><span>·</span><span>312 גרירות</span><span>·</span><span class="card-verified"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>מאומת</span></div>
+          </div>
+        </div>
+        <div class="card-auction-strip">
+          <div class="card-auction-stat"><div class="card-auction-label">זמן הגעה</div><div class="card-auction-value eta">8 דקות</div></div>
+          <div class="card-auction-stat"><div class="card-auction-label">מחיר סופי</div><div class="card-auction-value price">₪335</div></div>
+          <button class="card-action">בחר →</button>
+        </div>
+      </div>
+      <div class="existing-card">
+        <div class="card-body">
+          <div class="card-avatar" style="background: linear-gradient(135deg, #1D9E75, #5DCAA5);">יל</div>
+          <div class="card-info">
+            <p class="card-name">יוסי לוי</p>
+            <p class="card-cat">גרר אופנועים · 5 שנות ניסיון</p>
+            <div class="card-stats"><span class="card-rating">★ 4.5</span><span>·</span><span>67 גרירות</span></div>
+          </div>
+        </div>
+        <div class="card-auction-strip">
+          <div class="card-auction-stat"><div class="card-auction-label">זמן הגעה</div><div class="card-auction-value eta">18 דקות</div></div>
+          <div class="card-auction-stat"><div class="card-auction-label">מחיר סופי</div><div class="card-auction-value price">₪287</div></div>
+          <button class="card-action">בחר →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

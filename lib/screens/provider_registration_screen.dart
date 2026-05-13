@@ -9,6 +9,7 @@ import '../constants.dart';
 import '../services/service_architect.dart';
 import '../services/private_data_service.dart';
 import '../utils/safe_image_provider.dart';
+import '../widgets/address_input.dart';
 import 'pending_verification_screen.dart';
 
 // ── Brand tokens ──────────────────────────────────────────────────────────────
@@ -218,6 +219,18 @@ class _ProviderRegistrationScreenState
         if (_galleryUrls.isNotEmpty) 'gallery': _galleryUrls,
       };
 
+      // `serviceType` MUST hold the most specific category name — sub if a
+      // sub was picked, else the main. Search/discovery (CategoryResultsScreen
+      // + EditProfile sync + CSM detection like isMotorcycleTowingCategory)
+      // ALL key off this single field. Writing the parent here (the previous
+      // bug) silently broke sub-category resolution everywhere downstream:
+      // a motorcycle-tow provider registered via THIS screen would land with
+      // `serviceType: 'תחבורה'` instead of `'גרר אופנועים'` and the edit
+      // profile / CSM block / map could never resolve the right sub.
+      // OnboardingScreen + ProviderRegistrationWizardScreen already do this
+      // correctly — this screen is the third call site that needed the same
+      // contract.
+      final hasSubCat = effectiveSubCategory.isNotEmpty;
       final userPayload = <String, dynamic>{
         'name':                    name,
         'phone':                   phone,
@@ -226,8 +239,12 @@ class _ProviderRegistrationScreenState
         if (country.isNotEmpty) 'country': country,
         if (city.isNotEmpty) 'city': city,
         'businessType':            _businessType,
-        'serviceType':             effectiveCategory,
+        'serviceType':             hasSubCat ? effectiveSubCategory : effectiveCategory,
         'subCategory':             effectiveSubCategory,
+        // Mirrors OnboardingScreen — preserves the parent name as a separate
+        // field so search-by-parent flows can still find this provider when
+        // a customer browses the main "תחבורה" category instead of the sub.
+        if (hasSubCat) 'parentCategory': effectiveCategory,
         'aboutMe':                 about,
         'pricePerHour':            price,
         'gallery':                 _galleryUrls,
@@ -466,11 +483,20 @@ class _ProviderRegistrationScreenState
                           ),
                           const SizedBox(width: 10),
                           Expanded(
-                            child: _field(
-                              ctrl: _cityCtrl,
-                              label: 'עיר',
-                              icon: Icons.location_city_rounded,
-                              validator: (v) =>
+                            // City-only AddressInput with autocomplete against the
+                            // bundled Israeli cities list (~270 entries). Replaces
+                            // the legacy plain `_field` city input — same single
+                            // string lands in Firestore as before.
+                            child: AddressInput(
+                              key: const ValueKey('provider-registration-city'),
+                              cityOnly: true,
+                              dense: true,
+                              initialCity: _cityCtrl.text,
+                              cityLabel: 'עיר',
+                              onChanged: (v) {
+                                _cityCtrl.text = v.city;
+                              },
+                              cityValidator: (v) =>
                                   (v?.trim().isEmpty ?? true) ? 'שדה חובה' : null,
                             ),
                           ),

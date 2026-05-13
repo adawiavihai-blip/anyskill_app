@@ -241,7 +241,20 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         ],
                       ))
                     : _chatDocs.isEmpty
-                        ? _buildEmptyState()
+                        // Empty list — still pin the Support row at top so
+                        // every user (provider OR customer, brand-new OR
+                        // returning) has a permanent path to support.
+                        ? Column(
+                            children: [
+                              _buildSupportTile(),
+                              Divider(
+                                height: 1, thickness: 0.5,
+                                indent: 90, endIndent: 16,
+                                color: Colors.grey.shade100,
+                              ),
+                              Expanded(child: _buildEmptyState()),
+                            ],
+                          )
                         : RefreshIndicator(
                             onRefresh: _fetchChats,
                             child: ListView.separated(
@@ -254,23 +267,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                               ),
                               itemBuilder: (context, index) {
                                 // Index 0 = pinned Support entry
-                                if (index == 0) {
-                                  return ListTile(
-                                    leading: const CircleAvatar(
-                                      backgroundColor: Color(0xFF6366F1),
-                                      child: Icon(Icons.support_agent_rounded,
-                                          color: Colors.white, size: 22),
-                                    ),
-                                    title: const Text('תמיכה',
-                                        style: TextStyle(fontWeight: FontWeight.bold)),
-                                    subtitle: const Text('צריך עזרה? דבר עם הצוות שלנו',
-                                        style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8))),
-                                    trailing: const Icon(Icons.arrow_forward_ios_rounded,
-                                        size: 14, color: Color(0xFF94A3B8)),
-                                    onTap: () => Navigator.push(context,
-                                      MaterialPageRoute(builder: (_) => const SupportCenterScreen())),
-                                  );
-                                }
+                                if (index == 0) return _buildSupportTile();
                                 final chatDoc  = _chatDocs[index - 1];
                                 final chatData = chatDoc.data() as Map<String, dynamic>? ?? {};
                                 final users    = chatData['users'] as List? ?? [];
@@ -410,6 +407,31 @@ class _ChatListScreenState extends State<ChatListScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // Pinned "Support" row — rendered at index 0 of every state of the chat
+  // list (with chats AND empty state) so every user — provider, customer,
+  // brand-new, returning — always has a permanent path to support.
+  Widget _buildSupportTile() {
+    return Semantics(
+      button: true,
+      label: 'תמיכה — דבר עם הצוות שלנו',
+      child: ListTile(
+        leading: const CircleAvatar(
+          backgroundColor: Color(0xFF6366F1),
+          child: Icon(Icons.support_agent_rounded,
+              color: Colors.white, size: 22),
+        ),
+        title: const Text('תמיכה',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: const Text('צריך עזרה? דבר עם הצוות שלנו',
+            style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8))),
+        trailing: const Icon(Icons.arrow_forward_ios_rounded,
+            size: 14, color: Color(0xFF94A3B8)),
+        onTap: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const SupportCenterScreen())),
       ),
     );
   }

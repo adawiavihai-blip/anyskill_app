@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'chat_screen.dart';
 import '../services/audio_service.dart';
+import '../services/cached_readers.dart';
 import '../services/job_broadcast_service.dart';
 import '../services/location_service.dart';
 import '../services/gamification_service.dart';
@@ -16,6 +17,19 @@ import '../l10n/app_localizations.dart';
 import '../constants.dart' show resolveCanonicalCategory;
 import '../widgets/hint_icon.dart';
 import '../widgets/customer_profile_sheet.dart';
+import '../models/flash_auction.dart';
+import '../models/motorcycle_tow_profile.dart';
+import '../models/babysitter_emergency.dart';
+import '../models/babysitter_profile.dart';
+import '../models/delivery_express.dart';
+import '../models/delivery_profile.dart';
+import '../services/flash_auction_service.dart';
+import '../services/babysitter_emergency_service.dart';
+import '../services/delivery_express_service.dart';
+import '../services/motorcycle_tow_booking_service.dart';
+import 'flash_auction/flash_auction_provider_card.dart';
+import 'babysitter_emergency/babysitter_emergency_provider_card.dart';
+import 'delivery_express/delivery_express_provider_card.dart';
 
 // ── Sort modes (user-selectable filter chips) ─────────────────────────────────
 enum _SortMode { nearest, profitable, urgent }
@@ -127,11 +141,10 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
 
   Future<void> _loadUserData() async {
     if (_uid.isEmpty) return;
-    final snap = await FirebaseFirestore.instance.collection('users').doc(_uid).get();
-    if (!snap.exists || !mounted) return;
-    // v9.7.0: Safe null-check instead of force-unwrap (snap.data()!)
-    // Prevents crash when snapshot exists but data() returns null (rare edge case)
-    final d = snap.data() ?? {};
+    // §61/§66: cached read (5-min TTL). Hot path — provider's main tab,
+    // re-mounted on every bottom-nav return.
+    final d = await CachedReaders.providerProfile(_uid);
+    if (!mounted) return;
     final boostTs = d['boostedUntil'] as Timestamp?;
     setState(() {
       _xp             = (d['xp']                 as num? ?? 0).toInt();
@@ -241,6 +254,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
           if (boostEarned) 'boostedUntil': Timestamp.fromDate(
               DateTime.now().add(const Duration(hours: 24))),
         });
+        CachedReaders.invalidateProvider(_uid); // §61
         if (mounted) {
           setState(() {
             if (boostEarned) {
@@ -299,19 +313,19 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
         title: const Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.do_not_disturb_alt_rounded, color: Color(0xFFEF4444), size: 22),
+            Icon(Icons.delete_outline_rounded, color: Color(0xFFEF4444), size: 22),
             SizedBox(width: 8),
-            Text('דחיית בקשה', style: TextStyle(fontWeight: FontWeight.bold)),
+            Text('הסרת הזמנה', style: TextStyle(fontWeight: FontWeight.bold)),
           ],
         ),
         content: const Text(
-          'האם אתה בטוח שברצונך לדחות את הבקשה?\nהלקוח יקבל התראה.',
+          'להסיר את ההזמנה מהרשימה שלך?\nהלקוח יקבל הודעה שאינך זמין/ה.',
           textAlign: TextAlign.center,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(c, false),
-            child: const Text('לא, חזור'),
+            child: const Text('ביטול'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -320,7 +334,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
             onPressed: () => Navigator.pop(c, true),
-            child: const Text('כן, דחה', style: TextStyle(fontWeight: FontWeight.bold)),
+            child: const Text('הסר', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -348,7 +362,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           backgroundColor: Color(0xFF94A3B8),
-          content: Text('הבקשה נדחתה — הלקוח קיבל הודעה'),
+          content: Text('ההזמנה הוסרה מהרשימה שלך'),
         ));
       }
     } catch (e) {
@@ -638,6 +652,91 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────
+  // Flash Auction integration (CLAUDE.md §57)
+  // ─────────────────────────────────────────────────────────────────────
+
+  /// Streams flash auctions targeting this provider and renders a
+  /// horizontally-scrollable strip of [FlashAuctionProviderCard] above the
+  /// regular job_requests list. Returns SizedBox.shrink when:
+  ///   • Provider's serviceType is not motorcycle towing (no auctions
+  ///     would target them anyway, but the cheap guard avoids spawning a
+  ///     listener)
+  ///   • Stream returns empty (the FAB only shows for motorcycle
+  ///     subcategory, but a general-tab provider that ALSO has motorcycle
+  ///     in their profile may still be opted-in — we just don't render
+  ///     anything when there's nothing live).
+  Widget _buildFlashAuctionsSection() {
+    if (_uid.isEmpty) return const SizedBox.shrink();
+    return StreamBuilder<List<FlashAuction>>(
+      stream:
+          FlashAuctionService.watchActiveAuctionsForProvider(_uid),
+      builder: (_, snap) {
+        if (snap.hasError) return const SizedBox.shrink();
+        final auctions = snap.data ?? const <FlashAuction>[];
+        if (auctions.isEmpty) return const SizedBox.shrink();
+        return _FlashAuctionsStrip(
+          auctions: auctions,
+          providerUid: _uid,
+          customerLat: _currentPosition?.latitude,
+          customerLng: _currentPosition?.longitude,
+        );
+      },
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Babysitter Emergency integration (CLAUDE.md §76)
+  // ─────────────────────────────────────────────────────────────────────
+
+  /// Streams babysitter emergencies targeting this provider and renders
+  /// a vertical stack of [BabysitterEmergencyProviderCard] above the
+  /// regular job_requests list. Same gating as flash auctions.
+  Widget _buildBabysitterEmergenciesSection() {
+    if (_uid.isEmpty) return const SizedBox.shrink();
+    return StreamBuilder<List<BabysitterEmergency>>(
+      stream: BabysitterEmergencyService
+          .watchActiveEmergenciesForProvider(_uid),
+      builder: (_, snap) {
+        if (snap.hasError) return const SizedBox.shrink();
+        final list = snap.data ?? const <BabysitterEmergency>[];
+        if (list.isEmpty) return const SizedBox.shrink();
+        return _BabysitterEmergenciesStrip(
+          emergencies: list,
+          providerUid: _uid,
+          providerLat: _currentPosition?.latitude,
+          providerLng: _currentPosition?.longitude,
+        );
+      },
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Delivery Express integration (CLAUDE.md §78)
+  // ─────────────────────────────────────────────────────────────────────
+
+  /// Streams delivery_express auctions targeting this courier and
+  /// renders a vertical stack of [DeliveryExpressProviderCard] above
+  /// the regular job_requests list. Same gating as flash auctions.
+  Widget _buildDeliveryExpressSection() {
+    if (_uid.isEmpty) return const SizedBox.shrink();
+    return StreamBuilder<List<DeliveryExpress>>(
+      stream: DeliveryExpressService
+          .watchActiveAuctionsForProvider(_uid),
+      builder: (_, snap) {
+        if (snap.hasError) return const SizedBox.shrink();
+        final list = snap.data ?? const <DeliveryExpress>[];
+        if (list.isEmpty) return const SizedBox.shrink();
+        return _DeliveryExpressStrip(
+          auctions: list,
+          providerUid: _uid,
+          providerLat: _currentPosition?.latitude,
+          providerLng: _currentPosition?.longitude,
+        );
+      },
+    );
+  }
+
   Widget _buildNormalScaffold(AppLocalizations l10n) {
     return Scaffold(
       backgroundColor: const Color(0xFFF0F2F8),
@@ -656,36 +755,70 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
         ]),
         actions: const [HintIcon(screenKey: 'opportunities')],
       ),
-      body: Column(children: [
-        if (!widget.isAdmin)
-          _CoachingBriefCard(uid: _uid),
-        _buildXpBanner(),
-        _buildSortChips(),
-        // ── Urgent broadcast claims (first-come-first-served) ───────────
-        _buildBroadcastSection(),
-        Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: _buildQuery(),
+      // ── CustomScrollView ──────────────────────────────────────────────
+      // The previous outer `Column(children: [...headers, Expanded(ListView)])`
+      // could not scroll above the Expanded boundary. When a Flash Auction
+      // card became intrinsic-height (~700px), it overflowed the Column on
+      // both phones AND desktop — the bottom (price + ETA + green CTA) was
+      // hidden below the viewport with no way to scroll up to it.
+      //
+      // Slivers solve this: every header section becomes a SliverToBoxAdapter,
+      // and the job_requests list becomes a SliverList. The ENTIRE body now
+      // scrolls as one unit — Flash Auction card content + headers + cards
+      // are all accessible regardless of screen height.
+      body: CustomScrollView(
+        slivers: [
+          if (!widget.isAdmin)
+            SliverToBoxAdapter(child: _CoachingBriefCard(uid: _uid)),
+          SliverToBoxAdapter(child: _buildXpBanner()),
+          SliverToBoxAdapter(child: _buildSortChips()),
+          // Urgent broadcast claims (first-come-first-served).
+          SliverToBoxAdapter(child: _buildBroadcastSection()),
+          // Flash Auction motorcycle tow calls (CLAUDE.md §57). Vertical
+          // stack of intrinsic-height cards — no longer fixed-height.
+          SliverToBoxAdapter(child: _buildFlashAuctionsSection()),
+          // Babysitter Emergency dispatch (CLAUDE.md §76).
+          SliverToBoxAdapter(child: _buildBabysitterEmergenciesSection()),
+          // Delivery Express dispatch (CLAUDE.md §78).
+          SliverToBoxAdapter(child: _buildDeliveryExpressSection()),
+          // Regular job_requests list. Sliver-aware StreamBuilder returns
+          // either a SliverFillRemaining (loading / empty / error) or a
+          // SliverList of _RequestCard widgets with responsive padding.
+          StreamBuilder<QuerySnapshot>(
+            // CLAUDE.md Law 21 — stream MUST have ≤10s timeout fallback so
+            // a permission-denied / missing-index / network hang surfaces
+            // as the empty state instead of an infinite spinner.
+            stream: _buildQuery().timeout(
+              const Duration(seconds: 8),
+              onTimeout: (sink) {
+                sink.addError('opp_query_timeout_8s');
+              },
+            ),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
+                return const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(child: CircularProgressIndicator()),
+                );
               }
               if (snapshot.hasError) {
-                return Center(child: Text(l10n.oppError('${snapshot.error}')));
+                return SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _buildEmptyState(),
+                );
               }
               final docs = snapshot.data?.docs ?? [];
-              final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+              final cutoff =
+                  DateTime.now().subtract(const Duration(hours: 24));
               var filtered = docs.where((doc) {
-                final d   = doc.data() as Map<String, dynamic>;
+                final d = doc.data() as Map<String, dynamic>;
                 if (d['isActive'] == false) return false;
-                // ── Self-filter: never show user their own requests ──
                 if ((d['clientId'] ?? '') == _uid) return false;
-                // ── Decline filter: hide requests this provider declined ──
-                final declined = (d['declinedProviders'] as List?) ?? [];
+                final declined =
+                    (d['declinedProviders'] as List?) ?? [];
                 if (declined.contains(_uid)) return false;
-                final ts  = d['createdAt'] as Timestamp?;
+                final ts = d['createdAt'] as Timestamp?;
                 if (ts != null && ts.toDate().isBefore(cutoff)) return false;
-                // "דחוף" filter: only HOT cards (< 10 min)
                 if (_sortMode == _SortMode.urgent) {
                   return _temperatureOf(d['createdAt'] as Timestamp?) ==
                       _CardTemperature.hot;
@@ -698,15 +831,17 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                 case _SortMode.nearest:
                   if (_currentPosition != null) {
                     filtered.sort((a, b) {
-                      final da    = a.data() as Map<String, dynamic>;
+                      final da = a.data() as Map<String, dynamic>;
                       final dbMap = b.data() as Map<String, dynamic>;
                       final distA = LocationService.distanceMeters(
-                        _currentPosition!.latitude, _currentPosition!.longitude,
-                        (da['clientLat']    as num?)?.toDouble(),
-                        (da['clientLng']    as num?)?.toDouble(),
+                        _currentPosition!.latitude,
+                        _currentPosition!.longitude,
+                        (da['clientLat'] as num?)?.toDouble(),
+                        (da['clientLng'] as num?)?.toDouble(),
                       );
                       final distB = LocationService.distanceMeters(
-                        _currentPosition!.latitude, _currentPosition!.longitude,
+                        _currentPosition!.latitude,
+                        _currentPosition!.longitude,
                         (dbMap['clientLat'] as num?)?.toDouble(),
                         (dbMap['clientLng'] as num?)?.toDouble(),
                       );
@@ -718,51 +853,88 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                   }
                 case _SortMode.profitable:
                   filtered.sort((a, b) {
-                    final maxA = ((a.data() as Map)['budgetMax'] as num? ?? 0).toDouble();
-                    final maxB = ((b.data() as Map)['budgetMax'] as num? ?? 0).toDouble();
+                    final maxA =
+                        ((a.data() as Map)['budgetMax'] as num? ?? 0)
+                            .toDouble();
+                    final maxB =
+                        ((b.data() as Map)['budgetMax'] as num? ?? 0)
+                            .toDouble();
                     return maxB.compareTo(maxA); // descending
                   });
                 case _SortMode.urgent:
-                  break; // already filtered to HOT, keep Firestore order
+                  break; // already filtered to HOT
               }
 
-              if (filtered.isEmpty) return _buildEmptyState();
+              if (filtered.isEmpty) {
+                return SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _buildEmptyState(),
+                );
+              }
 
-              return ListView.builder(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-                itemCount: filtered.length,
-                itemBuilder: (context, index) {
-                  final doc         = filtered[index];
-                  final d           = doc.data() as Map<String, dynamic>;
-                  final clientId    = (d['clientId']    ?? '') as String;
-                  final clientName  = (d['clientName']  ?? l10n.oppDefaultClient) as String;
-                  final description = (d['description'] ?? '') as String;
-                  return _RequestCard(
-                    key:             ValueKey(doc.id),
-                    requestId:       doc.id,
-                    data:            d,
-                    currentUid:      _uid,
-                    currentPosition: _currentPosition,
-                    isProcessing:    _processingIds.contains(doc.id),
-                    platformFee:     _platformFee,
-                    providerName:    widget.providerName,
-                    onInterest: () => _expressInterest(
-                      context, doc.id, clientId, clientName, description,
-                      isUrgent: _isUrgentData(d),
-                    ),
-                    onQuickBid: () => _expressInterest(
-                      context, doc.id, clientId, clientName, description,
-                      isUrgent: _isUrgentData(d),
-                      customMessage: l10n.oppQuickBidMessage(clientName, widget.providerName),
-                    ),
-                    onDecline: () => _declineRequest(context, doc.id, clientId, clientName),
-                  );
-                },
+              // Responsive horizontal padding: 16px on phones, on desktop
+              // we cap effective content width to 720 by adding side gutters.
+              final screenWidth = MediaQuery.of(context).size.width;
+              final sideGutter = screenWidth > 720
+                  ? (screenWidth - 720) / 2
+                  : 0.0;
+              return SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  16 + sideGutter,
+                  16,
+                  16 + sideGutter,
+                  100,
+                ),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final doc = filtered[index];
+                      final d = doc.data() as Map<String, dynamic>;
+                      final clientId = (d['clientId'] ?? '') as String;
+                      final clientName =
+                          (d['clientName'] ?? l10n.oppDefaultClient)
+                              as String;
+                      final description =
+                          (d['description'] ?? '') as String;
+                      return _RequestCard(
+                        key: ValueKey(doc.id),
+                        requestId: doc.id,
+                        data: d,
+                        currentUid: _uid,
+                        currentPosition: _currentPosition,
+                        isProcessing: _processingIds.contains(doc.id),
+                        platformFee: _platformFee,
+                        providerName: widget.providerName,
+                        onInterest: () => _expressInterest(
+                          context,
+                          doc.id,
+                          clientId,
+                          clientName,
+                          description,
+                          isUrgent: _isUrgentData(d),
+                        ),
+                        onQuickBid: () => _expressInterest(
+                          context,
+                          doc.id,
+                          clientId,
+                          clientName,
+                          description,
+                          isUrgent: _isUrgentData(d),
+                          customMessage: l10n.oppQuickBidMessage(
+                              clientName, widget.providerName),
+                        ),
+                        onDecline: () => _declineRequest(
+                            context, doc.id, clientId, clientName),
+                      );
+                    },
+                    childCount: filtered.length,
+                  ),
+                ),
               );
             },
           ),
-        ),
-      ]),
+        ],
+      ),
     );
   }
 
@@ -1445,7 +1617,7 @@ class _RequestCardState extends State<_RequestCard>
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            '$viewers מומחים נוספים בוחנים את ההצעה',
+                            '$viewers נותני שירות נוספים בוחנים את ההצעה',
                             style: TextStyle(
                                 color: isClosed ? Colors.grey[600] : Colors.white,
                                 fontSize: 11,
@@ -1779,21 +1951,29 @@ class _RequestCardState extends State<_RequestCard>
                         ),
                       ],
 
-                      // ── Decline button (not interested) ─────────────────────
+                      // ── Remove button (hide from my opportunities) ──────────
                       if (!alreadyInterested && !isClosed) ...[
                         const SizedBox(height: 6),
                         SizedBox(
                           width: double.infinity,
-                          height: 38,
-                          child: TextButton(
-                            style: TextButton.styleFrom(
-                              foregroundColor: Colors.grey[500],
+                          height: 40,
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFEF4444),
+                              side: BorderSide(
+                                color: const Color(0xFFEF4444)
+                                    .withValues(alpha: 0.35),
+                              ),
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12)),
                             ),
                             onPressed: widget.onDecline,
-                            child: const Text('לא מעוניין',
-                                style: TextStyle(fontSize: 13)),
+                            icon: const Icon(Icons.delete_outline_rounded,
+                                size: 18),
+                            label: const Text('הסר מההזמנות',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600)),
                           ),
                         ),
                       ],
@@ -2238,10 +2418,11 @@ class _BroadcastClaimCardState extends State<_BroadcastClaimCard> {
           backgroundColor: Color(0xFF10B981),
         ),
       );
-      // Open chat with the client
-      final clientDoc = await FirebaseFirestore.instance
-          .collection('users').doc(result.clientId).get();
-      final clientName = (clientDoc.data()?['name'] as String?) ?? 'לקוח';
+      // Open chat with the client.
+      // §66: cached read — 5min TTL via §61. The same client may be
+      // claimed/inspected from multiple opportunity cards in one session.
+      final clientData = await CachedReaders.providerProfile(result.clientId!);
+      final clientName = (clientData['name'] as String?) ?? 'לקוח';
       if (!mounted) return;
       Navigator.push(
         context,
@@ -2458,6 +2639,471 @@ class _BroadcastClaimCardState extends State<_BroadcastClaimCard> {
           ),
         );
       },
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Flash Auction strip (CLAUDE.md §57)
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Renders above the regular opportunities list when ≥1 active flash
+// auction targets this provider. Loads the provider's
+// motorcycleTowProfile once (one-shot) so each card can compute its own
+// auto-priced breakdown without N parallel reads. Distance from provider
+// to pickup is computed via Haversine using the cached LocationService
+// position passed in.
+class _FlashAuctionsStrip extends StatefulWidget {
+  final List<FlashAuction> auctions;
+  final String providerUid;
+  final double? customerLat;
+  final double? customerLng;
+
+  const _FlashAuctionsStrip({
+    required this.auctions,
+    required this.providerUid,
+    required this.customerLat,
+    required this.customerLng,
+  });
+
+  @override
+  State<_FlashAuctionsStrip> createState() => _FlashAuctionsStripState();
+}
+
+class _FlashAuctionsStripState extends State<_FlashAuctionsStrip> {
+  MotorcycleTowProfile? _profile;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      // CLAUDE.md Law 21 — never leave a Future hanging. Without the
+      // timeout, a network stall here keeps `_loading = true` and the
+      // strip renders `SizedBox.shrink()` forever (acceptable on its
+      // own, but masks the fact that the provider IS in motorcycle-tow
+      // mode). 5s is plenty for a single-doc get.
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.providerUid)
+          .get()
+          .timeout(const Duration(seconds: 5));
+      final data = snap.data() ?? const {};
+      final raw = data['motorcycleTowProfile'] as Map<String, dynamic>?;
+      if (!mounted) return;
+      setState(() {
+        _profile =
+            raw == null ? null : MotorcycleTowProfile.fromMap(raw);
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  double? _distanceFromProvider(FlashAuction a) {
+    if (widget.customerLat == null || widget.customerLng == null) {
+      return null;
+    }
+    if (!a.pickup.hasCoords) return null;
+    return MotorcycleTowBookingService.haversineKm(
+      widget.customerLat!,
+      widget.customerLng!,
+      a.pickup.lat!,
+      a.pickup.lng!,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const SizedBox.shrink();
+    if (_profile == null) {
+      // Provider isn't motorcycle-towing-configured yet — they still
+      // shouldn't be receiving these notifications, but this guards
+      // against a stale notifiedProviderIds entry from before they
+      // unticked the bike-types.
+      return const SizedBox.shrink();
+    }
+    return Container(
+      padding: const EdgeInsets.fromLTRB(0, 8, 0, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDC2626).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.bolt_rounded,
+                    color: Color(0xFFDC2626),
+                    size: 16,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'קריאות גרר דחופות (${widget.auctions.length})',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          // Responsive vertical column — replaces the v1 horizontal strip
+          // with `height: 420 + width: 320`, which clipped the bottom of the
+          // card on every reasonable scenario (route map + photos + ETA +
+          // CTA pushed the card past 600px). Now: cards take their natural
+          // intrinsic height (no clipping), capped at maxWidth 520 on wide
+          // screens and centered, edge-to-edge on phones. The parent screen
+          // already scrolls vertically, so adding 1-3 cards stacked is
+          // exactly the same UX cost as a horizontal strip — minus the bug.
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 720;
+              final cardMaxWidth = wide ? 520.0 : double.infinity;
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (int i = 0; i < widget.auctions.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 10),
+                      Center(
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(maxWidth: cardMaxWidth),
+                          child: FlashAuctionProviderCard(
+                            auction: widget.auctions[i],
+                            providerProfile: _profile!,
+                            distanceFromProviderKm:
+                                _distanceFromProvider(widget.auctions[i]),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Babysitter Emergency strip (CLAUDE.md §76)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Sister widget to _FlashAuctionsStrip. Renders above the regular
+// opportunities list when ≥1 active babysitter emergency targets this
+// provider. Loads babysitterProfile once and re-renders all cards with
+// the auto-priced breakdown.
+class _BabysitterEmergenciesStrip extends StatefulWidget {
+  final List<BabysitterEmergency> emergencies;
+  final String providerUid;
+  final double? providerLat;
+  final double? providerLng;
+
+  const _BabysitterEmergenciesStrip({
+    required this.emergencies,
+    required this.providerUid,
+    required this.providerLat,
+    required this.providerLng,
+  });
+
+  @override
+  State<_BabysitterEmergenciesStrip> createState() =>
+      _BabysitterEmergenciesStripState();
+}
+
+class _BabysitterEmergenciesStripState
+    extends State<_BabysitterEmergenciesStrip> {
+  BabysitterProfile? _profile;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.providerUid)
+          .get()
+          .timeout(const Duration(seconds: 5));
+      final data = snap.data() ?? const {};
+      final raw = data['babysitterProfile'] as Map<String, dynamic>?;
+      if (!mounted) return;
+      setState(() {
+        _profile = raw == null ? null : BabysitterProfile.fromMap(raw);
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Distance from provider's last-known location to the customer's
+  /// home. Returns null if either side is missing coordinates — the
+  /// card hides the distance pill in that case.
+  double? _distanceFromProvider(BabysitterEmergency e) {
+    if (widget.providerLat == null || widget.providerLng == null) {
+      return null;
+    }
+    if (!e.location.hasCoords) return null;
+    return MotorcycleTowBookingService.haversineKm(
+      widget.providerLat!,
+      widget.providerLng!,
+      e.location.lat!,
+      e.location.lng!,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const SizedBox.shrink();
+    if (_profile == null) {
+      // Provider isn't babysitter-configured — same defensive guard
+      // as the flash auction strip.
+      return const SizedBox.shrink();
+    }
+    return Container(
+      padding: const EdgeInsets.fromLTRB(0, 8, 0, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEC4899).withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.child_care_rounded,
+                    color: Color(0xFFEC4899),
+                    size: 16,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'בקשות בייביסיטר דחופות (${widget.emergencies.length})',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 720;
+              final cardMaxWidth = wide ? 520.0 : double.infinity;
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (int i = 0; i < widget.emergencies.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 10),
+                      Center(
+                        child: ConstrainedBox(
+                          constraints:
+                              BoxConstraints(maxWidth: cardMaxWidth),
+                          child: BabysitterEmergencyProviderCard(
+                            emergency: widget.emergencies[i],
+                            providerProfile: _profile!,
+                            distanceFromProviderKm: _distanceFromProvider(
+                              widget.emergencies[i],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Delivery Express strip (CLAUDE.md §78)
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Sister widget to _FlashAuctionsStrip + _BabysitterEmergenciesStrip.
+// Renders above the regular opportunities list when ≥1 active delivery
+// express targets this courier. Loads deliveryProfile once and
+// re-renders all cards with the auto-priced breakdown.
+class _DeliveryExpressStrip extends StatefulWidget {
+  final List<DeliveryExpress> auctions;
+  final String providerUid;
+  final double? providerLat;
+  final double? providerLng;
+
+  const _DeliveryExpressStrip({
+    required this.auctions,
+    required this.providerUid,
+    required this.providerLat,
+    required this.providerLng,
+  });
+
+  @override
+  State<_DeliveryExpressStrip> createState() => _DeliveryExpressStripState();
+}
+
+class _DeliveryExpressStripState extends State<_DeliveryExpressStrip> {
+  DeliveryProfile? _profile;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.providerUid)
+          .get()
+          .timeout(const Duration(seconds: 5));
+      final data = snap.data() ?? const {};
+      final raw = data['deliveryProfile'] as Map<String, dynamic>?;
+      if (!mounted) return;
+      setState(() {
+        _profile = raw == null ? null : DeliveryProfile.fromMap(raw);
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Distance from courier's last-known location to the auction's
+  /// pickup. Returns null if either side is missing coordinates — the
+  /// card hides the distance pill in that case.
+  double? _distanceFromProvider(DeliveryExpress a) {
+    if (widget.providerLat == null || widget.providerLng == null) {
+      return null;
+    }
+    if (!a.pickup.hasCoords) return null;
+    return MotorcycleTowBookingService.haversineKm(
+      widget.providerLat!,
+      widget.providerLng!,
+      a.pickup.lat!,
+      a.pickup.lng!,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const SizedBox.shrink();
+    if (_profile == null) {
+      // Courier isn't delivery-configured — same defensive guard as
+      // the other two emergency-dispatch strips.
+      return const SizedBox.shrink();
+    }
+    return Container(
+      padding: const EdgeInsets.fromLTRB(0, 8, 0, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD97706).withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.delivery_dining_rounded,
+                    color: Color(0xFFD97706),
+                    size: 16,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'משלוחים דחופים (${widget.auctions.length})',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 720;
+              final cardMaxWidth = wide ? 520.0 : double.infinity;
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (int i = 0; i < widget.auctions.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 10),
+                      Center(
+                        child: ConstrainedBox(
+                          constraints:
+                              BoxConstraints(maxWidth: cardMaxWidth),
+                          child: DeliveryExpressProviderCard(
+                            auction: widget.auctions[i],
+                            providerProfile: _profile!,
+                            distanceFromProviderKm: _distanceFromProvider(
+                              widget.auctions[i],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 }

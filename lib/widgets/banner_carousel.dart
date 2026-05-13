@@ -38,9 +38,9 @@ class _BannerCarouselState extends State<BannerCarousel> {
 
   // ── Fallback shown while Firestore loads or collection is empty ─────────────
   static const _fallback = <Map<String, dynamic>>[
-    {'title': 'מצא מומחים מובילים', 'subtitle': 'אלפי מומחים מחכים לך',       'color1': '667eea', 'color2': '764ba2', 'iconName': 'stars'},
+    {'title': 'מצא נותני שירות מובילים', 'subtitle': 'אלפי נותני שירות מחכים לך',       'color1': '667eea', 'color2': '764ba2', 'iconName': 'stars'},
     {'title': 'שיעורים פרטיים',      'subtitle': 'ממש מהמקום שאתה נמצא',     'color1': '11998e', 'color2': '38ef7d', 'iconName': 'school'},
-    {'title': 'פתח את הפוטנציאל שלך','subtitle': 'עם המומחים הטובים ביותר', 'color1': 'f953c6', 'color2': 'b91d73', 'iconName': 'emoji_events'},
+    {'title': 'פתח את הפוטנציאל שלך','subtitle': 'עם נותני השירות הטובים ביותר', 'color1': 'f953c6', 'color2': 'b91d73', 'iconName': 'emoji_events'},
   ];
 
   static const _icons = <String, IconData>{

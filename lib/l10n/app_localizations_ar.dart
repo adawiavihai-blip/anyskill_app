@@ -424,6 +424,39 @@ class AppLocalizationsAr extends AppLocalizations {
   String get chatListTitle => 'الرسائل';
 
   @override
+  String get postJobStoryTitle => 'تريد المزيد من العمل مثل هذا؟';
+
+  @override
+  String get postJobStorySubtitle => 'شارك النتيجة في الستوري 🎬 ووصل إلى المزيد من العملاء';
+
+  @override
+  String get postJobStoryPhotoBtn => '📷 صورة';
+
+  @override
+  String get postJobStoryVideoBtn => '🎥 فيديو';
+
+  @override
+  String get postJobStoryLater => 'ربما لاحقاً';
+
+  @override
+  String get postJobStoryUploading => 'جارٍ التحميل إلى الستوري...';
+
+  @override
+  String get postJobStorySuccess => '✨ ستوريك متاح الآن! مرئي لمدة 24 ساعة';
+
+  @override
+  String get postJobStoryFileTooLarge => 'الملف كبير جداً (الحد الأقصى 50 ميجابايت)';
+
+  @override
+  String get postJobStorySourceTitle => 'اختر مصدراً';
+
+  @override
+  String get postJobStorySourceGallery => 'المعرض';
+
+  @override
+  String get postJobStorySourceCamera => 'الكاميرا';
+
+  @override
   String get expertSectionAbout => 'حول';
 
   @override
@@ -985,6 +1018,9 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get vipBenefit4 => 'دعم مميز';
+
+  @override
+  String get vipBenefit5 => 'ظهور في بانر مقدمي خدمة VIP في AnySkill';
 
   @override
   String withdrawMinBalance(int amount) {
@@ -2287,6 +2323,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get profInvoiceEmailSubOff => 'لن تستلم فواتير بالبريد';
 
   @override
+  String get profInvoiceEmailNeedsEmail => 'يلزم إدخال بريد إلكتروني لاستلام الفواتير — اضغط/ي للإضافة';
+
+  @override
+  String get profInvoiceEmailSkipped => 'لم يُضف بريد — يبقى استلام الفواتير معطلًا';
+
+  @override
   String get profSyncGooglePhoto => 'مزامنة الصورة من Google';
 
   @override
@@ -2420,14 +2462,25 @@ class AppLocalizationsAr extends AppLocalizations {
   String get homeMicroTasks => 'مهام صغيرة — اكسب بسرعة';
 
   @override
+  String get anyTasksBannerProviderTitle => 'مهام مفتوحة';
+
+  @override
+  String get anyTasksBannerProviderSub => 'اختر/ي وظائف واكسب/ي الآن';
+
+  @override
+  String get anyTasksBannerCustomerTitle => 'نشر مهمة';
+
+  @override
+  String get anyTasksBannerCustomerSub => 'اعثر على مقدم خدمة خلال دقائق';
+
+  @override
   String get anyTasksBannerTag => 'مهام';
 
   @override
-  String get anyTasksBannerDescription =>
-      'هل لديك مهمة؟ انشرها مع ميزانيتك — وسيتواصل معك مقدمو الخدمات.';
+  String get anyTasksBannerDescription => 'هل لديك مهمة؟ انشرها مع ميزانيتك — وسيتواصل معك مقدمو الخدمات.';
 
   @override
-  String get homeCommunityTitle => 'العطاء من القلب';
+  String get homeCommunityTitle => 'المجتمع';
 
   @override
   String get homeCommunitySlogan => 'مهارة واحدة، قلب واحد';
@@ -2599,8 +2652,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get chatQuoteExpiry24h => '24 ساعة';
 
   @override
-  String get chatQuoteValidation =>
-      'أدخل سعراً صحيحاً مع خصم أصغر منه';
+  String get chatQuoteValidation => 'أدخل سعراً صحيحاً مع خصم أصغر منه';
 
   @override
   String get chatQuoteSendOffer => 'إرسال العرض إلى العميل';
@@ -2636,8 +2688,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get chatQuoteDeclineConfirm => 'رفض هذا العرض؟';
 
   @override
-  String get chatQuoteExpiredError =>
-      'انتهت صلاحية العرض — اطلب من المزود عرضاً جديداً';
+  String get chatQuoteExpiredError => 'انتهت صلاحية العرض — اطلب من المزود عرضاً جديداً';
 
   @override
   String get chatSettingsTitle => 'إعدادات المحادثة';
@@ -2827,6 +2878,9 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get catMapView => 'عرض الخريطة';
+
+  @override
+  String get catMapButtonShort => 'خريطة';
 
   @override
   String get catListView => 'عرض القائمة';
@@ -3494,4 +3548,196 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get phoneLoginBecomeProvider => 'اربح مع AnySkill ←';
+
+  @override
+  String get massageSettingsBannerTitle => 'إعدادات التدليك';
+
+  @override
+  String get massageSettingsBannerDesc => 'سيرى العملاء فقط ما تحددينه هنا';
+
+  @override
+  String get massageSpecialtiesTitle => 'أنواع التدليك التي أقدمها';
+
+  @override
+  String get massageLocationsTitle => 'أين تقدمين العلاجات';
+
+  @override
+  String get massageAddOnsTitle => 'الإضافات التي أقدمها';
+
+  @override
+  String get massageDurationsTitle => 'مدد العلاج والأسعار';
+
+  @override
+  String get massagePackagesTitle => 'باقات الخصم';
+
+  @override
+  String get massagePreferencesTitle => 'التفضيلات والخدمة';
+
+  @override
+  String get massageBuildTreatmentTitle => 'ابنِ علاجك';
+
+  @override
+  String get massageSectionType => 'نوع التدليك';
+
+  @override
+  String get massageSectionLocation => 'أين؟';
+
+  @override
+  String get massageSectionDuration => 'المدة';
+
+  @override
+  String get massageSectionPressure => 'مستوى الضغط';
+
+  @override
+  String get massageSectionFocusAreas => 'أين يؤلم؟';
+
+  @override
+  String get massageSectionAddOns => 'إضافات';
+
+  @override
+  String get massageSectionPackages => 'باقات الخصم';
+
+  @override
+  String get massageSectionAmbiance => 'الأجواء';
+
+  @override
+  String get massageSectionNotes => 'ملاحظات إضافية';
+
+  @override
+  String get massagePressureLight => 'خفيف';
+
+  @override
+  String get massagePressureMedium => 'متوسط';
+
+  @override
+  String get massagePressureStrong => 'قوي';
+
+  @override
+  String get massageMusicCalm => 'هادئة';
+
+  @override
+  String get massageMusicNature => 'طبيعة';
+
+  @override
+  String get massageMusicClassical => 'كلاسيكي';
+
+  @override
+  String get massageMusicSilent => 'صمت';
+
+  @override
+  String get massageConvChatty => 'أحب الدردشة';
+
+  @override
+  String get massageConvMinimal => 'الحد الأدنى';
+
+  @override
+  String get massageSummaryTotal => 'المجموع';
+
+  @override
+  String get massageSummaryDuration => 'المدة الإجمالية';
+
+  @override
+  String get massageTrustSignal => 'دفع آمن · إلغاء مجاني حتى 24 ساعة قبل الموعد';
+
+  @override
+  String get pestSettingsBannerTitle => 'إعدادات مكافحة الآفات';
+
+  @override
+  String get pestSettingsBannerDesc => 'سيرى العملاء فقط ما تحدده هنا · يلزم ترخيص';
+
+  @override
+  String get pestLicensesTitle => 'تراخيص مطلوبة';
+
+  @override
+  String get pestLicensesWarning => 'مطلوب قانونياً - يلزم التحقق قبل الموافقة';
+
+  @override
+  String get pestTypesTitle => 'أنواع الآفات التي أعالجها';
+
+  @override
+  String get pestTypesHelper => 'سيرى العملاء اختيارك';
+
+  @override
+  String get pestMethodsTitle => 'طرق العلاج الخاصة بي';
+
+  @override
+  String get pestAvailabilityTitle => 'التوفر والاستجابة';
+
+  @override
+  String get pestEmergencyLabel => 'خدمة طوارئ';
+
+  @override
+  String get pestEmergencyDesc => 'خلال ساعة - رسوم إضافية';
+
+  @override
+  String get pest247Label => 'متاح 24/7';
+
+  @override
+  String get pestPricingTitle => 'أسعار شفافة';
+
+  @override
+  String get pestPricingSubtitle => 'يثق العملاء بالأسعار الواضحة';
+
+  @override
+  String get pestWarrantyTitle => 'الضمان والخدمة';
+
+  @override
+  String get pestWarrantyBasic => 'ضمان أساسي';
+
+  @override
+  String get pestDigitalReport => 'تقرير رقمي تلقائي';
+
+  @override
+  String get pestBeforeAfterPhotos => 'صور قبل/بعد';
+
+  @override
+  String get pestPackagesTitle => 'باقات الصيانة';
+
+  @override
+  String get pestPackagesHint => 'دخل متكرر · عملاء عائدون';
+
+  @override
+  String get pestInstructionsTitle => 'تعليمات ما بعد العلاج';
+
+  @override
+  String get pestInstructionsSubtitle => 'مترجمة تلقائياً للعملاء';
+
+  @override
+  String get pestInstructionsQuick => 'تعليمات سريعة (حدد ذات الصلة)';
+
+  @override
+  String get pestInstructionsCustom => 'تعليمات مخصصة إضافية';
+
+  @override
+  String get pestClientBlockTitle => 'ابنِ علاجك';
+
+  @override
+  String get pestClientAiTitle => 'لا تعرف ما هذا؟';
+
+  @override
+  String get pestClientAiSubtitle => 'التقط صورة وسيتعرف الذكاء الاصطناعي خلال ثانيتين';
+
+  @override
+  String get pestClientAiCapture => 'التقط الآن';
+
+  @override
+  String get pestClientAiUpload => 'ارفع صورة';
+
+  @override
+  String get pestClientInstructionsTitle => 'ما يجب معرفته قبل';
+
+  @override
+  String get pestClientInstructionsAcknowledge => 'قرأت وفهمت - أؤكد التعليمات';
+
+  @override
+  String get pestClientBookNow => 'احجز الآن';
+
+  @override
+  String get pestClientTrustPayment => 'الدفع لاحقاً';
+
+  @override
+  String get pestClientTrustReport => 'تقرير رقمي';
+
+  @override
+  String get pestClientTrustCancel => 'إلغاء مجاني';
 }

@@ -8,6 +8,25 @@ import 'package:intl/intl.dart' hide TextDirection;
 
 import '../utils/safe_image_provider.dart';
 import '../widgets/category_specs_widget.dart';
+import '../services/cached_readers.dart';
+import '../models/massage_profile.dart';
+import '../models/pest_control_profile.dart';
+import '../models/delivery_profile.dart';
+import '../models/cleaning_profile.dart';
+import '../models/handyman_profile.dart';
+import '../models/fitness_trainer_profile.dart';
+import '../models/babysitter_profile.dart';
+import '../models/motorcycle_tow_profile.dart';
+import 'massage/massage_settings_block.dart';
+import 'pest_control/pest_control_settings_block.dart';
+import 'delivery/delivery_settings_block.dart';
+import 'cleaning/cleaning_settings_block.dart';
+import 'handyman/handyman_settings_block.dart';
+import 'fitness_trainer/fitness_trainer_settings_block.dart';
+import 'babysitter/babysitter_settings_block.dart';
+import 'motorcycle_tow/motorcycle_tow_settings_block.dart';
+import '../widgets/category_tags_selector.dart';
+import '../widgets/price_list_widget.dart';
 
 /// Admin tab — create, edit, delete and toggle visibility of Demo Experts.
 ///
@@ -81,10 +100,7 @@ class _AdminDemoExpertsTabState extends State<AdminDemoExpertsTab>
           Expanded(
             child: TabBarView(
               controller: _tabController,
-              children: const [
-                _DemoExpertsListTab(),
-                _DemoBookingsListTab(),
-              ],
+              children: const [_DemoExpertsListTab(), _DemoBookingsListTab()],
             ),
           ),
         ],
@@ -108,11 +124,12 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
   final _db = FirebaseFirestore.instance;
   bool _autoSeedRan = false;
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> get _demoStream => _db
-      .collection('users')
-      .where('isDemo', isEqualTo: true)
-      .limit(100)
-      .snapshots();
+  Stream<QuerySnapshot<Map<String, dynamic>>> get _demoStream =>
+      _db
+          .collection('users')
+          .where('isDemo', isEqualTo: true)
+          .limit(100)
+          .snapshots();
 
   @override
   void initState() {
@@ -131,12 +148,14 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
     final newHidden = !current;
     // Update both user and listing for sync
     await _db.collection('users').doc(uid).update({'isHidden': newHidden});
+    CachedReaders.invalidateProvider(uid); // §61
     // Sync the listing too
-    final listings = await _db
-        .collection('provider_listings')
-        .where('uid', isEqualTo: uid)
-        .limit(2)
-        .get();
+    final listings =
+        await _db
+            .collection('provider_listings')
+            .where('uid', isEqualTo: uid)
+            .limit(2)
+            .get();
     for (final l in listings.docs) {
       await l.reference.update({'isHidden': newHidden});
     }
@@ -145,43 +164,48 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
   Future<void> _delete(BuildContext ctx, String uid, String name) async {
     final confirm = await showDialog<bool>(
       context: ctx,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('מחק מומחה דמו'),
-        content: Text(
-          'האם למחוק את "$name"?\n\n'
-          'גם הביקורות והמודעות (provider_listings) של המשתמש יימחקו.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('ביטול'),
+      builder:
+          (_) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: const Text('מחק נותן שירות דמו'),
+            content: Text(
+              'האם למחוק את "$name"?\n\n'
+              'גם הביקורות והמודעות (provider_listings) של המשתמש יימחקו.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('ביטול'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('מחק', style: TextStyle(color: Colors.red)),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('מחק', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
     );
     if (confirm != true) return;
 
     // Delete fake reviews
-    final reviews = await _db
-        .collection('reviews')
-        .where('expertId', isEqualTo: uid)
-        .where('isDemo', isEqualTo: true)
-        .get();
+    final reviews =
+        await _db
+            .collection('reviews')
+            .where('expertId', isEqualTo: uid)
+            .where('isDemo', isEqualTo: true)
+            .get();
     for (final r in reviews.docs) {
       await r.reference.delete();
     }
 
     // Delete provider_listings docs (the visible search records)
-    final listings = await _db
-        .collection('provider_listings')
-        .where('uid', isEqualTo: uid)
-        .limit(2)
-        .get();
+    final listings =
+        await _db
+            .collection('provider_listings')
+            .where('uid', isEqualTo: uid)
+            .limit(2)
+            .get();
     for (final l in listings.docs) {
       await l.reference.delete();
     }
@@ -214,8 +238,8 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
       'email': 'dana.levi@example.com',
       'aboutMe':
           'מנקה דירות מקצועית עם 10+ שנות ניסיון. ניקיון יסודי לדירות, '
-              'משרדים ולאחר שיפוץ. שימוש בחומרים ידידותיים לסביבה, יחס אישי '
-              'וחיוך.',
+          'משרדים ולאחר שיפוץ. שימוש בחומרים ידידותיים לסביבה, יחס אישי '
+          'וחיוך.',
       'parentCategory': 'ניקיון',
       'subCategory': 'ניקיון בית',
       'profileImage':
@@ -225,11 +249,36 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
       'cancellationPolicy': 'flexible',
       'quickTags': ['reliable', 'clean_work', 'punctual', 'fast_response'],
       'reviews': [
-        {'name': 'מיכל ברק',  'rating': 5, 'comment': 'דנה הגיעה בזמן, הדירה הברקה. מקצוענית אמיתית!', 'daysAgo': 7},
-        {'name': 'אמיר כהן',  'rating': 5, 'comment': 'יסודיות ברמה אחרת. ממליץ בחום.',                'daysAgo': 18},
-        {'name': 'תמר אדרי',  'rating': 5, 'comment': 'שירות מעולה ומחיר הוגן. כבר הזמנתי שוב.',         'daysAgo': 29},
-        {'name': 'יואב פלד',  'rating': 5, 'comment': 'הכי טוב שהיה לי. שמה לב לכל פינה.',               'daysAgo': 41},
-        {'name': 'שירה גל',   'rating': 5, 'comment': 'נחמדה, מקצועית, אמינה. שווה כל שקל.',             'daysAgo': 56},
+        {
+          'name': 'מיכל ברק',
+          'rating': 5,
+          'comment': 'דנה הגיעה בזמן, הדירה הברקה. מקצוענית אמיתית!',
+          'daysAgo': 7,
+        },
+        {
+          'name': 'אמיר כהן',
+          'rating': 5,
+          'comment': 'יסודיות ברמה אחרת. ממליץ בחום.',
+          'daysAgo': 18,
+        },
+        {
+          'name': 'תמר אדרי',
+          'rating': 5,
+          'comment': 'שירות מעולה ומחיר הוגן. כבר הזמנתי שוב.',
+          'daysAgo': 29,
+        },
+        {
+          'name': 'יואב פלד',
+          'rating': 5,
+          'comment': 'הכי טוב שהיה לי. שמה לב לכל פינה.',
+          'daysAgo': 41,
+        },
+        {
+          'name': 'שירה גל',
+          'rating': 5,
+          'comment': 'נחמדה, מקצועית, אמינה. שווה כל שקל.',
+          'daysAgo': 56,
+        },
       ],
     },
     {
@@ -238,9 +287,9 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
       'phone': '054-7100002',
       'email': 'roi.azulay@example.com',
       'aboutMe':
-          'מאמן כושר אישי מוסמך, מומחה בהורדת משקל ובניית שרירים. '
-              '8+ שנות ניסיון, אימונים בבית הלקוח, בפארק או באולם. '
-              'תוכנית תזונה מותאמת אישית במתנה.',
+          'מאמן כושר אישי מוסמך, נותן שירות בהורדת משקל ובניית שרירים. '
+          '8+ שנות ניסיון, אימונים בבית הלקוח, בפארק או באולם. '
+          'תוכנית תזונה מותאמת אישית במתנה.',
       'parentCategory': 'אימון כושר',
       'subCategory': 'כושר כללי',
       'profileImage':
@@ -250,10 +299,30 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
       'cancellationPolicy': 'moderate',
       'quickTags': ['experienced', 'reliable', 'top_quality', 'flexible'],
       'reviews': [
-        {'name': 'נועה שמש',   'rating': 5, 'comment': 'ירדתי 8 קילו ב-3 חודשים עם רועי. אלוף!',           'daysAgo': 9},
-        {'name': 'עידן רוזן',  'rating': 5, 'comment': 'מאמן ענק. סבלני, מקצועי וממש דוחף קדימה.',         'daysAgo': 21},
-        {'name': 'הילה בן עמי','rating': 5, 'comment': 'אימונים מאתגרים אבל מהנים. מומלץ בחום!',           'daysAgo': 34},
-        {'name': 'אורי דהן',   'rating': 5, 'comment': 'התוכנית התזונתית עזרה לי המון. תודה רועי.',         'daysAgo': 48},
+        {
+          'name': 'נועה שמש',
+          'rating': 5,
+          'comment': 'ירדתי 8 קילו ב-3 חודשים עם רועי. אלוף!',
+          'daysAgo': 9,
+        },
+        {
+          'name': 'עידן רוזן',
+          'rating': 5,
+          'comment': 'מאמן ענק. סבלני, מקצועי וממש דוחף קדימה.',
+          'daysAgo': 21,
+        },
+        {
+          'name': 'הילה בן עמי',
+          'rating': 5,
+          'comment': 'אימונים מאתגרים אבל מהנים. מומלץ בחום!',
+          'daysAgo': 34,
+        },
+        {
+          'name': 'אורי דהן',
+          'rating': 5,
+          'comment': 'התוכנית התזונתית עזרה לי המון. תודה רועי.',
+          'daysAgo': 48,
+        },
       ],
     },
     {
@@ -263,8 +332,8 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
       'email': 'eli.mizrahi@example.com',
       'aboutMe':
           'הובלות דירות ומשרדים — צוות של 3 עובדים, רכב גדול עם רמפה. '
-              'אריזה מקצועית, פירוק והרכבת רהיטים, ביטוח מלא. '
-              'זמינים גם בסופי שבוע.',
+          'אריזה מקצועית, פירוק והרכבת רהיטים, ביטוח מלא. '
+          'זמינים גם בסופי שבוע.',
       'parentCategory': 'שיפוצים',
       'subCategory': 'שיפוץ כללי',
       'profileImage':
@@ -274,11 +343,36 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
       'cancellationPolicy': 'strict',
       'quickTags': ['fast_response', 'experienced', 'reliable', 'punctual'],
       'reviews': [
-        {'name': 'רן שפירא',   'rating': 5, 'comment': 'הובילו אותי בלי שריטה אחת. מקצוענים!',                'daysAgo': 6},
-        {'name': 'דנה אילון',  'rating': 5, 'comment': 'הגיעו בזמן, עבדו מהר ובאחריות. ממליצה.',              'daysAgo': 17},
-        {'name': 'מאיה פרץ',   'rating': 5, 'comment': 'אריזה מושלמת, אדיבים מאוד. שירות 10/10.',              'daysAgo': 28},
-        {'name': 'אסף לוי',    'rating': 5, 'comment': 'מחיר הוגן, שירות מעולה. הצוות של אלי הכי טוב בארץ.', 'daysAgo': 39},
-        {'name': 'גל ניסים',   'rating': 5, 'comment': 'עבודה יסודית. הם פירקו והרכיבו את כל הרהיטים.',       'daysAgo': 52},
+        {
+          'name': 'רן שפירא',
+          'rating': 5,
+          'comment': 'הובילו אותי בלי שריטה אחת. מקצוענים!',
+          'daysAgo': 6,
+        },
+        {
+          'name': 'דנה אילון',
+          'rating': 5,
+          'comment': 'הגיעו בזמן, עבדו מהר ובאחריות. ממליצה.',
+          'daysAgo': 17,
+        },
+        {
+          'name': 'מאיה פרץ',
+          'rating': 5,
+          'comment': 'אריזה מושלמת, אדיבים מאוד. שירות 10/10.',
+          'daysAgo': 28,
+        },
+        {
+          'name': 'אסף לוי',
+          'rating': 5,
+          'comment': 'מחיר הוגן, שירות מעולה. הצוות של אלי הכי טוב בארץ.',
+          'daysAgo': 39,
+        },
+        {
+          'name': 'גל ניסים',
+          'rating': 5,
+          'comment': 'עבודה יסודית. הם פירקו והרכיבו את כל הרהיטים.',
+          'daysAgo': 52,
+        },
       ],
     },
     // ── PEST CONTROL TRIO — תחזוקה ותיקונים › הדברה ──────────────────────
@@ -289,8 +383,8 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
       'email': 'oren.avrahami@example.com',
       'aboutMe':
           'מדביר מקצועי עם 12+ שנות ניסיון. מוסמך לטיפולים למגורים ולעסקים. '
-              'מתמחה בג׳וקים, נמלים, מכרסמים ופשפשי מיטה. עבודה עם חומרים '
-              'מאושרי משרד הבריאות, אחריות מלאה לכל טיפול.',
+          'מתמחה בג׳וקים, נמלים, מכרסמים ופשפשי מיטה. עבודה עם חומרים '
+          'מאושרי משרד הבריאות, אחריות מלאה לכל טיפול.',
       'parentCategory': 'תחזוקה ותיקונים',
       'subCategory': 'הדברה',
       'profileImage':
@@ -300,11 +394,39 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
       'cancellationPolicy': 'moderate',
       'quickTags': ['experienced', 'reliable', 'punctual', 'top_quality'],
       'reviews': [
-        {'name': 'דנה כהן',     'rating': 5, 'comment': 'אורן הגיע בזמן, עבד ביסודיות וכל הג׳וקים נעלמו תוך יומיים. ממליצה בחום!', 'daysAgo': 12},
-        {'name': 'יוסי לוי',     'rating': 5, 'comment': 'מקצוען אמיתי. הסביר בדיוק מה הוא עושה ולמה. הבעיה נפתרה לחלוטין.',           'daysAgo': 24},
-        {'name': 'שירה ברק',     'rating': 5, 'comment': 'שירות מעולה, מחיר הוגן והתוצאה דיברה בעד עצמה. תודה רבה!',                    'daysAgo': 38},
-        {'name': 'משה אברמוביץ', 'rating': 4, 'comment': 'עבודה טובה ויסודית, אבל הגיע באיחור של חצי שעה. מעבר לזה — מצוין.',          'daysAgo': 51},
-        {'name': 'נועה פרץ',     'rating': 5, 'comment': 'הזמנתי לטיפול בנמלים בדירה — תוך שבוע אין סימן. ממליצה!',                    'daysAgo': 67},
+        {
+          'name': 'דנה כהן',
+          'rating': 5,
+          'comment':
+              'אורן הגיע בזמן, עבד ביסודיות וכל הג׳וקים נעלמו תוך יומיים. ממליצה בחום!',
+          'daysAgo': 12,
+        },
+        {
+          'name': 'יוסי לוי',
+          'rating': 5,
+          'comment':
+              'מקצוען אמיתי. הסביר בדיוק מה הוא עושה ולמה. הבעיה נפתרה לחלוטין.',
+          'daysAgo': 24,
+        },
+        {
+          'name': 'שירה ברק',
+          'rating': 5,
+          'comment': 'שירות מעולה, מחיר הוגן והתוצאה דיברה בעד עצמה. תודה רבה!',
+          'daysAgo': 38,
+        },
+        {
+          'name': 'משה אברמוביץ',
+          'rating': 4,
+          'comment':
+              'עבודה טובה ויסודית, אבל הגיע באיחור של חצי שעה. מעבר לזה — מצוין.',
+          'daysAgo': 51,
+        },
+        {
+          'name': 'נועה פרץ',
+          'rating': 5,
+          'comment': 'הזמנתי לטיפול בנמלים בדירה — תוך שבוע אין סימן. ממליצה!',
+          'daysAgo': 67,
+        },
       ],
     },
     {
@@ -314,8 +436,8 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
       'email': 'sara.cohen.pest@example.com',
       'aboutMe':
           'טכנאית הדברה מורשית, מתמחה בטיפולים אקולוגיים וידידותיים לסביבה. '
-              '8+ שנות ניסיון, פתרונות בטוחים למשפחות עם ילדים וחיות מחמד. '
-              'שימוש בחומרים אורגניים בלבד כשניתן.',
+          '8+ שנות ניסיון, פתרונות בטוחים למשפחות עם ילדים וחיות מחמד. '
+          'שימוש בחומרים אורגניים בלבד כשניתן.',
       'parentCategory': 'תחזוקה ותיקונים',
       'subCategory': 'הדברה',
       'profileImage':
@@ -325,10 +447,33 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
       'cancellationPolicy': 'flexible',
       'quickTags': ['clean_work', 'reliable', 'fast_response', 'flexible'],
       'reviews': [
-        {'name': 'מיכל אדרי',  'rating': 5, 'comment': 'שרה השתמשה בחומרים אקולוגיים והרגשנו בטוחים עם הילדים בבית. תוצאה מעולה!', 'daysAgo': 8},
-        {'name': 'רון שמש',    'rating': 5, 'comment': 'מקצועית ויסודית, הסבירה כל שלב. מומלץ במיוחד למי שיש לו ילדים או חיות.',  'daysAgo': 19},
-        {'name': 'טל גרינברג', 'rating': 5, 'comment': 'הגיעה תוך יומיים, עבדה מהר ויעיל. ללא ריח חזק כמו אצל מדבירים אחרים.',     'daysAgo': 33},
-        {'name': 'עידו ניסים', 'rating': 4, 'comment': 'שירות איכותי, יקר טיפה אבל שווה כי בטוח לסביבה.',                            'daysAgo': 47},
+        {
+          'name': 'מיכל אדרי',
+          'rating': 5,
+          'comment':
+              'שרה השתמשה בחומרים אקולוגיים והרגשנו בטוחים עם הילדים בבית. תוצאה מעולה!',
+          'daysAgo': 8,
+        },
+        {
+          'name': 'רון שמש',
+          'rating': 5,
+          'comment':
+              'מקצועית ויסודית, הסבירה כל שלב. מומלץ במיוחד למי שיש לו ילדים או חיות.',
+          'daysAgo': 19,
+        },
+        {
+          'name': 'טל גרינברג',
+          'rating': 5,
+          'comment':
+              'הגיעה תוך יומיים, עבדה מהר ויעיל. ללא ריח חזק כמו אצל מדבירים אחרים.',
+          'daysAgo': 33,
+        },
+        {
+          'name': 'עידו ניסים',
+          'rating': 4,
+          'comment': 'שירות איכותי, יקר טיפה אבל שווה כי בטוח לסביבה.',
+          'daysAgo': 47,
+        },
       ],
     },
     {
@@ -338,8 +483,8 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
       'email': 'yossi.raman.pest@example.com',
       'aboutMe':
           'שירות הדברה חירום 24/7. מוסמך לכל סוגי המזיקים — נחשים, צרעות, '
-              'פשפשים, מכרסמים. הגעה מהירה גם בלילות וסופי שבוע. ניסיון של '
-              '15+ שנים בטיפולים מורכבים ובמקומות עם מערכות אחסון מזון.',
+          'פשפשים, מכרסמים. הגעה מהירה גם בלילות וסופי שבוע. ניסיון של '
+          '15+ שנים בטיפולים מורכבים ובמקומות עם מערכות אחסון מזון.',
       'parentCategory': 'תחזוקה ותיקונים',
       'subCategory': 'הדברה',
       'profileImage':
@@ -349,23 +494,53 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
       'cancellationPolicy': 'nonRefundable',
       'quickTags': ['fast_response', 'experienced', 'reliable', 'top_quality'],
       'reviews': [
-        {'name': 'אבי שפירא',   'rating': 5, 'comment': 'התקשרתי בלילה אחרי שראיתי נחש בחצר. יוסי הגיע תוך 40 דקות וטיפל. מציל חיים!', 'daysAgo': 5},
-        {'name': 'רחל בן עמי',  'rating': 5, 'comment': 'קן צרעות ענק על המרפסת — יוסי טיפל ביעילות וללא סיכון. שירות חירום אמיתי.',  'daysAgo': 14},
-        {'name': 'דוד אילון',   'rating': 5, 'comment': 'הגיע ביום שישי בלילה לטפל בפשפשי מיטה. מקצוען אמיתי, פתר את הבעיה לחלוטין.',  'daysAgo': 22},
-        {'name': 'יעל ספיר',    'rating': 4, 'comment': 'יקר אבל מצוין לחירומים. הגעה מאוד מהירה, אין על מי לסמוך כמוהו.',              'daysAgo': 35},
-        {'name': 'גלעד אוחיון', 'rating': 5, 'comment': 'שירות 24/7 אמיתי. התקשרתי ב-2 לפנות בוקר והוא ענה מיד. מקצוען של פעם.',         'daysAgo': 48},
+        {
+          'name': 'אבי שפירא',
+          'rating': 5,
+          'comment':
+              'התקשרתי בלילה אחרי שראיתי נחש בחצר. יוסי הגיע תוך 40 דקות וטיפל. מציל חיים!',
+          'daysAgo': 5,
+        },
+        {
+          'name': 'רחל בן עמי',
+          'rating': 5,
+          'comment':
+              'קן צרעות ענק על המרפסת — יוסי טיפל ביעילות וללא סיכון. שירות חירום אמיתי.',
+          'daysAgo': 14,
+        },
+        {
+          'name': 'דוד אילון',
+          'rating': 5,
+          'comment':
+              'הגיע ביום שישי בלילה לטפל בפשפשי מיטה. מקצוען אמיתי, פתר את הבעיה לחלוטין.',
+          'daysAgo': 22,
+        },
+        {
+          'name': 'יעל ספיר',
+          'rating': 4,
+          'comment':
+              'יקר אבל מצוין לחירומים. הגעה מאוד מהירה, אין על מי לסמוך כמוהו.',
+          'daysAgo': 35,
+        },
+        {
+          'name': 'גלעד אוחיון',
+          'rating': 5,
+          'comment':
+              'שירות 24/7 אמיתי. התקשרתי ב-2 לפנות בוקר והוא ענה מיד. מקצוען של פעם.',
+          'daysAgo': 48,
+        },
       ],
     },
   ];
 
   Map<String, Map<String, String>> _seedWorkingHours() => {
-        '0': {'from': '08:00', 'to': '19:00'},
-        '1': {'from': '08:00', 'to': '19:00'},
-        '2': {'from': '08:00', 'to': '19:00'},
-        '3': {'from': '08:00', 'to': '19:00'},
-        '4': {'from': '08:00', 'to': '19:00'},
-        '5': {'from': '08:00', 'to': '14:00'},
-      };
+    '0': {'from': '08:00', 'to': '19:00'},
+    '1': {'from': '08:00', 'to': '19:00'},
+    '2': {'from': '08:00', 'to': '19:00'},
+    '3': {'from': '08:00', 'to': '19:00'},
+    '4': {'from': '08:00', 'to': '19:00'},
+    '5': {'from': '08:00', 'to': '14:00'},
+  };
 
   /// Loads ALL categories from Firestore and returns a list of
   /// `{id, name, parentId}`. Used by the seeder to resolve template
@@ -374,11 +549,13 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
   Future<List<Map<String, dynamic>>> _loadAllCategoriesFromFirestore() async {
     final snap = await _db.collection('categories').limit(500).get();
     return snap.docs
-        .map((d) => {
-              'id': d.id,
-              'name': (d.data()['name'] as String? ?? '').trim(),
-              'parentId': (d.data()['parentId'] as String? ?? '').trim(),
-            })
+        .map(
+          (d) => {
+            'id': d.id,
+            'name': (d.data()['name'] as String? ?? '').trim(),
+            'parentId': (d.data()['parentId'] as String? ?? '').trim(),
+          },
+        )
         .toList();
   }
 
@@ -412,35 +589,40 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
     }
 
     // Collect all sub-categories (any doc with non-empty parentId)
-    final allSubs = allCats
-        .where((c) => (c['parentId'] as String).isNotEmpty)
-        .toList();
+    final allSubs =
+        allCats.where((c) => (c['parentId'] as String).isNotEmpty).toList();
 
     // Strategy 1 — exact normalized match
-    var matches = allSubs.where((c) {
-      return norm(c['name'] as String) == dsN;
-    }).toList();
+    var matches =
+        allSubs.where((c) {
+          return norm(c['name'] as String) == dsN;
+        }).toList();
     debugPrint(
-        '[DemoSeed]   strategy 1 (exact) for "$desiredSub": ${matches.length} matches');
+      '[DemoSeed]   strategy 1 (exact) for "$desiredSub": ${matches.length} matches',
+    );
 
     // Strategy 2 — sub name contains desired (handles e.g. "חיטוי והדברה" ⊃ "הדברה")
     if (matches.isEmpty) {
-      matches = allSubs.where((c) {
-        final n = norm(c['name'] as String);
-        return n.contains(dsN);
-      }).toList();
+      matches =
+          allSubs.where((c) {
+            final n = norm(c['name'] as String);
+            return n.contains(dsN);
+          }).toList();
       debugPrint(
-          '[DemoSeed]   strategy 2 (sub contains "$desiredSub"): ${matches.length} matches');
+        '[DemoSeed]   strategy 2 (sub contains "$desiredSub"): ${matches.length} matches',
+      );
     }
 
     // Strategy 3 — desired contains sub name (handles e.g. desired "הדברה ביתית" ⊃ "הדברה")
     if (matches.isEmpty) {
-      matches = allSubs.where((c) {
-        final n = norm(c['name'] as String);
-        return n.length >= 3 && dsN.contains(n);
-      }).toList();
+      matches =
+          allSubs.where((c) {
+            final n = norm(c['name'] as String);
+            return n.length >= 3 && dsN.contains(n);
+          }).toList();
       debugPrint(
-          '[DemoSeed]   strategy 3 ("$desiredSub" contains sub): ${matches.length} matches');
+        '[DemoSeed]   strategy 3 ("$desiredSub" contains sub): ${matches.length} matches',
+      );
     }
 
     if (matches.isEmpty) return null;
@@ -453,11 +635,9 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
       final pn = norm(p['name'] as String);
       if (pn == dpN || pn.contains(dpN) || dpN.contains(pn)) {
         debugPrint(
-            '[DemoSeed]   ✓ matched parent "${p['name']}" → sub "${s['name']}"');
-        return (
-          parentName: p['name'] as String,
-          subName: s['name'] as String,
+          '[DemoSeed]   ✓ matched parent "${p['name']}" → sub "${s['name']}"',
         );
+        return (parentName: p['name'] as String, subName: s['name'] as String);
       }
     }
 
@@ -468,11 +648,9 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
     final p = parentOf(first);
     if (p == null) return null;
     debugPrint(
-        '[DemoSeed]   ⚠ no parent match for "$desiredParent" — using first sub match: "${p['name']} / ${first['name']}"');
-    return (
-      parentName: p['name'] as String,
-      subName: first['name'] as String,
+      '[DemoSeed]   ⚠ no parent match for "$desiredParent" — using first sub match: "${p['name']} / ${first['name']}"',
     );
+    return (parentName: p['name'] as String, subName: first['name'] as String);
   }
 
   /// Writes the 3 starter demos to Firestore. Skips any whose user doc
@@ -482,19 +660,22 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
     int skipped = 0;
     final errors = <String>[];
 
-    debugPrint('[DemoSeed] starting auto-seed of ${_starterDemos.length} demos');
+    debugPrint(
+      '[DemoSeed] starting auto-seed of ${_starterDemos.length} demos',
+    );
 
     try {
       // Load real categories so demos sync to whatever the admin has
       final allCats = await _loadAllCategoriesFromFirestore();
-      debugPrint('[DemoSeed] loaded ${allCats.length} categories from Firestore');
+      debugPrint(
+        '[DemoSeed] loaded ${allCats.length} categories from Firestore',
+      );
 
       // Dump the entire category tree to console — this is the ONLY way to
       // diagnose name mismatches without running a separate Firestore query.
       // Look for these lines in DevTools → Console after a hard refresh.
-      final parents = allCats
-          .where((c) => (c['parentId'] as String).isEmpty)
-          .toList();
+      final parents =
+          allCats.where((c) => (c['parentId'] as String).isEmpty).toList();
       debugPrint('[DemoSeed] ─── CATEGORY TREE DUMP ──────────────────');
       for (final p in parents) {
         final pid = p['id'] as String;
@@ -529,19 +710,21 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
           );
           if (resolved == null) {
             errors.add(
-                '${t['name']}: לא נמצאה תת-קטגוריה "$desiredSub" תחת "$desiredParent" ב-Firestore');
+              '${t['name']}: לא נמצאה תת-קטגוריה "$desiredSub" תחת "$desiredParent" ב-Firestore',
+            );
             debugPrint(
-                '[DemoSeed] ❌ no exact sub-category match for "$desiredSub" — skipping ${t['name']}');
+              '[DemoSeed] ❌ no exact sub-category match for "$desiredSub" — skipping ${t['name']}',
+            );
             continue;
           }
           final parentCategory = resolved.parentName;
           final subCategory = resolved.subName;
           debugPrint(
-              '[DemoSeed] resolved "$desiredParent / $desiredSub" → '
-              '"$parentCategory / $subCategory"');
+            '[DemoSeed] resolved "$desiredParent / $desiredSub" → '
+            '"$parentCategory / $subCategory"',
+          );
 
-          final reviews =
-              (t['reviews'] as List).cast<Map<String, dynamic>>();
+          final reviews = (t['reviews'] as List).cast<Map<String, dynamic>>();
           final ratings =
               reviews.map((r) => (r['rating'] as num).toDouble()).toList();
           final avg = ratings.reduce((a, b) => a + b) / ratings.length;
@@ -552,72 +735,73 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
           final hours = _seedWorkingHours();
           final listingId = 'demo_$uid';
 
-        final userData = <String, dynamic>{
-          'name': t['name'],
-          'phone': t['phone'],
-          'email': t['email'],
-          'aboutMe': t['aboutMe'],
-          'profileImage': t['profileImage'],
-          'serviceType': subCategory,
-          'subCategoryName': subCategory,
-          'parentCategory': parentCategory,
-          'gallery': <String>[],
-          'completedJobs': t['completedJobs'],
-          'rating': rating,
-          'reviewsCount': reviews.length,
-          'pricePerHour': t['pricePerHour'],
-          'categoryDetails': <String, dynamic>{},
-          'workingHours': hours,
-          'cancellationPolicy': t['cancellationPolicy'],
-          'quickTags': quickTags,
-          'isProvider': true,
-          'isCustomer': false,
-          'isDemo': true,
-          'isOnline': true,
-          'isVerified': true,
-          'isTopRated': isTopRated,
-          'isHidden': false,
-          'balance': 0,
-        };
-        await _db.collection('users').doc(uid).set(userData);
+          final userData = <String, dynamic>{
+            'name': t['name'],
+            'phone': t['phone'],
+            'email': t['email'],
+            'aboutMe': t['aboutMe'],
+            'profileImage': t['profileImage'],
+            'serviceType': subCategory,
+            'subCategoryName': subCategory,
+            'parentCategory': parentCategory,
+            'gallery': <String>[],
+            'completedJobs': t['completedJobs'],
+            'rating': rating,
+            'reviewsCount': reviews.length,
+            'pricePerHour': t['pricePerHour'],
+            'categoryDetails': <String, dynamic>{},
+            'workingHours': hours,
+            'cancellationPolicy': t['cancellationPolicy'],
+            'quickTags': quickTags,
+            'isProvider': true,
+            'isCustomer': false,
+            'isDemo': true,
+            'isOnline': true,
+            'isVerified': true,
+            'isTopRated': isTopRated,
+            'isHidden': false,
+            'balance': 0,
+          };
+          await _db.collection('users').doc(uid).set(userData);
 
-        final listingData = <String, dynamic>{
-          'uid': uid,
-          'identityIndex': 0,
-          'name': t['name'],
-          'profileImage': t['profileImage'],
-          'isVerified': true,
-          'isHidden': false,
-          'isDemo': true,
-          'isVolunteer': false,
-          'isOnline': true,
-          'isAnySkillPro': isTopRated,
-          'isPromoted': false,
-          'serviceType': subCategory,
-          'parentCategory': parentCategory,
-          'subCategory': subCategory,
-          'aboutMe': t['aboutMe'],
-          'pricePerHour': t['pricePerHour'],
-          'gallery': <String>[],
-          'categoryDetails': <String, dynamic>{},
-          'priceList': <String, dynamic>{},
-          'quickTags': quickTags,
-          'workingHours': hours,
-          'cancellationPolicy': t['cancellationPolicy'],
-          'rating': rating,
-          'reviewsCount': reviews.length,
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        };
-        await _db
-            .collection('provider_listings')
-            .doc(listingId)
-            .set(listingData);
+          final listingData = <String, dynamic>{
+            'uid': uid,
+            'identityIndex': 0,
+            'name': t['name'],
+            'profileImage': t['profileImage'],
+            'isVerified': true,
+            'isHidden': false,
+            'isDemo': true,
+            'isVolunteer': false,
+            'isOnline': true,
+            'isAnySkillPro': isTopRated,
+            'isPromoted': false,
+            'serviceType': subCategory,
+            'parentCategory': parentCategory,
+            'subCategory': subCategory,
+            'aboutMe': t['aboutMe'],
+            'pricePerHour': t['pricePerHour'],
+            'gallery': <String>[],
+            'categoryDetails': <String, dynamic>{},
+            'priceList': <String, dynamic>{},
+            'quickTags': quickTags,
+            'workingHours': hours,
+            'cancellationPolicy': t['cancellationPolicy'],
+            'rating': rating,
+            'reviewsCount': reviews.length,
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          };
+          await _db
+              .collection('provider_listings')
+              .doc(listingId)
+              .set(listingData);
 
-        await _db.collection('users').doc(uid).update({
-          'listingIds': [listingId],
-          'activeIdentityCount': 1,
-        });
+          await _db.collection('users').doc(uid).update({
+            'listingIds': [listingId],
+            'activeIdentityCount': 1,
+          });
+          CachedReaders.invalidateProvider(uid); // §61
 
           // Reviews — deterministic IDs so they're also idempotent
           for (int i = 0; i < reviews.length; i++) {
@@ -651,7 +835,8 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
     }
 
     debugPrint(
-        '[DemoSeed] done. created=$created skipped=$skipped errors=${errors.length}');
+      '[DemoSeed] done. created=$created skipped=$skipped errors=${errors.length}',
+    );
 
     // Report results to the admin via snackbar so failures are not silent
     if (mounted) {
@@ -684,6 +869,17 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _demoStream,
       builder: (context, snap) {
+        if (snap.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'שגיאה בטעינת מומחי דמו: ${snap.error}',
+                style: const TextStyle(color: Colors.red),
+              ),
+            ),
+          );
+        }
         if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
@@ -695,197 +891,235 @@ class _DemoExpertsListTabState extends State<_DemoExpertsListTab> {
             backgroundColor: const Color(0xFF6366F1),
             icon: const Icon(Icons.add, color: Colors.white),
             label: const Text(
-              'הוסף מומחה דמו',
+              'הוסף נותן שירות דמו',
               style: TextStyle(color: Colors.white),
             ),
             onPressed: () => _showForm(),
           ),
-          body: docs.isEmpty
-              ? const Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.people_outline, size: 64, color: Colors.grey),
-                      SizedBox(height: 12),
-                      Text(
-                        'אין מומחי דמו עדיין',
-                        style: TextStyle(color: Colors.grey, fontSize: 16),
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        'לחץ על + כדי ליצור פרופיל ראשון',
-                        style: TextStyle(color: Colors.grey, fontSize: 13),
-                      ),
-                    ],
-                  ),
-                )
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-                  itemCount: docs.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (ctx, i) {
-                    final doc = docs[i];
-                    final d = doc.data();
-                    final uid = doc.id;
-                    final name = d['name'] as String? ?? '—';
-                    final img = d['profileImage'] as String? ?? '';
-                    final parent = d['parentCategory'] as String?;
-                    final sub = (d['subCategoryName'] as String?)?.isNotEmpty == true
-                        ? d['subCategoryName'] as String
-                        : null;
-                    final cat = parent != null && sub != null
-                        ? '$parent › $sub'
-                        : (parent ?? sub ?? d['serviceType'] as String? ?? '—');
-                    final rating = (d['rating'] as num? ?? 0).toDouble();
-                    final reviews = (d['reviewsCount'] as num? ?? 0).toInt();
-                    final gallery = (d['gallery'] as List? ?? []).length;
-                    final hidden = d['isHidden'] as bool? ?? false;
-                    final isTopRated = d['isTopRated'] as bool? ?? false;
-
-                    return Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(14),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.04),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.all(12),
-                        leading: CircleAvatar(
-                          radius: 28,
-                          backgroundColor: Colors.grey[200],
-                          backgroundImage: safeImageProvider(img),
-                          child: safeImageProvider(img) == null
-                              ? const Icon(Icons.person, color: Colors.grey)
-                              : null,
+          body:
+              docs.isEmpty
+                  ? const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.people_outline,
+                          size: 64,
+                          color: Colors.grey,
                         ),
-                        title: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                name,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                            if (isTopRated)
-                              const Padding(
-                                padding: EdgeInsets.only(left: 4),
-                                child: Icon(Icons.workspace_premium,
-                                    color: Color(0xFFF59E0B), size: 16),
-                              ),
-                            Container(
-                              margin: const EdgeInsets.only(left: 4),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 7, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF6366F1)
-                                    .withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Text(
-                                'DEMO',
-                                style: TextStyle(
-                                  color: Color(0xFF6366F1),
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                        SizedBox(height: 12),
+                        Text(
+                          'אין מומחי דמו עדיין',
+                          style: TextStyle(color: Colors.grey, fontSize: 16),
+                        ),
+                        SizedBox(height: 6),
+                        Text(
+                          'לחץ על + כדי ליצור פרופיל ראשון',
+                          style: TextStyle(color: Colors.grey, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  )
+                  : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+                    itemCount: docs.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (ctx, i) {
+                      final doc = docs[i];
+                      final d = doc.data();
+                      final uid = doc.id;
+                      final name = d['name'] as String? ?? '—';
+                      final img = d['profileImage'] as String? ?? '';
+                      final parent = d['parentCategory'] as String?;
+                      final sub =
+                          (d['subCategoryName'] as String?)?.isNotEmpty == true
+                              ? d['subCategoryName'] as String
+                              : null;
+                      final cat =
+                          parent != null && sub != null
+                              ? '$parent › $sub'
+                              : (parent ??
+                                  sub ??
+                                  d['serviceType'] as String? ??
+                                  '—');
+                      final rating = (d['rating'] as num? ?? 0).toDouble();
+                      final reviews = (d['reviewsCount'] as num? ?? 0).toInt();
+                      final gallery = (d['gallery'] as List? ?? []).length;
+                      final hidden = d['isHidden'] as bool? ?? false;
+                      final isTopRated = d['isTopRated'] as bool? ?? false;
+
+                      return Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.04),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
                             ),
                           ],
                         ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const SizedBox(height: 3),
-                            Text(
-                              cat,
-                              style: TextStyle(
-                                  color: Colors.grey[600], fontSize: 12),
-                            ),
-                            const SizedBox(height: 3),
-                            Row(
-                              children: [
-                                const Icon(Icons.star_rounded,
-                                    size: 13, color: Color(0xFFF59E0B)),
-                                Text(
-                                  ' ${rating.toStringAsFixed(1)}',
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                                Text(
-                                  '  •  $reviews ביקורות',
-                                  style: TextStyle(
-                                      fontSize: 11, color: Colors.grey[500]),
-                                ),
-                                Text(
-                                  '  •  $gallery תמונות',
-                                  style: TextStyle(
-                                      fontSize: 11, color: Colors.grey[500]),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 5),
-                            GestureDetector(
-                              onTap: () => _toggleHidden(uid, hidden),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    hidden
-                                        ? Icons.visibility_off_outlined
-                                        : Icons.visibility_outlined,
-                                    size: 14,
-                                    color: hidden
-                                        ? Colors.red[400]
-                                        : Colors.green[600],
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.all(12),
+                          leading: CircleAvatar(
+                            radius: 28,
+                            backgroundColor: Colors.grey[200],
+                            backgroundImage: safeImageProvider(img),
+                            child:
+                                safeImageProvider(img) == null
+                                    ? const Icon(
+                                      Icons.person,
+                                      color: Colors.grey,
+                                    )
+                                    : null,
+                          ),
+                          title: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  name,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                  const SizedBox(width: 4),
+                                ),
+                              ),
+                              if (isTopRated)
+                                const Padding(
+                                  padding: EdgeInsets.only(left: 4),
+                                  child: Icon(
+                                    Icons.workspace_premium,
+                                    color: Color(0xFFF59E0B),
+                                    size: 16,
+                                  ),
+                                ),
+                              Container(
+                                margin: const EdgeInsets.only(left: 4),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(
+                                    0xFF6366F1,
+                                  ).withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Text(
+                                  'DEMO',
+                                  style: TextStyle(
+                                    color: Color(0xFF6366F1),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 3),
+                              Text(
+                                cat,
+                                style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.star_rounded,
+                                    size: 13,
+                                    color: Color(0xFFF59E0B),
+                                  ),
                                   Text(
-                                    hidden ? 'מוסתר מחיפוש' : 'מוצג בחיפוש',
+                                    ' ${rating.toStringAsFixed(1)}',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  Text(
+                                    '  •  $reviews ביקורות',
                                     style: TextStyle(
-                                      fontSize: 12,
-                                      color: hidden
-                                          ? Colors.red[400]
-                                          : Colors.green[600],
-                                      fontWeight: FontWeight.w500,
+                                      fontSize: 11,
+                                      color: Colors.grey[500],
+                                    ),
+                                  ),
+                                  Text(
+                                    '  •  $gallery תמונות',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey[500],
                                     ),
                                   ),
                                 ],
                               ),
-                            ),
-                          ],
+                              const SizedBox(height: 5),
+                              GestureDetector(
+                                onTap: () => _toggleHidden(uid, hidden),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      hidden
+                                          ? Icons.visibility_off_outlined
+                                          : Icons.visibility_outlined,
+                                      size: 14,
+                                      color:
+                                          hidden
+                                              ? Colors.red[400]
+                                              : Colors.green[600],
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      hidden ? 'מוסתר מחיפוש' : 'מוצג בחיפוש',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color:
+                                            hidden
+                                                ? Colors.red[400]
+                                                : Colors.green[600],
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Switch(
+                                value: !hidden,
+                                onChanged: (_) => _toggleHidden(uid, hidden),
+                                activeColor: const Color(0xFF10B981),
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.edit_outlined,
+                                  color: Color(0xFF6366F1),
+                                  size: 20,
+                                ),
+                                onPressed:
+                                    () => _showForm(uid: uid, existing: d),
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.delete_outline,
+                                  color: Colors.redAccent,
+                                  size: 20,
+                                ),
+                                onPressed: () => _delete(ctx, uid, name),
+                              ),
+                            ],
+                          ),
                         ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Switch(
-                              value: !hidden,
-                              onChanged: (_) => _toggleHidden(uid, hidden),
-                              activeColor: const Color(0xFF10B981),
-                              materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.edit_outlined,
-                                  color: Color(0xFF6366F1), size: 20),
-                              onPressed: () =>
-                                  _showForm(uid: uid, existing: d),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline,
-                                  color: Colors.redAccent, size: 20),
-                              onPressed: () => _delete(ctx, uid, name),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
+                      );
+                    },
+                  ),
         );
       },
     );
@@ -901,11 +1135,12 @@ class _DemoBookingsListTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final stream = FirebaseFirestore.instance
-        .collection('demo_bookings')
-        .orderBy('createdAt', descending: true)
-        .limit(200)
-        .snapshots();
+    final stream =
+        FirebaseFirestore.instance
+            .collection('demo_bookings')
+            .orderBy('createdAt', descending: true)
+            .limit(200)
+            .snapshots();
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: stream,
@@ -975,9 +1210,10 @@ class _DemoBookingsListTab extends StatelessWidget {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: isContacted
-                      ? const Color(0xFF10B981).withValues(alpha: 0.4)
-                      : const Color(0xFFF59E0B).withValues(alpha: 0.4),
+                  color:
+                      isContacted
+                          ? const Color(0xFF10B981).withValues(alpha: 0.4)
+                          : const Color(0xFFF59E0B).withValues(alpha: 0.4),
                 ),
                 boxShadow: [
                   BoxShadow(
@@ -997,20 +1233,22 @@ class _DemoBookingsListTab extends StatelessWidget {
                       children: [
                         CircleAvatar(
                           radius: 22,
-                          backgroundColor: const Color(0xFF6366F1)
-                              .withValues(alpha: 0.12),
+                          backgroundColor: const Color(
+                            0xFF6366F1,
+                          ).withValues(alpha: 0.12),
                           backgroundImage: safeImageProvider(customerImage),
-                          child: safeImageProvider(customerImage) == null
-                              ? Text(
-                                  customerName.isNotEmpty
-                                      ? customerName[0].toUpperCase()
-                                      : '?',
-                                  style: const TextStyle(
-                                    color: Color(0xFF6366F1),
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                )
-                              : null,
+                          child:
+                              safeImageProvider(customerImage) == null
+                                  ? Text(
+                                    customerName.isNotEmpty
+                                        ? customerName[0].toUpperCase()
+                                        : '?',
+                                    style: const TextStyle(
+                                      color: Color(0xFF6366F1),
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  )
+                                  : null,
                         ),
                         const SizedBox(width: 12),
                         Expanded(
@@ -1037,13 +1275,18 @@ class _DemoBookingsListTab extends StatelessWidget {
                         ),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
-                            color: isContacted
-                                ? const Color(0xFF10B981)
-                                    .withValues(alpha: 0.12)
-                                : const Color(0xFFF59E0B)
-                                    .withValues(alpha: 0.12),
+                            color:
+                                isContacted
+                                    ? const Color(
+                                      0xFF10B981,
+                                    ).withValues(alpha: 0.12)
+                                    : const Color(
+                                      0xFFF59E0B,
+                                    ).withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
@@ -1051,9 +1294,10 @@ class _DemoBookingsListTab extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
-                              color: isContacted
-                                  ? const Color(0xFF10B981)
-                                  : const Color(0xFFF59E0B),
+                              color:
+                                  isContacted
+                                      ? const Color(0xFF10B981)
+                                      : const Color(0xFFF59E0B),
                             ),
                           ),
                         ),
@@ -1063,14 +1307,15 @@ class _DemoBookingsListTab extends StatelessWidget {
                     // Details
                     _detailRow(
                       icon: Icons.person_outline_rounded,
-                      label: 'מומחה דמו',
+                      label: 'נותן שירות דמו',
                       value: '$demoExpertName ($demoExpertCategory)',
                     ),
                     if (selectedDate.isNotEmpty)
                       _detailRow(
                         icon: Icons.calendar_today_rounded,
                         label: 'תאריך מבוקש',
-                        value: '$selectedDate ${selectedTime.isNotEmpty ? "• $selectedTime" : ""}',
+                        value:
+                            '$selectedDate ${selectedTime.isNotEmpty ? "• $selectedTime" : ""}',
                       ),
                     if (amount > 0)
                       _detailRow(
@@ -1095,25 +1340,26 @@ class _DemoBookingsListTab extends StatelessWidget {
                                 backgroundColor: const Color(0xFF10B981),
                                 foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10)),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
                               ),
                               icon: const Icon(Icons.check_rounded, size: 16),
                               label: const Text('סמן כטופל'),
-                              onPressed: () =>
-                                  docs[i].reference.update({
-                                'status': 'contacted',
-                                'contactedAt': FieldValue.serverTimestamp(),
-                              }),
+                              onPressed:
+                                  () => docs[i].reference.update({
+                                    'status': 'contacted',
+                                    'contactedAt': FieldValue.serverTimestamp(),
+                                  }),
                             ),
                           ),
                         if (!isContacted) const SizedBox(width: 8),
                         OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFFEF4444),
-                            side:
-                                const BorderSide(color: Color(0xFFEF4444)),
+                            side: const BorderSide(color: Color(0xFFEF4444)),
                             shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                           icon: const Icon(Icons.delete_outline, size: 16),
                           label: const Text('מחק'),
@@ -1149,8 +1395,7 @@ class _DemoBookingsListTab extends StatelessWidget {
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w500),
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
               textAlign: TextAlign.end,
             ),
           ),
@@ -1215,7 +1460,14 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
   String _profileImageUrl = '';
   bool _uploadingProfile = false;
   final List<String> _galleryUrls = ['', '', '', '', '', ''];
-  final List<bool> _uploadingGallery = [false, false, false, false, false, false];
+  final List<bool> _uploadingGallery = [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+  ];
 
   // ── Working hours (per day, 0=Sun..6=Sat) ─────────────────────────────────
   // Default: 09:00–18:00 Sun-Thu, closed Fri-Sat
@@ -1234,6 +1486,27 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
   ServiceSchema _activeSchema = ServiceSchema.empty();
   Map<String, dynamic> _categoryDetails = {};
   bool _loadingSchema = false;
+
+  // ── Massage profile (category-specific module) ────────────────────────────
+  MassageProfile _massageProfile = const MassageProfile();
+  PestControlProfile _pestControlProfile = const PestControlProfile();
+  DeliveryProfile _deliveryProfile = const DeliveryProfile();
+  CleaningProfile _cleaningProfile = const CleaningProfile();
+  HandymanProfile _handymanProfile = const HandymanProfile();
+  FitnessTrainerProfile _fitnessTrainerProfile = const FitnessTrainerProfile();
+  BabysitterProfile _babysitterProfile = const BabysitterProfile();
+  MotorcycleTowProfile _motorcycleTowProfile = const MotorcycleTowProfile();
+
+  // ── Provider-edit-profile parity additions (CLAUDE.md §53 follow-up) ──
+  // These mirror the same fields that show up in edit_profile_screen.dart
+  // when a provider edits their profile, so demo profiles look complete.
+  final Set<String> _selectedCategoryTags = {};
+  Map<String, dynamic> _priceList = {};
+  int? _responseTimeMinutes;
+  late final TextEditingController _taxIdCtrl =
+      TextEditingController(text: (widget.existing?['taxIdNumber'] as String?) ?? '');
+  late final TextEditingController _businessDocCtrl = TextEditingController(
+      text: (widget.existing?['businessDocUrl'] as String?) ?? '');
 
   // ── Quick tags (selectable) ───────────────────────────────────────────────
   static const _availableQuickTags = [
@@ -1264,9 +1537,11 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
     _emailCtrl = TextEditingController(text: e['email'] as String? ?? '');
     _bioCtrl = TextEditingController(text: e['aboutMe'] as String? ?? '');
     _jobsCtrl = TextEditingController(
-        text: (e['completedJobs'] as num? ?? 54).toString());
+      text: (e['completedJobs'] as num? ?? 54).toString(),
+    );
     _priceCtrl = TextEditingController(
-        text: (e['pricePerHour'] as num? ?? 150).toString());
+      text: (e['pricePerHour'] as num? ?? 150).toString(),
+    );
 
     _profileImageUrl = e['profileImage'] as String? ?? '';
     final gallery = (e['gallery'] as List? ?? []).cast<String>();
@@ -1286,11 +1561,9 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
       });
     }
 
-    _cancellationPolicy =
-        e['cancellationPolicy'] as String? ?? 'flexible';
+    _cancellationPolicy = e['cancellationPolicy'] as String? ?? 'flexible';
 
-    final existingTags =
-        (e['quickTags'] as List? ?? []).cast<String>();
+    final existingTags = (e['quickTags'] as List? ?? []).cast<String>();
     _selectedQuickTags.addAll(existingTags);
 
     final existingDetails = e['categoryDetails'] as Map<String, dynamic>?;
@@ -1298,12 +1571,53 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
       _categoryDetails = Map<String, dynamic>.from(existingDetails);
     }
 
+    final rawMassage = e['massageProfile'] as Map<String, dynamic>?;
+    if (rawMassage != null) {
+      _massageProfile = MassageProfile.fromMap(rawMassage);
+    }
+    final rawDelivery = e['deliveryProfile'] as Map<String, dynamic>?;
+    if (rawDelivery != null) {
+      _deliveryProfile = DeliveryProfile.fromMap(rawDelivery);
+    }
+    final rawCleaning = e['cleaningProfile'] as Map<String, dynamic>?;
+    if (rawCleaning != null) {
+      _cleaningProfile = CleaningProfile.fromMap(rawCleaning);
+    }
+    final rawPest = e['pestControlProfile'] as Map<String, dynamic>?;
+    if (rawPest != null) {
+      _pestControlProfile = PestControlProfile.fromMap(rawPest);
+    }
+    final rawHandyman = e['handymanProfile'] as Map<String, dynamic>?;
+    if (rawHandyman != null) {
+      _handymanProfile = HandymanProfile.fromMap(rawHandyman);
+    }
+    final rawFitness = e['fitnessTrainerProfile'] as Map<String, dynamic>?;
+    if (rawFitness != null) {
+      _fitnessTrainerProfile = FitnessTrainerProfile.fromMap(rawFitness);
+    }
+    final rawBabysitter = e['babysitterProfile'] as Map<String, dynamic>?;
+    if (rawBabysitter != null) {
+      _babysitterProfile = BabysitterProfile.fromMap(rawBabysitter);
+    }
+    final rawMotorcycleTow = e['motorcycleTowProfile'] as Map<String, dynamic>?;
+    if (rawMotorcycleTow != null) {
+      _motorcycleTowProfile = MotorcycleTowProfile.fromMap(rawMotorcycleTow);
+    }
+
+    // Provider-edit-profile parity additions — load existing data
+    final existingCatTags = (e['categoryTags'] as List? ?? const []).cast<String>();
+    _selectedCategoryTags.addAll(existingCatTags);
+    final rawPriceList = e['priceList'] as Map<String, dynamic>?;
+    if (rawPriceList != null) {
+      _priceList = Map<String, dynamic>.from(rawPriceList);
+    }
+    _responseTimeMinutes = (e['responseTimeMinutes'] as num?)?.toInt();
+
     final parentCat = e['parentCategory'] as String?;
-    _selectedCategoryName = parentCat?.isNotEmpty == true
-        ? parentCat
-        : e['serviceType'] as String?;
-    _selectedSubCategory = e['subCategoryName'] as String? ??
-        e['subCategory'] as String?;
+    _selectedCategoryName =
+        parentCat?.isNotEmpty == true ? parentCat : e['serviceType'] as String?;
+    _selectedSubCategory =
+        e['subCategoryName'] as String? ?? e['subCategory'] as String?;
 
     _loadCategories();
 
@@ -1327,6 +1641,8 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
     _bioCtrl.dispose();
     _jobsCtrl.dispose();
     _priceCtrl.dispose();
+    _taxIdCtrl.dispose();
+    _businessDocCtrl.dispose();
     for (final r in _reviews) {
       r.dispose();
     }
@@ -1337,18 +1653,20 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
 
   Future<void> _loadExistingReviews() async {
     try {
-      final snap = await _db
-          .collection('reviews')
-          .where('expertId', isEqualTo: widget.uid)
-          .where('isDemo', isEqualTo: true)
-          .limit(20)
-          .get();
+      final snap =
+          await _db
+              .collection('reviews')
+              .where('expertId', isEqualTo: widget.uid)
+              .where('isDemo', isEqualTo: true)
+              .limit(20)
+              .get();
       final loaded = <_FakeReview>[];
       for (final doc in snap.docs) {
         final d = doc.data();
-        final r = _FakeReview()
-          ..existingDocId = doc.id
-          ..rating = (d['rating'] as num? ?? 5).toDouble();
+        final r =
+            _FakeReview()
+              ..existingDocId = doc.id
+              ..rating = (d['rating'] as num? ?? 5).toDouble();
         r.nameCtrl.text = d['reviewerName'] as String? ?? '';
         r.commentCtrl.text = d['comment'] as String? ?? '';
 
@@ -1422,11 +1740,68 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
   /// Stores it on `_activeSchema` so the v2 form can render fields + bundles
   /// + surcharge + booking requirements. Auto-applies the schema's default
   /// cancellation policy when the demo doesn't have one set yet.
+  bool _isDemoMassageCategory() {
+    final sub = _selectedSubCategory ?? '';
+    if (isMassageCategory(sub)) return true;
+    final main = _selectedCategoryName ?? '';
+    return isMassageCategory(main);
+  }
+
+  bool _isDemoDeliveryCategory() {
+    final sub = _selectedSubCategory ?? '';
+    if (isDeliveryCategory(sub)) return true;
+    final main = _selectedCategoryName ?? '';
+    return isDeliveryCategory(main);
+  }
+
+  bool _isDemoCleaningCategory() {
+    final sub = _selectedSubCategory ?? '';
+    if (isCleaningCategory(sub)) return true;
+    final main = _selectedCategoryName ?? '';
+    return isCleaningCategory(main);
+  }
+
+  bool _isDemoPestControlCategory() {
+    final sub = _selectedSubCategory ?? '';
+    if (isPestControlCategory(sub)) return true;
+    final main = _selectedCategoryName ?? '';
+    return isPestControlCategory(main);
+  }
+
+  bool _isDemoHandymanCategory() {
+    final sub = _selectedSubCategory ?? '';
+    if (isHandymanCategory(sub)) return true;
+    final main = _selectedCategoryName ?? '';
+    return isHandymanCategory(main);
+  }
+
+  bool _isDemoBabysitterCategory() {
+    final sub = _selectedSubCategory ?? '';
+    if (isBabysitterCategory(sub)) return true;
+    final main = _selectedCategoryName ?? '';
+    return isBabysitterCategory(main);
+  }
+
+  bool _isDemoFitnessTrainerCategory() {
+    final sub = _selectedSubCategory ?? '';
+    if (isFitnessTrainerCategory(sub)) return true;
+    final main = _selectedCategoryName ?? '';
+    return isFitnessTrainerCategory(main);
+  }
+
+  bool _isDemoMotorcycleTowingCategory() {
+    final sub = _selectedSubCategory ?? '';
+    if (isMotorcycleTowingCategory(sub)) return true;
+    final main = _selectedCategoryName ?? '';
+    return isMotorcycleTowingCategory(main);
+  }
+
   Future<void> _loadSchemaFor(String categoryName) async {
     if (!mounted) return;
     setState(() => _loadingSchema = true);
     try {
-      final schema = await loadServiceSchemaFor(categoryName);
+      // §61: cached read — 30 min TTL.
+      final schema = await CachedReaders.serviceSchemaForCategory(categoryName);
       if (mounted) {
         setState(() {
           _activeSchema = schema;
@@ -1436,7 +1811,7 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
           // existing demo doc didn't carry a value either).
           final hasExistingPolicy =
               (widget.existing?['cancellationPolicy'] as String?)?.isNotEmpty ??
-                  false;
+              false;
           if (!hasExistingPolicy && schema.defaultPolicy.isNotEmpty) {
             _cancellationPolicy = schema.defaultPolicy;
           }
@@ -1448,16 +1823,18 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
   }
 
   Future<void> _loadSubCategories(String parentDocId) async {
-    final snap = await _db
-        .collection('categories')
-        .where('parentId', isEqualTo: parentDocId)
-        .limit(50)
-        .get();
-    final subs = snap.docs
-        .map((d) => (d.data()['name'] as String? ?? ''))
-        .where((n) => n.isNotEmpty)
-        .toList()
-      ..sort();
+    final snap =
+        await _db
+            .collection('categories')
+            .where('parentId', isEqualTo: parentDocId)
+            .limit(50)
+            .get();
+    final subs =
+        snap.docs
+            .map((d) => (d.data()['name'] as String? ?? ''))
+            .where((n) => n.isNotEmpty)
+            .toList()
+          ..sort();
     if (!mounted) return;
     setState(() => _subCats = subs);
   }
@@ -1535,9 +1912,9 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedCategoryName == null || _selectedCategoryName!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('נא לבחור קטגוריה')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('נא לבחור קטגוריה')));
       return;
     }
     setState(() => _isSaving = true);
@@ -1575,6 +1952,37 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
         'workingHours': _workingHours,
         'cancellationPolicy': _cancellationPolicy,
         'quickTags': _selectedQuickTags.toList(),
+        if (_isDemoMassageCategory() && _massageProfile.specialties.isNotEmpty)
+          'massageProfile': _massageProfile.toMap(),
+        if (_isDemoPestControlCategory() &&
+            _pestControlProfile.pestTypes.isNotEmpty)
+          'pestControlProfile': _pestControlProfile.toMap(),
+        if (_isDemoDeliveryCategory() && _deliveryProfile.vehicles.isNotEmpty)
+          'deliveryProfile': _deliveryProfile.toMap(),
+        if (_isDemoCleaningCategory() &&
+            _cleaningProfile.cleaningTypes.isNotEmpty)
+          'cleaningProfile': _cleaningProfile.toMap(),
+        if (_isDemoHandymanCategory() &&
+            _handymanProfile.specialties.any((s) => s.active))
+          'handymanProfile': _handymanProfile.toMap(),
+        if (_isDemoFitnessTrainerCategory() &&
+            _fitnessTrainerProfile.selectedSpecialties.isNotEmpty)
+          'fitnessTrainerProfile': _fitnessTrainerProfile.toMap(),
+        if (_isDemoBabysitterCategory())
+          'babysitterProfile': _babysitterProfile.toMap(),
+        if (_isDemoMotorcycleTowingCategory() &&
+            _motorcycleTowProfile.bikeTypeIds.isNotEmpty)
+          'motorcycleTowProfile': _motorcycleTowProfile.toMap(),
+        // ── Provider-edit-profile parity additions ──
+        if (_selectedCategoryTags.isNotEmpty)
+          'categoryTags': _selectedCategoryTags.toList(),
+        if (_priceList.isNotEmpty) 'priceList': _priceList,
+        if (_responseTimeMinutes != null)
+          'responseTimeMinutes': _responseTimeMinutes,
+        if (_taxIdCtrl.text.trim().isNotEmpty)
+          'taxIdNumber': _taxIdCtrl.text.trim(),
+        if (_businessDocCtrl.text.trim().isNotEmpty)
+          'businessDocUrl': _businessDocCtrl.text.trim(),
         'isProvider': true,
         'isCustomer': false,
         'isDemo': true,
@@ -1591,6 +1999,7 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
       } else {
         await _db.collection('users').doc(uid).set(userData);
       }
+      CachedReaders.invalidateProvider(uid); // §61
 
       // ── 3. Sync provider_listings doc ─────────────────────────────────────
       // Demo experts MUST have a listing or they won't appear in search.
@@ -1617,10 +2026,36 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
         'pricePerHour': price,
         'gallery': gallery,
         'categoryDetails': _categoryDetails,
-        'priceList': <String, dynamic>{},
         'quickTags': _selectedQuickTags.toList(),
         'workingHours': _workingHours,
         'cancellationPolicy': _cancellationPolicy,
+        if (_isDemoMassageCategory() && _massageProfile.specialties.isNotEmpty)
+          'massageProfile': _massageProfile.toMap(),
+        if (_isDemoPestControlCategory() &&
+            _pestControlProfile.pestTypes.isNotEmpty)
+          'pestControlProfile': _pestControlProfile.toMap(),
+        if (_isDemoDeliveryCategory() && _deliveryProfile.vehicles.isNotEmpty)
+          'deliveryProfile': _deliveryProfile.toMap(),
+        if (_isDemoCleaningCategory() &&
+            _cleaningProfile.cleaningTypes.isNotEmpty)
+          'cleaningProfile': _cleaningProfile.toMap(),
+        if (_isDemoHandymanCategory() &&
+            _handymanProfile.specialties.any((s) => s.active))
+          'handymanProfile': _handymanProfile.toMap(),
+        if (_isDemoFitnessTrainerCategory() &&
+            _fitnessTrainerProfile.selectedSpecialties.isNotEmpty)
+          'fitnessTrainerProfile': _fitnessTrainerProfile.toMap(),
+        if (_isDemoBabysitterCategory())
+          'babysitterProfile': _babysitterProfile.toMap(),
+        if (_isDemoMotorcycleTowingCategory() &&
+            _motorcycleTowProfile.bikeTypeIds.isNotEmpty)
+          'motorcycleTowProfile': _motorcycleTowProfile.toMap(),
+        // ── Provider-edit-profile parity additions ──
+        if (_selectedCategoryTags.isNotEmpty)
+          'categoryTags': _selectedCategoryTags.toList(),
+        if (_priceList.isNotEmpty) 'priceList': _priceList,
+        if (_responseTimeMinutes != null)
+          'responseTimeMinutes': _responseTimeMinutes,
         'rating': rating,
         'reviewsCount': reviewsCount,
         'updatedAt': FieldValue.serverTimestamp(),
@@ -1665,8 +2100,9 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
           }
         } else if (hasContent) {
           // Brand new review
-          final date = DateTime.now()
-              .subtract(Duration(days: r.daysAgo + _rng.nextInt(3)));
+          final date = DateTime.now().subtract(
+            Duration(days: r.daysAgo + _rng.nextInt(3)),
+          );
           await _db.collection('reviews').add({
             'expertId': uid,
             'listingId': listingId,
@@ -1697,10 +2133,7 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('שגיאה: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -1717,497 +2150,784 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
       initialChildSize: 0.95,
       maxChildSize: 0.97,
       minChildSize: 0.5,
-      builder: (_, scrollCtrl) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Form(
-          key: _formKey,
-          // Use Stack so the bottom CTA stays sticky regardless of content length
-          child: Stack(
-            children: [
-              ListView(
-                controller: scrollCtrl,
-                // Bottom padding leaves room for the sticky CTA bar
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 110),
+      builder:
+          (_, scrollCtrl) => Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Form(
+              key: _formKey,
+              // Use Stack so the bottom CTA stays sticky regardless of content length
+              child: Stack(
                 children: [
-                  // Drag handle
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    isEdit ? 'ערוך מומחה דמו' : 'צור מומחה דמו חדש',
-                    style: const TextStyle(
-                        fontSize: 20, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'הפרופיל יופיע בחיפוש כספק רגיל. לקוחות יוכלו לנסות להזמין.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 20),
-
-                  // ── 1. Basic info ─────────────────────────────────────────
-                  _sectionHeader('📋 פרטים בסיסיים'),
-                  _field(_nameCtrl, 'שם המומחה *', Icons.person_outline),
-                  _field(_phoneCtrl, 'טלפון', Icons.phone_outlined,
-                      keyboard: TextInputType.phone),
-                  _field(_emailCtrl, 'אימייל', Icons.email_outlined,
-                      keyboard: TextInputType.emailAddress),
-                  _field(_bioCtrl, 'ביו / תיאור שירות', Icons.notes_outlined,
-                      maxLines: 3),
-                  _field(_jobsCtrl, 'עבודות שהושלמו', Icons.work_outline,
-                      keyboard: TextInputType.number),
-
-                  // ── 2. Pricing ────────────────────────────────────────────
-                  _sectionHeader('💰 תמחור'),
-                  _field(_priceCtrl, 'מחיר לשעה (₪) — ברירת מחדל',
-                      Icons.attach_money_rounded,
-                      keyboard: TextInputType.number),
-                  if (_loadingSchema)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                      child: Center(child: CircularProgressIndicator()),
-                    )
-                  else if (!_activeSchema.isEmpty)
-                    DynamicServiceSchemaForm(
-                      key: ValueKey(
-                          'schema_${_selectedSubCategory ?? _selectedCategoryName ?? ''}'),
-                      schema: _activeSchema,
-                      initialValues: _categoryDetails,
-                      onChanged: (v) {
-                        _categoryDetails = v;
-                      },
-                    ),
-
-                  // ── 3. Category ───────────────────────────────────────────
-                  _sectionHeader('🏷️ קטגוריה'),
-                  if (!_catsLoaded)
-                    const Center(child: CircularProgressIndicator())
-                  else ...[
-                    DropdownButtonFormField<String>(
-                      value: _selectedCategoryName,
-                      isExpanded: true,
-                      decoration: InputDecoration(
-                        labelText: 'קטגוריה ראשית *',
-                        prefixIcon:
-                            const Icon(Icons.category_outlined, size: 20),
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 14),
-                      ),
-                      items: _mainCats
-                          .map((c) => DropdownMenuItem<String>(
-                                value: c['name'],
-                                child: Text(c['name']!,
-                                    overflow: TextOverflow.ellipsis),
-                              ))
-                          .toList(),
-                      onChanged: (v) {
-                        setState(() {
-                          _selectedCategoryName = v;
-                          _selectedSubCategory = null;
-                          _subCats = [];
-                          _activeSchema = ServiceSchema.empty();
-                          _categoryDetails = {};
-                        });
-                        final match = _mainCats.firstWhere(
-                          (c) => c['name'] == v,
-                          orElse: () => {},
-                        );
-                        if (match.isNotEmpty) {
-                          _loadSubCategories(match['id']!);
-                        }
-                        if (v != null && v.isNotEmpty) {
-                          _loadSchemaFor(v);
-                        }
-                      },
-                      validator: (v) => (v == null || v.isEmpty)
-                          ? 'נא לבחור קטגוריה'
-                          : null,
-                    ),
-                    if (_subCats.isNotEmpty) ...[
-                      const SizedBox(height: 14),
-                      DropdownButtonFormField<String>(
-                        value: _selectedSubCategory,
-                        isExpanded: true,
-                        decoration: InputDecoration(
-                          labelText: 'תת-קטגוריה (אופציונלי)',
-                          prefixIcon: const Icon(
-                              Icons.subdirectory_arrow_right,
-                              size: 20),
-                          border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 14),
-                        ),
-                        items: [
-                          const DropdownMenuItem<String>(
-                            value: null,
-                            child: Text('— ללא תת-קטגוריה —',
-                                style: TextStyle(color: Colors.grey)),
-                          ),
-                          ..._subCats.map((s) => DropdownMenuItem<String>(
-                                value: s,
-                                child:
-                                    Text(s, overflow: TextOverflow.ellipsis),
-                              )),
-                        ],
-                        onChanged: (v) {
-                          setState(() {
-                            _selectedSubCategory = v;
-                            _activeSchema = ServiceSchema.empty();
-                            _categoryDetails = {};
-                          });
-                          if (v != null && v.isNotEmpty) {
-                            _loadSchemaFor(v);
-                          } else if ((_selectedCategoryName ?? '').isNotEmpty) {
-                            // Fallback to parent category schema
-                            _loadSchemaFor(_selectedCategoryName!);
-                          }
-                        },
-                      ),
-                    ],
-                  ],
-                  const SizedBox(height: 14),
-
-                  // ── 4. Profile image ──────────────────────────────────────
-                  _sectionHeader('📸 תמונת פרופיל'),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  ListView(
+                    controller: scrollCtrl,
+                    // Bottom padding leaves room for the sticky CTA bar
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 110),
                     children: [
-                      Container(
-                        width: 80,
-                        height: 80,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade300),
-                          image: safeImageProvider(_profileImageUrl) != null
-                              ? DecorationImage(
-                                  image: safeImageProvider(_profileImageUrl)!,
-                                  fit: BoxFit.cover,
-                                )
-                              : null,
+                      // Drag handle
+                      Center(
+                        child: Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[300],
+                            borderRadius: BorderRadius.circular(2),
+                          ),
                         ),
-                        child: safeImageProvider(_profileImageUrl) == null
-                            ? const Icon(Icons.person_outline,
-                                color: Colors.grey, size: 36)
-                            : null,
                       ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            OutlinedButton.icon(
-                              onPressed: _uploadingProfile
-                                  ? null
-                                  : _uploadProfileImage,
-                              icon: _uploadingProfile
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2))
-                                  : const Icon(Icons.upload_rounded,
-                                      size: 18),
-                              label: Text(_uploadingProfile
-                                  ? 'מעלה...'
-                                  : 'העלה מהמחשב'),
-                              style: OutlinedButton.styleFrom(
-                                side: const BorderSide(
-                                    color: Color(0xFF6366F1)),
-                                foregroundColor: const Color(0xFF6366F1),
+                      const SizedBox(height: 14),
+                      Text(
+                        isEdit ? 'ערוך נותן שירות דמו' : 'צור נותן שירות דמו חדש',
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'הפרופיל יופיע בחיפוש כספק רגיל. לקוחות יוכלו לנסות להזמין.',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 20),
+
+                      // ── 1. Basic info ─────────────────────────────────────────
+                      _sectionHeader('📋 פרטים בסיסיים'),
+                      _field(_nameCtrl, 'שם נותן השירות *', Icons.person_outline),
+                      _field(
+                        _phoneCtrl,
+                        'טלפון',
+                        Icons.phone_outlined,
+                        keyboard: TextInputType.phone,
+                      ),
+                      _field(
+                        _emailCtrl,
+                        'אימייל',
+                        Icons.email_outlined,
+                        keyboard: TextInputType.emailAddress,
+                      ),
+                      _field(
+                        _bioCtrl,
+                        'ביו / תיאור שירות',
+                        Icons.notes_outlined,
+                        maxLines: 3,
+                      ),
+                      _field(
+                        _jobsCtrl,
+                        'עבודות שהושלמו',
+                        Icons.work_outline,
+                        keyboard: TextInputType.number,
+                      ),
+
+                      // ── 2. Pricing ────────────────────────────────────────────
+                      _sectionHeader('💰 תמחור'),
+                      _field(
+                        _priceCtrl,
+                        'מחיר לשעה (₪) — ברירת מחדל',
+                        Icons.attach_money_rounded,
+                        keyboard: TextInputType.number,
+                      ),
+                      if (_loadingSchema)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else if (!_activeSchema.isEmpty)
+                        DynamicServiceSchemaForm(
+                          key: ValueKey(
+                            'schema_${_selectedSubCategory ?? _selectedCategoryName ?? ''}',
+                          ),
+                          schema: _activeSchema,
+                          initialValues: _categoryDetails,
+                          onChanged: (v) {
+                            _categoryDetails = v;
+                          },
+                        ),
+
+                      // ── 3. Category ───────────────────────────────────────────
+                      _sectionHeader('🏷️ קטגוריה'),
+                      if (!_catsLoaded)
+                        const Center(child: CircularProgressIndicator())
+                      else ...[
+                        DropdownButtonFormField<String>(
+                          value: _selectedCategoryName,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            labelText: 'קטגוריה ראשית *',
+                            prefixIcon: const Icon(
+                              Icons.category_outlined,
+                              size: 20,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 14,
+                            ),
+                          ),
+                          items:
+                              _mainCats
+                                  .map(
+                                    (c) => DropdownMenuItem<String>(
+                                      value: c['name'],
+                                      child: Text(
+                                        c['name']!,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                          onChanged: (v) {
+                            setState(() {
+                              _selectedCategoryName = v;
+                              _selectedSubCategory = null;
+                              _subCats = [];
+                              _activeSchema = ServiceSchema.empty();
+                              _categoryDetails = {};
+                            });
+                            final match = _mainCats.firstWhere(
+                              (c) => c['name'] == v,
+                              orElse: () => {},
+                            );
+                            if (match.isNotEmpty) {
+                              _loadSubCategories(match['id']!);
+                            }
+                            if (v != null && v.isNotEmpty) {
+                              _loadSchemaFor(v);
+                            }
+                          },
+                          validator:
+                              (v) =>
+                                  (v == null || v.isEmpty)
+                                      ? 'נא לבחור קטגוריה'
+                                      : null,
+                        ),
+                        if (_subCats.isNotEmpty) ...[
+                          const SizedBox(height: 14),
+                          DropdownButtonFormField<String>(
+                            value: _selectedSubCategory,
+                            isExpanded: true,
+                            decoration: InputDecoration(
+                              labelText: 'תת-קטגוריה (אופציונלי)',
+                              prefixIcon: const Icon(
+                                Icons.subdirectory_arrow_right,
+                                size: 20,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 14,
                               ),
                             ),
-                            const SizedBox(height: 8),
-                            TextFormField(
-                              initialValue: _profileImageUrl,
-                              decoration: InputDecoration(
-                                hintText: 'או הדבק URL של תמונה',
-                                hintStyle: TextStyle(
-                                    color: Colors.grey[400], fontSize: 12),
-                                border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10)),
-                                contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 10),
-                                isDense: true,
+                            items: [
+                              const DropdownMenuItem<String>(
+                                value: null,
+                                child: Text(
+                                  '— ללא תת-קטגוריה —',
+                                  style: TextStyle(color: Colors.grey),
+                                ),
                               ),
-                              onChanged: (v) => setState(
-                                  () => _profileImageUrl = v.trim()),
+                              ..._subCats.map(
+                                (s) => DropdownMenuItem<String>(
+                                  value: s,
+                                  child: Text(
+                                    s,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            ],
+                            onChanged: (v) {
+                              setState(() {
+                                _selectedSubCategory = v;
+                                _activeSchema = ServiceSchema.empty();
+                                _categoryDetails = {};
+                              });
+                              if (v != null && v.isNotEmpty) {
+                                _loadSchemaFor(v);
+                              } else if ((_selectedCategoryName ?? '')
+                                  .isNotEmpty) {
+                                // Fallback to parent category schema
+                                _loadSchemaFor(_selectedCategoryName!);
+                              }
+                            },
+                          ),
+                        ],
+                      ],
+
+                      // ── CSM block (category-specific module) ──────────────────
+                      // Wrapped in:
+                      //   • _CsmSafeBoundary — catches any build crash inside
+                      //     the heavy CSM widget so the whole admin shell
+                      //     doesn't freeze (was the suspect for the
+                      //     "Fitness Trainer freeze" report on web).
+                      //   • RepaintBoundary — isolates paint of the huge
+                      //     (3000+ line) blocks from sibling rebuilds (e.g.
+                      //     CategoryTagsSelector loading async).
+                      //   • KeyedSubtree with category-name key — ensures a
+                      //     fresh State when the admin switches between
+                      //     sub-categories (no stale fields leaking across).
+                      _CsmSafeBoundary(
+                        child: Builder(
+                          builder: (_) {
+                            if (_isDemoMassageCategory()) {
+                              return _csmBox(
+                                key: 'csm_massage',
+                                child: MassageSettingsBlock(
+                                  initialProfile: _massageProfile,
+                                  onChanged: (p) => _massageProfile = p,
+                                ),
+                              );
+                            }
+                            if (_isDemoPestControlCategory()) {
+                              return _csmBox(
+                                key: 'csm_pest',
+                                child: PestControlSettingsBlock(
+                                  initialProfile: _pestControlProfile,
+                                  onChanged: (p) => _pestControlProfile = p,
+                                ),
+                              );
+                            }
+                            if (_isDemoDeliveryCategory()) {
+                              return _csmBox(
+                                key: 'csm_delivery',
+                                child: DeliverySettingsBlock(
+                                  initialProfile: _deliveryProfile,
+                                  onChanged: (p) => _deliveryProfile = p,
+                                ),
+                              );
+                            }
+                            if (_isDemoCleaningCategory()) {
+                              return _csmBox(
+                                key: 'csm_cleaning',
+                                child: CleaningSettingsBlock(
+                                  initialProfile: _cleaningProfile,
+                                  onChanged: (p) => _cleaningProfile = p,
+                                ),
+                              );
+                            }
+                            if (_isDemoHandymanCategory()) {
+                              return _csmBox(
+                                key: 'csm_handyman',
+                                child: HandymanSettingsBlock(
+                                  initialProfile: _handymanProfile,
+                                  onChanged: (p) => _handymanProfile = p,
+                                ),
+                              );
+                            }
+                            if (_isDemoFitnessTrainerCategory()) {
+                              return _csmBox(
+                                key: 'csm_fitness',
+                                child: FitnessTrainerSettingsBlock(
+                                  initialProfile: _fitnessTrainerProfile,
+                                  onChanged: (p) =>
+                                      _fitnessTrainerProfile = p,
+                                ),
+                              );
+                            }
+                            if (_isDemoBabysitterCategory()) {
+                              return _csmBox(
+                                key: 'csm_babysitter',
+                                child: BabysitterSettingsBlock(
+                                  initialProfile: _babysitterProfile,
+                                  onChanged: (p) => _babysitterProfile = p,
+                                ),
+                              );
+                            }
+                            if (_isDemoMotorcycleTowingCategory()) {
+                              return _csmBox(
+                                key: 'csm_motorcycle_tow',
+                                child: MotorcycleTowSettingsBlock(
+                                  initialProfile: _motorcycleTowProfile,
+                                  onChanged: (p) =>
+                                      _motorcycleTowProfile = p,
+                                ),
+                              );
+                            }
+                            return const SizedBox.shrink();
+                          },
+                        ),
+                      ),
+
+                      const SizedBox(height: 14),
+
+                      // ── Structured price list (mirrors edit_profile) ──
+                      // Only renders for categories that have one — currently
+                      // balloon decorators + personal trainers (see
+                      // hasPriceList() in price_list_widget.dart).
+                      if (hasPriceList({
+                        'serviceType': _selectedSubCategory ?? '',
+                        'parentCategory': _selectedCategoryName ?? '',
+                      })) ...[
+                        _sectionHeader('💵 מחירון מובנה'),
+                        PriceListEditor(
+                          type: priceListType({
+                            'serviceType': _selectedSubCategory ?? '',
+                            'parentCategory': _selectedCategoryName ?? '',
+                          }),
+                          initialData: _priceList,
+                          onChanged: (val) => _priceList = val,
+                        ),
+                        const SizedBox(height: 14),
+                      ],
+
+                      // ── Category-specific tags (mirrors edit_profile §15a) ─
+                      // Reads from `category_tags/{categoryName}` collection;
+                      // hidden when the category has no catalog doc.
+                      if ((_selectedSubCategory ?? _selectedCategoryName ?? '')
+                          .isNotEmpty) ...[
+                        _sectionHeader('🏷️ תגיות קטגוריה'),
+                        CategoryTagsSelector(
+                          category:
+                              _selectedSubCategory ?? _selectedCategoryName ?? '',
+                          initialSelected: _selectedCategoryTags,
+                          onChanged: (s) {
+                            setState(() {
+                              _selectedCategoryTags
+                                ..clear()
+                                ..addAll(s);
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 14),
+                      ],
+
+                      // ── Response time chips (mirrors edit_profile) ──
+                      _sectionHeader('⏱️ זמן תגובה ממוצע'),
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          'דקות עד מענה ראשון ללקוח (משפיע על דירוג חיפוש)',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          for (final minutes in [5, 10, 15, 30, 60])
+                            ChoiceChip(
+                              label: Text('$minutes דק׳',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600)),
+                              selected: _responseTimeMinutes == minutes,
+                              selectedColor:
+                                  const Color(0xFF6366F1).withValues(alpha: 0.15),
+                              labelStyle: TextStyle(
+                                color: _responseTimeMinutes == minutes
+                                    ? const Color(0xFF6366F1)
+                                    : Colors.black87,
+                              ),
+                              onSelected: (_) {
+                                setState(() => _responseTimeMinutes =
+                                    _responseTimeMinutes == minutes
+                                        ? null
+                                        : minutes);
+                              },
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+
+                      // ── Tax ID + Business Doc URL (mirrors edit_profile) ──
+                      _sectionHeader('🪪 מספר עוסק / רישיון עסק (אופציונלי)'),
+                      _field(
+                        _taxIdCtrl,
+                        'מספר עוסק / ח.פ',
+                        Icons.receipt_long_rounded,
+                      ),
+                      const SizedBox(height: 8),
+                      _field(
+                        _businessDocCtrl,
+                        'URL של רישיון עסק / תעודת עוסק',
+                        Icons.link_rounded,
+                      ),
+                      const SizedBox(height: 14),
+
+                      // ── 4. Profile image ──────────────────────────────────────
+                      _sectionHeader('📸 תמונת פרופיל'),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.grey.shade300),
+                              image:
+                                  safeImageProvider(_profileImageUrl) != null
+                                      ? DecorationImage(
+                                        image:
+                                            safeImageProvider(
+                                              _profileImageUrl,
+                                            )!,
+                                        fit: BoxFit.cover,
+                                      )
+                                      : null,
+                            ),
+                            child:
+                                safeImageProvider(_profileImageUrl) == null
+                                    ? const Icon(
+                                      Icons.person_outline,
+                                      color: Colors.grey,
+                                      size: 36,
+                                    )
+                                    : null,
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed:
+                                      _uploadingProfile
+                                          ? null
+                                          : _uploadProfileImage,
+                                  icon:
+                                      _uploadingProfile
+                                          ? const SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                          : const Icon(
+                                            Icons.upload_rounded,
+                                            size: 18,
+                                          ),
+                                  label: Text(
+                                    _uploadingProfile
+                                        ? 'מעלה...'
+                                        : 'העלה מהמחשב',
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    side: const BorderSide(
+                                      color: Color(0xFF6366F1),
+                                    ),
+                                    foregroundColor: const Color(0xFF6366F1),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                TextFormField(
+                                  initialValue: _profileImageUrl,
+                                  decoration: InputDecoration(
+                                    hintText: 'או הדבק URL של תמונה',
+                                    hintStyle: TextStyle(
+                                      color: Colors.grey[400],
+                                      fontSize: 12,
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
+                                    ),
+                                    isDense: true,
+                                  ),
+                                  onChanged:
+                                      (v) => setState(
+                                        () => _profileImageUrl = v.trim(),
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+
+                      // ── 5. Gallery (6 slots) ──────────────────────────────────
+                      _sectionHeader('🖼️ גלריית עבודות (עד 6 תמונות)'),
+                      GridView.builder(
+                        physics: const NeverScrollableScrollPhysics(),
+                        shrinkWrap: true,
+                        itemCount: 6,
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 3,
+                              crossAxisSpacing: 8,
+                              mainAxisSpacing: 8,
+                              childAspectRatio: 1.0,
+                            ),
+                        itemBuilder: (_, i) {
+                          final url = _galleryUrls[i];
+                          return GestureDetector(
+                            onTap: () => _uploadGalleryImage(i),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.grey[100],
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: const Color(
+                                    0xFF6366F1,
+                                  ).withValues(alpha: 0.4),
+                                ),
+                                image:
+                                    safeImageProvider(url) != null
+                                        ? DecorationImage(
+                                          image: safeImageProvider(url)!,
+                                          fit: BoxFit.cover,
+                                        )
+                                        : null,
+                              ),
+                              child:
+                                  _uploadingGallery[i]
+                                      ? const Center(
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                      : url.isEmpty
+                                      ? Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.add_photo_alternate_outlined,
+                                            color: Colors.grey[400],
+                                            size: 28,
+                                          ),
+                                          Text(
+                                            'תמונה ${i + 1}',
+                                            style: TextStyle(
+                                              color: Colors.grey[400],
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ],
+                                      )
+                                      : Align(
+                                        alignment: Alignment.topRight,
+                                        child: GestureDetector(
+                                          onTap:
+                                              () => setState(
+                                                () => _galleryUrls[i] = '',
+                                              ),
+                                          child: Container(
+                                            margin: const EdgeInsets.all(4),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black54,
+                                              borderRadius:
+                                                  BorderRadius.circular(20),
+                                            ),
+                                            child: const Icon(
+                                              Icons.close,
+                                              color: Colors.white,
+                                              size: 14,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 20),
+
+                      // ── 6. Working hours ──────────────────────────────────────
+                      _sectionHeader('🕐 שעות פעילות'),
+                      _buildWorkingHoursEditor(),
+                      const SizedBox(height: 20),
+
+                      // ── 7. Cancellation policy ────────────────────────────────
+                      _sectionHeader('🛡️ מדיניות ביטולים'),
+                      _buildPolicySelector(),
+                      const SizedBox(height: 20),
+
+                      // ── 8. Quick tags ─────────────────────────────────────────
+                      _sectionHeader('🏷️ תגיות מהירות'),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children:
+                            _availableQuickTags.map((tag) {
+                              final selected = _selectedQuickTags.contains(
+                                tag['key'],
+                              );
+                              return FilterChip(
+                                label: Text('${tag['emoji']} ${tag['label']}'),
+                                selected: selected,
+                                onSelected: (v) {
+                                  setState(() {
+                                    if (v) {
+                                      _selectedQuickTags.add(tag['key']!);
+                                    } else {
+                                      _selectedQuickTags.remove(tag['key']);
+                                    }
+                                  });
+                                },
+                                selectedColor: const Color(
+                                  0xFF6366F1,
+                                ).withValues(alpha: 0.15),
+                                checkmarkColor: const Color(0xFF6366F1),
+                              );
+                            }).toList(),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // ── 9. Reviews (editable) ─────────────────────────────────
+                      _sectionHeader('⭐ ביקורות'),
+                      if (!_reviewsLoaded)
+                        const Center(child: CircularProgressIndicator())
+                      else
+                        ...List.generate(
+                          _reviews.length,
+                          (i) => _buildReviewSlot(i),
+                        ),
+
+                      const SizedBox(height: 8),
+                      // Rating preview
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEEF2FF),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(
+                              Icons.star_rounded,
+                              color: Color(0xFFF59E0B),
+                              size: 22,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              'דירוג מחושב: ${_calculatedRating.toStringAsFixed(1)} '
+                              '($_filledReviewsCount ביקורות)',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF4338CA),
+                                fontSize: 14,
+                              ),
+                            ),
+                            if (_calculatedRating >= 4.8 &&
+                                _filledReviewsCount > 0) ...[
+                              const SizedBox(width: 8),
+                              const Icon(
+                                Icons.workspace_premium,
+                                color: Color(0xFFF59E0B),
+                                size: 18,
+                              ),
+                              const Text(
+                                ' Top Rated',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFFF59E0B),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                  ),
+
+                  // ── Sticky bottom CTA bar ─────────────────────────────────────
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: const BorderRadius.vertical(
+                          bottom: Radius.circular(0),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.06),
+                            offset: const Offset(0, -2),
+                            blurRadius: 8,
+                          ),
+                        ],
+                        border: Border(
+                          top: BorderSide(color: Colors.grey.shade200),
+                        ),
+                      ),
+                      padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+                      child: SafeArea(
+                        top: false,
+                        child: Row(
+                          children: [
+                            TextButton(
+                              onPressed:
+                                  _isSaving
+                                      ? null
+                                      : () => Navigator.of(context).pop(),
+                              child: const Text(
+                                'ביטול',
+                                style: TextStyle(color: Colors.grey),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF6366F1),
+                                  minimumSize: const Size(double.infinity, 52),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                ),
+                                onPressed: _isSaving ? null : _save,
+                                child:
+                                    _isSaving
+                                        ? const SizedBox(
+                                          width: 22,
+                                          height: 22,
+                                          child: CircularProgressIndicator(
+                                            color: Colors.white,
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                        : Text(
+                                          isEdit ? 'אשר ועדכן' : 'אשר והעלה',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                              ),
                             ),
                           ],
                         ),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-
-                  // ── 5. Gallery (6 slots) ──────────────────────────────────
-                  _sectionHeader('🖼️ גלריית עבודות (עד 6 תמונות)'),
-                  GridView.builder(
-                    physics: const NeverScrollableScrollPhysics(),
-                    shrinkWrap: true,
-                    itemCount: 6,
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      crossAxisSpacing: 8,
-                      mainAxisSpacing: 8,
-                      childAspectRatio: 1.0,
-                    ),
-                    itemBuilder: (_, i) {
-                      final url = _galleryUrls[i];
-                      return GestureDetector(
-                        onTap: () => _uploadGalleryImage(i),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.grey[100],
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: const Color(0xFF6366F1)
-                                  .withValues(alpha: 0.4),
-                            ),
-                            image: safeImageProvider(url) != null
-                                ? DecorationImage(
-                                    image: safeImageProvider(url)!,
-                                    fit: BoxFit.cover,
-                                  )
-                                : null,
-                          ),
-                          child: _uploadingGallery[i]
-                              ? const Center(
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2))
-                              : url.isEmpty
-                                  ? Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.add_photo_alternate_outlined,
-                                          color: Colors.grey[400],
-                                          size: 28,
-                                        ),
-                                        Text(
-                                          'תמונה ${i + 1}',
-                                          style: TextStyle(
-                                            color: Colors.grey[400],
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                      ],
-                                    )
-                                  : Align(
-                                      alignment: Alignment.topRight,
-                                      child: GestureDetector(
-                                        onTap: () => setState(
-                                            () => _galleryUrls[i] = ''),
-                                        child: Container(
-                                          margin: const EdgeInsets.all(4),
-                                          decoration: BoxDecoration(
-                                            color: Colors.black54,
-                                            borderRadius:
-                                                BorderRadius.circular(20),
-                                          ),
-                                          child: const Icon(Icons.close,
-                                              color: Colors.white, size: 14),
-                                        ),
-                                      ),
-                                    ),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 20),
-
-                  // ── 6. Working hours ──────────────────────────────────────
-                  _sectionHeader('🕐 שעות פעילות'),
-                  _buildWorkingHoursEditor(),
-                  const SizedBox(height: 20),
-
-                  // ── 7. Cancellation policy ────────────────────────────────
-                  _sectionHeader('🛡️ מדיניות ביטולים'),
-                  _buildPolicySelector(),
-                  const SizedBox(height: 20),
-
-                  // ── 8. Quick tags ─────────────────────────────────────────
-                  _sectionHeader('🏷️ תגיות מהירות'),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _availableQuickTags.map((tag) {
-                      final selected =
-                          _selectedQuickTags.contains(tag['key']);
-                      return FilterChip(
-                        label: Text('${tag['emoji']} ${tag['label']}'),
-                        selected: selected,
-                        onSelected: (v) {
-                          setState(() {
-                            if (v) {
-                              _selectedQuickTags.add(tag['key']!);
-                            } else {
-                              _selectedQuickTags.remove(tag['key']);
-                            }
-                          });
-                        },
-                        selectedColor: const Color(0xFF6366F1)
-                            .withValues(alpha: 0.15),
-                        checkmarkColor: const Color(0xFF6366F1),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // ── 9. Reviews (editable) ─────────────────────────────────
-                  _sectionHeader('⭐ ביקורות'),
-                  if (!_reviewsLoaded)
-                    const Center(child: CircularProgressIndicator())
-                  else
-                    ...List.generate(
-                      _reviews.length,
-                      (i) => _buildReviewSlot(i),
-                    ),
-
-                  const SizedBox(height: 8),
-                  // Rating preview
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFEEF2FF),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.star_rounded,
-                            color: Color(0xFFF59E0B), size: 22),
-                        const SizedBox(width: 6),
-                        Text(
-                          'דירוג מחושב: ${_calculatedRating.toStringAsFixed(1)} '
-                          '($_filledReviewsCount ביקורות)',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF4338CA),
-                            fontSize: 14,
-                          ),
-                        ),
-                        if (_calculatedRating >= 4.8 &&
-                            _filledReviewsCount > 0) ...[
-                          const SizedBox(width: 8),
-                          const Icon(Icons.workspace_premium,
-                              color: Color(0xFFF59E0B), size: 18),
-                          const Text(
-                            ' Top Rated',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Color(0xFFF59E0B),
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ],
                     ),
                   ),
-                  const SizedBox(height: 12),
                 ],
               ),
-
-              // ── Sticky bottom CTA bar ─────────────────────────────────────
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: const BorderRadius.vertical(
-                        bottom: Radius.circular(0)),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.06),
-                        offset: const Offset(0, -2),
-                        blurRadius: 8,
-                      ),
-                    ],
-                    border: Border(
-                      top: BorderSide(color: Colors.grey.shade200),
-                    ),
-                  ),
-                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
-                  child: SafeArea(
-                    top: false,
-                    child: Row(
-                      children: [
-                        TextButton(
-                          onPressed: _isSaving
-                              ? null
-                              : () => Navigator.of(context).pop(),
-                          child: const Text(
-                            'ביטול',
-                            style: TextStyle(color: Colors.grey),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF6366F1),
-                              minimumSize:
-                                  const Size(double.infinity, 52),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14)),
-                            ),
-                            onPressed: _isSaving ? null : _save,
-                            child: _isSaving
-                                ? const SizedBox(
-                                    width: 22,
-                                    height: 22,
-                                    child: CircularProgressIndicator(
-                                        color: Colors.white,
-                                        strokeWidth: 2),
-                                  )
-                                : Text(
-                                    isEdit
-                                        ? 'אשר ועדכן'
-                                        : 'אשר והעלה',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
-      ),
     );
   }
 
   // ── Working hours editor ──────────────────────────────────────────────────
 
   Widget _buildWorkingHoursEditor() {
-    const dayLabels = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+    const dayLabels = [
+      'ראשון',
+      'שני',
+      'שלישי',
+      'רביעי',
+      'חמישי',
+      'שישי',
+      'שבת',
+    ];
     return Column(
       children: List.generate(7, (i) {
         final key = '$i';
@@ -2237,10 +2957,7 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
                         });
                       },
                     ),
-                    Text(
-                      dayLabels[i],
-                      style: const TextStyle(fontSize: 13),
-                    ),
+                    Text(dayLabels[i], style: const TextStyle(fontSize: 13)),
                   ],
                 ),
               ),
@@ -2253,15 +2970,15 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
                       labelText: 'מ-',
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 10),
+                        horizontal: 10,
+                        vertical: 10,
+                      ),
                       border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8)),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                     onChanged: (v) {
-                      _workingHours[key] = {
-                        ..._workingHours[key]!,
-                        'from': v,
-                      };
+                      _workingHours[key] = {..._workingHours[key]!, 'from': v};
                     },
                   ),
                 ),
@@ -2274,15 +2991,15 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
                       labelText: 'עד',
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 10),
+                        horizontal: 10,
+                        vertical: 10,
+                      ),
                       border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8)),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                     onChanged: (v) {
-                      _workingHours[key] = {
-                        ..._workingHours[key]!,
-                        'to': v,
-                      };
+                      _workingHours[key] = {..._workingHours[key]!, 'to': v};
                     },
                   ),
                 ),
@@ -2330,69 +3047,73 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
       },
     ];
     return Column(
-      children: policies.map((p) {
-        final selected = _cancellationPolicy == p['key'];
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: GestureDetector(
-            onTap: () =>
-                setState(() => _cancellationPolicy = p['key'] as String),
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: selected
-                    ? (p['color'] as Color).withValues(alpha: 0.08)
-                    : Colors.grey[50],
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: selected
-                      ? (p['color'] as Color)
-                      : Colors.grey.shade300,
-                  width: selected ? 2 : 1,
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    selected
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_unchecked,
-                    color: selected
-                        ? (p['color'] as Color)
-                        : Colors.grey,
-                    size: 22,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          p['label'] as String,
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                            color: selected
-                                ? (p['color'] as Color)
-                                : Colors.black87,
-                          ),
-                        ),
-                        Text(
-                          p['desc'] as String,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ],
+      children:
+          policies.map((p) {
+            final selected = _cancellationPolicy == p['key'];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: GestureDetector(
+                onTap:
+                    () => setState(
+                      () => _cancellationPolicy = p['key'] as String,
+                    ),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color:
+                        selected
+                            ? (p['color'] as Color).withValues(alpha: 0.08)
+                            : Colors.grey[50],
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color:
+                          selected
+                              ? (p['color'] as Color)
+                              : Colors.grey.shade300,
+                      width: selected ? 2 : 1,
                     ),
                   ),
-                ],
+                  child: Row(
+                    children: [
+                      Icon(
+                        selected
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_unchecked,
+                        color: selected ? (p['color'] as Color) : Colors.grey,
+                        size: 22,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              p['label'] as String,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                                color:
+                                    selected
+                                        ? (p['color'] as Color)
+                                        : Colors.black87,
+                              ),
+                            ),
+                            Text(
+                              p['desc'] as String,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ),
-          ),
-        );
-      }).toList(),
+            );
+          }).toList(),
     );
   }
 
@@ -2426,7 +3147,9 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
               if (isExisting)
                 Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 6, vertical: 2),
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFF10B981).withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(6),
@@ -2465,9 +3188,12 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
               labelText: 'שם הלקוח (למשל: ישראל ישראלי)',
               prefixIcon: const Icon(Icons.person_outline, size: 18),
               border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10)),
+                borderRadius: BorderRadius.circular(10),
+              ),
               contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 10),
+                horizontal: 12,
+                vertical: 10,
+              ),
               isDense: true,
             ),
           ),
@@ -2481,9 +3207,12 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
               labelText: 'תוכן הביקורת',
               prefixIcon: const Icon(Icons.rate_review_outlined, size: 18),
               border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10)),
+                borderRadius: BorderRadius.circular(10),
+              ),
               contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 10),
+                horizontal: 12,
+                vertical: 10,
+              ),
               isDense: true,
             ),
           ),
@@ -2491,8 +3220,10 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
           // Star rating picker
           Row(
             children: [
-              const Text('דירוג: ',
-                  style: TextStyle(fontSize: 13, color: Colors.grey)),
+              const Text(
+                'דירוג: ',
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
               ...List.generate(5, (s) {
                 final filled = s < r.rating.round();
                 return GestureDetector(
@@ -2530,14 +3261,31 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
                     max: 90,
                     divisions: 89,
                     activeColor: const Color(0xFF6366F1),
-                    onChanged: (v) =>
-                        setState(() => r.daysAgo = v.round()),
+                    onChanged: (v) => setState(() => r.daysAgo = v.round()),
                   ),
                 ),
               ],
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  // ── CSM block wrapper (perf + paint isolation) ───────────────────────────
+  // Used by every category-specific module render path. Ensures:
+  //   • RepaintBoundary — heavy CSM widgets (Fitness Trainer is 3,300 LOC,
+  //     11 sections) don't repaint when sibling widgets like the
+  //     CategoryTagsSelector finish their async load.
+  //   • KeyedSubtree with the CSM key — when the admin switches between
+  //     sub-categories, Flutter rebuilds with a fresh State so no stale
+  //     fields leak across CSMs.
+  Widget _csmBox({required String key, required Widget child}) {
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(top: 14),
+      child: KeyedSubtree(
+        key: ValueKey(key),
+        child: RepaintBoundary(child: child),
       ),
     );
   }
@@ -2575,16 +3323,138 @@ class _DemoExpertFormState extends State<_DemoExpertForm> {
         decoration: InputDecoration(
           labelText: label,
           prefixIcon: Icon(icon, size: 20),
-          border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12)),
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 14,
+          ),
         ),
-        validator: label.endsWith('*')
-            ? (v) =>
-                (v == null || v.trim().isEmpty) ? 'שדה חובה' : null
-            : null,
+        validator:
+            label.endsWith('*')
+                ? (v) => (v == null || v.trim().isEmpty) ? 'שדה חובה' : null
+                : null,
       ),
     );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CSM Safe Boundary
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Catches build-time exceptions inside any CSM block so a single bug in,
+// say, FitnessTrainerSettingsBlock doesn't freeze the entire admin shell.
+// On crash:
+//   • prints the actual stack to the console (un-minified in dev mode) so
+//     the next dev triage has something concrete to work with;
+//   • renders a small red error card with a retry button;
+//   • keeps the rest of the demo form interactive.
+//
+// Same defensive pattern as the Banners Studio (CLAUDE.md §51 fix history).
+
+class _CsmSafeBoundary extends StatefulWidget {
+  const _CsmSafeBoundary({required this.child});
+  final Widget child;
+
+  @override
+  State<_CsmSafeBoundary> createState() => _CsmSafeBoundaryState();
+}
+
+class _CsmSafeBoundaryState extends State<_CsmSafeBoundary> {
+  Object? _error;
+  int _attempt = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFEE2E2),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFEF4444)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.error_outline, color: Color(0xFFB91C1C)),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'שגיאה בטעינת בלוק הקטגוריה',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFFB91C1C),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '$_error',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0xFF7F1D1D),
+                ),
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: TextButton.icon(
+                  onPressed: () => setState(() {
+                    _error = null;
+                    _attempt++;
+                  }),
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('נסה שוב'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return _CsmGuardedChild(
+      key: ValueKey(_attempt),
+      onError: (e, st) {
+        if (!mounted) return;
+        // ignore: avoid_print
+        print('[CsmSafeBoundary] crash: $e\n$st');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _error = e;
+          });
+        });
+      },
+      child: widget.child,
+    );
+  }
+}
+
+class _CsmGuardedChild extends StatelessWidget {
+  const _CsmGuardedChild({
+    super.key,
+    required this.child,
+    required this.onError,
+  });
+  final Widget child;
+  final void Function(Object error, StackTrace stack) onError;
+
+  @override
+  Widget build(BuildContext context) {
+    try {
+      return child;
+    } catch (e, st) {
+      onError(e, st);
+      return const SizedBox.shrink();
+    }
   }
 }

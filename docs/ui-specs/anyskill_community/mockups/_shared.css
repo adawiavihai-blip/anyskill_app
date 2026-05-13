@@ -1,0 +1,209 @@
+/* AnySkill Community - Shared Design System */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #F5F5F4;
+  font-family: -apple-system, 'SF Pro Display', 'Inter', 'Heebo', sans-serif;
+  direction: rtl;
+  min-height: 100vh;
+  padding: 24px;
+  color: #18181B;
+}
+
+.page-title {
+  font-size: 13px;
+  color: #71717A;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.page-description {
+  font-size: 12px;
+  color: #71717A;
+  line-height: 1.55;
+  text-align: center;
+  max-width: 600px;
+  margin: 16px auto 0;
+}
+
+.phone-frame {
+  max-width: 390px;
+  margin: 0 auto;
+  background: #FFFFFF;
+  border-radius: 24px;
+  overflow: hidden;
+  border: 0.5px solid rgba(0,0,0,0.06);
+  box-shadow: 0 12px 48px rgba(0,0,0,0.06);
+}
+
+.dual-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+.triple-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.screen-label {
+  font-size: 11px;
+  color: #71717A;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  margin-bottom: 12px;
+}
+
+.screen-note {
+  font-size: 11px;
+  color: #71717A;
+  margin-top: 12px;
+  line-height: 1.55;
+}
+
+.header {
+  padding: 16px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 0.5px solid rgba(0,0,0,0.04);
+}
+
+.header-back {
+  background: transparent;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: #18181B;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.header-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #18181B;
+  letter-spacing: -0.1px;
+}
+
+.btn-primary {
+  width: 100%;
+  background: #18181B;
+  color: white;
+  border: none;
+  padding: 14px;
+  border-radius: 100px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: -0.1px;
+  font-family: inherit;
+}
+
+.btn-secondary {
+  background: white;
+  border: 0.5px solid rgba(0,0,0,0.12);
+  padding: 12px 18px;
+  border-radius: 100px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #18181B;
+  letter-spacing: -0.1px;
+  font-family: inherit;
+}
+
+.pill {
+  background: transparent;
+  color: #52525B;
+  border: 0.5px solid rgba(0,0,0,0.12);
+  padding: 6px 12px;
+  border-radius: 100px;
+  font-size: 12px;
+  cursor: pointer;
+  letter-spacing: -0.1px;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.pill-active {
+  background: #18181B;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  letter-spacing: -0.1px;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.divider {
+  width: 0.5px;
+  background: rgba(0,0,0,0.06);
+}
+
+.card {
+  background: white;
+  border-radius: 14px;
+  border: 0.5px solid rgba(0,0,0,0.08);
+  padding: 14px;
+}
+
+.card-soft {
+  background: #FAFAF9;
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.gold-heart-svg {
+  fill: #A87F2A;
+}
+
+.star-svg {
+  fill: #FBBF24;
+}
+
+.avatar-with-heart {
+  position: relative;
+  display: inline-block;
+}
+
+.avatar-heart-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  background: white;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+input, textarea {
+  font-family: inherit;
+}
+
+button {
+  font-family: inherit;
+}
+
+::-webkit-scrollbar {
+  display: none;
+}

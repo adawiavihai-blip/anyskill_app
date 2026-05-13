@@ -13,9 +13,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../../../utils/error_mapper.dart';
 import '../models/any_task.dart';
 import '../services/any_task_service.dart';
 import '../theme/any_tasks_palette.dart';
+import '../widgets/deadline_badge.dart';
 import 'compare_offers_screen.dart';
 import 'publish_task_screen.dart';
 import 'task_tracking_screen.dart';
@@ -273,11 +275,60 @@ class _TaskCard extends StatelessWidget {
     return 'לפני ${d.inDays} ימים';
   }
 
+  Future<void> _handleEdit(BuildContext context) async {
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+          builder: (_) => PublishTaskScreen(existingTask: task)),
+    );
+    if (result == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('השינויים נשמרו'),
+        backgroundColor: TasksPalette.success,
+      ));
+    }
+  }
+
+  Future<void> _handleDelete(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('מחיקת משימה'),
+        content: const Text(
+            'למחוק את המשימה? פעולה זו תסיר אותה מנותני השירות ולא ניתן לבטל.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: TasksPalette.danger),
+            child: const Text('מחק'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await AnyTaskService.instance.cancelTask(task.id!);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('המשימה נמחקה'),
+        backgroundColor: TasksPalette.success,
+      ));
+    } catch (e) {
+      if (!context.mounted) return;
+      ErrorMapper.show(context, e);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasOffers = task.status == 'open' && task.responseCount > 0;
     final inProgress =
         task.status == 'in_progress' || task.status == 'proof_submitted';
+    final isEditable = task.status == 'open';
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -321,6 +372,10 @@ class _TaskCard extends StatelessWidget {
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
                       color: TasksPalette.primaryGreenDark)),
+              if (task.deadline != null && task.status == 'open') ...[
+                const SizedBox(width: 8),
+                DeadlineBadge(deadline: task.deadline),
+              ],
             ],
           ),
           if (hasOffers) ...[
@@ -412,6 +467,56 @@ class _TaskCard extends StatelessWidget {
               ),
             ],
           ),
+          // Owner edit/delete — visible only while the task is still open
+          // (no provider selected). Once in_progress+ the details are
+          // frozen and the customer has to cancel instead.
+          if (isEditable) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: () => _handleEdit(context),
+                    icon: const Icon(Icons.edit_outlined, size: 16),
+                    label: const Text('ערוך',
+                        style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600)),
+                    style: TextButton.styleFrom(
+                      foregroundColor: TasksPalette.darkNavy,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                              TasksPalette.rButton),
+                          side: const BorderSide(
+                              color: TasksPalette.borderLight)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: () => _handleDelete(context),
+                    icon: const Icon(Icons.delete_outline, size: 16),
+                    label: const Text('מחק',
+                        style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600)),
+                    style: TextButton.styleFrom(
+                      foregroundColor: TasksPalette.danger,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                              TasksPalette.rButton),
+                          side: BorderSide(
+                              color: TasksPalette.danger
+                                  .withValues(alpha: 0.35))),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

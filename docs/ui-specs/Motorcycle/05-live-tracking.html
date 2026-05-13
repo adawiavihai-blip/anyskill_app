@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Tracking - מעקב חי</title>
+<style>
+  :root {
+    --purple-900: #26215C;
+    --purple-700: #3C3489;
+    --purple-500: #534AB7;
+    --purple-300: #7F77DD;
+    --purple-50: #EEEDFE;
+    --green-700: #0F6E56;
+    --green-500: #1D9E75;
+    --green-50: #E1F5EE;
+    --amber-800: #854F0B;
+    --amber-600: #BA7517;
+    --amber-50: #FAEEDA;
+    --red-700: #791F1F;
+    --red-500: #A32D2D;
+    --red-50: #FCEBEB;
+    --bg-primary: #FFFFFF;
+    --bg-secondary: #F5F4EE;
+    --text-primary: #2C2C2A;
+    --text-secondary: #5F5E5A;
+    --text-tertiary: #888780;
+    --border-tertiary: #E8E6DD;
+    --border-secondary: #D3D1C7;
+  }
+  * { box-sizing: border-box; }
+  body { direction: rtl; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg-secondary); color: var(--text-primary); margin: 0; padding: 20px; }
+  .container { max-width: 480px; margin: 0 auto; }
+
+  .status-bar { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--purple-500); border-radius: 12px; margin-bottom: 12px; color: white; }
+  .status-icon { width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; flex-shrink: 0; position: relative; }
+  .status-icon::before { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); animation: pulse 2s ease-out infinite; }
+  @keyframes pulse { 0% { transform: scale(0.9); opacity: 1; } 100% { transform: scale(1.4); opacity: 0; } }
+  .status-icon svg { width: 18px; height: 18px; stroke: white; fill: none; stroke-width: 2; }
+  .status-content { flex: 1; }
+  .status-label { font-size: 11px; opacity: 0.85; margin: 0 0 2px; }
+  .status-value { font-size: 15px; font-weight: 500; margin: 0; }
+  .status-eta { text-align: left; padding-right: 12px; border-right: 1px solid rgba(255,255,255,0.25); }
+  .status-eta-num { font-size: 22px; font-weight: 500; line-height: 1; margin: 0; }
+  .status-eta-unit { font-size: 11px; opacity: 0.85; margin: 2px 0 0; }
+
+  .map { position: relative; height: 220px; background: var(--green-50); border-radius: 12px; overflow: hidden; margin-bottom: 12px; border: 0.5px solid var(--border-tertiary); }
+  .map-bg { width: 100%; height: 100%; }
+  .map-controls { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 4px; }
+  .map-btn { width: 32px; height: 32px; border-radius: 8px; background: white; border: 0.5px solid var(--border-tertiary); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .map-btn svg { width: 14px; height: 14px; stroke: var(--text-primary); fill: none; stroke-width: 2; }
+  .map-pin { position: absolute; transform: translate(50%, -100%); }
+  .pin-driver { top: 45%; right: 28%; }
+  .pin-driver-circle { width: 36px; height: 36px; border-radius: 50%; background: var(--purple-500); border: 3px solid white; display: flex; align-items: center; justify-content: center; }
+  .pin-driver-circle svg { width: 18px; height: 18px; stroke: white; fill: none; stroke-width: 2; }
+  .pin-customer { top: 75%; right: 65%; }
+  .pin-customer-circle { width: 28px; height: 28px; border-radius: 50%; background: var(--green-500); border: 3px solid white; display: flex; align-items: center; justify-content: center; }
+  .pin-customer-circle svg { width: 12px; height: 12px; fill: white; }
+  .distance-badge { position: absolute; bottom: 10px; right: 10px; background: white; padding: 6px 10px; border-radius: 8px; border: 0.5px solid var(--border-tertiary); font-size: 12px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+  .distance-badge svg { width: 12px; height: 12px; stroke: var(--purple-500); fill: none; stroke-width: 2; }
+
+  .driver-card { background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 12px; padding: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px; }
+  .driver-avatar { width: 52px; height: 52px; border-radius: 50%; background: var(--purple-500); color: white; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 16px; flex-shrink: 0; position: relative; }
+  .driver-avatar::after { content: ''; position: absolute; bottom: 1px; left: 1px; width: 12px; height: 12px; border-radius: 50%; background: var(--green-500); border: 2px solid white; }
+  .driver-info { flex: 1; min-width: 0; }
+  .driver-name { font-size: 15px; font-weight: 500; margin: 0 0 2px; }
+  .driver-meta { font-size: 12px; color: var(--text-secondary); margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .driver-meta .star { color: var(--amber-600); }
+  .driver-vehicle { font-size: 11px; color: var(--text-tertiary); margin: 4px 0 0; }
+  .driver-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .action-btn { width: 40px; height: 40px; border-radius: 50%; border: 0.5px solid var(--border-secondary); background: var(--bg-primary); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .action-btn.primary { background: var(--green-500); border-color: var(--green-500); }
+  .action-btn.primary svg { stroke: white; }
+  .action-btn svg { width: 16px; height: 16px; stroke: var(--text-primary); fill: none; stroke-width: 2; }
+
+  .timeline-card { background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .timeline-title { font-size: 14px; font-weight: 500; margin: 0 0 14px; }
+  .timeline { position: relative; padding-right: 22px; }
+  .timeline::before { content: ''; position: absolute; right: 7px; top: 6px; bottom: 6px; width: 2px; background: var(--border-tertiary); }
+  .timeline-step { position: relative; padding-bottom: 16px; }
+  .timeline-step:last-child { padding-bottom: 0; }
+  .timeline-dot { position: absolute; right: -22px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--bg-primary); border: 2px solid var(--border-secondary); z-index: 1; }
+  .timeline-step.done .timeline-dot { background: var(--green-500); border-color: var(--green-500); }
+  .timeline-step.done .timeline-dot::after { content: ''; position: absolute; top: 3px; right: 2px; width: 5px; height: 8px; border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  .timeline-step.active .timeline-dot { background: var(--purple-500); border-color: var(--purple-500); box-shadow: 0 0 0 4px rgba(83,74,183,0.18); }
+  .timeline-content { font-size: 13px; }
+  .timeline-label { font-weight: 500; margin: 0; }
+  .timeline-step.done .timeline-label, .timeline-step:not(.active):not(.done) .timeline-label { color: var(--text-secondary); }
+  .timeline-time { font-size: 11px; color: var(--text-tertiary); margin: 2px 0 0; }
+  .timeline-step.active .timeline-time { color: var(--purple-500); font-weight: 500; }
+
+  .cost-card { background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  .cost-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .cost-title { font-size: 13px; font-weight: 500; margin: 0; }
+  .cost-locked { font-size: 11px; color: var(--green-500); display: flex; align-items: center; gap: 4px; font-weight: 500; }
+  .cost-locked svg { width: 11px; height: 11px; stroke: var(--green-500); fill: none; stroke-width: 2.5; }
+  .cost-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+  .cost-row .l { color: var(--text-secondary); }
+  .cost-row.total { border-top: 0.5px solid var(--border-tertiary); margin-top: 6px; padding-top: 8px; font-weight: 500; font-size: 14px; }
+  .cost-row.total .v { color: var(--purple-900); }
+
+  .safety-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+  .safety-card { padding: 12px; border-radius: 8px; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+  .safety-card.share { background: var(--bg-secondary); border: 0.5px solid var(--border-tertiary); }
+  .safety-card.sos { background: var(--red-50); border: 0.5px solid #F09595; }
+  .safety-card svg { width: 18px; height: 18px; flex-shrink: 0; fill: none; stroke-width: 2; }
+  .safety-card.share svg { stroke: var(--purple-500); }
+  .safety-card.sos svg { stroke: var(--red-500); }
+  .safety-text { font-size: 12px; line-height: 1.3; }
+  .safety-title { font-weight: 500; margin: 0; }
+  .safety-card.sos .safety-title { color: var(--red-500); }
+  .safety-sub { font-size: 10px; color: var(--text-tertiary); margin: 1px 0 0; }
+  .safety-card.sos .safety-sub { color: var(--red-700); opacity: 0.7; }
+
+  .bottom { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+  .cancel-btn { padding: 12px; background: transparent; border: 0.5px solid var(--border-secondary); border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--text-secondary); font-family: inherit; }
+  .help-btn { padding: 12px 16px; background: transparent; border: 0.5px solid var(--border-secondary); border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 6px; font-family: inherit; }
+  .help-btn svg { width: 14px; height: 14px; stroke: var(--text-primary); fill: none; stroke-width: 2; }
+
+  .section-label { font-size: 11px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; margin: 16px 0 8px; padding: 0 4px; font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="status-bar">
+    <div class="status-icon"><svg viewBox="0 0 24 24"><path d="M5 17h14M5 17l3-7h8l3 7M7 17v2a1 1 0 001 1h1a1 1 0 001-1v-2"/></svg></div>
+    <div class="status-content">
+      <p class="status-label">סיגלית בדרך אליך</p>
+      <p class="status-value">3.2 ק"מ ממך · נסיעה</p>
+    </div>
+    <div class="status-eta">
+      <p class="status-eta-num">12</p>
+      <p class="status-eta-unit">דקות</p>
+    </div>
+  </div>
+
+  <div class="map">
+    <svg class="map-bg" viewBox="0 0 400 220" preserveAspectRatio="xMidYMid slice">
+      <rect x="0" y="0" width="400" height="220" fill="#E1F5EE"/>
+      <path d="M0 60 L400 80" stroke="#C5E8DA" stroke-width="14" stroke-linecap="round"/>
+      <path d="M0 140 L400 130" stroke="#C5E8DA" stroke-width="10" stroke-linecap="round"/>
+      <path d="M80 0 L100 220" stroke="#C5E8DA" stroke-width="12" stroke-linecap="round"/>
+      <path d="M260 0 L240 220" stroke="#C5E8DA" stroke-width="14" stroke-linecap="round"/>
+      <path d="M280 100 Q220 110 165 130 T100 165" stroke="#534AB7" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="6 4" fill="none"/>
+      <path d="M340 60 Q320 75 295 95" stroke="#1D9E75" stroke-width="3.5" stroke-linecap="round" fill="none" opacity="0.6"/>
+    </svg>
+    <div class="map-pin pin-driver"><div class="pin-driver-circle"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 18L11 9h6l1 9"/></svg></div></div>
+    <div class="map-pin pin-customer"><div class="pin-customer-circle"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="6"/></svg></div></div>
+    <div class="map-controls">
+      <div class="map-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></div>
+      <div class="map-btn"><svg viewBox="0 0 24 24"><path d="M3 7v10M21 7v10"/></svg></div>
+    </div>
+    <div class="distance-badge"><svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/></svg>3.2 ק"מ נותרו</div>
+  </div>
+
+  <div class="driver-card">
+    <div class="driver-avatar">סמ</div>
+    <div class="driver-info">
+      <p class="driver-name">סיגלית מלסה</p>
+      <p class="driver-meta"><span><span class="star">★</span> 4.7</span><span>·</span><span>12 שנים ניסיון</span><span>·</span><span style="color: var(--green-500);">מאומתת</span></p>
+      <p class="driver-vehicle">פלטה גוררת · מספר רישוי 47-892-32</p>
+    </div>
+    <div class="driver-actions">
+      <div class="action-btn"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
+      <div class="action-btn primary"><svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg></div>
+    </div>
+  </div>
+
+  <div class="timeline-card">
+    <p class="timeline-title">סטטוס הנסיעה</p>
+    <div class="timeline">
+      <div class="timeline-step done"><div class="timeline-dot"></div><div class="timeline-content"><p class="timeline-label">הזמנה אושרה</p><p class="timeline-time">14:14 · עברו 8 דקות</p></div></div>
+      <div class="timeline-step done"><div class="timeline-dot"></div><div class="timeline-content"><p class="timeline-label">סיגלית קיבלה את הקריאה</p><p class="timeline-time">14:15</p></div></div>
+      <div class="timeline-step active"><div class="timeline-dot"></div><div class="timeline-content"><p class="timeline-label">בדרך אל האופנוע</p><p class="timeline-time">הגעה משוערת ב-14:42</p></div></div>
+      <div class="timeline-step"><div class="timeline-dot"></div><div class="timeline-content"><p class="timeline-label">הגעה ובדיקת האופנוע</p><p class="timeline-time">תיעוד תמונות "לפני"</p></div></div>
+      <div class="timeline-step"><div class="timeline-dot"></div><div class="timeline-content"><p class="timeline-label">העמסה ויציאה ליעד</p></div></div>
+      <div class="timeline-step"><div class="timeline-dot"></div><div class="timeline-content"><p class="timeline-label">הגעה ופריקה במוסך</p></div></div>
+    </div>
+  </div>
+
+  <div class="cost-card">
+    <div class="cost-header">
+      <p class="cost-title">פירוט תשלום</p>
+      <span class="cost-locked"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>מחיר נעול</span>
+    </div>
+    <div class="cost-row"><span class="l">מחיר בסיס</span><span class="v">₪180</span></div>
+    <div class="cost-row"><span class="l">תוספת מרחק (8.4 ק"מ)</span><span class="v">₪38</span></div>
+    <div class="cost-row"><span class="l">תוספת חירום מיידי</span><span class="v">₪109</span></div>
+    <div class="cost-row total"><span>סה"כ לתשלום</span><span class="v">₪327</span></div>
+  </div>
+
+  <p class="section-label">בטיחות וסיוע</p>
+  <div class="safety-row">
+    <div class="safety-card share">
+      <svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 3.9M15.4 6.6l-6.8 3.9"/></svg>
+      <div class="safety-text"><p class="safety-title">שתף מעקב</p><p class="safety-sub">לבן/בת זוג, חבר, משפחה</p></div>
+    </div>
+    <div class="safety-card sos">
+      <svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+      <div class="safety-text"><p class="safety-title">קריאת SOS</p><p class="safety-sub">משטרה + מוקד אסונות</p></div>
+    </div>
+  </div>
+
+  <div class="bottom">
+    <button class="cancel-btn">ביטול הזמנה (חינם עד הגעת הגורר)</button>
+    <button class="help-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01"/></svg>תמיכה</button>
+  </div>
+</div>
+</body>
+</html>

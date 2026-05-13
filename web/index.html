@@ -85,12 +85,15 @@
                    https://images.unsplash.com
                    https://*.ingest.sentry.io
                    https://*.sentry.io
+                   https://api.mapbox.com
+                   https://*.tiles.mapbox.com
                    https://*.basemaps.cartocdn.com
                    https://basemaps.cartocdn.com
                    https://*.tile.openstreetmap.org
                    https://tile.openstreetmap.org
                    https://staticmap.openstreetmap.de
-                   https://*.tile.openstreetmap.de;
+                   https://*.tile.openstreetmap.de
+                   https://nominatim.openstreetmap.org;
                  frame-src 'self'
                    https://www.youtube.com
                    https://www.google.com
@@ -117,8 +120,9 @@
   <meta http-equiv="Expires" content="0">
   <title>AnySkill Elite</title>
   <!-- app version — bump this string on every release to bust browser cache -->
-  <meta name="app-version" content="10.5.1">
-  <meta name="build-id" content="20260604-v5-nuclear">
+  <!-- MUST stay in sync with REQUIRED_VERSION in web/app_init.js. -->
+  <meta name="app-version" content="10.5.9">
+  <meta name="build-id" content="20260511-v13-remove-manual-sync-button">
 
   <!-- ── Google Sign-In client ID (used by google_sign_in web plugin) ──── -->
   <meta name="google-signin-client_id" 

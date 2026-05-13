@@ -413,12 +413,16 @@ class _DisputeDetailSheetState extends State<_DisputeDetailSheet> {
     setState(() => _resolving = true);
 
     try {
+      // §70: deterministic clientReqId — admin's resolution decision for
+      // a job is a single intent, so two clicks within 1h return the
+      // same outcome instead of double-mutating balances.
       await FirebaseFunctions.instance
           .httpsCallable('resolveDisputeAdmin')
           .call({
-        'jobId':      _jobId,
-        'resolution': resolution,
-        'adminNote':  _noteCtrl.text.trim(),
+        'jobId':       _jobId,
+        'resolution':  resolution,
+        'adminNote':   _noteCtrl.text.trim(),
+        'clientReqId': 'dispute_${_jobId}_$resolution',
       });
 
       if (mounted) {

@@ -16,6 +16,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../../widgets/wolt_tile_layer.dart';
+
 class LiveWalkMap extends StatelessWidget {
   final String jobId;
 
@@ -227,10 +229,7 @@ class _LiveMapBody extends StatelessWidget {
         ),
       ),
       children: [
-        TileLayer(
-          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.anyskill.app',
-        ),
+        WoltTileLayer.build(),
         PolylineLayer(
           polylines: [
             Polyline(

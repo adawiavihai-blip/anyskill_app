@@ -68,3 +68,18 @@ android/key.properties
 
 # Google Maps API key script (contains billing-linked API key)
 # web/Maps.js
+node_modules
+
+# Local-only test toolchain (downloaded portable binaries, ~70MB).
+# CI installs these fresh from official sources via setup-java + npm.
+tools/
+
+# Firebase Emulator artifacts
+firestore-debug.log
+firebase-debug.log
+ui-debug.log
+*.log
+firestore-rules-tests/firestore-debug.log
+
+# Local test output captures
+pub_deps_*.txt

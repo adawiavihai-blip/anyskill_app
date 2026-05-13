@@ -3,8 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'provider_registration_screen.dart';
+import 'provider_registration_wizard_screen.dart';
+import 'terms_of_service_screen.dart';
+import 'privacy_policy_screen.dart';
 import '../main.dart' show OnboardingGate;
+import '../services/cached_readers.dart';
 import '../services/private_data_service.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../l10n/app_localizations.dart';
@@ -111,12 +114,18 @@ class _OtpScreenState extends State<OtpScreen> {
       final isNew = cred.additionalUserInfo?.isNewUser ?? false;
 
       if (isNew) {
-        // v12.7.0 — Legacy user guard. Firebase gave us a NEW uid, but the
-        // phone may already belong to a legacy Firestore user doc whose
-        // Auth account hasn't been backfilled yet (e.g. Sigalit — was an
-        // email/password user). Block the new signup and direct the user
-        // to support. An admin must run `backfillPhonesToAuth` so Firebase
-        // routes future phone logins to the correct legacy uid.
+        // Legacy account self-heal (Sigalit case — CLAUDE.md §23).
+        // Firebase just created a new Auth uid for this phone. If the phone
+        // already belongs to a legacy user doc under a DIFFERENT uid (e.g.
+        // an old email/password account), the CF will:
+        //   1. Delete the brand-new Auth account.
+        //   2. Link the phone to the legacy uid.
+        //   3. Return a custom token so we sign in seamlessly as the legacy
+        //      user — no second OTP, no "contact support" dialog, no doc
+        //      duplication.
+        // The caller is authenticated (we just confirmed the OTP), and
+        // Firebase's phone_number JWT claim proves ownership, so the CF
+        // can perform the link atomically.
         try {
           final lookup = await FirebaseFunctions.instance
               .httpsCallable('lookupLegacyUidByPhone')
@@ -125,7 +134,37 @@ class _OtpScreenState extends State<OtpScreen> {
           final data = Map<String, dynamic>.from(lookup.data as Map);
           final foundUid = data['uid'] as String?;
           if (data['found'] == true && foundUid != null && foundUid != user.uid) {
-            // Tear down the empty new Auth account we just created.
+            // ── Self-heal succeeded — sign in as the legacy user ──
+            if (data['healed'] == true && data['customToken'] is String) {
+              final token = data['customToken'] as String;
+              try { await FirebaseAuth.instance.signOut(); } catch (_) {}
+              try {
+                await FirebaseAuth.instance.signInWithCustomToken(token);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: const Text('ברוכים השבים! 👋 זיהינו את החשבון שלך'),
+                    backgroundColor: _kGreen,
+                    behavior: SnackBarBehavior.floating,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ));
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (_) => const OnboardingGate()),
+                    (_) => false,
+                  );
+                }
+                return;
+              } catch (signInErr) {
+                debugPrint('[OTP] signInWithCustomToken failed: $signInErr');
+                // Fall through to legacy fallback dialog below.
+              }
+            }
+            // ── Fallback: CF found the legacy doc but couldn't heal ──
+            // (e.g. caller wasn't authenticated, phone-number JWT claim
+            // missing, or admin SDK call failed). Tear down the new Auth
+            // account and show the "contact support" dialog so the user
+            // doesn't accidentally create a duplicate profile.
             try { await user.delete(); } catch (_) {}
             try { await FirebaseAuth.instance.signOut(); } catch (_) {}
             if (mounted) {
@@ -175,21 +214,15 @@ class _OtpScreenState extends State<OtpScreen> {
       ),
     );
 
-    // Provider selected — sheet just closed, now push the full registration form
+    // Provider selected — sheet just closed, now push the full registration
+    // wizard. This is the SAME screen launched from a customer's "Join as
+    // Provider" button on the profile tab — keeps category dropdown synced
+    // with the live `categories` collection via CategoryRepository.
     if (result == 'provider' && mounted) {
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => ProviderRegistrationScreen(
-            isExistingUser: false,
-            prefillData: {
-              'uid':      user.uid,
-              'phone':    widget.phoneDisplay,
-              'name':     user.displayName ?? '',
-              'email':    user.email ?? '',
-              'photoURL': user.photoURL ?? '',
-            },
-          ),
+          builder: (_) => const ProviderRegistrationWizardScreen(),
         ),
       );
     }
@@ -511,6 +544,126 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
   bool _isLoading     = false;
   bool _agreedToTerms = false;
 
+  void _openTerms() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const TermsOfServiceScreen(showAcceptButton: false),
+      ),
+    );
+  }
+
+  void _openPrivacy() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const PrivacyPolicyScreen(),
+      ),
+    );
+  }
+
+  InlineSpan _termsLinkSpan(String text, {VoidCallback? onTap}) {
+    final tap = onTap ?? _openTerms;
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.baseline,
+      baseline: TextBaseline.alphabetic,
+      child: GestureDetector(
+        onTap: _isLoading ? null : tap,
+        behavior: HitTestBehavior.opaque,
+        child: Text(
+          text,
+          style: const TextStyle(
+            fontSize: 12.5,
+            color: _kPurple,
+            height: 1.45,
+            fontWeight: FontWeight.w500,
+            decoration: TextDecoration.underline,
+            decorationColor: _kPurple,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Provider path: create a baseline user doc with sensible defaults
+  // (balance, rating, reviewsCount, …) BEFORE pushing the registration
+  // wizard. The wizard's _submit uses set(merge:true), so without this
+  // baseline a brand-new provider would land in Firestore missing all the
+  // standard fields the rest of the app expects.
+  Future<void> _proceedAsProvider() async {
+    setState(() => _isLoading = true);
+    try {
+      final uid  = widget.user.uid;
+      final name = widget.user.displayName ?? '';
+
+      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+        'uid':            uid,
+        'name':           name,
+        'email':          widget.user.email ?? '',
+        'phone':          widget.phoneNumber,
+        'balance':        0.0,
+        'pendingBalance': 0.0,
+        'rating':         5.0,
+        'reviewsCount':   0,
+        'pricePerHour':   0.0,
+        'serviceType':    '',
+        'aboutMe':        '',
+        'profileImage':   widget.user.photoURL ?? '',
+        'gallery':        [],
+        'quickTags':      [],
+        'isOnline':       true,
+        'isAdmin':        false,
+        'isVerified':     false,
+        'isCustomer':     false,
+        'isProvider':     false,
+        // Wizard's _submit will flip isPendingExpert → true on submit.
+        'isPendingExpert':    false,
+        'termsAccepted':      true,
+        'agreedToTerms':      true,
+        'agreementTimestamp': FieldValue.serverTimestamp(),
+        'onboardingComplete': false,
+        'tourComplete':       false,
+        'createdAt':          FieldValue.serverTimestamp(),
+      }, SetOptions(merge: false));
+      CachedReaders.invalidateProvider(uid); // §61
+
+      // Mirror contact fields into private/identity (Section 11 dual-write).
+      await PrivateDataService.writeContactData(
+        uid,
+        phone: widget.phoneNumber,
+        email: widget.user.email,
+      );
+
+      // Activity log entry for admin Live Feed.
+      // CRITICAL: must use `createdAt` (not `timestamp`) — LiveActivityTab
+      // orders by `createdAt`, and Firestore excludes docs missing the field.
+      await FirebaseFirestore.instance.collection('activity_log').add({
+        'type':           'registration',
+        'userId':         uid,
+        'name':           name,
+        'phone':          widget.phoneNumber,
+        'email':          widget.user.email ?? '',
+        'signInProvider': 'phone',
+        'role':           'pending_provider',
+        'priority':       'normal',
+        'createdAt':      FieldValue.serverTimestamp(),
+        'message':        'משתמש חדש נרשם (בוחר להצטרף כנותן שירות): $name',
+        'expireAt':       Timestamp.fromDate(
+            DateTime.now().add(const Duration(days: 30))),
+      });
+
+      if (mounted) Navigator.pop(context, 'provider');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(AppLocalizations.of(context)
+              .otpCreateProfileError(e.toString())),
+          backgroundColor: _kRed,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _createProfile({required bool isProvider}) async {
     setState(() => _isLoading = true);
     try {
@@ -552,6 +705,7 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
         'tourComplete':       false,
         'createdAt':          FieldValue.serverTimestamp(),
       }, SetOptions(merge: false));
+      CachedReaders.invalidateProvider(uid); // §61
 
       // PR 2a: mirror contact fields into private/identity
       await PrivateDataService.writeContactData(
@@ -561,17 +715,22 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
       );
 
       // Write activity_log entry for admin Live Feed
+      // CRITICAL: must use `createdAt` (not `timestamp`) — LiveActivityTab
+      // orders by `createdAt`, and Firestore excludes docs missing the field.
       await FirebaseFirestore.instance.collection('activity_log').add({
-        'type':      isProvider ? 'expert_application' : 'registration',
-        'userId':    uid,
-        'name':      name,
-        'phone':     widget.phoneNumber,
-        'priority':  isProvider ? 'high' : 'normal',
-        'timestamp': FieldValue.serverTimestamp(),
-        'message':   isProvider
-            ? 'בקשת הצטרפות כנותן שירות: $name ($uid)'
-            : 'משתמש חדש נרשם: $name ($uid)',
-        'expireAt':  Timestamp.fromDate(
+        'type':           isProvider ? 'expert_application' : 'registration',
+        'userId':         uid,
+        'name':           name,
+        'phone':          widget.phoneNumber,
+        'email':          widget.user.email ?? '',
+        'signInProvider': 'phone',
+        'role':           isProvider ? 'pending_provider' : 'customer',
+        'priority':       isProvider ? 'high' : 'normal',
+        'createdAt':      FieldValue.serverTimestamp(),
+        'message':        isProvider
+            ? 'בקשת הצטרפות כנותן שירות: $name'
+            : 'משתמש חדש נרשם: $name',
+        'expireAt':       Timestamp.fromDate(
             DateTime.now().add(const Duration(days: 30))),
       });
 
@@ -654,21 +813,12 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
                           height: 1.45),
                       children: [
                         TextSpan(text: AppLocalizations.of(context).otpTermsPrefix),
-                        TextSpan(
-                          text: AppLocalizations.of(context).otpTermsOfService,
-                          style: const TextStyle(
-                              color: _kPurple,
-                              decoration: TextDecoration.underline,
-                              decorationColor: _kPurple),
-                        ),
+                        _termsLinkSpan(
+                            AppLocalizations.of(context).otpTermsOfService),
                         const TextSpan(text: ' / '),
-                        TextSpan(
-                          text: AppLocalizations.of(context).otpPrivacyPolicy,
-                          style: const TextStyle(
-                              color: _kPurple,
-                              decoration: TextDecoration.underline,
-                              decorationColor: _kPurple),
-                        ),
+                        _termsLinkSpan(
+                            AppLocalizations.of(context).otpPrivacyPolicy,
+                            onTap: _openPrivacy),
                       ],
                     ),
                   ),
@@ -692,8 +842,10 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
           const SizedBox(height: 16),
 
           // ── Provider card ─────────────────────────────────────────────────
-          // Returns 'provider' to _showRoleSelection which then pushes
-          // ProviderRegistrationScreen for the full form.
+          // Calls _proceedAsProvider() which seeds a baseline user doc with
+          // sensible defaults (balance, rating, …) and then returns 'provider'
+          // to _showRoleSelection — which pushes ProviderRegistrationWizardScreen
+          // (the same wizard launched from a customer's "Join as Provider" button).
           _RoleCard(
             icon: Icons.handyman_rounded,
             color: const Color(0xFF059669),
@@ -703,7 +855,7 @@ class _RoleSelectionSheetState extends State<_RoleSelectionSheet> {
             enabled: _agreedToTerms,
             onTap: (_isLoading || !_agreedToTerms)
                 ? null
-                : () => Navigator.pop(context, 'provider'),
+                : _proceedAsProvider,
           ),
 
           if (_isLoading) ...[

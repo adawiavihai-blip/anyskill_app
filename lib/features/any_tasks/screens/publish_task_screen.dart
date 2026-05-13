@@ -20,6 +20,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../utils/error_mapper.dart';
+import '../../../widgets/address_input.dart';
+import '../../../widgets/primary_cta.dart';
 import '../models/any_task.dart';
 import '../services/any_task_service.dart';
 import '../theme/any_tasks_palette.dart';
@@ -40,7 +43,18 @@ const Map<String, (int, int)> kCategoryPriceRange = {
 
 class PublishTaskScreen extends StatefulWidget {
   final String? presetCategory;
-  const PublishTaskScreen({super.key, this.presetCategory});
+
+  /// When non-null, the screen opens in EDIT mode and pre-fills every
+  /// field from this task. On submit it calls `AnyTaskService.updateTask`
+  /// instead of `publishTask` and pops back to the caller. Only allowed
+  /// while `existingTask.status == 'open'` (enforced by rules + service).
+  final AnyTask? existingTask;
+
+  const PublishTaskScreen({
+    super.key,
+    this.presetCategory,
+    this.existingTask,
+  });
 
   @override
   State<PublishTaskScreen> createState() => _PublishTaskScreenState();
@@ -67,12 +81,34 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
   final _locationTo = TextEditingController();
   bool _isRemote = false;
 
+  /// Product deadline — "I need this finished by …". When past, the CF
+  /// `expireOpenTasks` flips the task to `expired`. Optional; default 7
+  /// days from publish when the user doesn't pick one explicitly.
+  DateTime? _deadline;
+
   bool _submitting = false;
+
+  /// True when the screen was launched with `existingTask` — pops
+  /// mode-specific behaviour across submit, labels, locked fields.
+  bool get _isEdit => widget.existingTask != null;
 
   @override
   void initState() {
     super.initState();
-    if (widget.presetCategory != null &&
+    if (_isEdit) {
+      final t = widget.existingTask!;
+      _category = t.category;
+      _title.text = t.title;
+      _desc.text = t.description;
+      _budget.text = t.budgetNis.toString();
+      _urgency = t.urgency;
+      _proofType = t.proofType;
+      _locationFrom.text = t.locationFrom ?? '';
+      _locationTo.text = t.locationTo ?? '';
+      _isRemote = t.isRemote;
+      _deadline = t.deadline;
+      _step = 1; // category is locked — skip to details
+    } else if (widget.presetCategory != null &&
         kTaskCategories.contains(widget.presetCategory)) {
       _category = widget.presetCategory!;
       _step = 1; // skip straight to details
@@ -177,14 +213,65 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
     if (uid == null) return;
     setState(() => _submitting = true);
     try {
+      final from = _locationFrom.text.trim();
+      final to = _locationTo.text.trim();
+
+      // Default the product deadline to 7 days if the user didn't pick
+      // one — matches the typical service SLA and gives the safety-net
+      // CF something concrete to act on.
+      final effectiveDeadline = _deadline ??
+          DateTime.now().add(const Duration(days: 7));
+
+      if (_isEdit) {
+        // ── EDIT MODE ── allowlist: title, desc, deadline, location,
+        // imageUrl. Budget/urgency/proofType are NOT changeable post-
+        // publish (providers already saw them).
+        final updates = <String, dynamic>{
+          'title': _title.text.trim(),
+          'description': _desc.text.trim(),
+          'deadline': Timestamp.fromDate(effectiveDeadline),
+          'isRemote': _isRemote,
+          'locationFrom':
+              _isRemote || from.isEmpty ? null : from,
+          'locationTo': _isRemote || to.isEmpty ? null : to,
+        };
+        // 'isRemote' isn't in the client allowlist — drop it from the
+        // update payload and rely on locationFrom/To null to signal it.
+        updates.remove('isRemote');
+
+        await AnyTaskService.instance
+            .updateTask(widget.existingTask!.id!, updates);
+
+        // Image upload (optional). Wrap in its own try so a failure
+        // here doesn't roll back the text updates.
+        try {
+          final url = await _uploadImageIfAny(widget.existingTask!.id!);
+          if (url != null) {
+            await FirebaseFirestore.instance
+                .collection('any_tasks')
+                .doc(widget.existingTask!.id!)
+                .update({'imageUrl': url});
+          }
+        } catch (e) {
+          debugPrint('[PublishTask] image upload failed: $e');
+        }
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('✅ השינויים נשמרו'),
+          backgroundColor: TasksPalette.success,
+        ));
+        Navigator.of(context).pop(true);
+        return;
+      }
+
+      // ── PUBLISH MODE ──
       final userSnap = await FirebaseFirestore.instance
           .collection('users')
           .doc(uid)
           .get();
       final name = (userSnap.data()?['name'] ?? 'לקוח') as String;
 
-      final from = _locationFrom.text.trim();
-      final to = _locationTo.text.trim();
       final task = AnyTask(
         clientId: uid,
         clientName: name,
@@ -193,6 +280,7 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
         category: _category,
         budgetNis: int.parse(_budget.text.trim()),
         urgency: _urgency,
+        deadline: effectiveDeadline,
         locationFrom: _isRemote || from.isEmpty ? null : from,
         locationTo: _isRemote || to.isEmpty ? null : to,
         isRemote: _isRemote,
@@ -219,9 +307,21 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('שגיאה: $e'),
-          backgroundColor: TasksPalette.dangerRed));
+      // Domain codes from updateTask tx: task-not-editable / task-not-found.
+      final err = e.toString();
+      if (err.contains('task-not-editable')) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('המשימה כבר לא ניתנת לעריכה — נבחר נותן שירות'),
+          backgroundColor: TasksPalette.danger,
+        ));
+      } else if (err.contains('task-not-found')) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('המשימה לא נמצאה — ייתכן שנמחקה'),
+          backgroundColor: TasksPalette.danger,
+        ));
+      } else {
+        ErrorMapper.show(context, e);
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -236,7 +336,7 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            _WizardHeader(step: _step, onBack: _back),
+            _WizardHeader(step: _step, isEdit: _isEdit, onBack: _back),
             Expanded(
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 220),
@@ -251,6 +351,7 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
               step: _step,
               canContinue: _canContinue(),
               submitting: _submitting,
+              isEdit: _isEdit,
               onNext: _next,
               onBack: _back,
             ),
@@ -293,6 +394,9 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
           locationTo: _locationTo,
           isRemote: _isRemote,
           onRemoteChange: (v) => setState(() => _isRemote = v),
+          deadline: _deadline,
+          onDeadline: (d) => setState(() => _deadline = d),
+          isEdit: _isEdit,
           refresh: () => setState(() {}),
         );
       case 3:
@@ -309,14 +413,26 @@ class _PublishTaskScreenState extends State<PublishTaskScreen> {
 
 class _WizardHeader extends StatelessWidget {
   final int step;
+  final bool isEdit;
   final VoidCallback onBack;
-  const _WizardHeader({required this.step, required this.onBack});
+  const _WizardHeader({
+    required this.step,
+    required this.isEdit,
+    required this.onBack,
+  });
 
   static const _titles = [
     'בחר קטגוריה',
     'פרטי המשימה',
     'תשלום ולוגיסטיקה',
     'סיכום ופרסום',
+  ];
+
+  static const _editTitles = [
+    '—',
+    'עריכת פרטים',
+    'עריכת תשלום ולוגיסטיקה',
+    'סיכום שינויים',
   ];
 
   @override
@@ -341,15 +457,16 @@ class _WizardHeader extends StatelessWidget {
               ),
               const SizedBox(width: 4),
               Expanded(
-                child: Text(_titles[step],
+                child: Text(isEdit ? _editTitles[step] : _titles[step],
                     style: const TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w700,
                         color: TasksPalette.darkNavy)),
               ),
-              Text('${step + 1}/4',
-                  style: const TextStyle(
-                      fontSize: 12, color: TasksPalette.textSecondary)),
+              if (!isEdit)
+                Text('${step + 1}/4',
+                    style: const TextStyle(
+                        fontSize: 12, color: TasksPalette.textSecondary)),
             ],
           ),
           const SizedBox(height: 8),
@@ -623,6 +740,9 @@ class _PaymentStep extends StatelessWidget {
   final TextEditingController locationTo;
   final bool isRemote;
   final ValueChanged<bool> onRemoteChange;
+  final DateTime? deadline;
+  final ValueChanged<DateTime?> onDeadline;
+  final bool isEdit;
   final VoidCallback refresh;
 
   const _PaymentStep({
@@ -636,6 +756,9 @@ class _PaymentStep extends StatelessWidget {
     required this.locationTo,
     required this.isRemote,
     required this.onRemoteChange,
+    required this.deadline,
+    required this.onDeadline,
+    required this.isEdit,
     required this.refresh,
   });
 
@@ -710,26 +833,51 @@ class _PaymentStep extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
+        _label('עד מתי צריך את המשימה?'),
+        _DeadlinePicker(
+          deadline: deadline,
+          onChanged: onDeadline,
+        ),
+        const SizedBox(height: 16),
         _label('מיקום'),
         if (!isRemote) ...[
-          TextField(
-            controller: locationFrom,
-            decoration:
-                _input('כתובת איסוף / נקודת התחלה').copyWith(
-              labelText: 'מאיפה',
-              prefixIcon: const Icon(Icons.my_location_rounded,
-                  color: TasksPalette.primaryGreen),
-            ),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: locationTo,
-            decoration: _input('כתובת יעד / נקודת סיום').copyWith(
-              labelText: 'לאיפה',
-              prefixIcon: const Icon(Icons.flag_outlined,
-                  color: TasksPalette.coral),
-            ),
-          ),
+          // Address from — bridges the legacy single-string `locationFrom`
+          // field to the new two-field AddressInput. Parse on init, recombine
+          // back into the controller on every change so the submit path at
+          // line 215 still reads from `locationFrom.text`.
+          Builder(builder: (_) {
+            final initial = AddressValue.fromCombined(locationFrom.text);
+            return AddressInput(
+              key: const ValueKey('anytasks-location-from'),
+              initialCity: initial.city,
+              initialStreet: initial.street,
+              accentColor: TasksPalette.primaryGreen,
+              cityLabel: 'עיר (מאיפה)',
+              streetLabel: 'רחוב ומספר (איסוף)',
+              streetHint: 'לדוגמה: הרצל 10',
+              onChanged: (v) {
+                locationFrom.text = v.combined;
+                refresh();
+              },
+            );
+          }),
+          const SizedBox(height: 12),
+          Builder(builder: (_) {
+            final initial = AddressValue.fromCombined(locationTo.text);
+            return AddressInput(
+              key: const ValueKey('anytasks-location-to'),
+              initialCity: initial.city,
+              initialStreet: initial.street,
+              accentColor: TasksPalette.coral,
+              cityLabel: 'עיר (לאיפה)',
+              streetLabel: 'רחוב ומספר (יעד)',
+              streetHint: 'לדוגמה: דיזנגוף 50',
+              onChanged: (v) {
+                locationTo.text = v.combined;
+                refresh();
+              },
+            );
+          }),
           const SizedBox(height: 8),
         ],
         CheckboxListTile(
@@ -825,6 +973,186 @@ class _PaymentStep extends StatelessWidget {
                           : TasksPalette.darkNavy)),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DEADLINE PICKER — quick chips + custom date sheet
+// ═══════════════════════════════════════════════════════════════════
+
+class _DeadlinePicker extends StatelessWidget {
+  final DateTime? deadline;
+  final ValueChanged<DateTime?> onChanged;
+
+  const _DeadlinePicker({required this.deadline, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    // End-of-day for a given offset (=23:59:59 local on day N).
+    DateTime eod(int daysFromNow) {
+      final now = DateTime.now();
+      final d = DateTime(now.year, now.month, now.day)
+          .add(Duration(days: daysFromNow));
+      return DateTime(d.year, d.month, d.day, 23, 59, 59);
+    }
+
+    final chips = <({String label, DateTime when})>[
+      (label: 'היום', when: eod(0)),
+      (label: 'מחר', when: eod(1)),
+      (label: 'השבוע', when: eod(7)),
+      (label: 'החודש', when: eod(30)),
+    ];
+
+    bool isSame(DateTime a, DateTime b) =>
+        a.year == b.year && a.month == b.month && a.day == b.day;
+
+    String fmt(DateTime d) {
+      final day = d.day.toString().padLeft(2, '0');
+      final m = d.month.toString().padLeft(2, '0');
+      return '$day/$m/${d.year}';
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final c in chips)
+              _DeadlineChip(
+                label: c.label,
+                selected: deadline != null && isSame(deadline!, c.when),
+                onTap: () => onChanged(c.when),
+              ),
+            _DeadlineChip(
+              label: deadline != null &&
+                      !chips.any((c) => isSame(c.when, deadline!))
+                  ? 'תאריך: ${fmt(deadline!)}'
+                  : 'תאריך אחר…',
+              selected: deadline != null &&
+                  !chips.any((c) => isSame(c.when, deadline!)),
+              icon: Icons.event_rounded,
+              onTap: () async {
+                final now = DateTime.now();
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: deadline ??
+                      now.add(const Duration(days: 7)),
+                  firstDate: now,
+                  lastDate: now.add(const Duration(days: 90)),
+                  locale: const Locale('he'),
+                  helpText: 'בחר/י תאריך יעד',
+                  cancelText: 'ביטול',
+                  confirmText: 'אישור',
+                );
+                if (picked != null) {
+                  onChanged(DateTime(
+                      picked.year, picked.month, picked.day, 23, 59, 59));
+                }
+              },
+            ),
+          ],
+        ),
+        if (deadline != null) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: TasksPalette.bgPrimary,
+              borderRadius:
+                  BorderRadius.circular(TasksPalette.rButton),
+              border: Border.all(color: TasksPalette.borderLight),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline_rounded,
+                    size: 14, color: TasksPalette.textSecondary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'אם לא ייתפס עד ${fmt(deadline!)} — המשימה תפוג אוטומטית.',
+                    style: const TextStyle(
+                        fontSize: 11,
+                        color: TasksPalette.textSecondary),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => onChanged(null),
+                  style: TextButton.styleFrom(
+                    foregroundColor: TasksPalette.danger,
+                    minimumSize: const Size(0, 24),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                  ),
+                  child: const Text('נקה',
+                      style: TextStyle(fontSize: 11)),
+                ),
+              ],
+            ),
+          ),
+        ] else ...[
+          const SizedBox(height: 6),
+          const Text(
+            'ללא דד-ליין מפורש תוגדר תפוגה אוטומטית של 7 ימים.',
+            style: TextStyle(
+                fontSize: 11, color: TasksPalette.textSecondary),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _DeadlineChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final IconData? icon;
+  final VoidCallback onTap;
+  const _DeadlineChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(TasksPalette.rChip),
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected
+              ? TasksPalette.primaryGreen
+              : TasksPalette.cardWhite,
+          borderRadius: BorderRadius.circular(TasksPalette.rChip),
+          border: Border.all(
+              color: selected
+                  ? TasksPalette.primaryGreen
+                  : TasksPalette.borderLight),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon,
+                  size: 14,
+                  color:
+                      selected ? Colors.white : TasksPalette.darkNavy),
+              const SizedBox(width: 4),
+            ],
+            Text(label,
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color:
+                        selected ? Colors.white : TasksPalette.darkNavy)),
+          ],
         ),
       ),
     );
@@ -1022,12 +1350,14 @@ class _BottomBar extends StatelessWidget {
   final int step;
   final bool canContinue;
   final bool submitting;
+  final bool isEdit;
   final VoidCallback onNext;
   final VoidCallback onBack;
   const _BottomBar({
     required this.step,
     required this.canContinue,
     required this.submitting,
+    required this.isEdit,
     required this.onNext,
     required this.onBack,
   });
@@ -1067,32 +1397,17 @@ class _BottomBar extends StatelessWidget {
               ),
             if (step > 0) const SizedBox(width: 8),
             Expanded(
-              child: SizedBox(
+              child: PrimaryCTA(
+                label: step == 3
+                    ? (isEdit ? 'שמור שינויים' : 'פרסם משימה')
+                    : 'המשך',
+                variant: PrimaryCTAVariant.success,
+                loading: submitting,
                 height: 50,
-                child: ElevatedButton(
-                  onPressed: (!canContinue || submitting) ? null : onNext,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: TasksPalette.primaryGreen,
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor:
-                        TasksPalette.borderLight,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(TasksPalette.rButton)),
-                  ),
-                  child: submitting
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                              color: Colors.white, strokeWidth: 2),
-                        )
-                      : Text(step == 3 ? 'פרסם משימה' : 'המשך',
-                          style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700)),
-                ),
+                onPressed: !canContinue ? null : onNext,
+                semanticHint: step == 3
+                    ? 'מפרסם את המשימה ופותח את משפך ההצעות'
+                    : 'ממשיך לשלב הבא בפרסום',
               ),
             ),
           ],

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_functions/cloud_functions.dart' as ff;
 
+import '../../../services/cached_readers.dart';
 import '../models/activity_log_entry.dart';
 import '../models/category_v3_model.dart';
 import 'activity_log_service.dart';
@@ -140,6 +141,13 @@ class CategoriesV3Service {
 
     await _col.doc(id).update(fullPatch);
 
+    // §61: bust the CachedReaders entry for this category name. Without
+    // this, edit_profile / expert_profile / public_profile / demo_experts
+    // would keep serving the old schema for up to 30 minutes after the
+    // admin saved a change.
+    CachedReaders.invalidateServiceSchema(before.name);
+    CachedReaders.invalidateCategory(before.name);
+
     await _activityLog.log(
       actionType: action == 'image_changed'
           ? ActivityActionType.imageUpdate
@@ -157,6 +165,11 @@ class CategoriesV3Service {
     if (before == null) return;
 
     await _col.doc(id).delete();
+
+    // §61: bust caches before logging so any reader that races on the
+    // log-tail sees a fresh miss instead of stale data.
+    CachedReaders.invalidateServiceSchema(before.name);
+    CachedReaders.invalidateCategory(before.name);
 
     await _activityLog.log(
       actionType: ActivityActionType.delete,

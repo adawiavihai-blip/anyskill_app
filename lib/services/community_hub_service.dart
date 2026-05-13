@@ -12,6 +12,8 @@ library;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../utils/gold_heart_helper.dart';
+import 'cached_readers.dart';
 import 'gamification_service.dart';
 
 class CommunityHubService {
@@ -192,7 +194,13 @@ class CommunityHubService {
       });
 
       // Notify matching volunteers
-      await _notifyVolunteers(category, requesterId, title, urgency);
+      await _notifyVolunteers(
+        category,
+        requesterId,
+        title,
+        urgency,
+        docRef.id,
+      );
 
       return docRef.id;
     } catch (e) {
@@ -391,7 +399,10 @@ class CommunityHubService {
         'completionPhotoUrl': completionPhotoUrl,
       });
 
-      // Notify requester to confirm
+      // Notify requester to confirm.
+      // Phase D-2: include `requestId` so the v2 NotificationRouter can
+      // deep-link to ConfirmCompletionScreen (mockup 05). Additive — v1
+      // readers ignore the field harmlessly.
       if (requesterId.isNotEmpty) {
         await _db.collection('notifications').add({
           'userId': requesterId,
@@ -399,6 +410,7 @@ class CommunityHubService {
           'body': 'אנא אשר/י שקיבלת עזרה ב"$title"',
           'type': 'community_pending_confirmation',
           'relatedUserId': volunteerId,
+          'requestId': requestId,
           'isRead': false,
           'createdAt': FieldValue.serverTimestamp(),
         });
@@ -424,11 +436,16 @@ class CommunityHubService {
   ///
   /// Returns: `'ok'` on full success, `'ok_partial'` if status changed but
   /// rewards failed, or a Hebrew error string on hard rejection.
+  /// Phase D-2 (v15.x): added optional [rating] param (1-5). Persisted
+  /// to `community_requests/{id}.rating` ONLY when provided — never
+  /// defaulted to a fake value, so analytics + future search ranking
+  /// see honest data. Mockup 06 displays "—" when rating is absent.
   static Future<String> completeRequest({
     required String requestId,
     required String confirmingUserId,
     required String reviewText,
     String? thankYouNote,
+    int? rating,
   }) async {
     // ── 1. Read the request doc ──────────────────────────────────────────
     final docRef = _db.collection('community_requests').doc(requestId);
@@ -499,6 +516,11 @@ class CommunityHubService {
       updateData['thankYouNote'] = thankYouNote.trim();
       updateData['thankYouAuthor'] = requesterName;
     }
+    // Only write the rating field when actually supplied — keeps the
+    // analytics + future search ranking surface free of fake placeholders.
+    if (rating != null && rating >= 1 && rating <= 5) {
+      updateData['rating'] = rating;
+    }
 
     try {
       await docRef.update(updateData);
@@ -552,6 +574,10 @@ class CommunityHubService {
         'body': 'תודה על העזרה!$notePreview קיבלת $communityXpReward XP ותג מתנדב.',
         'type': 'community_completed',
         'relatedUserId': requesterId,
+        // Phase C (v15.x): include requestId so the v2 NotificationRouter
+        // can deep-link to CompletionCelebrationScreen instead of just
+        // opening the chat. Additive — v1 readers ignore it harmlessly.
+        'requestId': requestId,
         'isRead': false,
         'createdAt': FieldValue.serverTimestamp(),
       });
@@ -729,9 +755,14 @@ class CommunityHubService {
 
   // ── Badge & Heart Helpers ──────────────────────────────────────────────────
 
-  /// Returns true if the user has the permanent volunteer heart.
+  /// Returns true if the user has an active gold heart.
+  ///
+  /// As of Phase B (v15.x), this delegates to [GoldHeartHelper]. The new
+  /// `goldHeartExpiresAt` Timestamp field is the source of truth — the
+  /// legacy `volunteerHeart` boolean is kept in dual-write mode for
+  /// rollback safety but is no longer authoritative.
   static bool hasVolunteerHeart(Map<String, dynamic> userData) {
-    return userData['volunteerHeart'] == true;
+    return GoldHeartHelper.hasActiveFromUserData(userData);
   }
 
   /// Returns the highest badge earned from the list.
@@ -822,9 +853,18 @@ class CommunityHubService {
     }
   }
 
-  /// Updates volunteer's heart, badges, community XP, and task count
-  /// in a SINGLE Firestore write. All 6 fields must be in the
-  /// `onlyFields()` allowlist in firestore.rules (volunteer badge rule).
+  /// Updates volunteer's gold heart, badges, community XP, and task count
+  /// in a SINGLE atomic Firestore write (per-document atomicity).
+  ///
+  /// **All 7 fields must be in the `onlyFields()` allowlist** in
+  /// firestore.rules (volunteer badge rule).
+  ///
+  /// Phase B dual-write (v15.x):
+  /// - `goldHeartExpiresAt` (NEW, authoritative) — `now + 30d`. Renews on
+  ///   every completion, vanishes after 30 days of inactivity.
+  /// - `volunteerHeart` / `lastVolunteerTaskAt` / `hasActiveVolunteerBadge`
+  ///   (LEGACY) — kept for rollback safety + back-compat with v1 readers.
+  ///   Will be removed once the feature flag is lifted (Phase H).
   static Future<void> _updateVolunteerProfile(String volunteerId) async {
     final count = await completedTaskCount(volunteerId);
 
@@ -833,22 +873,41 @@ class CommunityHubService {
     if (count >= pillarThreshold) badges.add('pillar');
     if (count >= angelThreshold) badges.add('angel');
 
+    // Per-document atomic write — all 7 fields land together or not at all.
     await _db.collection('users').doc(volunteerId).update({
-      'volunteerHeart': true,
+      // ── New: gold heart (30-day rolling timer) ──────────────────────
+      'goldHeartExpiresAt': GoldHeartHelper.grantGoldHeart(),
+      // ── Permanent / cumulative ──────────────────────────────────────
       'communityBadges': badges,
       'communityXP': FieldValue.increment(communityXpReward),
-      'lastVolunteerTaskAt': FieldValue.serverTimestamp(),
       'volunteerTaskCount': FieldValue.increment(1),
+      // ── Legacy fields (deprecated, kept for back-compat) ────────────
+      'volunteerHeart': true,
+      'lastVolunteerTaskAt': FieldValue.serverTimestamp(),
       'hasActiveVolunteerBadge': true,
     });
+    CachedReaders.invalidateProvider(volunteerId); // §61
   }
 
   /// Notifies matching online volunteers about a new request.
+  ///
+  /// Phase F (v15.x — Smart Notification, mockup 16):
+  /// - Updated copy uses the unified "התנדבות" terminology (was "עזרה").
+  /// - Title is more action-oriented for urgent requests.
+  /// - **`requestId` is included in the notification doc** so the v2
+  ///   [NotificationRouter] can deep-link straight to
+  ///   [RequestDetailScreen]. v1 readers ignore the field harmlessly.
+  ///
+  /// **Future polish (deferred to V2):** real geographic distance
+  /// (e.g. "במרחק 4 דקות הליכה") + requester demographic snippets
+  /// (e.g. "רחל בת 78") would require both volunteer + request
+  /// location data + an age/persona schema we don't track yet.
   static Future<void> _notifyVolunteers(
     String category,
     String requesterId,
     String title,
     String urgency,
+    String requestId,
   ) async {
     final volunteersSnap = await _db
         .collection('users')
@@ -857,20 +916,32 @@ class CommunityHubService {
         .limit(30)
         .get();
 
+    final isUrgent = urgency == 'high';
+    final notifTitle = isUrgent
+        ? '🚨 בקשה דחופה באזורך'
+        : '🤝 בקשת התנדבות חדשה';
+    final notifBody = isUrgent
+        ? '$title · נדרש מענה מיידי'
+        : title;
+
     int count = 0;
     for (final doc in volunteersSnap.docs) {
       if (doc.id == requesterId) continue; // skip self
       if (count >= 20) break; // max notifications
 
+      // Phase H QA note: this notification has EXACTLY 10 fields, the
+      // hard limit set by `firestore.rules` on `notifications/{id}`.
+      // If a future PR needs another field, drop one of `category` or
+      // `urgency` — both are also retrievable via the request doc.
       await _db.collection('notifications').add({
         'userId': doc.id,
-        'title': urgency == 'high'
-            ? '🚨 בקשת עזרה דחופה!'
-            : '🤝 בקשת עזרה חדשה!',
-        'body': '$title — תוכל/י לעזור?',
+        'title': notifTitle,
+        'body': notifBody,
         'type': 'community_request',
         'relatedUserId': requesterId,
+        'requestId': requestId,
         'category': category,
+        'urgency': urgency,
         'isRead': false,
         'createdAt': FieldValue.serverTimestamp(),
       });

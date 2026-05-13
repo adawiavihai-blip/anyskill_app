@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/firestore_map.dart';
 
 /// A single field in a category's dynamic service schema.
 ///
@@ -97,10 +98,28 @@ class Category {
       createdAt:     (d['createdAt']   as Timestamp?)?.toDate(),
       autoCreated:   d['autoCreated']  as bool? ?? false,
       isHidden:      d['isHidden']     as bool? ?? false,
-      serviceSchema: (d['serviceSchema'] as List?)
-          ?.map((e) => SchemaField.fromMap(e as Map<String, dynamic>))
-          .toList() ?? const [],
+      serviceSchema: _parseSchema(d['serviceSchema']),
     );
+  }
+
+  /// Auto-detects v1 (List) vs v2 (Map) schema shape — never throws.
+  /// v1 (legacy): `[{id, label, type, unit, options}, ...]`
+  /// v2 (current): `{version, unitType, fields: [...], bundles, surcharge, ...}`
+  /// Mirrors `ServiceSchema.fromRaw` in `lib/widgets/category_specs_widget.dart`.
+  /// Without this, a malformed cast (`as List?` on a Map) would throw
+  /// `TypeError` inside `Category.fromFirestore`, crashing every consumer
+  /// of `watchAll()` and leaving the provider-registration category
+  /// dropdown (and others) silently empty.
+  static List<SchemaField> _parseSchema(dynamic raw) {
+    if (raw == null) return const [];
+    final List<dynamic>? rawList = raw is List
+        ? raw
+        : (raw is Map && raw['fields'] is List ? raw['fields'] as List : null);
+    if (rawList == null) return const [];
+    return rawList
+        .whereType<Map>()
+        .map((e) => SchemaField.fromMap(safeMapOrEmpty(e)))
+        .toList();
   }
 
   Map<String, dynamic> toJson() => {

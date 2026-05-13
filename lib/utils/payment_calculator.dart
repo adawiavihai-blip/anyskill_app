@@ -3,7 +3,7 @@ class PaymentResult {
   final double totalAmount;
   final double feePercentage;
   final double feeAmount;      // עמלת הפלטפורמה
-  final double netToExpert;    // מה שמגיע למומחה
+  final double netToExpert;    // מה שמגיע לנותן השירות
 
   const PaymentResult({
     required this.totalAmount,
@@ -17,7 +17,7 @@ class PaymentResult {
       'PaymentResult(total=$totalAmount, fee=$feeAmount, net=$netToExpert)';
 }
 
-/// מחשב את פיצול התשלום בין מומחה לפלטפורמה.
+/// מחשב את פיצול התשלום בין נותן שירות לפלטפורמה.
 ///
 /// [totalAmount]    — הסכום הכולל ששילם הלקוח
 /// [feePercentage]  — עמלת הפלטפורמה כ-0..1 (למשל 0.10 = 10%)

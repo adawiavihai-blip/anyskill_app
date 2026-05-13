@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/service_provider.dart';
+import '../services/cached_readers.dart';
 
 /// Handles ALL Firebase operations for service providers (experts).
 ///
@@ -98,6 +99,7 @@ class ProviderRepository {
   Future<void> updateProfile(String uid, Map<String, dynamic> updates) async {
     updates['updatedAt'] = FieldValue.serverTimestamp();
     await _db.collection('users').doc(uid).update(updates);
+    CachedReaders.invalidateProvider(uid); // §61
   }
 
   /// Update only the categoryDetails (dynamic schema values).
@@ -107,6 +109,7 @@ class ProviderRepository {
       'categoryDetails': details,
       'updatedAt': FieldValue.serverTimestamp(),
     });
+    CachedReaders.invalidateProvider(uid); // §61
   }
 
   // ── Write: Verification lifecycle (admin) ─────────────────────────────
@@ -119,6 +122,7 @@ class ProviderRepository {
       'isVerified':      true,
       'categoryReviewedByAdmin': true,
     });
+    CachedReaders.invalidateProvider(uid); // §61
   }
 
   /// Reject a pending expert.
@@ -128,6 +132,7 @@ class ProviderRepository {
       'isProvider':      false,
       'categoryReviewedByAdmin': true,
     });
+    CachedReaders.invalidateProvider(uid); // §61
   }
 
   /// Toggle the blue checkmark (isVerified).
@@ -135,6 +140,7 @@ class ProviderRepository {
     await _db.collection('users').doc(uid).update({
       'isVerified': verified,
     });
+    CachedReaders.invalidateProvider(uid); // §61
   }
 
   /// Toggle compliance status (isVerifiedProvider).
@@ -143,6 +149,7 @@ class ProviderRepository {
       'isVerifiedProvider': verified,
       'compliance': {'verified': verified},
     });
+    CachedReaders.invalidateProvider(uid); // §61
   }
 
   /// Approve a verification video.
@@ -150,6 +157,7 @@ class ProviderRepository {
     await _db.collection('users').doc(uid).update({
       'videoVerifiedByAdmin': true,
     });
+    CachedReaders.invalidateProvider(uid); // §61
   }
 
   /// Reject a verification video.
@@ -158,6 +166,7 @@ class ProviderRepository {
       'verificationVideoUrl': FieldValue.delete(),
       'videoVerifiedByAdmin': false,
     });
+    CachedReaders.invalidateProvider(uid); // §61
   }
 
   /// Ban or unban a provider.
@@ -165,6 +174,7 @@ class ProviderRepository {
     await _db.collection('users').doc(uid).update({
       'isBanned': banned,
     });
+    CachedReaders.invalidateProvider(uid); // §61
   }
 
   /// Hide or unhide from search results.
@@ -172,6 +182,7 @@ class ProviderRepository {
     await _db.collection('users').doc(uid).update({
       'isHidden': hidden,
     });
+    CachedReaders.invalidateProvider(uid); // §61
   }
 
   /// Toggle the online status.
@@ -179,5 +190,6 @@ class ProviderRepository {
     await _db.collection('users').doc(uid).update({
       'isOnline': online,
     });
+    CachedReaders.invalidateProvider(uid); // §61
   }
 }

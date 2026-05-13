@@ -20,6 +20,8 @@ class Story {
   final int viewCount;
   final int likeCount;
   final List<String> likedBy;
+  // 'video' (default — back-compat with all pre-mediaType docs) | 'image'
+  final String mediaType;
 
   const Story({
     required this.uid,
@@ -37,7 +39,10 @@ class Story {
     this.viewCount = 0,
     this.likeCount = 0,
     this.likedBy = const [],
+    this.mediaType = 'video',
   });
+
+  bool get isImage => mediaType == 'image';
 
   /// Whether this story is still within its 24-hour display window.
   bool get isExpired {
@@ -72,6 +77,7 @@ class Story {
       viewCount:       (d['viewCount']     as num?)?.toInt() ?? 0,
       likeCount:       (d['likeCount']     as num?)?.toInt() ?? 0,
       likedBy:         (d['likedBy']       as List?)?.cast<String>() ?? const [],
+      mediaType:       d['mediaType']      as String? ?? 'video',
     );
   }
 
@@ -92,6 +98,7 @@ class Story {
     'viewCount':      viewCount,
     'likeCount':      likeCount,
     'likedBy':        likedBy,
+    'mediaType':      mediaType,
   };
 
   // ── Immutable updates ─────────────────────────────────────────────────
@@ -112,6 +119,7 @@ class Story {
     int? viewCount,
     int? likeCount,
     List<String>? likedBy,
+    String? mediaType,
   }) {
     return Story(
       uid:             uid             ?? this.uid,
@@ -129,6 +137,7 @@ class Story {
       viewCount:       viewCount       ?? this.viewCount,
       likeCount:       likeCount       ?? this.likeCount,
       likedBy:         likedBy         ?? this.likedBy,
+      mediaType:       mediaType       ?? this.mediaType,
     );
   }
 

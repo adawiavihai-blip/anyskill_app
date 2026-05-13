@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>אנליטיקס צלילים — מסך 3</title>
+<link rel="stylesheet" href="assets/styles.css">
+<style>
+  .time-range {
+    display: flex;
+    gap: 4px;
+    background: var(--bg-surface);
+    padding: 4px;
+    border-radius: var(--radius-md);
+    border: 0.5px solid var(--border-light);
+  }
+
+  .time-range-btn {
+    padding: 6px 14px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    transition: all 0.15s ease;
+  }
+
+  .time-range-btn:hover { background: var(--bg-muted); color: var(--text-primary); }
+  .time-range-btn.active { background: var(--bg-muted); color: var(--text-primary); font-weight: 500; }
+
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .kpi-card {
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
+    border: 0.5px solid var(--border-light);
+    padding: 20px;
+    transition: transform 0.15s ease;
+  }
+
+  .kpi-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+  .kpi-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+  .kpi-value { font-size: 28px; font-weight: 500; line-height: 1; }
+  .kpi-trend { display: flex; align-items: center; gap: 4px; margin-top: 10px; font-size: 11px; }
+  .kpi-trend-up { color: var(--color-green-dark); }
+  .kpi-trend-down { color: var(--color-red); }
+
+  .chart-card {
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
+    border: 0.5px solid var(--border-light);
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+
+  .chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .chart-title { font-size: 16px; font-weight: 500; margin-bottom: 2px; }
+  .chart-subtitle { font-size: 12px; color: var(--text-tertiary); }
+
+  .chart-legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+
+  .ranking-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px 0;
+  }
+
+  .ranking-row + .ranking-row { border-top: 0.5px solid var(--border-light); }
+
+  .ranking-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .rank-num {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  .ranking-progress {
+    height: 6px;
+    background: var(--bg-muted);
+    border-radius: 3px;
+    margin-right: 44px;
+  }
+
+  .ranking-progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.6s ease-out;
+  }
+
+  .ai-insight-card {
+    background: var(--color-primary-light);
+    border-radius: var(--radius-lg);
+    border: 0.5px solid var(--color-primary-lighter);
+    padding: 22px;
+  }
+
+  .ai-insight-content { display: flex; gap: 16px; align-items: flex-start; }
+
+  .ai-insight-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md);
+    background: var(--color-primary);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--text-primary);
+    color: white;
+    padding: 12px 20px;
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    box-shadow: var(--shadow-lg);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 200;
+  }
+
+  .toast.show { opacity: 1; }
+
+  @media (max-width: 768px) {
+    .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    .ranking-progress { margin-right: 0; margin-top: 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Tabs -->
+  <nav class="tabs">
+    <a href="index.html" class="tab" style="text-decoration: none;">סטודיו</a>
+    <a href="library.html" class="tab" style="text-decoration: none;">ספרייה</a>
+    <button class="tab active">אנליטיקס</button>
+    <a href="logs.html" class="tab" style="text-decoration: none;">לוג מערכת</a>
+  </nav>
+
+  <!-- Header -->
+  <header class="page-header">
+    <div>
+      <h1 class="page-title">איך הצלילים מתפקדים</h1>
+      <p class="page-subtitle">כל מה שצריך לדעת כדי לקבל החלטות מבוססות נתונים</p>
+    </div>
+    <div class="time-range" id="time-range">
+      <button class="time-range-btn" data-range="24h">24 שעות</button>
+      <button class="time-range-btn active" data-range="7d">7 ימים</button>
+      <button class="time-range-btn" data-range="30d">30 ימים</button>
+    </div>
+  </header>
+
+  <!-- KPIs -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">סך השמעות</div>
+      <div class="kpi-value" id="kpi-plays">8,734</div>
+      <div class="kpi-trend kpi-trend-up">
+        <span>▲ 12%</span>
+        <span style="color: var(--text-tertiary);">לעומת שבוע קודם</span>
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">CTR ממוצע</div>
+      <div class="kpi-value" id="kpi-ctr">87%</div>
+      <div class="kpi-trend kpi-trend-up">
+        <span>▲ 3%</span>
+        <span style="color: var(--text-tertiary);">פעולה אחרי השמעה</span>
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">השתקות משתמשים</div>
+      <div class="kpi-value" id="kpi-mute">4.2%</div>
+      <div class="kpi-trend kpi-trend-down">
+        <span>▲ 0.8%</span>
+        <span style="color: var(--text-tertiary);">דורש בדיקה</span>
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">צליל מוביל</div>
+      <div class="kpi-value" style="font-size: 18px; line-height: 1.2;">Wealth<br>Crystal</div>
+      <div class="kpi-trend">
+        <span style="color: var(--text-tertiary);">CTR 94%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bar chart -->
+  <div class="chart-card">
+    <div class="chart-header">
+      <div>
+        <div class="chart-title">השמעות לפי יום</div>
+        <div class="chart-subtitle">פילוח לפי סוג צליל</div>
+      </div>
+      <div class="chart-legend">
+        <div class="legend-item"><span class="legend-dot" style="background: #534AB7;"></span><span>תשלום</span></div>
+        <div class="legend-item"><span class="legend-dot" style="background: #185FA5;"></span><span>AI Match</span></div>
+        <div class="legend-item"><span class="legend-dot" style="background: #1D9E75;"></span><span>הזדמנות</span></div>
+        <div class="legend-item"><span class="legend-dot" style="background: #BA7517;"></span><span>XP</span></div>
+      </div>
+    </div>
+    <div id="chart-container"></div>
+  </div>
+
+  <!-- Performance ranking -->
+  <div class="chart-card">
+    <h3 class="chart-title" style="margin-bottom: 16px;">דירוג ביצועים</h3>
+    <div id="ranking-list"></div>
+  </div>
+
+  <!-- AI Insight -->
+  <div class="ai-insight-card">
+    <div class="ai-insight-content">
+      <div class="ai-insight-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2l2 7h7l-5.5 4 2 7L12 16l-5.5 4 2-7L3 9h7z"/></svg>
+      </div>
+      <div style="flex: 1;">
+        <div style="font-size: 13px; font-weight: 500; color: var(--color-primary-dark); margin-bottom: 6px;">תובנת AI לשבוע הזה</div>
+        <p style="font-size: 13px; color: var(--color-primary); line-height: 1.7; margin-bottom: 14px;">
+          Solution Snap עם CTR של 76% — הנמוך ביותר. הצליל החד מדי בתדר 880Hz עלול לגרום לחלק מהמשתמשים להתעלם. שווה לבדוק את Coin Drop כחלופה (89% התאמה פסיכואקוסטית).
+        </p>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-primary" onclick="runABTest()">הרץ A/B test ←</button>
+          <button class="btn btn-secondary" onclick="dismissInsight()">דחה תובנה</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ============================
+  // DATA
+  // ============================
+  const CHART_DATA = {
+    days: ['א\'', 'ב\'', 'ג\'', 'ד\'', 'ה\'', 'ו\'', 'ש\''],
+    series: [
+      { name: 'תשלום', color: '#534AB7', values: [800, 850, 920, 1000, 880, 580, 420] },
+      { name: 'AI Match', color: '#185FA5', values: [240, 280, 250, 300, 240, 220, 200] },
+      { name: 'הזדמנות', color: '#1D9E75', values: [180, 200, 180, 200, 180, 140, 130] },
+      { name: 'XP', color: '#BA7517', values: [80, 130, 90, 100, 110, 90, 80] }
+    ]
+  };
+
+  const RANKING = [
+    { rank: 1, name: 'Wealth Crystal', plays: 3847, ctr: 94, color: '#534AB7', light: '#EEEDFE', dark: '#3C3489' },
+    { rank: 2, name: 'Growth Ascend', plays: 2104, ctr: 89, color: '#854F0B', light: '#FAEEDA', dark: '#412402' },
+    { rank: 3, name: 'Opportunity Pulse', plays: 1621, ctr: 82, color: '#0F6E56', light: '#E1F5EE', dark: '#04342C' },
+    { rank: 4, name: 'Solution Snap', plays: 1162, ctr: 76, color: '#185FA5', light: '#E6F1FB', dark: '#042C53' }
+  ];
+
+  // ============================
+  // RENDER CHART
+  // ============================
+  function renderChart() {
+    const container = document.getElementById('chart-container');
+    const width = 700;
+    const height = 240;
+    const padding = { top: 20, right: 20, bottom: 30, left: 50 };
+    const chartW = width - padding.left - padding.right;
+    const chartH = height - padding.top - padding.bottom;
+
+    const totals = CHART_DATA.days.map((_, i) =>
+      CHART_DATA.series.reduce((sum, s) => sum + s.values[i], 0)
+    );
+    const maxTotal = Math.max(...totals);
+    const yStep = Math.ceil(maxTotal / 4 / 100) * 100;
+
+    let svg = `<svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">`;
+
+    // Grid lines
+    for (let i = 0; i <= 4; i++) {
+      const y = padding.top + (chartH / 4) * i;
+      const value = (4 - i) * yStep;
+      svg += `<line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="rgba(0,0,0,0.06)" stroke-width="0.5" stroke-dasharray="2 3"/>`;
+      svg += `<text x="${padding.left - 8}" y="${y + 4}" font-size="10" fill="#888780" text-anchor="end">${value >= 1000 ? (value/1000) + 'K' : value}</text>`;
+    }
+
+    // Bars
+    const barWidth = 26;
+    const colWidth = chartW / CHART_DATA.days.length;
+
+    CHART_DATA.days.forEach((day, i) => {
+      const cx = padding.left + colWidth * i + colWidth / 2;
+      const x = cx - barWidth / 2;
+      let yPos = padding.top + chartH;
+
+      CHART_DATA.series.forEach(series => {
+        const val = series.values[i];
+        const h = (val / maxTotal) * chartH;
+        yPos -= h;
+        const isLast = series === CHART_DATA.series[CHART_DATA.series.length - 1];
+        svg += `<rect x="${x}" y="${yPos}" width="${barWidth}" height="${h}" fill="${series.color}" ${isLast ? 'rx="2"' : ''} class="bar fade-in" style="animation-delay: ${i * 50}ms;"/>`;
+      });
+
+      svg += `<text x="${cx}" y="${height - 8}" font-size="11" fill="#888780" text-anchor="middle">${day}</text>`;
+    });
+
+    svg += '</svg>';
+    container.innerHTML = svg;
+  }
+
+  // ============================
+  // RENDER RANKING
+  // ============================
+  function renderRanking() {
+    const container = document.getElementById('ranking-list');
+    container.innerHTML = RANKING.map(item => `
+      <div class="ranking-row">
+        <div class="ranking-header">
+          <div class="rank-num" style="background: ${item.light}; color: ${item.dark};">${item.rank}</div>
+          <div style="flex: 1;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 14px; font-weight: 500;">${item.name}</span>
+              <div style="display: flex; gap: 16px;">
+                <span style="font-size: 12px; color: var(--text-tertiary);">${item.plays.toLocaleString('he-IL')} השמעות</span>
+                <span style="font-size: 13px; font-weight: 500; color: ${item.ctr >= 85 ? 'var(--color-green-dark)' : 'var(--color-amber-dark)'};">CTR ${item.ctr}%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="ranking-progress">
+          <div class="ranking-progress-fill" style="width: ${item.ctr}%; background: ${item.color};"></div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // ============================
+  // INTERACTIONS
+  // ============================
+  document.getElementById('time-range').addEventListener('click', (e) => {
+    if (!e.target.classList.contains('time-range-btn')) return;
+    document.querySelectorAll('.time-range-btn').forEach(b => b.classList.remove('active'));
+    e.target.classList.add('active');
+
+    const range = e.target.dataset.range;
+    const multipliers = { '24h': 0.15, '7d': 1, '30d': 4.2 };
+    const m = multipliers[range];
+
+    document.getElementById('kpi-plays').textContent = Math.round(8734 * m).toLocaleString('he-IL');
+    showToast(`📊 מציג נתונים: ${e.target.textContent}`);
+  });
+
+  function runABTest() { showToast('🧪 מגדיר A/B test בין Solution Snap ל-Coin Drop...'); }
+  function dismissInsight() {
+    document.querySelector('.ai-insight-card').style.opacity = '0.4';
+    showToast('✓ התובנה נדחתה');
+  }
+
+  function showToast(message) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2500);
+  }
+
+  renderChart();
+  renderRanking();
+</script>
+</body>
+</html>

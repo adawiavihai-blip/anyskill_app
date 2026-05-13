@@ -14,6 +14,7 @@ import '../main.dart' show currentAppVersion;
 import '../widgets/anyskill_logo.dart';
 import 'otp_screen.dart';
 import 'terms_of_service_screen.dart';
+import 'privacy_policy_screen.dart';
 import 'provider_registration_wizard_screen.dart';
 import '../services/private_data_service.dart';
 import '../services/auth_duplicate_guard.dart';
@@ -52,14 +53,29 @@ const _kCountries = [
 ];
 
 // ── Rate-limit tracker (in-memory, resets on restart — server-side Firebase limits apply) ──
+//
+// Sliding-window: at most _kMaxSends OTP sends in the last _kWindowMins
+// minutes. When the limit is hit, the user must wait until the OLDEST
+// send drops out of the window — which is at most _kWindowMins minutes
+// but is usually less, so we report the precise remaining wait time
+// instead of always saying "wait 10 minutes".
 final List<DateTime> _otpSendTimestamps = [];
-const _kMaxSends   = 3;
+const _kMaxSends   = 5;   // was 3 — bumped so retries-after-back are forgiving
 const _kWindowMins = 10;
 
-bool _isRateLimited() {
-  final cutoff = DateTime.now().subtract(const Duration(minutes: _kWindowMins));
+/// Remaining seconds until the user can request another OTP, or 0 when
+/// the user is NOT currently rate-limited.
+int _rateLimitWaitSeconds() {
+  final now = DateTime.now();
+  final cutoff = now.subtract(const Duration(minutes: _kWindowMins));
   _otpSendTimestamps.removeWhere((t) => t.isBefore(cutoff));
-  return _otpSendTimestamps.length >= _kMaxSends;
+  if (_otpSendTimestamps.length < _kMaxSends) return 0;
+  // Oldest still-counted send is at index 0. The window opens up the
+  // moment that send is _kWindowMins old.
+  final oldest = _otpSendTimestamps.first;
+  final unblockAt = oldest.add(const Duration(minutes: _kWindowMins));
+  final secs = unblockAt.difference(now).inSeconds;
+  return secs > 0 ? secs : 0;
 }
 
 void _recordSend() => _otpSendTimestamps.add(DateTime.now());
@@ -158,8 +174,12 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen>
       _snack(AppLocalizations.of(context).phoneInvalidNumber, _kRed);
       return;
     }
-    if (_isRateLimited()) {
-      _snack(AppLocalizations.of(context).phoneTooManyCodes(_kWindowMins), _kRed);
+    final waitSec = _rateLimitWaitSeconds();
+    if (waitSec > 0) {
+      // Round UP to whole minutes for the user-facing message — but never
+      // below 1 (so we don't say "wait 0 minutes").
+      final waitMins = (waitSec / 60).ceil().clamp(1, _kWindowMins);
+      _snack(AppLocalizations.of(context).phoneTooManyCodes(waitMins), _kRed);
       return;
     }
 
@@ -584,7 +604,13 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen>
   }
 
   Widget _buildLanguageButton(AppLocalizations l10n) {
-    return ClipRRect(
+    // Semantics: pill in the corner that opens the language dropdown.
+    // Without explicit Semantics, screen readers announce only the
+    // current language label ("עברית") with no hint that it's tappable.
+    return Semantics(
+      button: true,
+      label: l10n.phoneLoginSelectCountry,  // "Select language" — l10n key from existing strings
+      child: ClipRRect(
       borderRadius: BorderRadius.circular(20),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
@@ -634,6 +660,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen>
           ),
         ),
       ),
+    ),
     );
   }
 
@@ -702,7 +729,14 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen>
   }) {
     // Listener (onPointerUp) matches the iOS PWA-safe pattern from the
     // original implementation — avoids the 300ms delay + swallowed taps.
-    return Listener(
+    // Semantics: marks this as a button for screen readers (TalkBack/VoiceOver).
+    // Without it, the button presents as plain text "המשך עם Google" and
+    // users with disabilities can't tell it's tappable.
+    return Semantics(
+      button: true,
+      label: label,
+      enabled: !_isLoading,
+      child: Listener(
       behavior: HitTestBehavior.opaque,
       onPointerUp: _isLoading ? null : (_) => onTap(),
       child: Container(
@@ -735,6 +769,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen>
           ],
         ),
       ),
+    ),
     );
   }
 
@@ -873,7 +908,14 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen>
 
   // ── Primary CTA — gradient + pulse + shimmer ─────────────────────────────
   Widget _buildCTAButton(AppLocalizations l10n) {
-    return AnimatedBuilder(
+    // Semantics wrapper announces this as the primary login button to
+    // screen readers. Without it, the gradient+shimmer Container is just
+    // decorative paint — TalkBack/VoiceOver users can't tell it's the CTA.
+    return Semantics(
+      button: true,
+      label: l10n.phoneLoginCtaLogin,        // "להתחברות" / "Sign in"
+      enabled: !_isLoading,
+      child: AnimatedBuilder(
       animation: Listenable.merge([_ctaPulseCtrl, _shimmerCtrl]),
       builder: (_, __) {
         final pulseT = _ctaPulseCtrl.value;
@@ -981,6 +1023,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen>
           ),
         );
       },
+    ),
     );
   }
 
@@ -998,7 +1041,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen>
           TextSpan(text: '${l10n.phoneLoginTermsPrefix} '),
           _linkSpan(l10n.phoneLoginTermsOfUse, _openTerms),
           TextSpan(text: ' ${l10n.phoneLoginAnd} '),
-          _linkSpan(l10n.phoneLoginPrivacyPolicy, _openTerms),
+          _linkSpan(l10n.phoneLoginPrivacyPolicy, _openPrivacy),
         ],
       ),
       textAlign: TextAlign.center,
@@ -1030,6 +1073,15 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen>
       context,
       MaterialPageRoute(
         builder: (_) => const TermsOfServiceScreen(showAcceptButton: false),
+      ),
+    );
+  }
+
+  void _openPrivacy() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const PrivacyPolicyScreen(),
       ),
     );
   }
@@ -1286,12 +1338,30 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen>
     final docRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
 
     // v12.8.0 — CRITICAL: do NOT overwrite an existing profile on re-login.
+    // Note on timeout handling: Dart's `Future.timeout()` does NOT cancel the
+    // source Future — it just races. The original `.get()` keeps running in
+    // the background and may later complete with an error that becomes an
+    // Uncaught Error in the zone. We attach a `.catchError` sink on the
+    // source Future before racing it, so a late-completion error is safely
+    // consumed instead of bubbling up to FlutterError.onError.
     for (int attempt = 1; attempt <= 3; attempt++) {
       try {
         // ignore: avoid_print
         print('📝 [Profile] Attempt $attempt — checking existing doc');
-        final existing =
-            await docRef.get().timeout(const Duration(seconds: 5));
+        final sourceFuture = docRef.get();
+        // Attach a silent error listener to the SOURCE Future so a late
+        // completion (after our 5s timeout already fired) doesn't bubble up
+        // as an Uncaught Error. We use `.then(..., onError: ...)` — this
+        // registers another listener on the same Future without creating a
+        // retry chain. The `unawaited` wrapper tells the linter we intentionally
+        // don't block on this listener; it exists purely to silence late errors.
+        // ignore: unawaited_futures
+        sourceFuture.then(
+          (DocumentSnapshot _) {},
+          onError: (Object _) {},
+        );
+        final existing = await sourceFuture
+            .timeout(const Duration(seconds: 5));
         if (existing.exists) {
           // ignore: avoid_print
           print('✅ [Profile] Existing doc preserved as-is (no overwrite).');
@@ -1330,6 +1400,11 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen>
           phone: user.phoneNumber ?? '',
           email: user.email ?? '',
         ));
+        // Activity_log entry for admin Live Feed — every social signup is
+        // recorded so admins see Google/Apple new users in real time, same
+        // as phone OTP signups. signInProvider helps the admin understand
+        // HOW the user signed up (handy for debugging duplicate accounts).
+        unawaited(_logRegistrationActivity(cred));
         // ignore: avoid_print
         print('✅ [Profile] First-time doc created on attempt $attempt');
         return true;
@@ -1346,6 +1421,47 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen>
       }
     }
     return true;
+  }
+
+  /// Records a `registration` entry to `activity_log` so the admin's Live
+  /// Activity tab shows every new social signup (Google / Apple) in real
+  /// time — same surface as phone OTP signups (otp_screen.dart). Best-effort:
+  /// any failure is swallowed because activity_log is a diagnostic surface,
+  /// not a transactional dependency of the signup flow.
+  Future<void> _logRegistrationActivity(UserCredential cred) async {
+    try {
+      final user = cred.user;
+      if (user == null) return;
+      final providerId =
+          cred.additionalUserInfo?.providerId ??
+          (user.providerData.isNotEmpty
+              ? user.providerData.first.providerId
+              : 'unknown');
+      final providerLabelHe = switch (providerId) {
+        'google.com' => 'Google',
+        'apple.com'  => 'Apple',
+        'phone'      => 'טלפון',
+        _            => providerId,
+      };
+      final name = user.displayName ?? '';
+      await FirebaseFirestore.instance.collection('activity_log').add({
+        'type':           'registration',
+        'userId':         user.uid,
+        'name':           name,
+        'phone':          user.phoneNumber ?? '',
+        'email':          user.email ?? '',
+        'signInProvider': providerId,
+        'role':           'customer',
+        'priority':       'normal',
+        'createdAt':      FieldValue.serverTimestamp(),
+        'message':        'משתמש חדש נרשם דרך $providerLabelHe: $name',
+        'expireAt':       Timestamp.fromDate(
+            DateTime.now().add(const Duration(days: 30))),
+      });
+    } catch (e) {
+      // ignore: avoid_print
+      print('⚠️ [Profile] activity_log write failed: $e');
+    }
   }
 
   static String _generateNonce([int length = 32]) {

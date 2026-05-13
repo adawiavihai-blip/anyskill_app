@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../l10n/app_localizations.dart';
+import '../../services/cached_readers.dart';
 import '../../services/chat_theme_controller.dart';
 import '../../services/escrow_service.dart';
 import '../../services/offline_message_queue.dart';
@@ -252,6 +253,79 @@ class ChatUIHelper {
                   fontWeight: FontWeight.w600,
                   fontSize: 13,
                   decoration: TextDecoration.underline,
+                ),
+              ),
+            ]),
+          ),
+        );
+
+      case 'video':
+        if (msg.isEmpty || !msg.startsWith('http')) {
+          return const SizedBox(
+            width: 220,
+            height: 60,
+            child: Center(child: Icon(Icons.broken_image, color: Colors.grey)),
+          );
+        }
+        return GestureDetector(
+          onTap: () => launchUrl(Uri.parse(msg),
+              mode: LaunchMode.externalApplication),
+          child: Container(
+            width: 220,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+            decoration: BoxDecoration(
+              color: isMe
+                  ? Colors.white.withValues(alpha: 0.15)
+                  : Colors.black.withValues(alpha: 0.04),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: isMe
+                    ? Colors.white.withValues(alpha: 0.3)
+                    : Colors.black.withValues(alpha: 0.08),
+              ),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: isMe
+                      ? Colors.white.withValues(alpha: 0.2)
+                      : const Color(0xFFEF4444).withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  Icons.play_arrow_rounded,
+                  color: isMe ? Colors.white : const Color(0xFFDC2626),
+                  size: 26,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'וידאו',
+                      style: TextStyle(
+                        color: isMe ? Colors.white : p.textPrimary,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'לחץ לצפייה',
+                      style: TextStyle(
+                        color: isMe
+                            ? Colors.white.withValues(alpha: 0.85)
+                            : p.textMuted,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ]),
@@ -748,14 +822,16 @@ class _OfficialQuoteCardState extends State<_OfficialQuoteCard> {
       final clientId =
           qData['clientId']?.toString() ?? widget.currentUserId;
 
-      final results = await Future.wait([
-        db.collection('users').doc(providerId).get(),
-        db.collection('users').doc(clientId).get(),
-      ]);
+      // §66: cached read — 5min TTL via §61. Two parallel cached fetches
+      // (provider + client name lookup) on every "Pay & Secure" tap.
+      // High-frequency surface, naturally idempotent.
+      final results = await CachedReaders.providerProfiles(
+        [providerId, clientId],
+      );
       final providerName =
-          (results[0].data() ?? {})['name']?.toString() ?? '';
+          (results[providerId] ?? const {})['name']?.toString() ?? '';
       final clientName =
-          (results[1].data() ?? {})['name']?.toString() ??
+          (results[clientId] ?? const {})['name']?.toString() ??
               FirebaseAuth.instance.currentUser?.displayName ??
               '';
 

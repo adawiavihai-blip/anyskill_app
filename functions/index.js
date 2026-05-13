@@ -32,6 +32,103 @@ admin.initializeApp();
 // This helper prevents ghost agorot and ensures fee + net = total exactly.
 function roundNIS(n) { return Math.round(n * 100) / 100; }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// IDEMPOTENCY (CLAUDE.md §60) — shared helpers for money-writing CFs
+// ═════════════════════════════════════════════════════════════════════════════
+// Pattern proven on grantAdminCredit (§4.6). Each money path now caches
+// the result of a (callerUid, clientReqId) pair for 1 hour so a network
+// retry returns the original outcome instead of double-charging or
+// returning a confusing "failed-precondition" because the state already
+// transitioned on the first call.
+//
+// Cache collections (rule-locked to CF-only writes):
+//   - admin_credit_idempotency      (grantAdminCredit, legacy)
+//   - payment_release_idempotency   (processPaymentRelease)
+//   - cancellation_idempotency      (processCancellation)
+//   - vip_purchase_idempotency      (purchaseVipWithCredits)
+//
+// Doc ID format: `${callerUid}_${clientReqId}` — unique per caller+request.
+// TTL: written with `expireAt = now + 7d` so Firestore TTL auto-cleans
+// (per CLAUDE.md §19 retention policy — manual GCP TTL setup required).
+//
+// Failure mode: BOTH read AND write are wrapped in try/catch and treated
+// as non-fatal. A flaky idempotency cache must never block a real money
+// transaction or fail a legitimate retry. Worst case: a duplicate fires
+// through — but every CF here has a SECOND defense via status guards
+// (e.g. `status === 'expert_completed'` precondition on payment release).
+// ═════════════════════════════════════════════════════════════════════════════
+
+const IDEMPOTENCY_TTL_MS = 60 * 60 * 1000;          // 1 hour replay window
+const IDEMPOTENCY_EXPIRE_MS = 7 * 24 * 60 * 60 * 1000; // 7d for TTL cleanup
+
+/**
+ * Check if a previous identical call has already completed. Returns the
+ * cached result if found within the TTL window, else null.
+ *
+ * @param {FirebaseFirestore.Firestore} db
+ * @param {string} scopeName  Collection name, e.g. "payment_release_idempotency"
+ * @param {string} callerUid
+ * @param {string|undefined} clientReqId
+ * @returns {Promise<any|null>}
+ */
+async function _checkIdempotency(db, scopeName, callerUid, clientReqId) {
+  if (!clientReqId || typeof clientReqId !== "string") return null;
+  if (!callerUid) return null;
+  try {
+    const doc = await db
+      .collection(scopeName)
+      .doc(`${callerUid}_${clientReqId}`)
+      .get();
+    if (!doc.exists) return null;
+    const data = doc.data() || {};
+    const ageMs = Date.now() - (data.createdAt?.toMillis?.() || 0);
+    if (ageMs >= IDEMPOTENCY_TTL_MS) return null;
+    console.log(
+      `[idempotency] HIT on ${scopeName}: caller=${callerUid} ` +
+      `clientReqId=${clientReqId} ageMs=${ageMs}`,
+    );
+    return data.result || null;
+  } catch (e) {
+    // Non-fatal — proceed with the actual operation.
+    console.warn(`[idempotency] check failed on ${scopeName}: ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * Cache the successful result of a money-writing CF so a later retry with
+ * the same clientReqId returns the same payload instead of re-executing.
+ *
+ * @param {FirebaseFirestore.Firestore} db
+ * @param {string} scopeName
+ * @param {string} callerUid
+ * @param {string|undefined} clientReqId
+ * @param {any} result  Anything serialisable to Firestore.
+ */
+async function _saveIdempotencyResult(db, scopeName, callerUid, clientReqId, result) {
+  if (!clientReqId || typeof clientReqId !== "string") return;
+  if (!callerUid) return;
+  try {
+    await db
+      .collection(scopeName)
+      .doc(`${callerUid}_${clientReqId}`)
+      .set({
+        callerUid,
+        clientReqId,
+        result,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        // §19 TTL auto-cleanup. Operator must configure the TTL policy on
+        // the GCP Console for each idempotency collection.
+        expireAt: admin.firestore.Timestamp.fromDate(
+          new Date(Date.now() + IDEMPOTENCY_EXPIRE_MS),
+        ),
+      });
+  } catch (e) {
+    // Non-fatal — the underlying mutation already succeeded.
+    console.warn(`[idempotency] save failed on ${scopeName}: ${e.message}`);
+  }
+}
+
 // ── v9.7.0: Centralized admin check ────────────────────────────────────────
 // Replaces 8 hardcoded email checks scattered across the codebase.
 // Admin status is determined SOLELY by the Firestore `isAdmin` flag on the
@@ -719,7 +816,11 @@ exports.processPaymentRelease = onCall(async (request) => {
     // document. Cosmetic display fields (expertName, customerName) are
     // also re-derived from jobData; we only fall back to request fields
     // for the transaction title text if jobData lacks them.
-    const { jobId } = request.data;
+    //
+    // Idempotency (§60): optional `clientReqId` lets a network-retry
+    // return the original success result instead of re-running and
+    // hitting STEP 5's status-already-changed precondition.
+    const { jobId, clientReqId } = request.data || {};
     if (!jobId || typeof jobId !== 'string') {
         console.error('[PPR] STEP2 FAIL: jobId missing or invalid');
         throw new HttpsError('invalid-argument', 'jobId is required.');
@@ -727,6 +828,17 @@ exports.processPaymentRelease = onCall(async (request) => {
     console.log(`[PPR] STEP2 OK: jobId=${jobId}`);
 
     const db = admin.firestore();
+    const callerUid = request.auth.uid;
+
+    // STEP 2.5: Idempotency replay check (best-effort, pre-transaction)
+    const cachedResult = await _checkIdempotency(
+        db, "payment_release_idempotency", callerUid, clientReqId,
+    );
+    if (cachedResult) {
+        console.log(`[PPR] STEP2.5 IDEMPOTENT REPLAY: returning cached result`);
+        return cachedResult;
+    }
+
     const jobRef = db.collection('jobs').doc(jobId);
     const adminSettingsRef = db.collection('admin').doc('admin').collection('settings').doc('settings');
 
@@ -934,10 +1046,24 @@ exports.processPaymentRelease = onCall(async (request) => {
         });
 
         console.log(`[PPR] STEP6 OK: transaction committed. job=${jobId} completed`);
+
+        // Cache success result for idempotent retries (§60).
+        const successResult = { success: true, jobId };
+        await _saveIdempotencyResult(
+            db, "payment_release_idempotency", callerUid, clientReqId, successResult,
+        );
+
         console.log('[PPR] ── END (success) ────────────────────────────');
-        return { success: true };
+        return successResult;
 
     } catch (e) {
+        // Re-throw HttpsError as-is so the client sees the right code.
+        // Don't cache failures — clients should be able to retry after
+        // fixing the underlying issue (top up balance, etc).
+        if (e instanceof HttpsError) {
+            console.error(`[PPR] STEP6 FAIL: ${e.code}: ${e.message}`);
+            throw e;
+        }
         console.error(`[PPR] STEP6 FAIL: transaction threw — code=${e.code} message=${e.message}`);
         console.error('[PPR] full error:', JSON.stringify(e, Object.getOwnPropertyNames(e)));
         throw new HttpsError('internal', `Payment release failed: ${e.message}`);
@@ -1226,6 +1352,88 @@ exports.awardXpQuickResponse = onDocumentCreated(
     }
 );
 
+// ── Auto-compute provider avgResponseMinutes ─────────────────────────────────
+//
+// Replaces the manual chip selector on the edit-profile screen (the
+// provider used to declare their own response-time SLA — UX bug, providers
+// shouldn't grade themselves). This CF observes every real provider reply
+// in a chat room and folds the measured delta into a running EWMA on
+// `users/{providerUid}.avgResponseMinutes`. The search ranking + Pro
+// badge + streak features (CLAUDE.md §6, §3 AnySkill Pro, §8b) all read
+// this field unchanged.
+//
+// Why a separate CF (not folded into awardXpQuickResponse): the XP one
+// caps at 5 min AND only fires on the provider's FIRST reply in a room
+// (so it grants 25 XP exactly once). We want EVERY provider reply in
+// EVERY room, capped at 24 h (outliers when the provider was asleep).
+//
+// Smoothing factor α = 0.15 → ~7-message half-life. Fast enough to
+// reflect a provider who just woke up and is now active, slow enough
+// that one slow reply doesn't tank the badge.
+exports.computeResponseTimeOnMessage = onDocumentCreated(
+    { document: "chats/{roomId}/messages/{messageId}", maxInstances: 50 },
+    async (event) => {
+        const msg = event.data.data();
+        const senderId   = msg.senderId;
+        const receiverId = msg.receiverId;
+        if (!senderId || !receiverId || senderId === 'system') return null;
+
+        const db = admin.firestore();
+
+        // Only track response time for providers — customers' avg is
+        // not surfaced anywhere in the app.
+        const senderSnap = await db.collection('users').doc(senderId).get();
+        if (!senderSnap.exists || !senderSnap.data().isProvider) return null;
+
+        // Find the customer's most recent message BEFORE this one. If
+        // the customer hasn't messaged in this room yet, the provider
+        // is initiating — no delta to compute.
+        const prevSnap = await db
+            .collection('chats').doc(event.params.roomId)
+            .collection('messages')
+            .where('senderId', '==', receiverId)
+            .orderBy('timestamp', 'desc')
+            .limit(1)
+            .get();
+        if (prevSnap.empty) return null;
+
+        const prevTs = prevSnap.docs[0].data().timestamp?.toDate();
+        const thisTs = msg.timestamp?.toDate() || new Date();
+        if (!prevTs) return null;
+
+        const diffMins = (thisTs - prevTs) / 60000;
+        // Sanity bounds — negatives are clock skew (out-of-order writes),
+        // anything over 24 h is "slept on it" and should not pollute the
+        // average. The provider's reply is still legit, just not graded.
+        if (diffMins < 0 || diffMins > 1440) return null;
+
+        try {
+            const senderData = senderSnap.data();
+            const prev = (typeof senderData.avgResponseMinutes === 'number' &&
+                senderData.avgResponseMinutes > 0)
+                ? senderData.avgResponseMinutes
+                : null;
+            // EWMA — first measurement seeds the average exactly; every
+            // subsequent measurement nudges it by 15 % toward the new
+            // observation.
+            const alpha = 0.15;
+            const next = prev == null
+                ? diffMins
+                : (prev * (1 - alpha) + diffMins * alpha);
+            // Round to one decimal — UI never needs more precision than
+            // "~3.4 min".
+            const rounded = Math.round(next * 10) / 10;
+            await db.collection('users').doc(senderId).set({
+                avgResponseMinutes: rounded,
+                avgResponseUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+        } catch (e) {
+            console.error('avgResponseMinutes update failed:', e);
+        }
+        return null;
+    }
+);
+
 // ── Callable: סימון הודעות כנקראו (Admin SDK — ללא מגבלות client) ──────────────
 // מוחלף על פעולת batch כבדה בצד הלקוח. מאפס shards + שדה מדנורמלי + isRead
 exports.processMarkAsRead = onCall({ minInstances: 1, concurrency: 80 }, async (request) => {
@@ -1432,47 +1640,36 @@ exports.sendReceiptEmail = onDocumentUpdated(
 // Callable: deducts ₪99 from balance and activates isPromoted for 30 days.
 
 exports.activateVipSubscription = onCall(async (request) => {
+    // ── DEPRECATED — CLAUDE.md §51 follow-up ─────────────────────────────
+    //
+    // This CF was the legacy `isPromoted` VIP path. It set
+    // `users/{uid}.isPromoted: true` for 30 days but did NOT add the
+    // provider to the new `vip_subscriptions/` collection or the home-tab
+    // carousel banner. After a real incident where a provider tapped
+    // BOTH the old (`_showVipSheet` bottom square) AND new
+    // (`VipUpgradeButton` top card) entry points and was debited 198₪,
+    // we removed the UI entry point AND now hard-block this CF so any
+    // stale client (cached old build) cannot trigger a legacy debit
+    // either.
+    //
+    // The replacement is `purchaseVipWithCredits` — same 99₪ price, but
+    // writes to `vip_subscriptions/{id}` and triggers the carousel sync.
+    //
+    // The CF stays exported so deploy doesn't break older clients with
+    // a "function not found" 404 — they get a friendly Hebrew error
+    // instead and can tap the new button.
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError('unauthenticated', 'Not authenticated');
 
-    const db       = admin.firestore();
-    const userRef  = db.collection('users').doc(uid);
-    const txRef    = db.collection('transactions').doc();
-    const VIP_PRICE = 99;
-    const VIP_DAYS  = 30;
+    console.warn(
+      `[activateVipSubscription] DEPRECATED call from uid=${uid} — ` +
+      `routed to no-op. Caller should use purchaseVipWithCredits.`,
+    );
 
-    await db.runTransaction(async (tx) => {
-        const userDoc = await tx.get(userRef);
-        if (!userDoc.exists) throw new HttpsError('not-found', 'User not found');
-
-        const balance = userDoc.data()?.balance ?? 0;
-        if (balance < VIP_PRICE) {
-            throw new HttpsError(
-                'failed-precondition',
-                `יתרה לא מספיקה. נדרש ₪${VIP_PRICE}, יש ₪${balance}`
-            );
-        }
-
-        const expiryDate = new Date();
-        expiryDate.setDate(expiryDate.getDate() + VIP_DAYS);
-
-        tx.update(userRef, {
-            balance:              admin.firestore.FieldValue.increment(-VIP_PRICE),
-            isPromoted:           true,
-            promotionExpiryDate:  admin.firestore.Timestamp.fromDate(expiryDate),
-        });
-
-        tx.set(txRef, {
-            userId:    uid,
-            amount:    -VIP_PRICE,
-            title:     `מנוי VIP — חשיפה מוגברת (${VIP_DAYS} יום)`,
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            type:      'vip_subscription',
-        });
-    });
-
-    console.log(`VIP activated for ${uid} for ${VIP_DAYS} days`);
-    return { success: true };
+    throw new HttpsError(
+      'failed-precondition',
+      'מסלול ה-VIP הישן הוסר. השתמש בכפתור "הצטרף ל-VIP" החדש בראש העמוד.',
+    );
 });
 
 // ── VIP Expiry — daily cron at 00:30 IST ─────────────────────────────────
@@ -3080,9 +3277,18 @@ exports.resolveDisputeAdmin = onCall(
             throw new HttpsError("permission-denied", "Admin access required.");
         }
 
-        const { jobId, resolution, adminNote } = request.data;
+        const { jobId, resolution, adminNote, clientReqId } = request.data || {};
         if (!jobId || !["refund", "release", "split"].includes(resolution)) {
             throw new HttpsError("invalid-argument", "jobId and valid resolution are required.");
+        }
+
+        // Idempotency replay check (§70) — pre-transaction.
+        const cachedDispute = await _checkIdempotency(
+            db, "dispute_resolution_idempotency", callerId, clientReqId,
+        );
+        if (cachedDispute) {
+            console.log(`[resolveDisputeAdmin] IDEMPOTENT REPLAY for jobId=${jobId}`);
+            return cachedDispute;
         }
 
         const jobRef  = db.collection("jobs").doc(jobId);
@@ -3247,7 +3453,8 @@ exports.resolveDisputeAdmin = onCall(
         ]);
 
         console.log(`[resolveDisputeAdmin] jobId=${jobId} resolution=${resolution} by admin=${callerId}`);
-        return {
+
+        const disputeResult = {
             success:       true,
             resolution,
             newStatus,
@@ -3255,6 +3462,13 @@ exports.resolveDisputeAdmin = onCall(
             expertCredit:   parseFloat(expertCredit.toFixed(2)),
             platformFee:    parseFloat(platformFee.toFixed(2)),
         };
+
+        // Cache success result for idempotent retries (§70).
+        await _saveIdempotencyResult(
+            db, "dispute_resolution_idempotency", callerId, clientReqId, disputeResult,
+        );
+
+        return disputeResult;
     }
 );
 
@@ -3272,10 +3486,19 @@ exports.processCancellation = onCall(
 
         const db       = admin.firestore();
         const callerId = request.auth.uid;
-        const { jobId, cancelledBy } = request.data;
+        const { jobId, cancelledBy, clientReqId } = request.data || {};
 
         if (!jobId) {
             throw new HttpsError("invalid-argument", "jobId is required.");
+        }
+
+        // Idempotency replay check (§60) — pre-transaction.
+        const cachedCancelResult = await _checkIdempotency(
+            db, "cancellation_idempotency", callerId, clientReqId,
+        );
+        if (cachedCancelResult) {
+            console.log(`[CANCEL] IDEMPOTENT REPLAY: returning cached result`);
+            return cachedCancelResult;
         }
 
         const jobRef = db.collection("jobs").doc(jobId);
@@ -3480,13 +3703,21 @@ exports.processCancellation = onCall(
         }
 
         console.log(`[processCancellation] jobId=${jobId} by=${callerId} status=${newStatus} customerCredit=${customerCredit} expertCredit=${expertCredit}`);
-        return {
+
+        const cancelResult = {
             success:       true,
             newStatus,
             isPenalty,
             customerCredit: parseFloat(customerCredit.toFixed(2)),
             expertCredit:   parseFloat(expertCredit.toFixed(2)),
         };
+
+        // Cache success result for idempotent retries (§60).
+        await _saveIdempotencyResult(
+            db, "cancellation_idempotency", callerId, clientReqId, cancelResult,
+        );
+
+        return cancelResult;
     }
 );
 
@@ -9541,15 +9772,24 @@ exports.backfillPhonesToAuth = onCall(
   },
 );
 
-// Companion: per-user lookup for the OTP client.
-// Given a phone number, returns the uid of the user doc that holds it (if
-// any). Used by otp_screen to detect "new Auth uid but legacy user doc
-// exists" — a sign the backfill hasn't run yet for this user.
+// Companion: per-user lookup + auto-heal for the OTP client.
 //
-// Auth not required — pre-signup lookup. Rate-limited per IP to prevent
-// phone-number enumeration attacks. After the limit is hit, returns
-// honeypot "not found" responses so the attacker cannot distinguish
-// rate-limited from genuine misses.
+// Two modes:
+//   (1) Anonymous lookup (no caller auth): returns {found, uid} or {found: false}.
+//       Used pre-signup to detect "new Auth uid but legacy user doc exists".
+//   (2) Authenticated self-heal: if the caller is signed in via phone OTP and
+//       the verified phone matches a legacy user doc owned by a DIFFERENT uid,
+//       the CF performs the link automatically:
+//         a. Deletes the caller's brand-new Auth account (frees the phone).
+//         b. Links the phone to the legacy Auth uid via admin SDK.
+//         c. Normalizes the legacy doc's `phone` field to E.164.
+//         d. Returns a custom token so the client signs in seamlessly as
+//            the legacy uid, preserving role + history + verifications.
+//
+// Phone matching tolerates legacy non-E.164 formats (e.g. `0521234567`) so
+// that pre-backfill users are caught without admin intervention.
+//
+// Rate-limited per IP. After the limit is hit, returns honeypot "not found".
 const _phoneLookupBuckets = new Map(); // ip → {count, resetAt}
 const _PHONE_LOOKUP_MAX = 10;          // max requests per window
 const _PHONE_LOOKUP_WINDOW_MS = 60_000; // 1 minute
@@ -9590,12 +9830,216 @@ exports.lookupLegacyUidByPhone = onCall(
       throw new HttpsError("invalid-argument", "Invalid phone.");
     }
     const db = admin.firestore();
+
+    // Build phone-format variants — the legacy doc's `phone` field may be
+    // stored in non-E.164 format (e.g. `0521234567`) for users who registered
+    // before write-time normalization shipped. Without this, pre-backfill
+    // users are silently invisible to the lookup.
+    const variants = [phone];
+    if (phone.startsWith("+972")) {
+      variants.push("0" + phone.substring(4));   // +972521234567 → 0521234567
+      variants.push(phone.substring(1));         // +972521234567 → 972521234567
+    } else if (phone.startsWith("+")) {
+      variants.push(phone.substring(1));
+    }
+
     const snap = await db.collection("users")
-      .where("phone", "==", phone)
+      .where("phone", "in", variants)
       .limit(1)
       .get();
     if (snap.empty) return { found: false };
-    return { found: true, uid: snap.docs[0].id };
+
+    const legacyUid = snap.docs[0].id;
+
+    // ── Self-heal path ──
+    // The caller is authenticated AND has a verified phone matching the
+    // legacy user doc. Firebase already cryptographically proved phone
+    // ownership via OTP, so it's safe to merge.
+    const callerUid = request.auth?.uid;
+    const callerTokenPhone = request.auth?.token?.phone_number;
+    const callerNormalizedPhone = _normalizeE164(callerTokenPhone);
+    const callerOwnsPhone = callerNormalizedPhone === phone;
+
+    if (callerUid && callerOwnsPhone && callerUid !== legacyUid) {
+      try {
+        // Step 1: free the phone by deleting caller's brand-new Auth account.
+        // (Phone uniqueness is enforced project-wide; without this the
+        // updateUser below would fail with `auth/phone-number-already-exists`.)
+        try {
+          await admin.auth().deleteUser(callerUid);
+        } catch (deleteErr) {
+          console.error(
+            `[Self-heal] deleteUser(${callerUid}) failed:`,
+            deleteErr.code, deleteErr.message,
+          );
+          // Continue anyway — if the delete failed because the user was
+          // already gone, the linkage step still succeeds.
+        }
+
+        // Step 2: link phone to the legacy Auth uid.
+        await admin.auth().updateUser(legacyUid, { phoneNumber: phone });
+
+        // Step 3: normalize the legacy doc's `phone` field to E.164 + stamp
+        // verified-at, so the next lookup is a direct equality match.
+        try {
+          await db.collection("users").doc(legacyUid).update({
+            phone,
+            phoneVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        } catch (updateErr) {
+          console.error(`[Self-heal] doc update failed:`, updateErr.message);
+          // Best-effort. Auth linkage already succeeded.
+        }
+
+        // Step 4: audit (per CLAUDE.md §50 — every privilege/identity
+        // mutation must hit admin_audit_log).
+        await db.collection("admin_audit_log").add({
+          action: "self_heal_legacy_phone_link",
+          legacyUid,
+          deletedNewUid: callerUid,
+          phone,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        // Step 5: custom token so the client can sign in seamlessly as the
+        // legacy user — no second OTP needed.
+        const customToken = await admin.auth().createCustomToken(legacyUid);
+
+        return {
+          found: true,
+          uid: legacyUid,
+          customToken,
+          healed: true,
+        };
+      } catch (e) {
+        console.error(
+          `[Self-heal] failed for caller=${callerUid}, legacy=${legacyUid}:`,
+          e.code || "unknown", e.message || e,
+        );
+        // Fall through to non-heal response — client falls back to the
+        // legacy "contact support" dialog, preserving prior behavior.
+        return { found: true, uid: legacyUid };
+      }
+    }
+
+    return { found: true, uid: legacyUid };
+  },
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// Email-side self-heal — companion to lookupLegacyUidByPhone.
+//
+// Scenario: a returning user who previously had email/password (removed in
+// v12.5) signs in via Google/Apple. Firebase creates a brand-new uid because
+// no Google/Apple credential was previously linked to her legacy Auth
+// account. Result: she sees an empty profile with none of her data.
+//
+// This CF does the same heal as the phone-side: when the caller is signed
+// in with a verified email AND a legacy user doc exists with the same email
+// under a different uid, delete the caller's brand-new Auth account and
+// return a custom token for the legacy uid so the client can sign back in
+// seamlessly. The legacy doc + history is preserved.
+//
+// Auth required. Caller's `email_verified` JWT claim must be true (Google
+// and Apple emails are auto-verified, so this is normally automatic).
+// ═══════════════════════════════════════════════════════════════════
+
+exports.selfHealAccountByEmail = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Must be signed in.");
+    }
+    const callerUid = request.auth.uid;
+    const callerEmailRaw = request.auth.token?.email;
+    const callerEmailVerified = request.auth.token?.email_verified === true;
+
+    if (!callerEmailRaw) {
+      throw new HttpsError("failed-precondition", "Email not on token.");
+    }
+    if (!callerEmailVerified) {
+      // Google/Apple sign-ins always have email_verified=true. If it's
+      // false, the caller didn't go through OAuth — refuse to heal so we
+      // don't accidentally let an unverified caller hijack a legacy
+      // account.
+      throw new HttpsError(
+        "failed-precondition",
+        "Caller email is not verified.",
+      );
+    }
+
+    const normalized = callerEmailRaw.trim().toLowerCase();
+    const db = admin.firestore();
+
+    // Find a legacy doc with the same email under a DIFFERENT uid.
+    const snap = await db.collection("users")
+      .where("email", "==", normalized)
+      .limit(2)
+      .get();
+
+    let legacyUid = null;
+    for (const doc of snap.docs) {
+      if (doc.id !== callerUid) {
+        legacyUid = doc.id;
+        break;
+      }
+    }
+    if (!legacyUid) return { found: false };
+
+    try {
+      // Step 1: delete caller's brand-new Auth account. This frees the
+      // email + any provider links so the legacy account remains the
+      // canonical owner of that email.
+      try {
+        await admin.auth().deleteUser(callerUid);
+      } catch (deleteErr) {
+        console.error(
+          `[Self-heal email] deleteUser(${callerUid}) failed:`,
+          deleteErr.code, deleteErr.message,
+        );
+        // Continue — may have been deleted concurrently.
+      }
+
+      // Step 2: ensure the legacy Auth account's email matches (handles
+      // edge cases like casing drift).
+      try {
+        await admin.auth().updateUser(legacyUid, { email: normalized, emailVerified: true });
+      } catch (updateErr) {
+        // updateUser with same email + emailVerified=true is a no-op;
+        // failures here usually indicate the email is already on a third
+        // account (very rare). Log + continue — token still works.
+        console.error(
+          `[Self-heal email] updateUser(${legacyUid}) failed:`,
+          updateErr.code, updateErr.message,
+        );
+      }
+
+      // Step 3: audit (CLAUDE.md §50 rule).
+      await db.collection("admin_audit_log").add({
+        action: "self_heal_legacy_email_link",
+        legacyUid,
+        deletedNewUid: callerUid,
+        email: normalized,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // Step 4: custom token for seamless re-auth. Client signs out then
+      // signs in with this token → routes to legacyUid → recovered.
+      const customToken = await admin.auth().createCustomToken(legacyUid);
+
+      return {
+        found: true,
+        uid: legacyUid,
+        customToken,
+        healed: true,
+      };
+    } catch (e) {
+      console.error(
+        `[Self-heal email] failed for caller=${callerUid}, legacy=${legacyUid}:`,
+        e.code || "unknown", e.message || e,
+      );
+      return { found: true, uid: legacyUid };
+    }
   },
 );
 
@@ -12574,6 +13018,280 @@ async function _sendReviewReminderEmail({
   return "sent";
 }
 
+// ==========================================================================
+// REVIEW SUBMITTED NOTIFICATION EMAIL - Immediate "you received a review" (§77)
+// ==========================================================================
+// Fires the moment a review is created. Sends a Hebrew HTML email to the
+// reviewee (the one being reviewed) informing them that a review has just
+// been left for them.
+//
+// Honors the double-blind rule (CLAUDE.md §5.2):
+//   • The email NEVER reveals review content or star rating.
+//   • It only names the reviewer and prompts the reviewee to submit their
+//     own review so both go live, or wait 7 days for auto-publish.
+//
+// Works for both `jobs` and `any_tasks` source collections (v14.2.0 dual-
+// rating) via the `sourceCollection` field on the review doc.
+//
+// Idempotency: writes `notifiedAt` on the review doc after sending.
+// `event.data.data()` is the at-creation snapshot, so on retry we re-read
+// the live doc to check the flag. The `notifiedAt` write does NOT re-fire
+// `onReviewPublishedEvalPro` (keys on isPublished flip) or this trigger
+// (onCreate, not onUpdate).
+//
+// Opt-out: respects users/{uid}.receiveEmailReceipts === false.
+
+exports.notifyOnReviewSubmitted = onDocumentCreated(
+  "reviews/{reviewId}",
+  async (event) => {
+    const db = admin.firestore();
+    const reviewId = event.params.reviewId;
+    const reviewRef = event.data && event.data.ref;
+    if (!reviewRef) return null;
+
+    try {
+      // Idempotency: re-read live doc so retries see the freshly-written
+      // notifiedAt and bail out.
+      const fresh = await reviewRef.get();
+      const review = fresh.data() || {};
+      if (review.notifiedAt) {
+        console.log(`[notifyOnReviewSubmitted] ${reviewId}: already notified, skipping`);
+        return null;
+      }
+
+      const revieweeId = review.revieweeId;
+      const reviewerName = String(review.reviewerName || "משתמש AnySkill");
+      const jobId = review.jobId;
+      const isClientReview = review.isClientReview === true;
+      const sourceCollection = review.sourceCollection || "jobs";
+
+      if (!revieweeId || typeof revieweeId !== "string") {
+        console.log(`[notifyOnReviewSubmitted] ${reviewId}: no revieweeId`);
+        return null;
+      }
+      if (!jobId || typeof jobId !== "string") {
+        console.log(`[notifyOnReviewSubmitted] ${reviewId}: no jobId`);
+        return null;
+      }
+
+      // Resolve recipient
+      const userSnap = await db.collection("users").doc(revieweeId).get();
+      if (!userSnap.exists) {
+        console.log(`[notifyOnReviewSubmitted] ${reviewId}: reviewee ${revieweeId} not found`);
+        return null;
+      }
+      const userData = userSnap.data() || {};
+      const email = userData.email;
+      const userName = userData.name || "";
+      const recipientGreeting = userName ? ("היי " + userName) : "היי";
+
+      // Read the source doc to know if BOTH sides have submitted — adjusts
+      // both the email tone (call-to-action vs "both reviews are live") AND
+      // the in-app/push notification body.
+      let bothReviewed = false;
+      try {
+        const jobSnap = await db.collection(sourceCollection).doc(jobId).get();
+        if (jobSnap.exists) {
+          const job = jobSnap.data() || {};
+          bothReviewed = job.clientReviewDone === true && job.providerReviewDone === true;
+        }
+      } catch (e) {
+        console.log(`[notifyOnReviewSubmitted] ${reviewId}: source doc read failed: ${e.message}`);
+      }
+
+      // ── In-app + FCM push ─────────────────────────────────────────────
+      // Fired BEFORE the email-skip checks below — push + in-app are
+      // independent channels (some users have no email or have opted out
+      // of email receipts; they should still get notified).
+      //
+      // Body never reveals the review content (double-blind §5.2). Tap is
+      // routed by [NotificationRouter] (§43) on `type: 'review_received'`
+      // → [PublicProfileScreen(userId: revieweeId)] where the review will
+      // appear once it's published (both reviewed OR 7d passed).
+      const pushTitle = "⭐ קיבלת ביקורת חדשה";
+      const pushBody = bothReviewed
+        ? `${reviewerName} כתב/ה עליך חוות דעת — שתי הביקורות פורסמו!`
+        : `${reviewerName} כתב/ה עליך חוות דעת — לחץ/י לצפייה`;
+
+      // 1. FCM push (best-effort — skipped gracefully if no token).
+      const fcmToken = userData.fcmToken;
+      if (fcmToken && typeof fcmToken === "string") {
+        try {
+          await admin.messaging().send({
+            token: fcmToken,
+            notification: { title: pushTitle, body: pushBody },
+            android: {
+              priority: "high",
+              notification: { channelId: "anyskill_default" },
+            },
+            apns: {
+              headers: { "apns-priority": "10" },
+              payload: { aps: { sound: "default", contentAvailable: 1 } },
+            },
+            webpush: {
+              notification: { icon: "/icons/Icon-192.png" },
+              fcm_options: { link: "https://anyskill-6fdf3.web.app" },
+            },
+            data: {
+              type: "review_received",
+              reviewId: String(reviewId),
+              relatedUserId: revieweeId,
+              revieweeId: revieweeId,
+              jobId: String(jobId),
+              sourceCollection: String(sourceCollection),
+              isClientReview: String(isClientReview),
+              bothReviewed: String(bothReviewed),
+            },
+          });
+          console.log(`[notifyOnReviewSubmitted] ${reviewId}: push sent to ${revieweeId}`);
+        } catch (e) {
+          console.error(`[notifyOnReviewSubmitted] ${reviewId}: push failed:`, e.message);
+        }
+      } else {
+        console.log(`[notifyOnReviewSubmitted] ${reviewId}: no fcmToken for ${revieweeId}, push skipped`);
+      }
+
+      // 2. In-app notification doc (durable record — visible in the bell
+      //    inbox even if push fails or the device has no FCM token).
+      try {
+        await db.collection("notifications").add({
+          userId: revieweeId,
+          title: pushTitle,
+          body: pushBody,
+          type: "review_received",
+          relatedUserId: revieweeId,
+          revieweeId: revieweeId,
+          reviewId: reviewId,
+          jobId: jobId,
+          sourceCollection: sourceCollection,
+          isClientReview: isClientReview,
+          bothReviewed: bothReviewed,
+          isRead: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          expireAt: admin.firestore.Timestamp.fromDate(
+            new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+          ),
+        });
+      } catch (e) {
+        console.error(`[notifyOnReviewSubmitted] ${reviewId}: in-app notification failed:`, e.message);
+      }
+
+      // ── Email skip checks (after push + in-app) ───────────────────────
+      if (!email) {
+        console.log(`[notifyOnReviewSubmitted] ${reviewId}: no email for ${revieweeId}`);
+        await reviewRef.update({
+          notifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }).catch(() => {});
+        return null;
+      }
+      if (userData.receiveEmailReceipts === false) {
+        console.log(`[notifyOnReviewSubmitted] ${reviewId}: ${revieweeId} opted out of emails`);
+        await reviewRef.update({
+          notifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }).catch(() => {});
+        return null;
+      }
+
+      // HTML escape helper
+      const esc = (s) => String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+
+      // The reviewee writes the OPPOSITE side's review. If this review is
+      // client→provider, the reviewee (provider) writes a provider→client
+      // review next (isClientReview=false). The /#/review route already
+      // accepts this param (see sendReviewReminders).
+      const reviewUrl =
+        "https://anyskill-6fdf3.web.app/#/review?jobId=" +
+        encodeURIComponent(jobId) +
+        "&isClientReview=" + (isClientReview ? "false" : "true");
+
+      let subject;
+      let bodyInnerHtml;
+
+      if (bothReviewed) {
+        subject = "⭐ הביקורות שלכם פורסמו — " + reviewerName;
+        bodyInnerHtml = `
+    <p>${esc(recipientGreeting)},</p>
+    <p>קיבלת ביקורת חדשה מ-<strong>${esc(reviewerName)}</strong>, וגם הביקורת שכתבת פורסמה.</p>
+    <p>שתי הביקורות זמינות עכשיו לצפייה בפרופיל שלך.</p>
+    <div class="highlight">
+      <strong>📬 שתי הביקורות פורסמו</strong><br>
+      <span style="font-size: 13px; color: #6B7280;">ניתן לראות אותן בפרופיל הציבורי.</span>
+    </div>
+    <a href="https://anyskill-6fdf3.web.app/" class="btn">לפרופיל שלי</a>`;
+      } else {
+        subject = "⭐ קיבלת ביקורת חדשה מ-" + reviewerName;
+        bodyInnerHtml = `
+    <p>${esc(recipientGreeting)},</p>
+    <p><strong>${esc(reviewerName)}</strong> השאיר/ה עבורך ביקורת חדשה ב-AnySkill.</p>
+    <p>על פי המדיניות שלנו, הביקורת תיחשף לעיניך רק לאחר שגם אתה תשתף את החוויה שלך — או באופן אוטומטי לאחר 7 ימים. כך אנחנו מבטיחים שכל הביקורות אותנטיות והוגנות.</p>
+    <div class="highlight">
+      <strong>📝 הזמן לכתוב את הביקורת שלך</strong><br>
+      <span style="font-size: 13px; color: #6B7280;">לוקח פחות מדקה — מיד לאחר השליחה שתי הביקורות יתפרסמו יחד.</span>
+    </div>
+    <a href="${reviewUrl}" class="btn">כתוב חוות דעת עכשיו</a>`;
+      }
+
+      const html = `
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head><meta charset="UTF-8">
+<style>
+  body { font-family: Arial, sans-serif; background: #f5f7fa; margin: 0; padding: 20px; direction: rtl; }
+  .card { background: #fff; border-radius: 16px; max-width: 520px; margin: 0 auto; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,.08); }
+  .header { background: linear-gradient(135deg,#6366F1,#8B5CF6); color: #fff; padding: 28px; text-align: center; }
+  .header h1 { margin: 0; font-size: 24px; font-weight: 900; }
+  .header .emoji { font-size: 44px; margin-bottom: 10px; }
+  .body { padding: 28px; color: #1F2937; }
+  .body p { line-height: 1.6; font-size: 15px; margin: 0 0 14px; }
+  .highlight { background: #FEF3C7; border-right: 4px solid #F59E0B; padding: 14px 18px; border-radius: 10px; margin: 16px 0; }
+  .btn { display: block; background: #6366F1; color: #fff !important; padding: 14px 24px; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 15px; text-align: center; margin: 24px auto 8px; max-width: 280px; }
+  .footer { text-align: center; padding: 16px; background: #f9fafb; color: #bbb; font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <div class="emoji">⭐</div>
+    <h1>קיבלת ביקורת חדשה!</h1>
+  </div>
+  <div class="body">${bodyInnerHtml}
+    <p style="font-size: 12px; color: #9CA3AF; text-align: center; margin-top: 20px;">
+      לא רוצה לקבל מיילים כאלה? ניתן לבטל בדף הפרופיל.
+    </p>
+  </div>
+  <div class="footer">AnySkill &bull; מסמך נשלח אוטומטית</div>
+</div>
+</body></html>`;
+
+      // Queue email + stamp notifiedAt atomically. If the mail collection
+      // write fails, we don't stamp — Firebase retries the CF.
+      const batch = db.batch();
+      batch.set(db.collection("mail").doc(), {
+        to: [email],
+        message: { subject, html },
+      });
+      batch.update(reviewRef, {
+        notifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      await batch.commit();
+
+      console.log(
+        `[notifyOnReviewSubmitted] ${reviewId}: sent to ${revieweeId} ` +
+        `(reviewer=${reviewerName}, bothReviewed=${bothReviewed}, source=${sourceCollection})`
+      );
+      return null;
+    } catch (err) {
+      console.error(`[notifyOnReviewSubmitted] ${reviewId} error:`, err);
+      return null;
+    }
+  }
+);
+
 // ── Pest Control: AI Pest Identification via Gemini Vision ─────────────────
 // Callable — any authenticated user.
 // Input:  { imageBase64: string }
@@ -15085,6 +15803,43 @@ exports.generateBannerInsights = onSchedule(
         ? Number(((totalClicks / totalImp) * 100).toFixed(2))
         : null;
 
+    // ── Phase-6 addition: VIP capacity context ─────────────────────
+    // Surface VIP slot fill + waitlist + monthly revenue so Gemini can
+    // suggest "promote VIP — 7 slots open" type insights. Best-effort:
+    // any failure here just falls through to the original metricsJson.
+    let vipContext = null;
+    try {
+      const [activeVip, waitlist] = await Promise.all([
+        db.collection("vip_subscriptions")
+          .where("status", "==", "active")
+          .limit(60)
+          .get(),
+        db.collection("vip_subscriptions")
+          .where("status", "==", "waitlist")
+          .limit(200)
+          .get(),
+      ]);
+      const paying = activeVip.docs.filter(
+        (d) => (d.data() || {}).type === "paid",
+      ).length;
+      const adminComp = activeVip.size - paying;
+      const monthlyRevenue = paying * 99;
+      vipContext = {
+        activeCount: activeVip.size,
+        capacity: 30,
+        slotsOpen: Math.max(0, 30 - activeVip.size),
+        paying,
+        adminComp,
+        waitlist: waitlist.size,
+        monthlyRevenueIls: monthlyRevenue,
+        // If 7+ slots are open, that's worth surfacing
+        // ("nudge providers to upgrade") — Gemini decides.
+        recommendVipPush: activeVip.size < 24,
+      };
+    } catch (e) {
+      console.error("[generateBannerInsights] VIP context fetch failed:", e.message);
+    }
+
     const metricsJson = {
       now: now.toISOString(),
       totals: {
@@ -15099,6 +15854,7 @@ exports.generateBannerInsights = onSchedule(
       },
       // Top 15 — enough signal, keeps the token bill small.
       banners: banners.slice(0, 15),
+      ...(vipContext ? { vip: vipContext } : {}),
     };
 
     // ── Prompt ────────────────────────────────────────────────────────
@@ -15106,14 +15862,18 @@ exports.generateBannerInsights = onSchedule(
       "אתה מנהל מוצר של AnySkill — מרקטפלייס שירותים ישראלי. " +
       "קיבלת תמונת מצב של כל הבאנרים ברחבי הפלטפורמה. " +
       "החזר תובנה אסטרטגית אחת בעברית שהאדמין יכול לפעול לפיה היום. " +
-      "עדיפות: מקסם CTR של באנרים פעילים > דחוף לפרסום טיוטות מבטיחות > " +
-      "סגור באנרים בעלי ביצועים חלשים (CTR < 1% עם 500+ חשיפות). " +
+      "עדיפות: " +
+      "1) אם vip.slotsOpen >= 5 — המלץ על קמפיין דחיפה ל-VIP " +
+      "(מציין כמה הכנסה פוטנציאלית — slotsOpen × 99). " +
+      "2) מקסם CTR של באנרים פעילים. " +
+      "3) דחוף לפרסום טיוטות מבטיחות. " +
+      "4) סגור באנרים חלשים (CTR < 1% עם 500+ חשיפות). " +
       "אם אין מספיק data (כל ה-CTR נאל), תן המלצה על publishing / timing. " +
       "החזר אך ורק JSON תקין בסכמה:\n" +
       '{"title":"כותרת קצרה (עד 40 תווים)",' +
       '"recommendation":"משפט פעולה קונקרטי",' +
       '"expectedImpact":"השפעה מספרית צפויה (אופציונלי)",' +
-      '"actionType":"toggle_banner|duplicate_banner|adjust_schedule|none",' +
+      '"actionType":"toggle_banner|duplicate_banner|adjust_schedule|promote_vip|none",' +
       '"actionParams":{"bannerId":"<doc id>","...":"..."}}';
 
     let result;
@@ -15647,4 +16407,3878 @@ exports.evaluateProStatusAsAdmin = onCall(async (request) => {
     revokeReason: res.revokeReason || null,
   };
 });
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// purchaseVipWithCredits — Phase 5 of Banners Studio (CLAUDE.md §49 →
+// new §51 once shipped). Provider buys a VIP slot using internal credits
+// (₪1 = 1 credit). Stripe was removed in v11.9.x — see CLAUDE.md §2 for
+// replacement plan when Tranzila/PayPlus lands. The schema (vip_payments
+// + vip_subscriptions) stays identical; only this CF body changes.
+//
+// Atomic transaction:
+//   1. Read users/{uid}.balance.
+//   2. Verify ≥ 99. Throw failed-precondition with insufficient hint.
+//   3. Verify caller doesn't already have an active subscription.
+//   4. Count active subscriptions vs cap (30).
+//   5. Debit 99 from balance.
+//   6. Create vip_subscriptions/{id} with type='paid' + status (active
+//      if cap not hit, else waitlist + position).
+//   7. Create vip_payments/{id} with status='paid', method='credits'.
+//   8. Mirror to transactions/ ledger so finance reports stay correct.
+//   9. Best-effort post-tx: admin_audit_log + in-app notification.
+//
+// Returns: {subscriptionId, paymentId, status, waitlistPosition?,
+//   amountCharged, newBalance}
+// ═══════════════════════════════════════════════════════════════════════════
+exports.purchaseVipWithCredits = onCall(
+  {
+    cors: true,
+    region: "us-central1",
+    maxInstances: 10,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "must-be-signed-in");
+    }
+    const uid = request.auth.uid;
+    const autoRenew = request.data && request.data.autoRenew !== false;
+    const clientReqId = request.data && request.data.clientReqId;
+    const PRICE = 99;
+    const MAX_SLOTS = 30;
+    const db = admin.firestore();
+
+    // Idempotency replay check (§60) — pre-transaction.
+    const cachedVipResult = await _checkIdempotency(
+      db, "vip_purchase_idempotency", uid, clientReqId,
+    );
+    if (cachedVipResult) {
+      console.log(`[purchaseVipWithCredits] IDEMPOTENT REPLAY for uid=${uid}`);
+      // Defensive: re-run the carousel sync even on replay. If the first
+      // call's inline sync failed silently (transient Firestore blip,
+      // missing banner doc, race with another sub flip), the user keeps
+      // getting "buy VIP" success without ever appearing in the rail.
+      // _runVipCarouselSync is idempotent — a no-op when in-sync — so
+      // re-running on replay is safe + closes the bug where Roi paid but
+      // didn't show up in the VIP carousel (CLAUDE.md §51 follow-up).
+      if (cachedVipResult.status === "active") {
+        try {
+          await _runVipCarouselSync(db, "purchaseVipWithCredits");
+        } catch (e) {
+          console.warn(
+            "[purchaseVipWithCredits] replay carousel sync failed (non-fatal):",
+            e,
+          );
+        }
+      }
+      return cachedVipResult;
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const subsCol = db.collection("vip_subscriptions");
+    const paymentsCol = db.collection("vip_payments");
+    const txnCol = db.collection("transactions");
+
+    const result = await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) {
+        throw new HttpsError("failed-precondition", "user-doc-missing");
+      }
+      const userData = userSnap.data() || {};
+      const balance = Number(userData.balance) || 0;
+
+      if (balance < PRICE) {
+        throw new HttpsError(
+          "failed-precondition",
+          `insufficient-balance: have ${balance}, need ${PRICE}`,
+        );
+      }
+
+      // Existing active subscription check
+      const existing = await tx.get(
+        subsCol
+          .where("providerId", "==", uid)
+          .where("status", "in", ["active", "waitlist"])
+          .limit(1),
+      );
+      if (!existing.empty) {
+        throw new HttpsError(
+          "already-exists",
+          "active-subscription-exists",
+        );
+      }
+
+      // Capacity check
+      const activeAgg = await tx.get(
+        subsCol.where("status", "==", "active").limit(60),
+      );
+      const willBeActive = activeAgg.size < MAX_SLOTS;
+
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const startDate = new Date();
+      const endDate = new Date(startDate);
+      endDate.setMonth(endDate.getMonth() + 1);
+
+      const subRef = subsCol.doc();
+      let waitlistPosition = null;
+      if (!willBeActive) {
+        const wlAgg = await tx.get(
+          subsCol.where("status", "==", "waitlist").limit(500),
+        );
+        let maxPos = 0;
+        wlAgg.forEach((d) => {
+          const p = Number((d.data() || {}).waitlistPosition) || 0;
+          if (p > maxPos) maxPos = p;
+        });
+        waitlistPosition = maxPos + 1;
+      }
+
+      tx.set(subRef, {
+        providerId: uid,
+        status: willBeActive ? "active" : "waitlist",
+        type: "paid",
+        startDate: admin.firestore.Timestamp.fromDate(startDate),
+        endDate: admin.firestore.Timestamp.fromDate(endDate),
+        autoRenew: autoRenew,
+        pricePerMonth: PRICE,
+        ...(waitlistPosition != null
+          ? { waitlistPosition }
+          : {}),
+        totalImpressions: 0,
+        totalClicks: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const paymentRef = paymentsCol.doc();
+      tx.set(paymentRef, {
+        providerId: uid,
+        subscriptionId: subRef.id,
+        amount: PRICE,
+        currency: "ILS",
+        status: "paid",
+        paymentMethod: "credits",
+        paymentDate: now,
+        isRenewal: false,
+        renewalType: "initial",
+        createdAt: now,
+      });
+
+      const newBalance = balance - PRICE;
+      tx.update(userRef, {
+        balance: admin.firestore.FieldValue.increment(-PRICE),
+      });
+
+      const txnRef = txnCol.doc();
+      tx.set(txnRef, {
+        senderId: uid,
+        senderName: userData.name || "ספק",
+        receiverId: "platform",
+        receiverName: "AnySkill VIP",
+        amount: PRICE,
+        type: "vip_purchase",
+        subscriptionId: subRef.id,
+        paymentId: paymentRef.id,
+        timestamp: now,
+      });
+
+      return {
+        subscriptionId: subRef.id,
+        paymentId: paymentRef.id,
+        status: willBeActive ? "active" : "waitlist",
+        waitlistPosition: waitlistPosition,
+        amountCharged: PRICE,
+        newBalance: newBalance,
+      };
+    });
+
+    // Post-tx side effects
+    try {
+      await db.collection("admin_audit_log").add({
+        action: "vip_purchase",
+        targetUserId: uid,
+        adminUid: uid,
+        adminName: "self",
+        reason: result.status === "active"
+          ? "VIP purchased — added to carousel"
+          : `VIP purchased — added to waitlist position ${result.waitlistPosition}`,
+        metadata: {
+          subscriptionId: result.subscriptionId,
+          paymentId: result.paymentId,
+          amountCharged: result.amountCharged,
+          paymentMethod: "credits",
+        },
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      console.error("[purchaseVipWithCredits] audit log failed:", e);
+    }
+
+    try {
+      await db.collection("notifications").add({
+        userId: uid,
+        title: result.status === "active"
+          ? "🎉 ברוכים הבאים ל-VIP!"
+          : "⏳ נכנסת לרשימת ההמתנה ל-VIP",
+        body: result.status === "active"
+          ? `המנוי שלך פעיל לחודש. נחייב אוטומטית את ${result.amountCharged} הקרדיטים בחודש הבא.`
+          : `אתה במקום #${result.waitlistPosition} ברשימת ההמתנה. תיכנס לקרוסלה ברגע שיתפנה מקום.`,
+        type: result.status === "active" ? "vip_active" : "vip_waitlist",
+        relatedDocId: result.subscriptionId,
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      console.error("[purchaseVipWithCredits] notification failed:", e);
+    }
+
+    // Cache result for idempotent retries (§60). Belt-and-braces try/catch:
+    // _saveIdempotencyResult ALREADY has an internal try/catch + console.warn
+    // (functions/index.js:111-129), but a future regression could remove it
+    // and an uncaught throw here would mean the CF returned a 5xx to the
+    // client even though the transaction (= the actual money + subscription
+    // creation) succeeded. The client would surface a Hebrew "unexpected
+    // error" dialog and the user would assume their VIP purchase failed
+    // when it actually didn't. Worst-case for users → defend against it.
+    try {
+      await _saveIdempotencyResult(
+        db, "vip_purchase_idempotency", uid, clientReqId, result,
+      );
+    } catch (e) {
+      console.warn("[purchaseVipWithCredits] idempotency cache save failed (non-fatal — purchase succeeded):", e);
+    }
+
+    // INLINE CAROUSEL SYNC — guarantees the new VIP appears in the
+    // customer rail BEFORE the success dialog even closes. Without this,
+    // we'd rely SOLELY on the syncVipCarouselOnSubscriptionChange trigger
+    // — and triggers have cold-start latency + can fail silently. By
+    // running the sync inline (in the same CF instance that's already
+    // warm), the user sees their card on the home rail by the time they
+    // pull-to-refresh after the purchase. Only runs for active subs;
+    // waitlist subs intentionally do NOT appear on the rail. Never throws.
+    if (result && result.status === "active") {
+      try {
+        const written = await _runVipCarouselSync(db, "purchaseVipWithCredits");
+        console.log(
+          `[purchaseVipWithCredits] inline carousel sync wrote ${written} providers`,
+        );
+      } catch (e) {
+        console.warn(
+          "[purchaseVipWithCredits] inline carousel sync failed (trigger will retry):",
+          e,
+        );
+      }
+    }
+
+    return result;
+  },
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// _runVipCarouselSync — shared reconciliation logic.
+//
+// Reads every `vip_subscriptions` doc with status=='active', finds the
+// live `provider_carousel` banner (or auto-creates one), and writes the
+// `providerIds` array. Idempotent. Returns the number of providerIds
+// written (or null on failure).
+//
+// Called from BOTH:
+//   • syncVipCarouselOnSubscriptionChange — Firestore trigger, async.
+//   • purchaseVipWithCredits — inline after tx commit, so the new VIP
+//     shows up in the customer rail BEFORE the user's success dialog
+//     even closes. The trigger still fires as a safety net.
+//   • forceSyncVipCarousel — admin force-resync.
+// ═══════════════════════════════════════════════════════════════════════════
+async function _runVipCarouselSync(db, source = "_runVipCarouselSync") {
+  try {
+    // 1a. New-system VIPs: active subscriptions in `vip_subscriptions/`
+    const activeSnap = await db.collection("vip_subscriptions")
+      .where("status", "==", "active")
+      .limit(60) // 30 cap + buffer
+      .get();
+    const newSystemIds = activeSnap.docs
+      .map((d) => (d.data() || {}).providerId)
+      .filter((s) => typeof s === "string" && s.length > 0);
+
+    // 1b. Legacy VIPs: providers with `isPromoted: true` + non-expired
+    // `promotionExpiryDate`. The legacy `activateVipSubscription` CF
+    // (now disabled — see CLAUDE.md §51 follow-up) wrote these flags
+    // but never added the provider to `vip_subscriptions/` or the
+    // carousel banner. We MUST keep showing them in the carousel until
+    // their 30-day legacy term expires — they paid 99₪ for the
+    // exposure, and not delivering on that is a refund-worthy bug.
+    //
+    // Composite index: `users(isPromoted, promotionExpiryDate)` already
+    // exists at firestore.indexes.json:313-320.
+    let legacyIds = [];
+    try {
+      const nowTs = admin.firestore.Timestamp.now();
+      const legacySnap = await db.collection("users")
+        .where("isPromoted", "==", true)
+        .where("promotionExpiryDate", ">", nowTs)
+        .limit(60)
+        .get();
+      legacyIds = legacySnap.docs
+        .map((d) => d.id)
+        .filter((s) => typeof s === "string" && s.length > 0);
+    } catch (e) {
+      // Missing composite index or transient blip → skip legacy bucket.
+      // The new-system VIPs still flow through. Worst case: a legacy
+      // VIP doesn't appear in the carousel until the index lands —
+      // their `isPromoted: true` still boosts search ranking +200.
+      console.warn("[vipCarouselSync] legacy isPromoted lookup failed (non-fatal):", e);
+    }
+
+    // Merge — new-system takes precedence; legacy fills remaining slots.
+    // Preserve insertion order so Roi (legacy) doesn't bump a freshly-
+    // purchased new-system VIP off the carousel.
+    const seen = new Set();
+    const activeIds = [];
+    for (const id of newSystemIds) {
+      if (!seen.has(id)) { seen.add(id); activeIds.push(id); }
+    }
+    for (const id of legacyIds) {
+      if (!seen.has(id)) { seen.add(id); activeIds.push(id); }
+    }
+
+    // 2. Find the live provider_carousel banner
+    const bannersSnap = await db.collection("banners")
+      .where("placement", "==", "provider_carousel")
+      .limit(10)
+      .get();
+    const candidates = bannersSnap.docs
+      .map((d) => ({ id: d.id, data: d.data() || {} }))
+      .filter((b) => {
+        const isActive = b.data.isActive === undefined
+          ? true
+          : b.data.isActive === true;
+        if (!isActive) return false;
+        const exp = b.data.expiresAt;
+        if (exp && exp.toDate && exp.toDate() < new Date()) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const ao = Number(a.data.order) || 999;
+        const bo = Number(b.data.order) || 999;
+        return ao - bo;
+      });
+
+    if (candidates.length === 0) {
+      if (activeIds.length === 0) {
+        console.log("[vipCarouselSync] no banner + no active subs — nothing to do");
+        return 0;
+      }
+      const cappedIds = activeIds.slice(0, 20);
+      const newBannerRef = db.collection("banners").doc();
+      await newBannerRef.set({
+        title: "המומחים שלנו · VIP",
+        subtitle: "נבחרי AnySkill",
+        placement: "provider_carousel",
+        isActive: true,
+        order: 0,
+        imageUrl: "",
+        color1: "1F1B14",
+        color2: "2A2317",
+        iconName: "stars",
+        providerCarousel: {
+          providerIds: cappedIds,
+          rotationDurationMs: 4000,
+          sortMode: "ai",
+          transition: "fade",
+          display: {
+            showProfilePic: true,
+            showRating: true,
+            showGallery: true,
+            galleryCount: 3,
+            showCategory: true,
+            showPrice: false,
+            showAvailability: true,
+          },
+        },
+        impressions: 0,
+        clicks: 0,
+        hasAbTest: false,
+        designStyle: "gradient",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdBy: "system_auto",
+        autoCreatedBy: source,
+      });
+      console.log(
+        `[vipCarouselSync] auto-created banner ${newBannerRef.id} with ${cappedIds.length} providers`,
+      );
+      return cappedIds.length;
+    }
+
+    // Cap at 20 (provider_carousel hard limit per the model).
+    const cappedIds = activeIds.slice(0, 20);
+
+    // ─── Write to ALL qualifying banners, not just the first ───────────
+    //
+    // The customer home rail (home_tab._ProviderCarouselsRail) ALSO filters
+    // by `_studioScheduleAllowsNow` (Banners Studio §51, Phase 6) — but the
+    // CF here does NOT. So if the lowest-`order` banner has scheduleHours
+    // restricting it to e.g. evenings, and the user lands on the home tab
+    // at noon, the rail filters out the banner the CF wrote to and falls
+    // through to the NEXT qualifying banner — which has stale or empty
+    // providerIds and shows the wrong people.
+    //
+    // Fix: write providerIds to every qualifying `provider_carousel` banner.
+    // They share the same VIP provider list semantically, so overwriting
+    // their `providerIds` is correct regardless of which one the rail picks
+    // at any given hour. Display config (rotation duration, sort mode,
+    // transition, etc.) on each banner stays untouched.
+    //
+    // Capacity: candidates.length is already bounded by limit(10) above.
+    let writtenCount = 0;
+    let skippedCount = 0;
+    for (const candidate of candidates) {
+      const cfg = candidate.data.providerCarousel || {};
+      const currentIds = Array.isArray(cfg.providerIds)
+        ? cfg.providerIds.filter((s) => typeof s === "string")
+        : [];
+      // Diff per-banner. Skip identical ones.
+      if (currentIds.length === cappedIds.length &&
+          currentIds.every((id, i) => id === cappedIds[i])) {
+        skippedCount++;
+        continue;
+      }
+      try {
+        await db.collection("banners").doc(candidate.id).update({
+          "providerCarousel.providerIds": cappedIds,
+        });
+        writtenCount++;
+      } catch (e) {
+        console.warn(
+          `[vipCarouselSync] banner=${candidate.id} update failed (continuing):`,
+          e,
+        );
+      }
+    }
+
+    console.log(
+      `[vipCarouselSync] ${writtenCount} banner(s) updated, ${skippedCount} already-in-sync — providerIds.length=${cappedIds.length}`,
+    );
+    return cappedIds.length;
+  } catch (e) {
+    console.error("[vipCarouselSync] failed:", e);
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// syncVipCarouselOnSubscriptionChange — Phase 6 of Banners Studio.
+//
+// Trigger: onDocumentWritten on `vip_subscriptions/{id}`.
+//
+// Whenever a subscription is created, updated (status flip, endDate
+// change), or deleted, this CF reconciles the customer-facing
+// `provider_carousel` banner's `providerIds` array with the current
+// active set. The home tab's `_ProviderCarouselsRail` reads that array,
+// so providers see/leave the rail within seconds of an admin grant /
+// purchase / expire.
+//
+// Note: `purchaseVipWithCredits` ALSO calls `_runVipCarouselSync` inline
+// for instant feedback. This trigger is the safety net (covers admin-comp
+// grants, manual Firestore edits, scheduledMonthlyVipBilling expirations).
+// ═══════════════════════════════════════════════════════════════════════════
+exports.syncVipCarouselOnSubscriptionChange = onDocumentWritten(
+  "vip_subscriptions/{subId}",
+  async (event) => {
+    await _runVipCarouselSync(admin.firestore(), "syncVipCarouselOnSubscriptionChange");
+    return null;
+  },
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// scheduledMonthlyVipBilling — Phase 6 of Banners Studio.
+//
+// Schedule: daily 03:00 Asia/Jerusalem.
+//
+// For every subscription whose endDate ≤ now AND status='active' AND
+// type='paid':
+//   - If autoRenew=true:
+//       1. Read users/{uid}.balance
+//       2. If balance ≥ 99: debit, extend endDate by 30d, write
+//          payment record (renewalType='auto'), send notification.
+//       3. If balance < 99: set status='expired', write payment record
+//          status='failed', send "top up" notification.
+//   - If autoRenew=false:
+//       1. Set status='expired', send "your VIP expired" notification.
+//
+// admin-comp subscriptions are ignored — they expire passively when
+// endDate passes (or never, if endDate is null).
+//
+// Each subscription is processed in its own transaction for atomicity.
+// Errors on one don't break the rest.
+// ═══════════════════════════════════════════════════════════════════════════
+exports.scheduledMonthlyVipBilling = onSchedule(
+  {
+    schedule: "0 3 * * *",
+    timeZone: "Asia/Jerusalem",
+    region: "us-central1",
+  },
+  async () => {
+    const db = admin.firestore();
+    const now = admin.firestore.Timestamp.now();
+
+    const expiringSnap = await db.collection("vip_subscriptions")
+      .where("status", "==", "active")
+      .where("type", "==", "paid")
+      .where("endDate", "<=", now)
+      .limit(100)
+      .get();
+
+    if (expiringSnap.empty) {
+      console.log("[scheduledMonthlyVipBilling] nothing to bill");
+      return null;
+    }
+
+    let renewed = 0;
+    let expired = 0;
+    let failed = 0;
+
+    for (const doc of expiringSnap.docs) {
+      const subId = doc.id;
+      const data = doc.data() || {};
+      const providerId = data.providerId;
+      const autoRenew = data.autoRenew === true;
+      const price = Number(data.pricePerMonth) || 99;
+
+      if (!providerId) {
+        console.warn(`[scheduledMonthlyVipBilling] sub ${subId} missing providerId`);
+        continue;
+      }
+
+      // ── Auto-renew path ───────────────────────────────────────────
+      if (autoRenew) {
+        try {
+          const result = await db.runTransaction(async (tx) => {
+            const userRef = db.collection("users").doc(providerId);
+            const subRef = db.collection("vip_subscriptions").doc(subId);
+            const userSnap = await tx.get(userRef);
+            if (!userSnap.exists) {
+              throw new Error("user-doc-missing");
+            }
+            const balance = Number((userSnap.data() || {}).balance) || 0;
+            if (balance < price) {
+              // Insufficient — expire + write failed payment
+              tx.update(subRef, {
+                status: "expired",
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              });
+              const failedPaymentRef = db.collection("vip_payments").doc();
+              tx.set(failedPaymentRef, {
+                providerId,
+                subscriptionId: subId,
+                amount: price,
+                currency: "ILS",
+                status: "failed",
+                paymentMethod: "credits",
+                paymentDate: admin.firestore.FieldValue.serverTimestamp(),
+                failureReason: `insufficient-balance: ${balance} < ${price}`,
+                isRenewal: true,
+                renewalType: "auto",
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              });
+              return { outcome: "failed-insufficient" };
+            }
+
+            // Debit + extend
+            const newEndDate = new Date();
+            newEndDate.setMonth(newEndDate.getMonth() + 1);
+
+            tx.update(userRef, {
+              balance: admin.firestore.FieldValue.increment(-price),
+            });
+            tx.update(subRef, {
+              endDate: admin.firestore.Timestamp.fromDate(newEndDate),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            const paymentRef = db.collection("vip_payments").doc();
+            tx.set(paymentRef, {
+              providerId,
+              subscriptionId: subId,
+              amount: price,
+              currency: "ILS",
+              status: "paid",
+              paymentMethod: "credits",
+              paymentDate: admin.firestore.FieldValue.serverTimestamp(),
+              isRenewal: true,
+              renewalType: "auto",
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            // Mirror to transactions ledger
+            const txnRef = db.collection("transactions").doc();
+            tx.set(txnRef, {
+              senderId: providerId,
+              senderName: (userSnap.data() || {}).name || "ספק",
+              receiverId: "platform",
+              receiverName: "AnySkill VIP",
+              amount: price,
+              type: "vip_renewal",
+              subscriptionId: subId,
+              paymentId: paymentRef.id,
+              timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            return { outcome: "renewed" };
+          });
+
+          if (result.outcome === "renewed") {
+            renewed++;
+            // Notify provider
+            await db.collection("notifications").add({
+              userId: providerId,
+              title: "↻ המנוי שלך חודש",
+              body: `חודש נוסף של VIP — ${price} קרדיטים נחויבו מהיתרה.`,
+              type: "vip_renewed",
+              relatedDocId: subId,
+              isRead: false,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            }).catch(() => {});
+          } else {
+            failed++;
+            await db.collection("notifications").add({
+              userId: providerId,
+              title: "⚠️ המנוי VIP פג",
+              body: "החיוב נכשל בגלל חוסר ביתרה. הוסף קרדיטים והרשם מחדש.",
+              type: "vip_renewal_failed",
+              relatedDocId: subId,
+              isRead: false,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            }).catch(() => {});
+          }
+        } catch (e) {
+          console.error(`[scheduledMonthlyVipBilling] sub ${subId} renew failed:`, e);
+        }
+        continue;
+      }
+
+      // ── Manual-renew path: just expire ────────────────────────────
+      try {
+        await db.collection("vip_subscriptions").doc(subId).update({
+          status: "expired",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        expired++;
+        await db.collection("notifications").add({
+          userId: providerId,
+          title: "המנוי VIP שלך הסתיים",
+          body: "תוקף המנוי פג. אתה מוזמן להירשם מחדש בכל עת.",
+          type: "vip_expired",
+          relatedDocId: subId,
+          isRead: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        }).catch(() => {});
+      } catch (e) {
+        console.error(`[scheduledMonthlyVipBilling] sub ${subId} expire failed:`, e);
+      }
+    }
+
+    console.log(
+      `[scheduledMonthlyVipBilling] renewed=${renewed}, expired=${expired}, failed=${failed}`,
+    );
+    return null;
+  },
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// forceSyncVipCarousel — admin-only callable that runs the same logic as
+// `syncVipCarouselOnSubscriptionChange` but on demand.
+//
+// Why: the trigger only fires on writes to vip_subscriptions/. If the
+// trigger code was deployed AFTER existing subscriptions were created
+// (typical rollout scenario), those existing subs never refire the
+// trigger automatically. Admin clicks "סנכרן עכשיו" → this CF reconciles.
+// ═══════════════════════════════════════════════════════════════════════════
+exports.forceSyncVipCarousel = onCall(
+  {
+    cors: true,
+    region: "us-central1",
+    maxInstances: 5,
+  },
+  async (request) => {
+    if (!(await isAdminCaller(request))) {
+      throw new HttpsError("permission-denied", "admin-only");
+    }
+    const db = admin.firestore();
+
+    // New-system VIPs
+    const activeSnap = await db.collection("vip_subscriptions")
+      .where("status", "==", "active")
+      .limit(60)
+      .get();
+    const newSystemIds = activeSnap.docs
+      .map((d) => (d.data() || {}).providerId)
+      .filter((s) => typeof s === "string" && s.length > 0);
+
+    // Legacy VIPs (`isPromoted: true` + non-expired) — see comment in
+    // _runVipCarouselSync above for why we merge.
+    let legacyIds = [];
+    try {
+      const nowTs = admin.firestore.Timestamp.now();
+      const legacySnap = await db.collection("users")
+        .where("isPromoted", "==", true)
+        .where("promotionExpiryDate", ">", nowTs)
+        .limit(60)
+        .get();
+      legacyIds = legacySnap.docs
+        .map((d) => d.id)
+        .filter((s) => typeof s === "string" && s.length > 0);
+    } catch (e) {
+      console.warn("[forceSyncVipCarousel] legacy isPromoted lookup failed (non-fatal):", e);
+    }
+
+    const seen = new Set();
+    const activeIds = [];
+    for (const id of newSystemIds) {
+      if (!seen.has(id)) { seen.add(id); activeIds.push(id); }
+    }
+    for (const id of legacyIds) {
+      if (!seen.has(id)) { seen.add(id); activeIds.push(id); }
+    }
+
+    const bannersSnap = await db.collection("banners")
+      .where("placement", "==", "provider_carousel")
+      .limit(10)
+      .get();
+    const candidates = bannersSnap.docs
+      .map((d) => ({ id: d.id, data: d.data() || {} }))
+      .filter((b) => {
+        const isActive = b.data.isActive === undefined
+          ? true
+          : b.data.isActive === true;
+        if (!isActive) return false;
+        const exp = b.data.expiresAt;
+        if (exp && exp.toDate && exp.toDate() < new Date()) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const ao = Number(a.data.order) || 999;
+        const bo = Number(b.data.order) || 999;
+        return ao - bo;
+      });
+
+    if (candidates.length === 0) {
+      if (activeIds.length === 0) {
+        return {
+          ok: true,
+          action: "no-op",
+          reason: "no banner + no active subs — nothing to do",
+          activeCount: 0,
+        };
+      }
+      const cappedIds = activeIds.slice(0, 20);
+      const newBannerRef = db.collection("banners").doc();
+      await newBannerRef.set({
+        title: "המומחים שלנו · VIP",
+        subtitle: "נבחרי AnySkill",
+        placement: "provider_carousel",
+        isActive: true,
+        order: 0,
+        imageUrl: "",
+        color1: "1F1B14",
+        color2: "2A2317",
+        iconName: "stars",
+        providerCarousel: {
+          providerIds: cappedIds,
+          rotationDurationMs: 4000,
+          sortMode: "ai",
+          transition: "fade",
+          display: {
+            showProfilePic: true,
+            showRating: true,
+            showGallery: true,
+            galleryCount: 3,
+            showCategory: true,
+            showPrice: false,
+            showAvailability: true,
+          },
+        },
+        impressions: 0,
+        clicks: 0,
+        hasAbTest: false,
+        designStyle: "gradient",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdBy: "system_auto",
+        autoCreatedBy: "forceSyncVipCarousel",
+      });
+      return {
+        ok: true,
+        action: "created",
+        bannerId: newBannerRef.id,
+        providerCount: cappedIds.length,
+        activeCount: activeSnap.size,
+      };
+    }
+
+    // Write to ALL qualifying banners (not just the first) for the same
+    // reason as _runVipCarouselSync — see comment there. Closes the
+    // `scheduleHours` mismatch where the home rail picks a different
+    // banner than the CF would target.
+    const cappedIds = activeIds.slice(0, 20);
+    let writtenCount = 0;
+    let skippedCount = 0;
+    let firstTargetId = null;
+    for (const candidate of candidates) {
+      firstTargetId = firstTargetId || candidate.id;
+      const cfg = candidate.data.providerCarousel || {};
+      const currentIds = Array.isArray(cfg.providerIds)
+        ? cfg.providerIds.filter((s) => typeof s === "string")
+        : [];
+      if (currentIds.length === cappedIds.length &&
+          currentIds.every((id, i) => id === cappedIds[i])) {
+        skippedCount++;
+        continue;
+      }
+      try {
+        await db.collection("banners").doc(candidate.id).update({
+          "providerCarousel.providerIds": cappedIds,
+        });
+        writtenCount++;
+      } catch (e) {
+        console.warn(
+          `[forceSyncVipCarousel] banner=${candidate.id} update failed (continuing):`,
+          e,
+        );
+      }
+    }
+
+    return {
+      ok: true,
+      action: writtenCount === 0 ? "already-synced" : "updated",
+      bannerId: firstTargetId,
+      bannersWritten: writtenCount,
+      bannersSkipped: skippedCount,
+      providerCount: cappedIds.length,
+      activeCount: activeSnap.size,
+    };
+  },
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMMUNITY GOLD HEART — Phase B (v15.x, see CLAUDE.md community redesign)
+//
+// The gold heart is a 30-day rolling badge granted on every confirmed
+// community task completion. Renews to a fresh 30 days on every new
+// completion (NOT additive). Vanishes silently after 30 days of inactivity.
+//
+// `users/{uid}.goldHeartExpiresAt: Timestamp` is the new authoritative
+// field. Legacy `volunteerHeart` / `lastVolunteerTaskAt` /
+// `hasActiveVolunteerBadge` are dual-written by the client services for
+// rollback safety; this CF acts as the SECOND independent grant path
+// (defense in depth) so even a client-side write failure still produces
+// a heart.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Grant a 30-day gold heart whenever `community_requests/{id}.status`
+ * transitions to `'completed'`.
+ *
+ * Idempotency rule (per Phase B kickoff (א)): the trigger MUST exit
+ * silently if the previous version already had `status === 'completed'`.
+ * Without this guard, any rapid client retry that re-writes the doc
+ * (even with no actual status change) would re-fire and double-grant
+ * the heart by pushing `goldHeartExpiresAt` forward another 30 days.
+ *
+ * The check is on the BEFORE snapshot, not the AFTER — so even if
+ * `before.status === undefined` (a brand-new doc somehow created with
+ * status=completed), we still grant once.
+ */
+exports.onCommunityRequestCompleted = onDocumentUpdated(
+  { document: "community_requests/{requestId}", maxInstances: 10 },
+  async (event) => {
+    const before = event.data?.before?.data() || {};
+    const after  = event.data?.after?.data()  || {};
+
+    // Guard (א): only fire on the open→completed transition. If the
+    // document was already `completed` in the previous version, exit.
+    if (before.status === "completed") {
+      console.log(
+        "[community.goldHeart] Skip — already completed",
+        event.params.requestId,
+      );
+      return null;
+    }
+    if (after.status !== "completed") {
+      // Not interested in any other transition.
+      return null;
+    }
+
+    const volunteerId = after.volunteerUserId || after.volunteerId;
+    if (!volunteerId) {
+      console.warn(
+        "[community.goldHeart] No volunteerId on doc",
+        event.params.requestId,
+      );
+      return null;
+    }
+
+    const expiresAt = admin.firestore.Timestamp.fromDate(
+      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    );
+
+    try {
+      // Per-document atomic write (Admin SDK bypasses rules).
+      // We only touch the gold-heart fields here — counts/badges/XP are
+      // owned by the client-side `_updateVolunteerProfile` (Variant רכה,
+      // see Phase B kickoff (ד)) so we don't double-increment.
+      await admin.firestore().collection("users").doc(volunteerId).update({
+        goldHeartExpiresAt: expiresAt,
+        // Mirror legacy fields too, so a stale v1 reader still sees an
+        // active heart even if the client write race-lost. These will be
+        // pruned in Phase H along with their client-side dual-write.
+        volunteerHeart: true,
+        hasActiveVolunteerBadge: true,
+        lastVolunteerTaskAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      console.log(
+        `[community.goldHeart] Granted +30d heart to ${volunteerId} ` +
+        `(request ${event.params.requestId})`,
+      );
+
+      // Notification is already sent by the client-side completeRequest
+      // (community_completed type). No need to duplicate here.
+
+      return null;
+    } catch (e) {
+      console.error(
+        "[community.goldHeart] Failed to grant heart:",
+        e.message || e,
+      );
+      // Don't throw — let the client-side dual-write be the safety net.
+      return null;
+    }
+  },
+);
+
+/**
+ * One-shot backfill: scan every user with a `lastVolunteerTaskAt`
+ * within the last 30 days and grant them a `goldHeartExpiresAt` of
+ * `lastVolunteerTaskAt + 30d`. Users whose legacy timestamp is older
+ * than 30 days are NOT touched — they'll get a fresh heart on their
+ * next completion (per the user's chosen migration strategy).
+ *
+ * Idempotency rule (per Phase B kickoff (ב)): writes a sentinel doc
+ * at `system_config/migrations/community_gold_heart_backfill_v1`. Any
+ * subsequent invocation reads that doc and exits with `skipped: true`
+ * if it's already `completed: true`. Force a re-run by deleting the
+ * doc manually in the Firestore console.
+ *
+ * Admin-only callable. Run ONCE before Phase B → Phase C transition.
+ */
+exports.backfillCommunityGoldHearts = onCall(async (request) => {
+  if (!(await isAdminCaller(request))) {
+    throw new HttpsError("permission-denied", "Admin only.");
+  }
+
+  const db = admin.firestore();
+  const sentinelRef = db
+    .collection("system_config")
+    .doc("migrations")
+    .collection("community_gold_heart_backfill_v1")
+    .doc("status");
+
+  // ── Guard (ב): refuse to re-run ────────────────────────────────────────
+  const sentinelSnap = await sentinelRef.get();
+  if (sentinelSnap.exists && sentinelSnap.data()?.completed === true) {
+    return {
+      skipped: true,
+      reason: "already-ran",
+      previouslyRanAt: sentinelSnap.data().completedAt || null,
+      previousCount:   sentinelSnap.data().count        || null,
+    };
+  }
+
+  // ── Scan users with a recent legacy timestamp ──────────────────────────
+  // Users whose lastVolunteerTaskAt is within the last 30 days are
+  // entitled to keep their existing badge — backfill into the new field.
+  const cutoff = admin.firestore.Timestamp.fromDate(
+    new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+  );
+
+  const snap = await db
+    .collection("users")
+    .where("lastVolunteerTaskAt", ">", cutoff)
+    .get();
+
+  let granted = 0;
+  let skipped = 0;
+  const errors = [];
+
+  // Firestore batch limit is 500 ops — chunk if we ever hit that scale.
+  const CHUNK = 400;
+  const docs = snap.docs;
+
+  for (let i = 0; i < docs.length; i += CHUNK) {
+    const chunk = docs.slice(i, i + CHUNK);
+    const batch = db.batch();
+
+    for (const doc of chunk) {
+      const data = doc.data() || {};
+      // Don't overwrite if user already has an authoritative gold heart
+      // (e.g., from running this CF + then a real completion). Only
+      // backfill empty / pre-migration fields.
+      if (data.goldHeartExpiresAt) {
+        skipped++;
+        continue;
+      }
+      const lastTs = data.lastVolunteerTaskAt;
+      if (!lastTs || typeof lastTs.toMillis !== "function") {
+        skipped++;
+        continue;
+      }
+      const expiresAt = admin.firestore.Timestamp.fromMillis(
+        lastTs.toMillis() + 30 * 24 * 60 * 60 * 1000,
+      );
+      batch.update(doc.ref, { goldHeartExpiresAt: expiresAt });
+      granted++;
+    }
+
+    try {
+      await batch.commit();
+    } catch (e) {
+      errors.push({ chunkStart: i, error: String(e.message || e) });
+    }
+  }
+
+  // ── Mark sentinel + audit log ──────────────────────────────────────────
+  const completedAt = admin.firestore.FieldValue.serverTimestamp();
+  await sentinelRef.set({
+    completed: true,
+    completedAt,
+    completedBy: request.auth.uid,
+    scanned: snap.size,
+    granted,
+    skipped,
+    errorCount: errors.length,
+    errorSamples: errors.slice(0, 5),
+  });
+
+  // Per-(ב): also log to admin_audit_log (matches §50 audit trail
+  // convention).
+  try {
+    await db.collection("admin_audit_log").add({
+      action: "backfill_community_gold_hearts",
+      adminUid: request.auth.uid,
+      adminEmail: request.auth.token?.email || null,
+      result: { scanned: snap.size, granted, skipped, errorCount: errors.length },
+      createdAt: completedAt,
+    });
+  } catch (_) { /* non-blocking */ }
+
+  return {
+    skipped: false,
+    scanned:   snap.size,
+    granted,
+    legacySkipped: skipped,
+    errorCount: errors.length,
+    errorSamples: errors.slice(0, 5),
+  };
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// Flash Auction (CLAUDE.md §57) — emergency motorcycle towing dispatch.
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Three Cloud Functions cooperate:
+//   • onFlashAuctionCreate (onDocumentCreated trigger)
+//       Fires immediately when the customer creates a flash_auctions/{id}
+//       doc. Dispatches Tier-1 FCM (5km, up to 5 nearest providers).
+//   • dispatchFlashAuction (scheduled every 1 min)
+//       Walks live auctions and:
+//         - Tier 2 expansion (5 → 10 km) when ≥30s elapsed and 0 offers
+//         - Tier 3 expansion (10 → 15 km) when ≥60s elapsed and 0 offers
+//         - Marks status='expired' when ≥120s elapsed and 0 offers
+//       Cloud Scheduler minimum granularity is 1 minute, so timing is
+//       slightly looser than the spec's 30s ticks but functionally
+//       identical for the customer. The onCreate trigger keeps T+0
+//       instantaneous.
+//   • notifyOnFlashAuctionOffer (onDocumentCreated trigger)
+//       Fires when a provider submits an offer. Sends FCM + writes a
+//       notifications/{id} doc to the customer.
+//
+// No Cloud Tasks, no geoflutterfire — pure Haversine over a capped
+// `users` query. Matches the CLAUDE.md §6b job_broadcasts pattern.
+
+const _FA_INITIAL_RADIUS_KM = 5;
+const _FA_TIER2_RADIUS_KM = 10;
+const _FA_TIER3_RADIUS_KM = 15;
+const _FA_TIER1_MAX_PROVIDERS = 5;
+const _FA_TIER2_MAX_PROVIDERS = 10;
+const _FA_TIER2_AFTER_SEC = 30;
+const _FA_TIER3_AFTER_SEC = 60;
+const _FA_EXPIRE_AFTER_SEC = 120;
+
+function _faHaversineKm(lat1, lng1, lat2, lng2) {
+    const r = 6371; // Earth radius in km
+    const toRad = (d) => (d * Math.PI) / 180.0;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) ** 2
+        + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return r * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/// Estimates the provider's net earnings after the platform commission
+/// using the same math as flash_auction_pricing_service.dart on the
+/// client. Used to populate the FCM body's "₪Y הכנסה משוערת" line.
+function _faEstimateProviderEarnings(profile, distanceKm, feePercentage) {
+    const pricing = (profile && profile.pricing) || {};
+    const basePrice = Number(pricing.basePrice ?? 180);
+    const pricePerKm = Number(pricing.pricePerKm ?? 4.5);
+    const includedKm = Number(pricing.includedKm ?? 10);
+    const nightPct = Number(pricing.nightSurchargePercent ?? 25);
+    const emergencyPct = Number(pricing.emergencySurchargePercent ?? 50);
+    const nightStart = Number(pricing.nightStartHour ?? 22);
+    const nightEnd = Number(pricing.nightEndHour ?? 6);
+
+    const extraKm = Math.max(0, distanceKm - includedKm);
+    const kmFee = extraKm * pricePerKm;
+    const subtotal = basePrice + kmFee;
+
+    const nowIst = new Date(); // server-side; close enough for an estimate
+    const hour = nowIst.getHours();
+    const isSaturday = nowIst.getDay() === 6;
+    const isNight = isSaturday
+        || (nightStart <= nightEnd
+            ? hour >= nightStart && hour < nightEnd
+            : hour >= nightStart || hour < nightEnd);
+    const nightSurcharge = isNight ? subtotal * (nightPct / 100) : 0;
+    const emergSurcharge = (subtotal + nightSurcharge) * (emergencyPct / 100);
+    const total = subtotal + nightSurcharge + emergSurcharge;
+
+    const commission = total * (feePercentage || 0.10);
+    return Math.max(0, total - commission);
+}
+
+/// Reads the global `feePercentage` once. Falls back to 0.10 (10%).
+async function _faReadFeePercentage(db) {
+    try {
+        const snap = await db.collection('admin').doc('admin')
+            .collection('settings').doc('settings').get();
+        return Number((snap.data() || {}).feePercentage ?? 0.10);
+    } catch (_) {
+        return 0.10;
+    }
+}
+
+/// Queries motorcycle-towing providers within the given radius (km) and
+/// returns up to `maxResults` candidates sorted by distance. Excludes any
+/// uid in `excludeUids` (already-notified providers). Respects each
+/// provider's `isOnline == true` so off-duty providers don't get pinged.
+async function _faFindNearbyProviders({
+    db,
+    pickupLat,
+    pickupLng,
+    radiusKm,
+    maxResults,
+    excludeUids,
+}) {
+    if (!Number.isFinite(pickupLat) || !Number.isFinite(pickupLng)) {
+        return [];
+    }
+    // Single-field filter only — composite indexes aren't needed because
+    // we filter the rest client-side. Cap the read at 200 to bound cost.
+    let q;
+    try {
+        q = await db.collection('users')
+            .where('isOnline', '==', true)
+            .limit(200)
+            .get();
+    } catch (e) {
+        console.error('[FlashAuction] provider query failed:', e);
+        return [];
+    }
+    const candidates = [];
+    for (const doc of q.docs) {
+        if (excludeUids.has(doc.id)) continue;
+        const data = doc.data() || {};
+        // Defense-in-depth: require BOTH the motorcycle-towing profile AND
+        // the current sub-category to match. A provider who filled the
+        // motorcycleTowProfile and then switched sub-category to something
+        // else (handyman, etc) shouldn't receive these calls — see §57
+        // hardening note in CLAUDE.md.
+        const profile = data.motorcycleTowProfile;
+        if (!profile) continue;
+        const serviceType = (data.serviceType || '').toString().toLowerCase();
+        const isMotorcycleTow = serviceType === 'גרר אופנועים' ||
+            serviceType === 'motorcycle towing' ||
+            serviceType === 'motorcycle_towing' ||
+            serviceType.includes('גרר אופנוע') ||
+            serviceType.includes('motorcycle tow');
+        if (!isMotorcycleTow) continue;
+        const bikeIds = Array.isArray(profile.bikeTypeIds) ? profile.bikeTypeIds : [];
+        if (bikeIds.length === 0) continue;
+        const lat = Number(data.latitude);
+        const lng = Number(data.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+        const distance = _faHaversineKm(pickupLat, pickupLng, lat, lng);
+        if (distance > radiusKm) continue;
+        candidates.push({
+            uid: doc.id,
+            distance,
+            fcmToken: data.fcmToken || data.deviceToken || null,
+            profile,
+            name: data.name || '',
+        });
+    }
+    candidates.sort((a, b) => a.distance - b.distance);
+    return candidates.slice(0, maxResults);
+}
+
+/// Sends FCM + writes the notifications/{id} inbox row for a single
+/// notified provider. Best-effort — failure here is logged but does NOT
+/// throw (one bad token shouldn't block the rest of the tier).
+async function _faNotifyProvider({
+    db,
+    auctionId,
+    auctionData,
+    candidate,
+    feePercentage,
+}) {
+    const earnings = _faEstimateProviderEarnings(
+        candidate.profile,
+        Number(auctionData.distanceKm || 0),
+        feePercentage,
+    );
+    const title = 'קריאת גרר חדשה';
+    const body = `${candidate.distance.toFixed(1)} ק"מ ממך · ₪${Math.round(earnings)} הכנסה משוערת`;
+
+    // Inbox row first (durable even if FCM fails).
+    try {
+        await db.collection('notifications').add({
+            userId: candidate.uid,
+            title,
+            body,
+            type: 'flash_auction_dispatch',
+            flashAuctionId: auctionId,
+            isRead: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    } catch (e) {
+        console.error('[FlashAuction] notif inbox write failed:', e);
+    }
+
+    if (!candidate.fcmToken) return;
+    try {
+        await admin.messaging().send({
+            token: candidate.fcmToken,
+            notification: { title, body },
+            data: {
+                type: 'flash_auction_dispatch',
+                flashAuctionId: auctionId,
+                click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            },
+            android: {
+                priority: 'high',
+                notification: { channelId: 'anyskill_chats' },
+            },
+            apns: {
+                headers: { 'apns-priority': '10' },
+                payload: { aps: { sound: 'default' } },
+            },
+        });
+    } catch (e) {
+        console.error(`[FlashAuction] FCM send failed for ${candidate.uid}:`, e);
+    }
+}
+
+/// Dispatches a single tier of an auction. Skips uids already in
+/// `notifiedProviderIds`. Returns the new array of notified uids
+/// (existing + just-added) so the caller can persist it.
+async function _faDispatchTier({
+    db,
+    auctionId,
+    auctionData,
+    radiusKm,
+    maxProviders,
+    feePercentage,
+}) {
+    const existing = Array.isArray(auctionData.notifiedProviderIds)
+        ? auctionData.notifiedProviderIds : [];
+    const existingSet = new Set(existing);
+    // Skip the customer themselves so they don't FCM-themselves if they
+    // also happen to be a motorcycle towing provider.
+    if (auctionData.customerId) existingSet.add(auctionData.customerId);
+
+    const pickup = auctionData.pickupLocation || {};
+    const pickupLat = Number(pickup.lat);
+    const pickupLng = Number(pickup.lng);
+    const candidates = await _faFindNearbyProviders({
+        db,
+        pickupLat,
+        pickupLng,
+        radiusKm,
+        maxResults: maxProviders,
+        excludeUids: existingSet,
+    });
+
+    const newUids = [];
+    for (const c of candidates) {
+        await _faNotifyProvider({
+            db,
+            auctionId,
+            auctionData,
+            candidate: c,
+            feePercentage,
+        });
+        newUids.push(c.uid);
+    }
+    return Array.from(new Set([...existing, ...newUids]));
+}
+
+// ── onFlashAuctionCreate ───────────────────────────────────────────────
+// Fires the moment the customer creates the auction. Sends Tier-1 FCM
+// (5km, up to 5 closest providers). Sets `currentRadiusKm` so the
+// scheduled CF knows where we are when it next ticks.
+exports.onFlashAuctionCreate = onDocumentCreated(
+    { document: 'flash_auctions/{auctionId}' },
+    async (event) => {
+        const auctionId = event.params.auctionId;
+        const data = event.data?.data() || {};
+        if (data.status !== 'searching') return null;
+
+        const db = admin.firestore();
+
+        // ── Pre-flight: pickup coords MUST be finite ────────────────────
+        // Without them _faFindNearbyProviders returns [] and no provider
+        // gets notified. The customer would otherwise wait 120s for the
+        // scheduled CF to expire the auction with no clear reason why.
+        // Fail loud + fast — surface an actionable error to the customer.
+        const pickup = data.pickupLocation || {};
+        const pickupLat = Number(pickup.lat);
+        const pickupLng = Number(pickup.lng);
+        if (!Number.isFinite(pickupLat) || !Number.isFinite(pickupLng)) {
+            console.error(
+                `[FlashAuction] ${auctionId} — REJECTED: missing pickup coords ` +
+                `(lat=${pickup.lat}, lng=${pickup.lng}). ` +
+                `Customer must pin location on the map before broadcasting.`
+            );
+            try {
+                await db.collection('flash_auctions').doc(auctionId).update({
+                    status: 'expired',
+                    expiredReason: 'missing_pickup_coords',
+                    expiredReasonHebrew:
+                        'לא נמצא מיקום GPS לנקודת הגרירה. ' +
+                        'אנא סמן את המיקום על המפה ושדר שוב.',
+                    expiredAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            } catch (e) {
+                console.error('[FlashAuction] expire-no-coords write failed:', e);
+            }
+            return null;
+        }
+
+        const feePct = await _faReadFeePercentage(db);
+
+        const newNotified = await _faDispatchTier({
+            db,
+            auctionId,
+            auctionData: data,
+            radiusKm: _FA_INITIAL_RADIUS_KM,
+            maxProviders: _FA_TIER1_MAX_PROVIDERS,
+            feePercentage: feePct,
+        });
+
+        try {
+            await db.collection('flash_auctions').doc(auctionId).update({
+                notifiedProviderIds: newNotified,
+                currentRadiusKm: _FA_INITIAL_RADIUS_KM,
+                lastDispatchAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('[FlashAuction] tier-1 update failed:', e);
+        }
+
+        console.log(`[FlashAuction] ${auctionId} — tier 1 dispatched to ${newNotified.length} providers ` +
+            `(pickup ${pickupLat.toFixed(4)},${pickupLng.toFixed(4)})`);
+        return null;
+    }
+);
+
+// ── dispatchFlashAuction ───────────────────────────────────────────────
+// Scheduled scan of in-flight auctions. Handles tier expansion + expiry.
+// Cap the per-run query at 50 — at single-digit-launch volumes this is
+// orders of magnitude more headroom than needed.
+exports.dispatchFlashAuction = onSchedule(
+    { schedule: 'every 1 minutes', timeZone: 'Asia/Jerusalem' },
+    async () => {
+        const db = admin.firestore();
+        const now = Date.now();
+
+        const liveSnap = await db.collection('flash_auctions')
+            .where('status', 'in', ['searching', 'has_offers'])
+            .limit(50)
+            .get();
+
+        if (liveSnap.empty) {
+            console.log('[FlashAuction/scheduler] no live auctions');
+            return;
+        }
+
+        const feePct = await _faReadFeePercentage(db);
+
+        let expanded = 0;
+        let expired = 0;
+
+        for (const doc of liveSnap.docs) {
+            const a = doc.data() || {};
+            const createdAt = a.createdAt?.toDate?.() || new Date(0);
+            const ageSec = (now - createdAt.getTime()) / 1000;
+            const offerCount = Number(a.offerCount || 0);
+            const radius = Number(a.currentRadiusKm || 0);
+
+            // ── Expiry — 120s elapsed AND no offers (offers screen still
+            //    valid for the customer if any offers came in).
+            if (ageSec > _FA_EXPIRE_AFTER_SEC && offerCount === 0) {
+                try {
+                    await doc.ref.update({
+                        status: 'expired',
+                        expiredAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    expired++;
+                } catch (_) {}
+                continue;
+            }
+
+            // ── Tier 3 — 60s elapsed AND still at radius 10
+            if (offerCount === 0
+                && ageSec >= _FA_TIER3_AFTER_SEC
+                && radius < _FA_TIER3_RADIUS_KM) {
+                const newNotified = await _faDispatchTier({
+                    db,
+                    auctionId: doc.id,
+                    auctionData: a,
+                    radiusKm: _FA_TIER3_RADIUS_KM,
+                    maxProviders: 999, // unlimited within radius
+                    feePercentage: feePct,
+                });
+                try {
+                    await doc.ref.update({
+                        notifiedProviderIds: newNotified,
+                        currentRadiusKm: _FA_TIER3_RADIUS_KM,
+                        lastDispatchAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    expanded++;
+                } catch (_) {}
+                continue;
+            }
+
+            // ── Tier 2 — 30s elapsed AND still at radius 5
+            if (offerCount === 0
+                && ageSec >= _FA_TIER2_AFTER_SEC
+                && radius < _FA_TIER2_RADIUS_KM) {
+                const newNotified = await _faDispatchTier({
+                    db,
+                    auctionId: doc.id,
+                    auctionData: a,
+                    radiusKm: _FA_TIER2_RADIUS_KM,
+                    maxProviders: _FA_TIER2_MAX_PROVIDERS,
+                    feePercentage: feePct,
+                });
+                try {
+                    await doc.ref.update({
+                        notifiedProviderIds: newNotified,
+                        currentRadiusKm: _FA_TIER2_RADIUS_KM,
+                        lastDispatchAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    expanded++;
+                } catch (_) {}
+                continue;
+            }
+        }
+
+        console.log(`[FlashAuction/scheduler] scanned=${liveSnap.size} expanded=${expanded} expired=${expired}`);
+    }
+);
+
+// ── notifyOnFlashAuctionOffer ──────────────────────────────────────────
+// Fires when a provider submits an offer. Sends FCM + writes a
+// notifications/{id} row to the customer so they pop into the offers
+// screen if they're not already there.
+exports.notifyOnFlashAuctionOffer = onDocumentCreated(
+    { document: 'flash_auctions/{auctionId}/offers/{offerId}' },
+    async (event) => {
+        const auctionId = event.params.auctionId;
+        const offerId = event.params.offerId;
+        const offer = event.data?.data() || {};
+        const db = admin.firestore();
+
+        // Pull the parent auction to find the customer.
+        let auctionData;
+        try {
+            const aSnap = await db.collection('flash_auctions').doc(auctionId).get();
+            if (!aSnap.exists) return null;
+            auctionData = aSnap.data() || {};
+        } catch (_) {
+            return null;
+        }
+        const customerId = auctionData.customerId;
+        if (!customerId) return null;
+
+        const providerName = offer.providerName || 'גרריסט';
+        const eta = Number(offer.etaMinutes || 0);
+        const title = 'הצעת גרר חדשה!';
+        const body = `${providerName} יכול להגיע ב-${eta} דקות`;
+
+        // Inbox row.
+        try {
+            await db.collection('notifications').add({
+                userId: customerId,
+                title,
+                body,
+                type: 'flash_auction_offer',
+                flashAuctionId: auctionId,
+                offerId,
+                isRead: false,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('[FlashAuction] customer notif write failed:', e);
+        }
+
+        // FCM push.
+        try {
+            const customerSnap = await db.collection('users').doc(customerId).get();
+            const token = (customerSnap.data() || {}).fcmToken
+                || (customerSnap.data() || {}).deviceToken;
+            if (!token) return null;
+            await admin.messaging().send({
+                token,
+                notification: { title, body },
+                data: {
+                    type: 'flash_auction_offer',
+                    flashAuctionId: auctionId,
+                    offerId,
+                    click_action: 'FLUTTER_NOTIFICATION_CLICK',
+                },
+                android: {
+                    priority: 'high',
+                    notification: { channelId: 'anyskill_chats' },
+                },
+                apns: {
+                    headers: { 'apns-priority': '10' },
+                    payload: { aps: { sound: 'default' } },
+                },
+            });
+        } catch (e) {
+            console.error('[FlashAuction] customer FCM failed:', e);
+        }
+
+        return null;
+    }
+);
+
+// ── bookFromFlashAuctionOffer (CLAUDE.md §57) ────────────────────────────────
+//
+// Server-side atomic booking from a Flash Auction offer. Replaces the
+// client-side transaction in FlashAuctionService.bookFromOffer (Dart) that
+// was blocked by the §50 audit Round B rule — direct client writes to
+// users/{provider}.pendingBalance INCREMENTS are denied. This CF runs as
+// Admin SDK so it bypasses rules and atomically:
+//
+//   1. Re-reads auction (status searching|has_offers) + offer (pending).
+//   2. Reads admin fee % (layered: custom > category > global) inside tx.
+//   3. Reads customer balance — throws failed-precondition if insufficient.
+//   4. Writes jobs/{newId} (status=paid_escrow) with full motorcycleTowPreferences.
+//   5. Debits customer balance + credits provider pendingBalance.
+//   6. Writes platform_earnings + customer transactions.
+//   7. Flips auction → matched + offer → selected + sets matchedJobId.
+//
+// Idempotent via _checkIdempotency on `flash_auction_book_idempotency`
+// (1h replay window per §60). Retries return the cached jobId.
+exports.bookFromFlashAuctionOffer = onCall(
+    { region: "us-central1" },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError("unauthenticated", "Must be signed in.");
+        }
+        const uid = request.auth.uid;
+        const { auctionId, offerId, clientReqId } = request.data || {};
+        if (!auctionId || !offerId) {
+            throw new HttpsError("invalid-argument", "Missing auctionId or offerId.");
+        }
+
+        const db = admin.firestore();
+
+        // Idempotency replay (§60 pattern).
+        const cached = await _checkIdempotency(
+            db, "flash_auction_book_idempotency", uid, clientReqId,
+        );
+        if (cached) {
+            return cached;
+        }
+
+        const auctionRef = db.collection("flash_auctions").doc(auctionId);
+        const offerRef = auctionRef.collection("offers").doc(offerId);
+        const adminSettingsRef = db.collection("admin").doc("admin")
+            .collection("settings").doc("settings");
+
+        let createdJobId = null;
+        let chatRoomId = null;
+        let providerId = null;
+        let providerName = "";
+        let totalPrice = 0;
+        let etaMinutes = 0;
+
+        try {
+            await db.runTransaction(async (tx) => {
+                // ── READS ──────────────────────────────────────────────────
+                const aSnap = await tx.get(auctionRef);
+                if (!aSnap.exists) {
+                    throw new HttpsError("not-found", "הקריאה לא נמצאה");
+                }
+                const aData = aSnap.data() || {};
+                const aStatus = aData.status || "";
+                if (aStatus !== "searching" && aStatus !== "has_offers") {
+                    throw new HttpsError("failed-precondition", "הקריאה כבר נסגרה");
+                }
+                if (aData.customerId && aData.customerId !== uid) {
+                    throw new HttpsError("permission-denied", "אין הרשאה לבצע הזמנה זו");
+                }
+
+                const oSnap = await tx.get(offerRef);
+                if (!oSnap.exists) {
+                    throw new HttpsError("not-found", "ההצעה לא נמצאה");
+                }
+                const oData = oSnap.data() || {};
+                if (oData.status !== "pending") {
+                    throw new HttpsError("failed-precondition", "ההצעה כבר אינה זמינה");
+                }
+
+                providerId = oData.providerId;
+                if (!providerId) {
+                    throw new HttpsError("internal", "Offer missing providerId.");
+                }
+                if (uid === providerId) {
+                    throw new HttpsError("permission-denied", "לא ניתן להזמין שירות מעצמך");
+                }
+
+                totalPrice = Number(oData.totalPrice || 0);
+                if (totalPrice <= 0) {
+                    throw new HttpsError("invalid-argument", "מחיר לא חוקי בהצעה");
+                }
+                etaMinutes = Number(oData.etaMinutes || 0);
+                providerName = String(oData.providerName || "");
+
+                const customerRef = db.collection("users").doc(uid);
+                const providerRef = db.collection("users").doc(providerId);
+                const cSnap = await tx.get(customerRef);
+                const pSnap = await tx.get(providerRef);
+                const adminSnap = await tx.get(adminSettingsRef);
+                const cData = cSnap.data() || {};
+                const pData = pSnap.data() || {};
+
+                const balance = Number(cData.balance || 0);
+                if (balance < totalPrice) {
+                    throw new HttpsError(
+                        "failed-precondition",
+                        "יתרה לא מספיקה — יש להטעין את הארנק",
+                    );
+                }
+
+                // Layered commission: custom > category > global (mirrors
+                // createEscrowPayment).
+                let feePct = Number((adminSnap.data() || {}).feePercentage || 0.10);
+                let feeSource = "global";
+                const providerCategory = (pData.serviceType || "").toString();
+                if (providerCategory) {
+                    const catDoc = await tx.get(
+                        db.collection("category_commissions").doc(providerCategory),
+                    );
+                    if (catDoc.exists) {
+                        const catPct = catDoc.data()?.percentage;
+                        if (catPct != null) {
+                            feePct = Number(catPct) / 100;
+                            feeSource = "category";
+                        }
+                    }
+                }
+                const customActive = pData.customCommissionActive === true;
+                const custom = pData.customCommission;
+                if (customActive && custom && typeof custom === "object") {
+                    const pct = custom.percentage;
+                    const expiresAt = custom.expiresAt;
+                    const live = !expiresAt
+                        || (expiresAt.toDate ? expiresAt.toDate() > new Date() : true);
+                    if (pct != null && live) {
+                        feePct = Number(pct) / 100;
+                        feeSource = "custom";
+                    }
+                }
+
+                const commission = roundNIS(totalPrice * feePct);
+                const netForExpert = roundNIS(totalPrice - commission);
+
+                const customerName = String(cData.name || "");
+                const policy = String(pData.cancellationPolicy || "flexible");
+
+                // chatRoomId = sorted-join of the two uids.
+                const ids = [uid, providerId].slice().sort();
+                chatRoomId = ids.join("_");
+
+                // ── WRITES ─────────────────────────────────────────────────
+                const jobRef = db.collection("jobs").doc();
+                createdJobId = jobRef.id;
+
+                const pickup = aData.pickup || {};
+                const dropoff = aData.dropoff || {};
+                const breakdown = oData.priceBreakdown || {};
+
+                const motorcyclePrefs = {
+                    bikeTypeId: "",
+                    bikeModel: "",
+                    issueId: aData.issueType || "",
+                    issueDetails: aData.issueDetails || "",
+                    pickupAddress: pickup.address || "",
+                    dropoffAddress: dropoff.address || "",
+                    distanceKm: Number(aData.distanceKm || 0),
+                    urgencyId: "immediate",
+                    contactName: customerName,
+                    contactPhone: String(cData.phone || ""),
+                    beforePhotoUrls: Array.isArray(aData.photoUrls) ? aData.photoUrls : [],
+                    priceBreakdown: {
+                        basePrice: Number(breakdown.basePrice || 0),
+                        kmFee: Number(breakdown.kmFee || 0),
+                        nightSurcharge: Number(breakdown.nightSurcharge || 0),
+                        emergencySurcharge: Number(breakdown.emergencySurcharge || 0),
+                        total: Number(breakdown.total || totalPrice),
+                        extraKm: Number(breakdown.kmCharged || 0),
+                    },
+                };
+                if (pickup.lat != null) motorcyclePrefs.pickupLat = Number(pickup.lat);
+                if (pickup.lng != null) motorcyclePrefs.pickupLng = Number(pickup.lng);
+                if (dropoff.lat != null) motorcyclePrefs.dropoffLat = Number(dropoff.lat);
+                if (dropoff.lng != null) motorcyclePrefs.dropoffLng = Number(dropoff.lng);
+
+                tx.set(jobRef, {
+                    jobId: jobRef.id,
+                    chatRoomId,
+                    customerId: uid,
+                    customerName,
+                    expertId: providerId,
+                    expertName: providerName,
+                    totalPaidByCustomer: totalPrice,
+                    totalAmount: totalPrice,
+                    commissionAmount: commission,
+                    netAmountForExpert: netForExpert,
+                    commissionFeePct: feePct * 100,
+                    commissionSource: feeSource,
+                    appointmentDate: null,
+                    appointmentTime: "מיד",
+                    status: "paid_escrow",
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                    cancellationPolicy: policy,
+                    expertServiceType: "גרר אופנועים",
+                    flashAuctionId: auctionId,
+                    flashAuctionOfferId: offerId,
+                    motorcycleTowPreferences: motorcyclePrefs,
+                    priceBreakdown: {
+                        basePrice: Number(breakdown.basePrice || 0),
+                        total: totalPrice,
+                    },
+                    clientReviewDone: false,
+                    providerReviewDone: false,
+                    source: "flash_auction",
+                });
+
+                tx.update(customerRef, {
+                    balance: admin.firestore.FieldValue.increment(-totalPrice),
+                });
+                tx.update(providerRef, {
+                    pendingBalance: admin.firestore.FieldValue.increment(netForExpert),
+                });
+
+                tx.set(db.collection("platform_earnings").doc(), {
+                    jobId: jobRef.id,
+                    amount: commission,
+                    sourceExpertId: providerId,
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    status: "pending_escrow",
+                });
+
+                tx.set(db.collection("transactions").doc(), {
+                    userId: uid,
+                    senderId: uid,
+                    senderName: customerName,
+                    receiverId: providerId,
+                    receiverName: providerName,
+                    amount: -totalPrice,
+                    type: "flash_auction_payment",
+                    jobId: jobRef.id,
+                    flashAuctionId: auctionId,
+                    payoutStatus: "pending",
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    title: `גרר אופנועים — ${providerName} (חירום)`,
+                    status: "escrow",
+                });
+
+                tx.update(auctionRef, {
+                    status: "matched",
+                    selectedOfferId: offerId,
+                    selectedProviderId: providerId,
+                    matchedJobId: jobRef.id,
+                    matchedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    matchedJobCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+                tx.update(offerRef, { status: "selected" });
+
+                tx.set(adminSettingsRef, {
+                    totalPlatformBalance:
+                        admin.firestore.FieldValue.increment(commission),
+                }, { merge: true });
+            });
+        } catch (e) {
+            if (e instanceof HttpsError) throw e;
+            console.error("[FlashAuction] bookFromFlashAuctionOffer error:", e);
+            throw new HttpsError("internal", "אירעה שגיאה. נסה/י שוב");
+        }
+
+        // System chat message — best-effort, outside the tx.
+        if (createdJobId && chatRoomId && providerId) {
+            try {
+                const chatRef = db.collection("chats").doc(chatRoomId);
+                await chatRef.set(
+                    { users: [uid, providerId] },
+                    { merge: true },
+                );
+                await chatRef.collection("messages").add({
+                    senderId: "system",
+                    message: `🛠️ הזמנת גרר חירום נפתחה. ${providerName} בדרך אליך ` +
+                        `(ETA: ${etaMinutes} דק׳). ₪${Math.round(totalPrice)} נעולים ` +
+                        `באסקרו.`,
+                    type: "text",
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            } catch (e) {
+                console.warn("[FlashAuction] system chat write failed:", e.message);
+            }
+        }
+
+        const result = { success: true, jobId: createdJobId };
+        await _saveIdempotencyResult(
+            db, "flash_auction_book_idempotency", uid, clientReqId, result,
+        );
+        return result;
+    },
+);
+
+// =============================================================================
+// ─── Babysitter Emergency Dispatch (CLAUDE.md §76) ────────────────────────────
+// =============================================================================
+//
+// Sister-module to Flash Auction (§57). Same 3-CF triplet:
+//   1. onBabysitterEmergencyCreate — Tier-1 dispatch on doc create
+//   2. dispatchBabysitterEmergency — scheduled scan for tier expansion
+//      and expiry
+//   3. notifyOnBabysitterEmergencyOffer — customer FCM + inbox row when a
+//      provider submits an offer
+//
+// CRITICAL safety filter: only providers with
+//   • babysitterProfile.trust.backgroundChecked == true
+//   • babysitterProfile.availability.acceptsLastMinute == true
+//   • serviceType resolves to babysitter
+//   • isOnline == true
+// get the FCM. Childcare emergencies cannot be dispatched to unvetted
+// providers. The customer also sees the badges on the offer card.
+
+const _BSE_INITIAL_RADIUS_KM = 5;
+const _BSE_TIER2_RADIUS_KM = 10;
+const _BSE_TIER3_RADIUS_KM = 15;
+const _BSE_TIER1_MAX_PROVIDERS = 5;
+const _BSE_TIER2_MAX_PROVIDERS = 10;
+const _BSE_TIER2_AFTER_SEC = 30;
+const _BSE_TIER3_AFTER_SEC = 60;
+const _BSE_EXPIRE_AFTER_SEC = 120;
+
+/// Detector — same shape as the Dart `isBabysitterCategory`. Mirror
+/// changes here when adding new sub-category aliases.
+function _bseIsBabysitterServiceType(serviceType) {
+    const lower = (serviceType || '').toString().trim().toLowerCase();
+    if (!lower) return false;
+    return lower === 'בייביסיטר'
+        || lower === 'בייביסיטרים'
+        || lower === 'שמרטף'
+        || lower === 'שמרטפים'
+        || lower === 'שמרטפות'
+        || lower === 'babysitter'
+        || lower === 'baby sitter'
+        || lower === 'nanny'
+        || lower.includes('בייביסיטר')
+        || lower.includes('שמרטף')
+        || lower.includes('שמרטפ')
+        || lower.includes('babysit')
+        || lower.includes('nanny');
+}
+
+/// Estimates the provider's net earnings for the FCM body. Mirrors
+/// BabysitterEmergencyPricingService.priceForProvider — pricing math
+/// stays in sync between Dart and JS.
+function _bseEstimateProviderEarnings({
+    profile, numChildren, agreedStart, agreedEnd, isHoliday, feePercentage,
+}) {
+    const pricing = (profile && profile.pricing) || {};
+    const rateOne = Number(pricing.rateOneChild ?? 60);
+    const rateTwo = Number(pricing.rateTwoChildren ?? 80);
+    const rateThree = Number(pricing.rateThreePlusChildren ?? 100);
+    const nightPct = Number(pricing.nightSurchargePercent ?? 20);
+    const nightStart = Number(pricing.nightStartsAtHour ?? 22);
+    const nightEnd = Number(pricing.nightEndsAtHour ?? 6);
+    const holidayPct = Number(pricing.holidaySurchargePercent ?? 50);
+    const lastMinPct = Number(pricing.lastMinuteSurchargePercent ?? 30);
+
+    const hourly = numChildren <= 1
+        ? rateOne
+        : (numChildren === 2 ? rateTwo : rateThree);
+
+    // Walk minute-by-minute, same algorithm as the Dart helper. For an
+    // average shift this is <=720 iterations — negligible CF cost.
+    let regularMin = 0;
+    let nightMin = 0;
+    const start = new Date(agreedStart);
+    const end = new Date(agreedEnd);
+    if (!(end > start)) return 0;
+
+    let cursor = new Date(start.getTime());
+    let safety = 0; // hard cap: 24h worth of minutes = 1440
+    while (cursor < end && safety < 1440) {
+        const h = cursor.getHours();
+        const isNight = nightStart < nightEnd
+            ? (h >= nightStart && h < nightEnd)
+            : (h >= nightStart || h < nightEnd);
+        if (isNight) nightMin++; else regularMin++;
+        cursor = new Date(cursor.getTime() + 60 * 1000);
+        safety++;
+    }
+    const regularHours = regularMin / 60.0;
+    const nightHours = nightMin / 60.0;
+
+    const regularAmount = regularHours * hourly;
+    const nightAmount = nightHours * hourly * (1 + nightPct / 100);
+    let subtotal = regularAmount + nightAmount;
+    if (isHoliday) subtotal += subtotal * (holidayPct / 100);
+    // Babysitter emergencies ALWAYS apply the last-minute surcharge.
+    subtotal += subtotal * (lastMinPct / 100);
+
+    const commission = subtotal * (feePercentage || 0.10);
+    return Math.max(0, subtotal - commission);
+}
+
+/// Reads the global feePercentage. Identical to _faReadFeePercentage —
+/// kept as a separate function so future changes to one don't silently
+/// break the other.
+async function _bseReadFeePercentage(db) {
+    try {
+        const snap = await db.collection('admin').doc('admin')
+            .collection('settings').doc('settings').get();
+        return Number((snap.data() || {}).feePercentage ?? 0.10);
+    } catch (_) {
+        return 0.10;
+    }
+}
+
+/// Queries babysitter providers within the given radius and returns up
+/// to `maxResults` candidates sorted by distance. Filters: online +
+/// background-checked + accepts-last-minute + serviceType=babysitter.
+async function _bseFindNearbyProviders({
+    db, customerLat, customerLng, radiusKm, maxResults, excludeUids,
+}) {
+    if (!Number.isFinite(customerLat) || !Number.isFinite(customerLng)) {
+        return [];
+    }
+    let q;
+    try {
+        q = await db.collection('users')
+            .where('isOnline', '==', true)
+            .limit(200)
+            .get();
+    } catch (e) {
+        console.error('[BSE] provider query failed:', e);
+        return [];
+    }
+    const candidates = [];
+    for (const doc of q.docs) {
+        if (excludeUids.has(doc.id)) continue;
+        const data = doc.data() || {};
+        const profile = data.babysitterProfile;
+        if (!profile) continue;
+        // Trust gate — non-negotiable for childcare emergencies.
+        const trust = profile.trust || {};
+        if (trust.backgroundChecked !== true) continue;
+        const availability = profile.availability || {};
+        if (availability.acceptsLastMinute === false) continue;
+        if (!_bseIsBabysitterServiceType(data.serviceType)) continue;
+
+        const lat = Number(data.latitude);
+        const lng = Number(data.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+        const distance = _faHaversineKm(customerLat, customerLng, lat, lng);
+        if (distance > radiusKm) continue;
+        candidates.push({
+            uid: doc.id,
+            distance,
+            fcmToken: data.fcmToken || data.deviceToken || null,
+            profile,
+            name: data.name || '',
+        });
+    }
+    candidates.sort((a, b) => a.distance - b.distance);
+    return candidates.slice(0, maxResults);
+}
+
+/// Sends FCM + writes notifications/{id} for a single provider.
+/// Best-effort — same as flash auction.
+async function _bseNotifyProvider({
+    db, emergencyId, emergencyData, candidate, feePercentage,
+}) {
+    const numChildren = Number(emergencyData.numChildren || 1);
+    const earnings = _bseEstimateProviderEarnings({
+        profile: candidate.profile,
+        numChildren,
+        agreedStart: emergencyData.agreedStartTime?.toDate?.()
+            || emergencyData.agreedStartTime || new Date(),
+        agreedEnd: emergencyData.agreedEndTime?.toDate?.()
+            || emergencyData.agreedEndTime
+            || new Date(Date.now() + 3 * 3600 * 1000),
+        isHoliday: emergencyData.isHoliday === true,
+        feePercentage,
+    });
+    const kidsLabel = numChildren === 1 ? 'ילד אחד' : `${numChildren} ילדים`;
+    const title = 'בקשת בייביסיטר דחופה';
+    const body = `${kidsLabel} · ${candidate.distance.toFixed(1)} ק"מ ממך · ₪${Math.round(earnings)} הכנסה משוערת`;
+
+    // Inbox row first (durable even if FCM fails).
+    try {
+        await db.collection('notifications').add({
+            userId: candidate.uid,
+            title,
+            body,
+            type: 'babysitter_emergency_dispatch',
+            babysitterEmergencyId: emergencyId,
+            isRead: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    } catch (e) {
+        console.error('[BSE] notif inbox write failed:', e);
+    }
+
+    if (!candidate.fcmToken) return;
+    try {
+        await admin.messaging().send({
+            token: candidate.fcmToken,
+            notification: { title, body },
+            data: {
+                type: 'babysitter_emergency_dispatch',
+                babysitterEmergencyId: emergencyId,
+                click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            },
+            android: {
+                priority: 'high',
+                notification: { channelId: 'anyskill_chats' },
+            },
+            apns: {
+                headers: { 'apns-priority': '10' },
+                payload: { aps: { sound: 'default' } },
+            },
+        });
+    } catch (e) {
+        console.error(`[BSE] FCM send failed for ${candidate.uid}:`, e);
+    }
+}
+
+/// Dispatches a single tier of an emergency. Skips uids already
+/// notified. Returns the new array of notified uids.
+async function _bseDispatchTier({
+    db, emergencyId, emergencyData, radiusKm, maxProviders, feePercentage,
+}) {
+    const existing = Array.isArray(emergencyData.notifiedProviderIds)
+        ? emergencyData.notifiedProviderIds : [];
+    const existingSet = new Set(existing);
+    if (emergencyData.customerId) existingSet.add(emergencyData.customerId);
+
+    const loc = emergencyData.location || {};
+    const customerLat = Number(loc.lat);
+    const customerLng = Number(loc.lng);
+    const candidates = await _bseFindNearbyProviders({
+        db,
+        customerLat,
+        customerLng,
+        radiusKm,
+        maxResults: maxProviders,
+        excludeUids: existingSet,
+    });
+
+    const newUids = [];
+    for (const c of candidates) {
+        await _bseNotifyProvider({
+            db, emergencyId, emergencyData, candidate: c, feePercentage,
+        });
+        newUids.push(c.uid);
+    }
+    return Array.from(new Set([...existing, ...newUids]));
+}
+
+// ── onBabysitterEmergencyCreate ──────────────────────────────────────────
+exports.onBabysitterEmergencyCreate = onDocumentCreated(
+    { document: 'babysitter_emergencies/{emergencyId}' },
+    async (event) => {
+        const emergencyId = event.params.emergencyId;
+        const data = event.data?.data() || {};
+        if (data.status !== 'searching') return null;
+
+        const db = admin.firestore();
+
+        // Pre-flight: location coords MUST be finite (same as flash auction).
+        const loc = data.location || {};
+        const lat = Number(loc.lat);
+        const lng = Number(loc.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+            console.error(
+                `[BSE] ${emergencyId} — REJECTED: missing GPS coords ` +
+                `(lat=${loc.lat}, lng=${loc.lng})`,
+            );
+            try {
+                await db.collection('babysitter_emergencies').doc(emergencyId).update({
+                    status: 'expired',
+                    expiredReason: 'missing_location_coords',
+                    expiredReasonHebrew:
+                        'לא נמצא מיקום GPS לכתובת. אנא סמני את המיקום על המפה ושדרי שוב.',
+                    expiredAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            } catch (e) {
+                console.error('[BSE] expire-no-coords write failed:', e);
+            }
+            return null;
+        }
+
+        const feePct = await _bseReadFeePercentage(db);
+        const newNotified = await _bseDispatchTier({
+            db,
+            emergencyId,
+            emergencyData: data,
+            radiusKm: _BSE_INITIAL_RADIUS_KM,
+            maxProviders: _BSE_TIER1_MAX_PROVIDERS,
+            feePercentage: feePct,
+        });
+
+        try {
+            await db.collection('babysitter_emergencies').doc(emergencyId).update({
+                notifiedProviderIds: newNotified,
+                currentRadiusKm: _BSE_INITIAL_RADIUS_KM,
+                lastDispatchAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('[BSE] tier-1 update failed:', e);
+        }
+
+        console.log(`[BSE] ${emergencyId} — tier 1 dispatched to ${newNotified.length} providers ` +
+            `(loc ${lat.toFixed(4)},${lng.toFixed(4)})`);
+        return null;
+    }
+);
+
+// ── dispatchBabysitterEmergency ──────────────────────────────────────────
+exports.dispatchBabysitterEmergency = onSchedule(
+    { schedule: 'every 1 minutes', timeZone: 'Asia/Jerusalem' },
+    async () => {
+        const db = admin.firestore();
+        const now = Date.now();
+
+        const liveSnap = await db.collection('babysitter_emergencies')
+            .where('status', 'in', ['searching', 'has_offers'])
+            .limit(50)
+            .get();
+
+        if (liveSnap.empty) {
+            console.log('[BSE/scheduler] no live emergencies');
+            return;
+        }
+
+        const feePct = await _bseReadFeePercentage(db);
+        let expanded = 0;
+        let expired = 0;
+
+        for (const doc of liveSnap.docs) {
+            const e = doc.data() || {};
+            const createdAt = e.createdAt?.toDate?.() || new Date(0);
+            const ageSec = (now - createdAt.getTime()) / 1000;
+            const offerCount = Number(e.offerCount || 0);
+            const radius = Number(e.currentRadiusKm || 0);
+
+            // Expiry — 120s elapsed AND no offers
+            if (ageSec > _BSE_EXPIRE_AFTER_SEC && offerCount === 0) {
+                try {
+                    await doc.ref.update({
+                        status: 'expired',
+                        expiredAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    expired++;
+                } catch (_) {}
+                continue;
+            }
+
+            // Tier 3 — 60s elapsed, still at radius < 15
+            if (offerCount === 0
+                && ageSec >= _BSE_TIER3_AFTER_SEC
+                && radius < _BSE_TIER3_RADIUS_KM) {
+                const newNotified = await _bseDispatchTier({
+                    db,
+                    emergencyId: doc.id,
+                    emergencyData: e,
+                    radiusKm: _BSE_TIER3_RADIUS_KM,
+                    maxProviders: 999,
+                    feePercentage: feePct,
+                });
+                try {
+                    await doc.ref.update({
+                        notifiedProviderIds: newNotified,
+                        currentRadiusKm: _BSE_TIER3_RADIUS_KM,
+                        lastDispatchAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    expanded++;
+                } catch (_) {}
+                continue;
+            }
+
+            // Tier 2 — 30s elapsed, still at radius < 10
+            if (offerCount === 0
+                && ageSec >= _BSE_TIER2_AFTER_SEC
+                && radius < _BSE_TIER2_RADIUS_KM) {
+                const newNotified = await _bseDispatchTier({
+                    db,
+                    emergencyId: doc.id,
+                    emergencyData: e,
+                    radiusKm: _BSE_TIER2_RADIUS_KM,
+                    maxProviders: _BSE_TIER2_MAX_PROVIDERS,
+                    feePercentage: feePct,
+                });
+                try {
+                    await doc.ref.update({
+                        notifiedProviderIds: newNotified,
+                        currentRadiusKm: _BSE_TIER2_RADIUS_KM,
+                        lastDispatchAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    expanded++;
+                } catch (_) {}
+                continue;
+            }
+        }
+
+        console.log(`[BSE/scheduler] scanned=${liveSnap.size} expanded=${expanded} expired=${expired}`);
+    }
+);
+
+// ── notifyOnBabysitterEmergencyOffer ─────────────────────────────────────
+exports.notifyOnBabysitterEmergencyOffer = onDocumentCreated(
+    { document: 'babysitter_emergencies/{emergencyId}/offers/{offerId}' },
+    async (event) => {
+        const emergencyId = event.params.emergencyId;
+        const offerId = event.params.offerId;
+        const offer = event.data?.data() || {};
+        const db = admin.firestore();
+
+        let emergencyData;
+        try {
+            const eSnap = await db.collection('babysitter_emergencies')
+                .doc(emergencyId).get();
+            if (!eSnap.exists) return null;
+            emergencyData = eSnap.data() || {};
+        } catch (_) {
+            return null;
+        }
+        const customerId = emergencyData.customerId;
+        if (!customerId) return null;
+
+        const providerName = offer.providerName || 'בייביסיטר';
+        const eta = Number(offer.etaMinutes || 0);
+        const title = 'הצעת בייביסיטר חדשה!';
+        const body = `${providerName} יכולה להגיע ב-${eta} דקות`;
+
+        try {
+            await db.collection('notifications').add({
+                userId: customerId,
+                title,
+                body,
+                type: 'babysitter_emergency_offer',
+                babysitterEmergencyId: emergencyId,
+                offerId,
+                isRead: false,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('[BSE] customer notif write failed:', e);
+        }
+
+        try {
+            const customerSnap = await db.collection('users').doc(customerId).get();
+            const token = (customerSnap.data() || {}).fcmToken
+                || (customerSnap.data() || {}).deviceToken;
+            if (!token) return null;
+            await admin.messaging().send({
+                token,
+                notification: { title, body },
+                data: {
+                    type: 'babysitter_emergency_offer',
+                    babysitterEmergencyId: emergencyId,
+                    offerId,
+                    click_action: 'FLUTTER_NOTIFICATION_CLICK',
+                },
+                android: {
+                    priority: 'high',
+                    notification: { channelId: 'anyskill_chats' },
+                },
+                apns: {
+                    headers: { 'apns-priority': '10' },
+                    payload: { aps: { sound: 'default' } },
+                },
+            });
+        } catch (e) {
+            console.error('[BSE] customer FCM failed:', e);
+        }
+
+        return null;
+    }
+);
+
+// ── bookFromBabysitterEmergencyOffer (CLAUDE.md §76) ────────────────────────
+//
+// Server-side atomic booking from a Babysitter Emergency offer. Same
+// motivation as bookFromFlashAuctionOffer (§57) — the §50 audit rule blocks
+// client-side `pendingBalance` increments. This CF runs as Admin SDK so
+// the entire Pay & Secure transaction is atomic + bypasses rules.
+//
+// Idempotent via `babysitter_emergency_book_idempotency` cache (§60).
+exports.bookFromBabysitterEmergencyOffer = onCall(
+    { region: "us-central1" },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError("unauthenticated", "Must be signed in.");
+        }
+        const uid = request.auth.uid;
+        const { emergencyId, offerId, clientReqId } = request.data || {};
+        if (!emergencyId || !offerId) {
+            throw new HttpsError(
+                "invalid-argument", "Missing emergencyId or offerId.",
+            );
+        }
+
+        const db = admin.firestore();
+
+        const cached = await _checkIdempotency(
+            db, "babysitter_emergency_book_idempotency", uid, clientReqId,
+        );
+        if (cached) {
+            return cached;
+        }
+
+        const emergencyRef = db.collection("babysitter_emergencies").doc(emergencyId);
+        const offerRef = emergencyRef.collection("offers").doc(offerId);
+        const adminSettingsRef = db.collection("admin").doc("admin")
+            .collection("settings").doc("settings");
+
+        let createdJobId = null;
+        let chatRoomId = null;
+        let providerId = null;
+        let providerName = "";
+        let totalPrice = 0;
+        let etaMinutes = 0;
+        let formattedAddress = "";
+        let apartmentNumber = "";
+
+        try {
+            await db.runTransaction(async (tx) => {
+                const eSnap = await tx.get(emergencyRef);
+                if (!eSnap.exists) {
+                    throw new HttpsError("not-found", "הקריאה לא נמצאה");
+                }
+                const eData = eSnap.data() || {};
+                const eStatus = eData.status || "";
+                if (eStatus !== "searching" && eStatus !== "has_offers") {
+                    throw new HttpsError("failed-precondition", "הקריאה כבר נסגרה");
+                }
+                if (eData.customerId && eData.customerId !== uid) {
+                    throw new HttpsError("permission-denied", "אין הרשאה לבצע הזמנה זו");
+                }
+
+                const oSnap = await tx.get(offerRef);
+                if (!oSnap.exists) {
+                    throw new HttpsError("not-found", "ההצעה לא נמצאה");
+                }
+                const oData = oSnap.data() || {};
+                if (oData.status !== "pending") {
+                    throw new HttpsError("failed-precondition", "ההצעה כבר אינה זמינה");
+                }
+
+                providerId = oData.providerId;
+                if (!providerId) {
+                    throw new HttpsError("internal", "Offer missing providerId.");
+                }
+                if (uid === providerId) {
+                    throw new HttpsError("permission-denied", "לא ניתן להזמין שירות מעצמך");
+                }
+
+                totalPrice = Number(oData.totalPrice || 0);
+                if (totalPrice <= 0) {
+                    throw new HttpsError("invalid-argument", "מחיר לא חוקי בהצעה");
+                }
+                etaMinutes = Number(oData.etaMinutes || 0);
+                providerName = String(oData.providerName || "");
+
+                const customerRef = db.collection("users").doc(uid);
+                const providerRef = db.collection("users").doc(providerId);
+                const cSnap = await tx.get(customerRef);
+                const pSnap = await tx.get(providerRef);
+                const adminSnap = await tx.get(adminSettingsRef);
+                const cData = cSnap.data() || {};
+                const pData = pSnap.data() || {};
+
+                const balance = Number(cData.balance || 0);
+                if (balance < totalPrice) {
+                    throw new HttpsError(
+                        "failed-precondition",
+                        "יתרה לא מספיקה — יש להטעין את הארנק",
+                    );
+                }
+
+                // Layered commission (same as createEscrowPayment).
+                let feePct = Number((adminSnap.data() || {}).feePercentage || 0.10);
+                let feeSource = "global";
+                const providerCategory = (pData.serviceType || "").toString();
+                if (providerCategory) {
+                    const catDoc = await tx.get(
+                        db.collection("category_commissions").doc(providerCategory),
+                    );
+                    if (catDoc.exists) {
+                        const catPct = catDoc.data()?.percentage;
+                        if (catPct != null) {
+                            feePct = Number(catPct) / 100;
+                            feeSource = "category";
+                        }
+                    }
+                }
+                const customActive = pData.customCommissionActive === true;
+                const custom = pData.customCommission;
+                if (customActive && custom && typeof custom === "object") {
+                    const pct = custom.percentage;
+                    const expiresAt = custom.expiresAt;
+                    const live = !expiresAt
+                        || (expiresAt.toDate ? expiresAt.toDate() > new Date() : true);
+                    if (pct != null && live) {
+                        feePct = Number(pct) / 100;
+                        feeSource = "custom";
+                    }
+                }
+
+                const commission = roundNIS(totalPrice * feePct);
+                const netForExpert = roundNIS(totalPrice - commission);
+
+                const customerName = String(cData.name || "");
+                const customerPhone = String(cData.phone || "");
+                const policy = String(pData.cancellationPolicy || "flexible");
+
+                const ids = [uid, providerId].slice().sort();
+                chatRoomId = ids.join("_");
+
+                // Address from emergency doc.
+                const loc = eData.location || {};
+                formattedAddress = String(loc.formattedAddress || "");
+                apartmentNumber = String(loc.apartmentNumber || "");
+
+                const breakdown = oData.priceBreakdown || {};
+                const agreedStart = eData.agreedStartTime;
+                const agreedEnd = eData.agreedEndTime;
+
+                // Format appointmentTime from agreedStart Timestamp.
+                let appointmentTime = "";
+                if (agreedStart && agreedStart.toDate) {
+                    const d = agreedStart.toDate();
+                    appointmentTime = `${String(d.getHours()).padStart(2, "0")}:` +
+                        `${String(d.getMinutes()).padStart(2, "0")}`;
+                }
+
+                const jobRef = db.collection("jobs").doc();
+                createdJobId = jobRef.id;
+
+                tx.set(jobRef, {
+                    jobId: jobRef.id,
+                    chatRoomId,
+                    customerId: uid,
+                    customerName,
+                    expertId: providerId,
+                    expertName: providerName,
+                    totalPaidByCustomer: totalPrice,
+                    totalAmount: totalPrice,
+                    commissionAmount: commission,
+                    netAmountForExpert: netForExpert,
+                    commissionFeePct: feePct * 100,
+                    commissionSource: feeSource,
+                    appointmentDate: null,
+                    appointmentTime,
+                    status: "paid_escrow",
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                    cancellationPolicy: policy,
+                    expertServiceType: "בייביסיטר",
+                    babysitterEmergencyId: emergencyId,
+                    babysitterEmergencyOfferId: offerId,
+                    babysitterPreferences: {
+                        numChildren: Number(eData.numChildren || 0),
+                        childrenAgeGroups:
+                            Array.isArray(eData.childrenAgeGroups)
+                                ? eData.childrenAgeGroups : [],
+                        agreedStart: agreedStart || null,
+                        agreedEnd: agreedEnd || null,
+                        verifiedAddress: {
+                            formattedAddress,
+                            apartmentNumber,
+                            accessNotes: String(loc.accessNotes || ""),
+                            latitude: Number(loc.lat || 0),
+                            longitude: Number(loc.lng || 0),
+                            pinAdjusted: loc.pinAdjusted === true,
+                        },
+                        specialInstructions: String(eData.specialNotes || ""),
+                        allergiesOrNotes: [],
+                        isHoliday: eData.isHoliday === true,
+                        reason: String(eData.reason || ""),
+                        reasonDetails: String(eData.reasonDetails || ""),
+                        urgency: "emergency",
+                        contactName: customerName,
+                        contactPhone: customerPhone,
+                        priceBreakdown: {
+                            regularHours: Number(breakdown.regularHours || 0),
+                            regularAmount: Number(breakdown.regularAmount || 0),
+                            nightHours: Number(breakdown.nightHours || 0),
+                            nightAmount: Number(breakdown.nightAmount || 0),
+                            holidaySurcharge: Number(breakdown.holidaySurcharge || 0),
+                            lastMinuteSurcharge:
+                                Number(breakdown.lastMinuteSurcharge || 0),
+                            total: Number(breakdown.total || totalPrice),
+                        },
+                    },
+                    priceBreakdown: {
+                        basePrice: Number(breakdown.regularAmount || 0) +
+                            Number(breakdown.nightAmount || 0),
+                        total: totalPrice,
+                    },
+                    clientReviewDone: false,
+                    providerReviewDone: false,
+                    source: "babysitter_emergency",
+                });
+
+                tx.update(db.collection("users").doc(uid), {
+                    balance: admin.firestore.FieldValue.increment(-totalPrice),
+                });
+                tx.update(db.collection("users").doc(providerId), {
+                    pendingBalance: admin.firestore.FieldValue.increment(netForExpert),
+                });
+
+                tx.set(db.collection("platform_earnings").doc(), {
+                    jobId: jobRef.id,
+                    amount: commission,
+                    sourceExpertId: providerId,
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    status: "pending_escrow",
+                });
+
+                tx.set(db.collection("transactions").doc(), {
+                    userId: uid,
+                    senderId: uid,
+                    senderName: customerName,
+                    receiverId: providerId,
+                    receiverName: providerName,
+                    amount: -totalPrice,
+                    type: "babysitter_emergency_payment",
+                    jobId: jobRef.id,
+                    babysitterEmergencyId: emergencyId,
+                    payoutStatus: "pending",
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    title: `בייביסיטר חירום — ${providerName}`,
+                    status: "escrow",
+                });
+
+                tx.update(emergencyRef, {
+                    status: "matched",
+                    selectedOfferId: offerId,
+                    selectedProviderId: providerId,
+                    matchedJobId: jobRef.id,
+                    matchedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    matchedJobCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+                tx.update(offerRef, { status: "selected" });
+
+                tx.set(adminSettingsRef, {
+                    totalPlatformBalance:
+                        admin.firestore.FieldValue.increment(commission),
+                }, { merge: true });
+            });
+        } catch (e) {
+            if (e instanceof HttpsError) throw e;
+            console.error(
+                "[BabysitterEmergency] bookFromBabysitterEmergencyOffer error:", e,
+            );
+            throw new HttpsError("internal", "אירעה שגיאה. נסה/י שוב");
+        }
+
+        // System chat message — best-effort.
+        if (createdJobId && chatRoomId && providerId) {
+            try {
+                const chatRef = db.collection("chats").doc(chatRoomId);
+                await chatRef.set(
+                    { users: [uid, providerId] },
+                    { merge: true },
+                );
+                const addressLine = apartmentNumber
+                    ? `${formattedAddress} · דירה ${apartmentNumber}`
+                    : formattedAddress;
+                await chatRef.collection("messages").add({
+                    senderId: "system",
+                    message: `👶 הזמנת בייביסיטר חירום נפתחה. ${providerName} ` +
+                        `תגיע ב-${etaMinutes} דק׳ ל-${addressLine}. ` +
+                        `₪${Math.round(totalPrice)} נעולים באסקרו.`,
+                    type: "text",
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            } catch (e) {
+                console.warn(
+                    "[BabysitterEmergency] system chat write failed:", e.message,
+                );
+            }
+        }
+
+        const result = { success: true, jobId: createdJobId };
+        await _saveIdempotencyResult(
+            db, "babysitter_emergency_book_idempotency", uid, clientReqId, result,
+        );
+        return result;
+    },
+);
+
+// =============================================================================
+// ─── exportUserData (CLAUDE.md §58) ───────────────────────────────────────────
+// =============================================================================
+// "Right of Access" under Israeli Privacy Protection Law (sec. 13) and GDPR
+// Article 15. Returns a JSON bundle of every personal-data record we hold for
+// the authenticated caller. Self-only — admins use the existing user-detail
+// admin screens for support cases.
+//
+// What's included:
+//   - users/{uid}              (public profile + denormalised fields)
+//   - users/{uid}/private/*    (KYC, identity, financial — sec. 17 categories)
+//   - jobs (as customer + as expert, last 200 each)
+//   - reviews (written + received, last 100 each)
+//   - transactions (last 200)
+//   - notifications (last 100)
+//   - chats (metadata only — last 100; message bodies excluded to protect
+//     the privacy of the other party in each conversation, per CLAUDE.md
+//     §58 / Hebrew Privacy Protection Law sec. 11(a)(2))
+//
+// What's excluded (with rationale):
+//   - chat message bodies — privacy of counter-party
+//   - audit logs — administrative control records, not user data
+//   - other users' profiles — not personal data of the caller
+//
+// Audit: every successful export writes one row to admin_audit_log so we have
+// a forensic trail of who exported what when.
+//
+// Throttling: one export per uid per 60 seconds (idempotency check via
+// admin_audit_log timestamp lookup).
+// =============================================================================
+exports.exportUserData = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "256MiB" },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Login required");
+    }
+    const uid = request.auth.uid;
+    const db = admin.firestore();
+    const startedAt = Date.now();
+
+    // ── 1. Throttle: max one export per minute per user ──────────────────
+    const recentExportSnap = await db.collection("admin_audit_log")
+      .where("targetUserId", "==", uid)
+      .where("action",       "==", "data_export")
+      .orderBy("createdAt", "desc")
+      .limit(1)
+      .get();
+    if (!recentExportSnap.empty) {
+      const last = recentExportSnap.docs[0].data();
+      const lastMs = last.createdAt?.toMillis?.() ?? 0;
+      if (Date.now() - lastMs < 60_000) {
+        throw new HttpsError("resource-exhausted",
+          "Please wait a minute between exports");
+      }
+    }
+
+    // ── 2. Fetch in parallel ────────────────────────────────────────────
+    // Audit fix (post-§75 review): wrap the fetch in try/catch so a
+    // partial failure (one of the 10 queries throws) still writes an
+    // audit row before re-throwing. Without this, failed exports leave
+    // no forensic trail — see the §58 audit findings.
+    let userDoc, privateSnap, asCustomerSnap, asExpertSnap, reviewsByMeSnap,
+        reviewsAboutMeSnap, txSentSnap, txReceivedSnap, notifSnap, chatsSnap;
+    try {
+      [
+        userDoc,
+        privateSnap,
+        asCustomerSnap,
+        asExpertSnap,
+        reviewsByMeSnap,
+        reviewsAboutMeSnap,
+        txSentSnap,
+        txReceivedSnap,
+        notifSnap,
+        chatsSnap,
+      ] = await Promise.all([
+        db.collection("users").doc(uid).get(),
+        db.collection("users").doc(uid).collection("private").get(),
+        db.collection("jobs").where("customerId", "==", uid)
+          .orderBy("createdAt", "desc").limit(200).get(),
+        db.collection("jobs").where("expertId",   "==", uid)
+          .orderBy("createdAt", "desc").limit(200).get(),
+        db.collection("reviews").where("reviewerId", "==", uid)
+          .orderBy("createdAt", "desc").limit(100).get(),
+        db.collection("reviews").where("revieweeId", "==", uid)
+          .orderBy("createdAt", "desc").limit(100).get(),
+        db.collection("transactions").where("senderId",   "==", uid)
+          .orderBy("timestamp", "desc").limit(200).get(),
+        db.collection("transactions").where("receiverId", "==", uid)
+          .orderBy("timestamp", "desc").limit(200).get(),
+        db.collection("notifications").where("userId", "==", uid)
+          .orderBy("createdAt", "desc").limit(100).get(),
+        db.collection("chats").where("users", "array-contains", uid)
+          .orderBy("lastTimestamp", "desc").limit(100).get(),
+      ]);
+    } catch (e) {
+      // Forensic trail for failed exports — write audit log BEFORE re-throwing.
+      try {
+        await db.collection("admin_audit_log").add({
+          action:       "data_export",
+          targetUserId: uid,
+          adminUid:     uid,
+          adminName:    "self",
+          status:       "failed",
+          error:        (e?.message || "unknown").substring(0, 500),
+          elapsedMs:    Date.now() - startedAt,
+          createdAt:    admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (auditErr) {
+        console.warn("[exportUserData] failure-audit write failed:",
+            auditErr?.message);
+      }
+      console.error("[exportUserData] fetch failed for uid=" + uid + ":", e);
+      throw new HttpsError("internal", "Export fetch failed: " + (e?.message || "unknown"));
+    }
+
+    // ── 3. Build the JSON envelope ──────────────────────────────────────
+    const docToObj = (snap) => ({ id: snap.id, ...snap.data() });
+    const docsToArr = (qSnap) => qSnap.docs.map(d => docToObj(d));
+
+    // Strip private subcollection fields that are NOT the caller's own
+    // (defensive — these queries are scoped to the caller anyway, but we
+    // explicitly remove any token / hash / nonce field that may exist).
+    //
+    // Audit fix (post-§75): the regex now does substring matching so
+    // variants like `passwordHash`, `apiToken`, `sessionSecret`, `salt2`
+    // are caught. Pre-fix only caught exact-match keys.
+    const sanitisePrivateDoc = (data) => {
+      const out = { ...data };
+      for (const k of Object.keys(out)) {
+        if (/(salt|hash|secret|token|password|nonce|apikey|api_key)/i.test(k)) {
+          out[k] = "[redacted]";
+        }
+      }
+      return out;
+    };
+
+    // Chats: include metadata only — never message bodies.
+    const chatsMeta = chatsSnap.docs.map(d => {
+      const data = d.data();
+      return {
+        chatId:           d.id,
+        users:            data.users || [],
+        lastTimestamp:    data.lastTimestamp || null,
+        lastSenderId:     data.lastSenderId || null,
+        unreadCounters:   Object.fromEntries(
+          Object.entries(data).filter(([k]) => k.startsWith("unreadCount_"))
+        ),
+      };
+    });
+
+    const exportBundle = {
+      exportedAt:    new Date().toISOString(),
+      schemaVersion: "1.0.0",
+      callerUid:     uid,
+      profile: userDoc.exists ? docToObj(userDoc) : null,
+      privateData: privateSnap.docs.map(d => ({
+        id: d.id,
+        ...sanitisePrivateDoc(d.data()),
+      })),
+      jobs: {
+        asCustomer: docsToArr(asCustomerSnap),
+        asExpert:   docsToArr(asExpertSnap),
+      },
+      reviews: {
+        written:  docsToArr(reviewsByMeSnap),
+        received: docsToArr(reviewsAboutMeSnap),
+      },
+      transactions: {
+        sent:     docsToArr(txSentSnap),
+        received: docsToArr(txReceivedSnap),
+      },
+      notifications: docsToArr(notifSnap),
+      chats: chatsMeta,
+      _excluded: {
+        chatMessageBodies: "Excluded to protect the privacy of the other party. " +
+                           "Request explicitly via privacy@anyskill.app.",
+        auditLogs:         "Administrative records, not personal data.",
+      },
+    };
+
+    const elapsedMs = Date.now() - startedAt;
+    console.log(`[exportUserData] uid=${uid} jobs=${asCustomerSnap.size + asExpertSnap.size} ` +
+                `reviews=${reviewsByMeSnap.size + reviewsAboutMeSnap.size} ` +
+                `tx=${txSentSnap.size + txReceivedSnap.size} elapsed=${elapsedMs}ms`);
+
+    // ── 4. Audit log (forensic trail) ───────────────────────────────────
+    try {
+      await db.collection("admin_audit_log").add({
+        action:       "data_export",
+        targetUserId: uid,
+        adminUid:     uid,           // self-export
+        adminName:    "self",
+        status:       "succeeded",   // pairs with "failed" written above
+        elapsedMs,
+        bytes:        JSON.stringify(exportBundle).length,
+        createdAt:    admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      console.warn("[exportUserData] audit log write failed:", e?.message);
+    }
+
+    return exportBundle;
+  }
+);
+
+// =============================================================================
+// ─── checkBackupHealth (CLAUDE.md §58 — backup monitoring) ────────────────────
+// =============================================================================
+// Hourly canary that verifies the daily Firestore backup actually ran.
+// Reads the most recent admin_audit_log entry where action == "firestore_backup"
+// and status == "started". If that entry is older than 26 hours (giving a 2h
+// grace window over the 24h schedule) OR the latest entry has status "failed",
+// it writes/updates `system_alerts/backup_stale` with severity "critical".
+//
+// The admin Vault tab streams `system_alerts` and renders critical alerts at
+// the top of the dashboard. A second consumer (future PR) can flip this into
+// a Sentry capture / FCM to admin emails.
+// =============================================================================
+exports.checkBackupHealth = onSchedule(
+  {
+    schedule:   "0 * * * *",           // top of every hour
+    timeZone:   "Asia/Jerusalem",
+    retryCount: 1,
+  },
+  async () => {
+    const db = admin.firestore();
+    try {
+      const lastSnap = await db.collection("admin_audit_log")
+        .where("action", "==", "firestore_backup")
+        .orderBy("createdAt", "desc")
+        .limit(1)
+        .get();
+
+      const alertRef = db.collection("system_alerts").doc("backup_stale");
+      const nowMs = Date.now();
+
+      if (lastSnap.empty) {
+        // No backup ever recorded — most severe.
+        await alertRef.set({
+          type:        "backup_health",
+          severity:    "critical",
+          title:       "אין רשומת גיבוי",
+          message:     "scheduledFirestoreBackup לא רץ אף פעם. ייתכן שה-bucket לא נוצר.",
+          firstSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastCheckAt: admin.firestore.FieldValue.serverTimestamp(),
+          resolved:    false,
+        }, { merge: true });
+        console.error("[BackupHealth] no backup audit entry found — critical");
+        return;
+      }
+
+      const last      = lastSnap.docs[0].data();
+      const lastMs    = last.createdAt?.toMillis?.() ?? 0;
+      const ageHours  = (nowMs - lastMs) / 3_600_000;
+      const lastFailed = last.status === "failed";
+
+      // Healthy: most recent run was a "started" within last 26h.
+      if (last.status === "started" && ageHours < 26) {
+        // Clear any stale alert.
+        const existing = await alertRef.get();
+        if (existing.exists && existing.data().resolved !== true) {
+          await alertRef.set({
+            resolved:    true,
+            resolvedAt:  admin.firestore.FieldValue.serverTimestamp(),
+            lastCheckAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+          console.log("[BackupHealth] cleared stale alert — backup is healthy");
+        }
+        return;
+      }
+
+      // Unhealthy.
+      const severity = ageHours > 48 || lastFailed ? "critical" : "warning";
+      const title = lastFailed
+        ? "הגיבוי האחרון נכשל"
+        : `הגיבוי לא רץ ${ageHours.toFixed(1)} שעות`;
+      const message = lastFailed
+        ? `שגיאה: ${(last.error || "לא ידוע").substring(0, 200)}`
+        : `הגיבוי האחרון: ${new Date(lastMs).toISOString()}. צפי לסיכון אובדן נתונים.`;
+
+      await alertRef.set({
+        type:           "backup_health",
+        severity,
+        title,
+        message,
+        lastBackupAt:   lastMs ? admin.firestore.Timestamp.fromMillis(lastMs) : null,
+        ageHours:       Math.round(ageHours * 10) / 10,
+        lastStatus:     last.status || null,
+        lastCheckAt:    admin.firestore.FieldValue.serverTimestamp(),
+        resolved:       false,
+      }, { merge: true });
+
+      console.warn(`[BackupHealth] ${severity}: ${title}`);
+    } catch (e) {
+      console.error("[BackupHealth] check failed:", e);
+    }
+  }
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// recordVipBannerEvent — per-provider impression / click tracking for the
+// home-tab VIP carousel. Closes the §51 deferred "totalImpressions /
+// totalClicks populated by analytics CF in Phase 6" item.
+//
+// Two layers updated atomically (in a single batched commit):
+//   1. `vip_subscriptions where providerId == X AND status == 'active'`
+//      → totalImpressions / totalClicks += 1. This is what the provider's
+//      own VIP card on their profile reads to show CTR.
+//   2. `banners/{bannerId}` → impressions / clicks += 1 (optional —
+//      only when bannerId is provided). Mirrors the existing client
+//      write to `banners.clicks` so admin banner analytics stay in sync.
+//
+// Why a CF (not a direct client write):
+//   The §50 audit locked vip_subscriptions to admin/CF writes only —
+//   relaxing that would let a provider self-inflate their own stats.
+//   This CF runs as the Admin SDK so the writes are gated by the auth
+//   check above. Any signed-in user (the customer scrolling the home
+//   tab) can record impressions for ANY provider in the carousel —
+//   that's fine because the providerId came from the trusted banner doc.
+//
+// Rate limiting: none for now. At ~5 DAU pre-launch this is a non-issue.
+// If volume picks up, add a debounce on the client side (already
+// per-rotation, so ~20 events per session is the realistic ceiling).
+// ═══════════════════════════════════════════════════════════════════════════
+exports.recordVipBannerEvent = onCall(
+  {
+    cors: true,
+    region: "us-central1",
+    timeoutSeconds: 10,
+    memory: "256MiB",
+    maxInstances: 20,
+  },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const data = request.data || {};
+    const providerId = String(data.providerId || "").trim();
+    const eventType = String(data.eventType || "").trim();
+    const bannerId = String(data.bannerId || "").trim();
+
+    if (!providerId) {
+      throw new HttpsError("invalid-argument", "providerId is required.");
+    }
+    if (eventType !== "impression" && eventType !== "click") {
+      throw new HttpsError(
+        "invalid-argument",
+        "eventType must be 'impression' or 'click'.",
+      );
+    }
+
+    const db = admin.firestore();
+
+    // Find the provider's active VIP subscription. There's at most one
+    // active sub per provider; if zero (sub expired / never existed),
+    // skip the sub write and just bump the banner counters.
+    let subId = null;
+    try {
+      const q = await db
+        .collection("vip_subscriptions")
+        .where("providerId", "==", providerId)
+        .where("status", "==", "active")
+        .limit(1)
+        .get();
+      if (!q.empty) subId = q.docs[0].id;
+    } catch (e) {
+      // Composite-index miss or transient — log + continue with banner
+      // increment so we don't lose the analytics signal entirely.
+      console.warn(
+        `[recordVipBannerEvent] sub lookup failed for ${providerId}: ${e.message}`,
+      );
+    }
+
+    const batch = db.batch();
+    const subField =
+      eventType === "click" ? "totalClicks" : "totalImpressions";
+    const bannerField = eventType === "click" ? "clicks" : "impressions";
+
+    if (subId) {
+      batch.update(db.collection("vip_subscriptions").doc(subId), {
+        [subField]: admin.firestore.FieldValue.increment(1),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+    if (bannerId) {
+      batch.set(
+        db.collection("banners").doc(bannerId),
+        {
+          [bannerField]: admin.firestore.FieldValue.increment(1),
+        },
+        { merge: true },
+      );
+    }
+
+    try {
+      await batch.commit();
+    } catch (e) {
+      console.error(
+        `[recordVipBannerEvent] batch commit failed (${eventType}): ${e.message}`,
+      );
+      // Don't surface — the client treats this as fire-and-forget.
+      return { ok: false, reason: "write_failed" };
+    }
+
+    return { ok: true, subUpdated: !!subId, bannerUpdated: !!bannerId };
+  },
+);
+
+// =============================================================================
+// ─── Delivery Express Dispatch (CLAUDE.md §78) ────────────────────────────────
+// =============================================================================
+//
+// Sister-module to Flash Auction (§57) and Babysitter Emergency (§76). Same
+// 3-CF triplet + bookFromOffer atomic CF:
+//   1. onDeliveryExpressCreate — Tier-1 dispatch on doc create
+//   2. dispatchDeliveryExpress — scheduled scan for tier expansion + expiry
+//   3. notifyOnDeliveryExpressOffer — customer FCM + inbox row on new offer
+//   4. bookFromDeliveryExpressOffer — atomic Pay & Secure transaction
+//
+// Eligibility filter (provider side):
+//   • isOnline == true
+//   • has deliveryProfile
+//   • _deIsDeliveryServiceType(serviceType) matches
+//   • has an enabled vehicle that's eligible for the package size
+//     (scooter ≤30kg → docs/small/flowers/cakes; car can do all 6)
+//
+// All math kept in sync with DeliveryBookingService.buildPriceBreakdown
+// (Dart). Always uses `timing: 'immediate'`.
+
+const _DE_INITIAL_RADIUS_KM = 5;
+const _DE_TIER2_RADIUS_KM = 10;
+const _DE_TIER3_RADIUS_KM = 15;
+const _DE_TIER1_MAX_PROVIDERS = 5;
+const _DE_TIER2_MAX_PROVIDERS = 10;
+const _DE_TIER2_AFTER_SEC = 30;
+const _DE_TIER3_AFTER_SEC = 60;
+const _DE_EXPIRE_AFTER_SEC = 120;
+
+/// Detector — mirror of Dart `isDeliveryCategory`. Keep in sync when
+/// adding new sub-category aliases.
+function _deIsDeliveryServiceType(serviceType) {
+    const lower = (serviceType || '').toString().trim().toLowerCase();
+    if (!lower) return false;
+    return lower === 'משלוחים'
+        || lower === 'delivery'
+        || lower === 'שליחים'
+        || lower === 'courier'
+        || lower.includes('משלוח')
+        || lower.includes('שליח')
+        || lower.includes('deliver')
+        || lower.includes('courier');
+}
+
+/// Vehicle eligibility — mirror of Dart
+/// `DeliveryExpressPackageType.eligibleVehicles`. Scooter handles light
+/// items only; car handles everything.
+function _deEligibleVehiclesForPackage(packageType) {
+    switch (packageType) {
+        case 'documents':
+        case 'small_package':
+        case 'flowers':
+        case 'cakes':
+            return ['scooter', 'car'];
+        case 'medium_package':
+        case 'large_package':
+            return ['car'];
+        default:
+            return ['scooter', 'car'];
+    }
+}
+
+/// Returns true if the courier has at least one enabled vehicle that can
+/// carry the package size.
+function _deProviderHasEligibleVehicle(profile, packageType) {
+    const eligible = new Set(_deEligibleVehiclesForPackage(packageType));
+    const vehicles = Array.isArray(profile.vehicles) ? profile.vehicles : [];
+    for (const v of vehicles) {
+        if (!v) continue;
+        if (v.enabled === false) continue;
+        if (eligible.has(v.type)) return true;
+    }
+    return false;
+}
+
+/// Base price for a package — mirror of Dart `DeliveryPricing.priceFor`.
+function _dePriceForPackage(pricing, packageType) {
+    const p = pricing || {};
+    switch (packageType) {
+        case 'documents': return Number(p.documents ?? 35);
+        case 'small_package': return Number(p.small_package ?? 45);
+        case 'medium_package': return Number(p.medium_package ?? 65);
+        case 'large_package': return Number(p.large_package ?? 90);
+        case 'flowers': return Number(p.flowers ?? 50);
+        case 'cakes': return Number(p.cakes ?? 55);
+        default: return Number(p.small_package ?? 45);
+    }
+}
+
+/// Total price — mirror of Dart `DeliveryBookingService.calculateTotal`.
+/// Always uses `timing: 'immediate'` so the immediate surcharge fires.
+function _deCalculateTotal(profile, packageType, distanceKm) {
+    const pricing = profile.pricing || {};
+    const base = _dePriceForPackage(pricing, packageType);
+    const immediate = profile.availability && profile.availability.immediate;
+    const surcharge = (immediate && immediate.enabled !== false)
+        ? Number(immediate.surcharge ?? 25)
+        : 0;
+    let kmAfter5 = 0;
+    if (Number(distanceKm) > 5) {
+        const perKm = Number(pricing.perKmAfter5 ?? 3.5);
+        kmAfter5 = (distanceKm - 5) * perKm;
+    }
+    return Math.round((base + surcharge + kmAfter5) * 100) / 100;
+}
+
+/// Net earnings after platform commission — used in the FCM body.
+function _deEstimateProviderEarnings(profile, packageType, distanceKm, feePercentage) {
+    const total = _deCalculateTotal(profile, packageType, distanceKm);
+    const commission = total * (feePercentage || 0.10);
+    return Math.max(0, total - commission);
+}
+
+/// Reads the global feePercentage. Identical shape to _fa* / _bse* —
+/// kept as a separate function so future changes to one don't silently
+/// affect the other.
+async function _deReadFeePercentage(db) {
+    try {
+        const snap = await db.collection('admin').doc('admin')
+            .collection('settings').doc('settings').get();
+        return Number((snap.data() || {}).feePercentage ?? 0.10);
+    } catch (_) {
+        return 0.10;
+    }
+}
+
+/// Inline Haversine — same math as _faHaversineKm. Duplicated rather
+/// than imported so each subsystem is self-contained.
+function _deHaversineKm(lat1, lng1, lat2, lng2) {
+    const r = 6371;
+    const toRad = (d) => (d * Math.PI) / 180.0;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) ** 2
+        + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return r * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/// Queries delivery providers within the given radius and returns up to
+/// `maxResults` candidates sorted by distance. Filters: online +
+/// deliveryProfile + serviceType=delivery + at-least-one-eligible-vehicle.
+async function _deFindNearbyProviders({
+    db, pickupLat, pickupLng, packageType, radiusKm, maxResults, excludeUids,
+}) {
+    if (!Number.isFinite(pickupLat) || !Number.isFinite(pickupLng)) {
+        return [];
+    }
+    let q;
+    try {
+        q = await db.collection('users')
+            .where('isOnline', '==', true)
+            .limit(200)
+            .get();
+    } catch (e) {
+        console.error('[DeliveryExpress] provider query failed:', e);
+        return [];
+    }
+    const candidates = [];
+    for (const doc of q.docs) {
+        if (excludeUids.has(doc.id)) continue;
+        const data = doc.data() || {};
+        const profile = data.deliveryProfile;
+        if (!profile) continue;
+        if (!_deIsDeliveryServiceType(data.serviceType)) continue;
+        // Vehicle eligibility — courier MUST have an enabled vehicle that
+        // can carry the package size. Without this, a scooter-only courier
+        // would get pinged for a large_package they can't fulfill.
+        if (!_deProviderHasEligibleVehicle(profile, packageType)) continue;
+
+        const lat = Number(data.latitude);
+        const lng = Number(data.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+        const distance = _deHaversineKm(pickupLat, pickupLng, lat, lng);
+        if (distance > radiusKm) continue;
+
+        candidates.push({
+            uid: doc.id,
+            distance,
+            fcmToken: data.fcmToken || data.deviceToken || null,
+            profile,
+            name: data.name || '',
+        });
+    }
+    candidates.sort((a, b) => a.distance - b.distance);
+    return candidates.slice(0, maxResults);
+}
+
+/// Sends FCM + writes the notifications/{id} inbox row for a single
+/// notified courier. Best-effort.
+async function _deNotifyProvider({
+    db, auctionId, auctionData, candidate, feePercentage,
+}) {
+    const pkgType = auctionData.packageType || 'small_package';
+    const pkgLabel = ({
+        documents: 'מסמכים',
+        small_package: 'חבילה קטנה',
+        medium_package: 'חבילה בינונית',
+        large_package: 'חבילה גדולה',
+        flowers: 'פרחים',
+        cakes: 'עוגות',
+    })[pkgType] || 'חבילה';
+    const earnings = _deEstimateProviderEarnings(
+        candidate.profile,
+        pkgType,
+        Number(auctionData.distanceKm || 0),
+        feePercentage,
+    );
+    const title = 'משלוח דחוף חדש';
+    const body = `${pkgLabel} · ${candidate.distance.toFixed(1)} ק"מ ממך · ` +
+        `₪${Math.round(earnings)} הכנסה משוערת`;
+
+    try {
+        await db.collection('notifications').add({
+            userId: candidate.uid,
+            title,
+            body,
+            type: 'delivery_express_dispatch',
+            deliveryExpressId: auctionId,
+            isRead: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    } catch (e) {
+        console.error('[DeliveryExpress] notif inbox write failed:', e);
+    }
+
+    if (!candidate.fcmToken) return;
+    try {
+        await admin.messaging().send({
+            token: candidate.fcmToken,
+            notification: { title, body },
+            data: {
+                type: 'delivery_express_dispatch',
+                deliveryExpressId: auctionId,
+                click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            },
+            android: {
+                priority: 'high',
+                notification: { channelId: 'anyskill_chats' },
+            },
+            apns: {
+                headers: { 'apns-priority': '10' },
+                payload: { aps: { sound: 'default' } },
+            },
+        });
+    } catch (e) {
+        console.error(`[DeliveryExpress] FCM send failed for ${candidate.uid}:`, e);
+    }
+}
+
+/// Dispatches a single tier. Skips uids already in `notifiedProviderIds`.
+/// Returns the new merged array of notified uids.
+async function _deDispatchTier({
+    db, auctionId, auctionData, radiusKm, maxProviders, feePercentage,
+}) {
+    const existing = Array.isArray(auctionData.notifiedProviderIds)
+        ? auctionData.notifiedProviderIds : [];
+    const existingSet = new Set(existing);
+    if (auctionData.customerId) existingSet.add(auctionData.customerId);
+
+    const pickup = auctionData.pickupLocation || {};
+    const pickupLat = Number(pickup.lat);
+    const pickupLng = Number(pickup.lng);
+    const candidates = await _deFindNearbyProviders({
+        db,
+        pickupLat,
+        pickupLng,
+        packageType: auctionData.packageType || 'small_package',
+        radiusKm,
+        maxResults: maxProviders,
+        excludeUids: existingSet,
+    });
+
+    const newUids = [];
+    for (const c of candidates) {
+        await _deNotifyProvider({
+            db,
+            auctionId,
+            auctionData,
+            candidate: c,
+            feePercentage,
+        });
+        newUids.push(c.uid);
+    }
+    return Array.from(new Set([...existing, ...newUids]));
+}
+
+// ── onDeliveryExpressCreate ────────────────────────────────────────────
+// Fires when the customer creates the auction. Tier-1 dispatch (5km, up
+// to 5 closest couriers). Pre-flight validation rejects when pickup
+// lacks finite GPS — same pattern as Flash Auction.
+exports.onDeliveryExpressCreate = onDocumentCreated(
+    { document: 'delivery_express/{auctionId}' },
+    async (event) => {
+        const auctionId = event.params.auctionId;
+        const data = event.data?.data() || {};
+        if (data.status !== 'searching') return null;
+
+        const db = admin.firestore();
+
+        const pickup = data.pickupLocation || {};
+        const pickupLat = Number(pickup.lat);
+        const pickupLng = Number(pickup.lng);
+        if (!Number.isFinite(pickupLat) || !Number.isFinite(pickupLng)) {
+            console.error(
+                `[DeliveryExpress] ${auctionId} — REJECTED: missing pickup coords ` +
+                `(lat=${pickup.lat}, lng=${pickup.lng}). ` +
+                `Customer must pin location on the map before broadcasting.`
+            );
+            try {
+                await db.collection('delivery_express').doc(auctionId).update({
+                    status: 'expired',
+                    expiredReason: 'missing_pickup_coords',
+                    expiredReasonHebrew:
+                        'לא נמצא מיקום GPS לנקודת האיסוף. ' +
+                        'אנא סמן את המיקום על המפה ושדר שוב.',
+                    expiredAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            } catch (e) {
+                console.error('[DeliveryExpress] expire-no-coords write failed:', e);
+            }
+            return null;
+        }
+
+        const feePct = await _deReadFeePercentage(db);
+
+        const newNotified = await _deDispatchTier({
+            db,
+            auctionId,
+            auctionData: data,
+            radiusKm: _DE_INITIAL_RADIUS_KM,
+            maxProviders: _DE_TIER1_MAX_PROVIDERS,
+            feePercentage: feePct,
+        });
+
+        try {
+            await db.collection('delivery_express').doc(auctionId).update({
+                notifiedProviderIds: newNotified,
+                currentRadiusKm: _DE_INITIAL_RADIUS_KM,
+                lastDispatchAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('[DeliveryExpress] tier-1 update failed:', e);
+        }
+
+        console.log(
+            `[DeliveryExpress] ${auctionId} — tier 1 dispatched to ` +
+            `${newNotified.length} couriers ` +
+            `(pickup ${pickupLat.toFixed(4)},${pickupLng.toFixed(4)}, ` +
+            `package=${data.packageType || 'small_package'})`
+        );
+        return null;
+    }
+);
+
+// ── dispatchDeliveryExpress ────────────────────────────────────────────
+// Scheduled scan for tier expansion + expiry. Cap per-run at 50.
+exports.dispatchDeliveryExpress = onSchedule(
+    { schedule: 'every 1 minutes', timeZone: 'Asia/Jerusalem' },
+    async () => {
+        const db = admin.firestore();
+        const now = Date.now();
+
+        const liveSnap = await db.collection('delivery_express')
+            .where('status', 'in', ['searching', 'has_offers'])
+            .limit(50)
+            .get();
+
+        if (liveSnap.empty) {
+            console.log('[DeliveryExpress/scheduler] no live auctions');
+            return;
+        }
+
+        const feePct = await _deReadFeePercentage(db);
+
+        let expanded = 0;
+        let expired = 0;
+
+        for (const doc of liveSnap.docs) {
+            const a = doc.data() || {};
+            const createdAt = a.createdAt?.toDate?.() || new Date(0);
+            const ageSec = (now - createdAt.getTime()) / 1000;
+            const offerCount = Number(a.offerCount || 0);
+            const radius = Number(a.currentRadiusKm || 0);
+
+            if (ageSec > _DE_EXPIRE_AFTER_SEC && offerCount === 0) {
+                try {
+                    await doc.ref.update({
+                        status: 'expired',
+                        expiredAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    expired++;
+                } catch (_) { /* ignore */ }
+                continue;
+            }
+
+            if (offerCount === 0
+                && ageSec >= _DE_TIER3_AFTER_SEC
+                && radius < _DE_TIER3_RADIUS_KM) {
+                const newNotified = await _deDispatchTier({
+                    db,
+                    auctionId: doc.id,
+                    auctionData: a,
+                    radiusKm: _DE_TIER3_RADIUS_KM,
+                    maxProviders: 999,
+                    feePercentage: feePct,
+                });
+                try {
+                    await doc.ref.update({
+                        notifiedProviderIds: newNotified,
+                        currentRadiusKm: _DE_TIER3_RADIUS_KM,
+                        lastDispatchAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    expanded++;
+                } catch (_) { /* ignore */ }
+                continue;
+            }
+
+            if (offerCount === 0
+                && ageSec >= _DE_TIER2_AFTER_SEC
+                && radius < _DE_TIER2_RADIUS_KM) {
+                const newNotified = await _deDispatchTier({
+                    db,
+                    auctionId: doc.id,
+                    auctionData: a,
+                    radiusKm: _DE_TIER2_RADIUS_KM,
+                    maxProviders: _DE_TIER2_MAX_PROVIDERS,
+                    feePercentage: feePct,
+                });
+                try {
+                    await doc.ref.update({
+                        notifiedProviderIds: newNotified,
+                        currentRadiusKm: _DE_TIER2_RADIUS_KM,
+                        lastDispatchAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    expanded++;
+                } catch (_) { /* ignore */ }
+                continue;
+            }
+        }
+
+        console.log(
+            `[DeliveryExpress/scheduler] scanned=${liveSnap.size} ` +
+            `expanded=${expanded} expired=${expired}`
+        );
+    }
+);
+
+// ── notifyOnDeliveryExpressOffer ───────────────────────────────────────
+// Fires when a courier submits an offer. FCM + notifications row to the
+// customer.
+exports.notifyOnDeliveryExpressOffer = onDocumentCreated(
+    { document: 'delivery_express/{auctionId}/offers/{offerId}' },
+    async (event) => {
+        const auctionId = event.params.auctionId;
+        const offerId = event.params.offerId;
+        const offer = event.data?.data() || {};
+        const db = admin.firestore();
+
+        let auctionData;
+        try {
+            const aSnap = await db.collection('delivery_express').doc(auctionId).get();
+            if (!aSnap.exists) return null;
+            auctionData = aSnap.data() || {};
+        } catch (_) {
+            return null;
+        }
+        const customerId = auctionData.customerId;
+        if (!customerId) return null;
+
+        const providerName = offer.providerName || 'שליח';
+        const eta = Number(offer.etaMinutes || 0);
+        const title = 'הצעת שליח חדשה!';
+        const body = `${providerName} יכול לאסוף בעוד ${eta} דקות`;
+
+        try {
+            await db.collection('notifications').add({
+                userId: customerId,
+                title,
+                body,
+                type: 'delivery_express_offer',
+                deliveryExpressId: auctionId,
+                offerId,
+                isRead: false,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('[DeliveryExpress] customer notif write failed:', e);
+        }
+
+        try {
+            const customerSnap = await db.collection('users').doc(customerId).get();
+            const token = (customerSnap.data() || {}).fcmToken
+                || (customerSnap.data() || {}).deviceToken;
+            if (!token) return null;
+            await admin.messaging().send({
+                token,
+                notification: { title, body },
+                data: {
+                    type: 'delivery_express_offer',
+                    deliveryExpressId: auctionId,
+                    offerId,
+                    click_action: 'FLUTTER_NOTIFICATION_CLICK',
+                },
+                android: {
+                    priority: 'high',
+                    notification: { channelId: 'anyskill_chats' },
+                },
+                apns: {
+                    headers: { 'apns-priority': '10' },
+                    payload: { aps: { sound: 'default' } },
+                },
+            });
+        } catch (e) {
+            console.error('[DeliveryExpress] customer FCM failed:', e);
+        }
+
+        return null;
+    }
+);
+
+// ── bookFromDeliveryExpressOffer (CLAUDE.md §78) ────────────────────────
+//
+// Server-side atomic booking from a Delivery Express offer. Mirrors
+// bookFromFlashAuctionOffer (§57): runs as Admin SDK, bypasses rules,
+// and atomically:
+//   1. Re-reads auction (status searching|has_offers) + offer (pending).
+//   2. Reads admin fee % (layered: custom > category > global) inside tx.
+//   3. Reads customer balance — throws failed-precondition if insufficient.
+//   4. Writes jobs/{newId} (status=paid_escrow) with full deliveryPreferences.
+//   5. Debits customer balance + credits courier pendingBalance.
+//   6. Writes platform_earnings + customer transactions.
+//   7. Flips auction → matched + offer → selected + sets matchedJobId.
+//
+// Idempotent via _checkIdempotency on `delivery_express_book_idempotency`
+// (1h replay window per §60). Retries return the cached jobId.
+exports.bookFromDeliveryExpressOffer = onCall(
+    { region: "us-central1" },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError("unauthenticated", "Must be signed in.");
+        }
+        const uid = request.auth.uid;
+        const { auctionId, offerId, clientReqId } = request.data || {};
+        if (!auctionId || !offerId) {
+            throw new HttpsError("invalid-argument", "Missing auctionId or offerId.");
+        }
+
+        const db = admin.firestore();
+
+        const cached = await _checkIdempotency(
+            db, "delivery_express_book_idempotency", uid, clientReqId,
+        );
+        if (cached) {
+            return cached;
+        }
+
+        const auctionRef = db.collection("delivery_express").doc(auctionId);
+        const offerRef = auctionRef.collection("offers").doc(offerId);
+        const adminSettingsRef = db.collection("admin").doc("admin")
+            .collection("settings").doc("settings");
+
+        let createdJobId = null;
+        let chatRoomId = null;
+        let providerId = null;
+        let providerName = "";
+        let totalPrice = 0;
+        let etaMinutes = 0;
+
+        try {
+            await db.runTransaction(async (tx) => {
+                // ── READS ──────────────────────────────────────────────────
+                const aSnap = await tx.get(auctionRef);
+                if (!aSnap.exists) {
+                    throw new HttpsError("not-found", "הקריאה לא נמצאה");
+                }
+                const aData = aSnap.data() || {};
+                const aStatus = aData.status || "";
+                if (aStatus !== "searching" && aStatus !== "has_offers") {
+                    throw new HttpsError("failed-precondition", "הקריאה כבר נסגרה");
+                }
+                if (aData.customerId && aData.customerId !== uid) {
+                    throw new HttpsError("permission-denied", "אין הרשאה לבצע הזמנה זו");
+                }
+
+                const oSnap = await tx.get(offerRef);
+                if (!oSnap.exists) {
+                    throw new HttpsError("not-found", "ההצעה לא נמצאה");
+                }
+                const oData = oSnap.data() || {};
+                if (oData.status !== "pending") {
+                    throw new HttpsError("failed-precondition", "ההצעה כבר אינה זמינה");
+                }
+
+                providerId = oData.providerId;
+                if (!providerId) {
+                    throw new HttpsError("internal", "Offer missing providerId.");
+                }
+                if (uid === providerId) {
+                    throw new HttpsError("permission-denied", "לא ניתן להזמין שירות מעצמך");
+                }
+
+                totalPrice = Number(oData.totalPrice || 0);
+                if (totalPrice <= 0) {
+                    throw new HttpsError("invalid-argument", "מחיר לא חוקי בהצעה");
+                }
+                etaMinutes = Number(oData.etaMinutes || 0);
+                providerName = String(oData.providerName || "");
+
+                const customerRef = db.collection("users").doc(uid);
+                const providerRef = db.collection("users").doc(providerId);
+                const cSnap = await tx.get(customerRef);
+                const pSnap = await tx.get(providerRef);
+                const adminSnap = await tx.get(adminSettingsRef);
+                const cData = cSnap.data() || {};
+                const pData = pSnap.data() || {};
+
+                const balance = Number(cData.balance || 0);
+                if (balance < totalPrice) {
+                    throw new HttpsError(
+                        "failed-precondition",
+                        "יתרה לא מספיקה — יש להטעין את הארנק",
+                    );
+                }
+
+                // Layered commission: custom > category > global.
+                let feePct = Number((adminSnap.data() || {}).feePercentage || 0.10);
+                let feeSource = "global";
+                const providerCategory = (pData.serviceType || "").toString();
+                if (providerCategory) {
+                    const catDoc = await tx.get(
+                        db.collection("category_commissions").doc(providerCategory),
+                    );
+                    if (catDoc.exists) {
+                        const catPct = catDoc.data()?.percentage;
+                        if (catPct != null) {
+                            feePct = Number(catPct) / 100;
+                            feeSource = "category";
+                        }
+                    }
+                }
+                const customActive = pData.customCommissionActive === true;
+                const custom = pData.customCommission;
+                if (customActive && custom && typeof custom === "object") {
+                    const pct = custom.percentage;
+                    const expiresAt = custom.expiresAt;
+                    const live = !expiresAt
+                        || (expiresAt.toDate ? expiresAt.toDate() > new Date() : true);
+                    if (pct != null && live) {
+                        feePct = Number(pct) / 100;
+                        feeSource = "custom";
+                    }
+                }
+
+                const commission = roundNIS(totalPrice * feePct);
+                const netForExpert = roundNIS(totalPrice - commission);
+
+                const customerName = String(cData.name || "");
+                const policy = String(pData.cancellationPolicy || "flexible");
+
+                const ids = [uid, providerId].slice().sort();
+                chatRoomId = ids.join("_");
+
+                // ── WRITES ─────────────────────────────────────────────────
+                const jobRef = db.collection("jobs").doc();
+                createdJobId = jobRef.id;
+
+                const pickup = aData.pickupLocation || {};
+                const dropoff = aData.dropoffLocation || {};
+                const breakdown = oData.priceBreakdown || {};
+
+                const deliveryPrefs = {
+                    packageType: aData.packageType || 'small_package',
+                    urgencyReason: aData.urgencyReason || 'other',
+                    packageDescription: String(aData.packageDescription || ''),
+                    recipientName: String(aData.recipientName || ''),
+                    recipientPhone: String(aData.recipientPhone || ''),
+                    pickupAddress: pickup.address || '',
+                    pickupDetails: pickup.details || '',
+                    dropoffAddress: dropoff.address || '',
+                    dropoffDetails: dropoff.details || '',
+                    distanceKm: Number(aData.distanceKm || 0),
+                    vehicleType: String(oData.vehicleType || 'scooter'),
+                    timing: 'immediate',
+                    contactName: customerName,
+                    contactPhone: String(cData.phone || ''),
+                    beforePhotoUrls: Array.isArray(aData.photos) ? aData.photos : [],
+                    priceBreakdown: {
+                        base: Number(breakdown.base || 0),
+                        addOnsTotal: Number(breakdown.addOnsTotal || 0),
+                        immediateSurcharge: Number(breakdown.immediateSurcharge || 0),
+                        kmAfter5: Number(breakdown.kmAfter5 || 0),
+                        total: Number(breakdown.total || totalPrice),
+                    },
+                };
+                if (pickup.lat != null) deliveryPrefs.pickupLat = Number(pickup.lat);
+                if (pickup.lng != null) deliveryPrefs.pickupLng = Number(pickup.lng);
+                if (dropoff.lat != null) deliveryPrefs.dropoffLat = Number(dropoff.lat);
+                if (dropoff.lng != null) deliveryPrefs.dropoffLng = Number(dropoff.lng);
+
+                tx.set(jobRef, {
+                    jobId: jobRef.id,
+                    chatRoomId,
+                    customerId: uid,
+                    customerName,
+                    expertId: providerId,
+                    expertName: providerName,
+                    totalPaidByCustomer: totalPrice,
+                    totalAmount: totalPrice,
+                    commissionAmount: commission,
+                    netAmountForExpert: netForExpert,
+                    commissionFeePct: feePct * 100,
+                    commissionSource: feeSource,
+                    appointmentDate: null,
+                    appointmentTime: "מיד",
+                    status: "paid_escrow",
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                    cancellationPolicy: policy,
+                    expertServiceType: "משלוחים",
+                    deliveryExpressId: auctionId,
+                    deliveryExpressOfferId: offerId,
+                    deliveryPreferences: deliveryPrefs,
+                    priceBreakdown: {
+                        base: Number(breakdown.base || 0),
+                        total: totalPrice,
+                    },
+                    clientReviewDone: false,
+                    providerReviewDone: false,
+                    source: "delivery_express",
+                });
+
+                tx.update(customerRef, {
+                    balance: admin.firestore.FieldValue.increment(-totalPrice),
+                });
+                tx.update(providerRef, {
+                    pendingBalance: admin.firestore.FieldValue.increment(netForExpert),
+                });
+
+                tx.set(db.collection("platform_earnings").doc(), {
+                    jobId: jobRef.id,
+                    amount: commission,
+                    sourceExpertId: providerId,
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    status: "pending_escrow",
+                });
+
+                tx.set(db.collection("transactions").doc(), {
+                    userId: uid,
+                    senderId: uid,
+                    senderName: customerName,
+                    receiverId: providerId,
+                    receiverName: providerName,
+                    amount: -totalPrice,
+                    type: "delivery_express_payment",
+                    jobId: jobRef.id,
+                    deliveryExpressId: auctionId,
+                    payoutStatus: "pending",
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    title: `משלוח דחוף — ${providerName}`,
+                    status: "escrow",
+                });
+
+                tx.update(auctionRef, {
+                    status: "matched",
+                    selectedOfferId: offerId,
+                    selectedProviderId: providerId,
+                    matchedJobId: jobRef.id,
+                    matchedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    matchedJobCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+                tx.update(offerRef, { status: "selected" });
+
+                tx.set(adminSettingsRef, {
+                    totalPlatformBalance:
+                        admin.firestore.FieldValue.increment(commission),
+                }, { merge: true });
+            });
+        } catch (e) {
+            if (e instanceof HttpsError) throw e;
+            console.error("[DeliveryExpress] bookFromDeliveryExpressOffer error:", e);
+            throw new HttpsError("internal", "אירעה שגיאה. נסה/י שוב");
+        }
+
+        // System chat message — best-effort, outside the tx.
+        if (createdJobId && chatRoomId && providerId) {
+            try {
+                const chatRef = db.collection("chats").doc(chatRoomId);
+                await chatRef.set(
+                    { users: [uid, providerId] },
+                    { merge: true },
+                );
+                await chatRef.collection("messages").add({
+                    senderId: "system",
+                    message: `📦 הזמנת משלוח דחוף נפתחה. ${providerName} בדרך לאיסוף ` +
+                        `(זמן הגעה: ${etaMinutes} דק׳). ₪${Math.round(totalPrice)} נעולים ` +
+                        `באסקרו.`,
+                    type: "text",
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            } catch (e) {
+                console.warn("[DeliveryExpress] system chat write failed:", e.message);
+            }
+        }
+
+        const result = { success: true, jobId: createdJobId };
+        await _saveIdempotencyResult(
+            db, "delivery_express_book_idempotency", uid, clientReqId, result,
+        );
+        return result;
+    },
+);
 

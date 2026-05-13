@@ -14,6 +14,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../utils/error_mapper.dart';
 import '../models/any_task.dart';
 import '../models/task_milestone.dart';
 import '../services/any_task_service.dart';
@@ -345,9 +346,7 @@ class _ProofSectionState extends State<_ProofSection> {
           backgroundColor: TasksPalette.success));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('שגיאה: $e'),
-          backgroundColor: TasksPalette.danger));
+      ErrorMapper.show(context, e);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -543,9 +542,7 @@ class _StageActions extends StatelessWidget {
           .update({field: FieldValue.serverTimestamp()});
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('שגיאה: $e'),
-          backgroundColor: TasksPalette.dangerRed));
+      ErrorMapper.show(context, e);
     }
   }
 

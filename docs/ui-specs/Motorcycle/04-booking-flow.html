@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Booking Flow - זרימת הזמנת גרירה</title>
+<style>
+  :root {
+    --purple-900: #26215C;
+    --purple-700: #3C3489;
+    --purple-500: #534AB7;
+    --purple-300: #7F77DD;
+    --purple-50: #EEEDFE;
+    --green-700: #0F6E56;
+    --green-500: #1D9E75;
+    --green-50: #E1F5EE;
+    --amber-800: #854F0B;
+    --amber-600: #BA7517;
+    --amber-50: #FAEEDA;
+    --bg-primary: #FFFFFF;
+    --bg-secondary: #F5F4EE;
+    --text-primary: #2C2C2A;
+    --text-secondary: #5F5E5A;
+    --text-tertiary: #888780;
+    --border-tertiary: #E8E6DD;
+    --border-secondary: #D3D1C7;
+  }
+  * { box-sizing: border-box; }
+  body { direction: rtl; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg-secondary); color: var(--text-primary); margin: 0; padding: 20px; }
+  .container { max-width: 480px; margin: 0 auto; }
+
+  .header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; padding: 12px 14px; background: var(--bg-secondary); border-radius: 12px; }
+  .avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--purple-500); color: white; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 14px; flex-shrink: 0; }
+  .header-text { flex: 1; }
+  .header-title { font-size: 14px; font-weight: 500; margin: 0; }
+  .header-sub { font-size: 12px; color: var(--text-secondary); margin: 2px 0 0; display: flex; align-items: center; gap: 6px; }
+  .live { width: 6px; height: 6px; border-radius: 50%; background: var(--green-500); box-shadow: 0 0 0 2px rgba(29,158,117,0.2); }
+
+  .steps { display: flex; gap: 4px; margin-bottom: 16px; }
+  .step-pill { flex: 1; height: 4px; background: var(--border-tertiary); border-radius: 2px; transition: background 0.2s; }
+  .step-pill.done, .step-pill.active { background: var(--purple-500); }
+
+  .step { display: none; }
+  .step.active { display: block; }
+  .step-label { font-size: 11px; color: var(--text-tertiary); margin-bottom: 4px; }
+  .step-title { font-size: 18px; font-weight: 500; margin: 0 0 4px; }
+  .step-desc { font-size: 13px; color: var(--text-secondary); margin: 0 0 16px; }
+
+  .card { background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 12px; padding: 14px; margin-bottom: 10px; }
+  .input { width: 100%; padding: 12px 14px; border: 0.5px solid var(--border-secondary); border-radius: 8px; background: var(--bg-primary); font-size: 14px; box-sizing: border-box; font-family: inherit; }
+  .textarea { min-height: 70px; resize: vertical; }
+  .label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+  .hint { font-size: 11px; color: var(--text-tertiary); margin-top: 4px; }
+
+  .bike-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .bike-chip { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px; background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 8px; cursor: pointer; transition: all 0.15s; }
+  .bike-chip.on { background: var(--purple-50); border-color: var(--purple-300); }
+  .bike-chip-img { width: 100%; aspect-ratio: 4/3; border-radius: 6px; overflow: hidden; }
+  .bike-chip-img img { width: 100%; height: 100%; object-fit: cover; }
+  .bike-chip span { font-size: 12px; font-weight: 500; }
+
+  .issue-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .issue { display: flex; align-items: center; gap: 10px; padding: 12px; background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 8px; cursor: pointer; transition: all 0.15s; }
+  .issue.on { background: var(--purple-50); border-color: var(--purple-300); }
+  .issue svg { width: 20px; height: 20px; stroke: var(--purple-500); fill: none; stroke-width: 1.8; flex-shrink: 0; }
+  .issue span { font-size: 13px; font-weight: 500; }
+
+  .urgency { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .urgency-card { padding: 14px; border: 0.5px solid var(--border-tertiary); border-radius: 8px; cursor: pointer; transition: all 0.15s; background: var(--bg-primary); }
+  .urgency-card.on { background: var(--purple-50); border-color: var(--purple-300); border-width: 1px; }
+  .urgency-title { font-size: 14px; font-weight: 500; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+  .urgency-title .badge { font-size: 10px; background: var(--amber-50); color: var(--amber-800); padding: 2px 6px; border-radius: 4px; font-weight: 500; }
+  .urgency-sub { font-size: 11px; color: var(--text-secondary); }
+
+  .map { height: 140px; background: var(--green-50); border-radius: 8px; position: relative; overflow: hidden; margin-bottom: 12px; }
+  .map svg { width: 100%; height: 100%; }
+  .pin { position: absolute; width: 28px; height: 28px; border-radius: 50%; background: var(--purple-500); border: 3px solid white; display: flex; align-items: center; justify-content: center; }
+  .pin.from { top: 50%; right: 18%; transform: translate(50%, -50%); background: var(--green-500); }
+  .pin.to { top: 30%; right: 70%; transform: translate(50%, -50%); }
+  .pin svg { width: 14px; height: 14px; stroke: white; fill: none; stroke-width: 2; }
+
+  .price-card { background: var(--purple-50); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .price-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 13px; }
+  .price-row.total { border-top: 0.5px solid var(--purple-300); margin-top: 6px; padding-top: 10px; font-size: 16px; font-weight: 500; color: var(--purple-900); }
+  .price-row .v { color: var(--purple-700); }
+  .price-row.total .v { font-size: 20px; }
+
+  .summary-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 0.5px solid var(--border-tertiary); }
+  .summary-row:last-child { border-bottom: none; }
+  .summary-icon { width: 32px; height: 32px; border-radius: 8px; background: var(--bg-secondary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .summary-icon svg { width: 16px; height: 16px; stroke: var(--purple-500); fill: none; stroke-width: 2; }
+  .summary-content { flex: 1; }
+  .summary-label { font-size: 11px; color: var(--text-tertiary); margin-bottom: 2px; }
+  .summary-value { font-size: 13px; font-weight: 500; }
+
+  .photo-zone { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 20px; background: var(--bg-secondary); border: 1px dashed var(--border-secondary); border-radius: 8px; cursor: pointer; }
+  .photo-zone svg { width: 22px; height: 22px; stroke: var(--purple-500); fill: none; stroke-width: 2; }
+
+  .actions { display: flex; gap: 8px; margin-top: 16px; }
+  .btn-primary { flex: 1; padding: 14px; background: var(--purple-500); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; font-family: inherit; }
+  .btn-secondary { padding: 14px 18px; background: transparent; color: var(--text-primary); border: 0.5px solid var(--border-secondary); border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit; }
+  .btn-primary svg { width: 16px; height: 16px; stroke: white; fill: none; stroke-width: 2; }
+
+  .confirm { text-align: center; padding: 20px 12px; }
+  .confirm-icon { width: 64px; height: 64px; border-radius: 50%; background: var(--green-500); margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; }
+  .confirm-icon svg { width: 32px; height: 32px; stroke: white; fill: none; stroke-width: 2.5; }
+  .confirm h2 { margin: 0 0 6px; font-size: 22px; font-weight: 500; }
+  .confirm-sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; }
+  .eta-banner { background: var(--purple-50); border-radius: 12px; padding: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px; text-align: right; }
+  .eta-banner-icon { width: 40px; height: 40px; border-radius: 50%; background: var(--purple-500); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .eta-banner-icon svg { width: 20px; height: 20px; stroke: white; fill: none; stroke-width: 2; }
+  .eta-banner-content { flex: 1; }
+  .eta-banner-label { font-size: 12px; color: var(--purple-700); margin: 0 0 2px; }
+  .eta-banner-value { font-size: 16px; font-weight: 500; color: var(--purple-900); margin: 0; }
+  .order-id { font-size: 12px; color: var(--text-tertiary); margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="avatar">סמ</div>
+    <div class="header-text">
+      <p class="header-title">סיגלית מלסה · גרר אופנועים</p>
+      <p class="header-sub"><span class="live"></span>זמין כעת · ★ 4.7 (7 ביקורות)</p>
+    </div>
+  </div>
+
+  <div class="steps">
+    <div class="step-pill active" data-pill="1"></div>
+    <div class="step-pill" data-pill="2"></div>
+    <div class="step-pill" data-pill="3"></div>
+    <div class="step-pill" data-pill="4"></div>
+    <div class="step-pill" data-pill="5"></div>
+  </div>
+
+  <!-- STEP 1: BIKE TYPE -->
+  <div class="step active" data-step="1">
+    <p class="step-label">שלב 1 מתוך 5</p>
+    <h2 class="step-title">איזה סוג אופנוע?</h2>
+    <p class="step-desc">זה עוזר לסיגלית להביא את הציוד הנכון</p>
+    <div class="bike-grid">
+      <div class="bike-chip on"><div class="bike-chip-img"><img src="https://images.unsplash.com/photo-1568772585407-9361f9bf3a87?w=400&h=300&fit=crop"/></div><span>ספורט</span></div>
+      <div class="bike-chip"><div class="bike-chip-img"><img src="https://images.unsplash.com/photo-1558981403-c5f9899a28bc?w=400&h=300&fit=crop"/></div><span>קרוזר</span></div>
+      <div class="bike-chip"><div class="bike-chip-img"><img src="https://images.unsplash.com/photo-1599819811279-d5ad9cccf838?w=400&h=300&fit=crop"/></div><span>אדוונצ'ר</span></div>
+      <div class="bike-chip"><div class="bike-chip-img"><img src="https://images.unsplash.com/photo-1591216105232-d23bea36b827?w=400&h=300&fit=crop"/></div><span>קטנוע</span></div>
+    </div>
+    <div style="margin-top: 14px;">
+      <label class="label">דגם (אופציונלי)</label>
+      <input type="text" class="input" placeholder='למשל: Yamaha MT-07'/>
+    </div>
+    <div class="actions">
+      <button class="btn-primary" data-next="2">המשך<svg viewBox="0 0 24 24"><path d="M19 12H5M12 5l-7 7 7 7"/></svg></button>
+    </div>
+  </div>
+
+  <!-- STEP 2: ISSUE -->
+  <div class="step" data-step="2">
+    <p class="step-label">שלב 2 מתוך 5</p>
+    <h2 class="step-title">מה קרה?</h2>
+    <p class="step-desc">בחר את הסיבה לגרירה</p>
+    <div class="issue-grid">
+      <div class="issue"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg><span>תאונה</span></div>
+      <div class="issue on"><svg viewBox="0 0 24 24"><path d="M14 6l-3 3-2-2-7 7v4h4l7-7-2-2 3-3"/></svg><span>תקלת מנוע</span></div>
+      <div class="issue"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg><span>פנצ'ר</span></div>
+      <div class="issue"><svg viewBox="0 0 24 24"><path d="M5 8h14v10H5zM8 4h2M14 4h2"/></svg><span>מצבר מת</span></div>
+      <div class="issue"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg><span>גלגלים נעולים</span></div>
+      <div class="issue"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M8 5V3M16 5V3"/></svg><span>העברה מתוכננת</span></div>
+    </div>
+    <div style="margin-top: 14px;">
+      <label class="label">פרטים נוספים (אופציונלי)</label>
+      <textarea class="input textarea" placeholder="למשל: האופנוע על המדרכה..."></textarea>
+    </div>
+    <div class="actions">
+      <button class="btn-secondary" data-back="1">חזרה</button>
+      <button class="btn-primary" data-next="3">המשך<svg viewBox="0 0 24 24"><path d="M19 12H5M12 5l-7 7 7 7"/></svg></button>
+    </div>
+  </div>
+
+  <!-- STEP 3: LOCATION -->
+  <div class="step" data-step="3">
+    <p class="step-label">שלב 3 מתוך 5</p>
+    <h2 class="step-title">מאיפה לאן?</h2>
+    <p class="step-desc">המיקום הנוכחי שלך זוהה אוטומטית</p>
+    <div class="map">
+      <svg viewBox="0 0 400 140" preserveAspectRatio="none">
+        <path d="M0 70 Q100 40 200 60 T400 80" stroke="#9FE1CB" stroke-width="2" fill="none"/>
+        <path d="M280 42 Q220 55 130 65" stroke="#534AB7" stroke-width="2.5" fill="none" stroke-dasharray="4 3"/>
+      </svg>
+      <div class="pin from"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="white"/></svg></div>
+      <div class="pin to"><svg viewBox="0 0 24 24"><path d="M12 2C8 2 5 5 5 9c0 5 7 13 7 13s7-8 7-13c0-4-3-7-7-7z"/></svg></div>
+    </div>
+    <div style="margin-bottom: 12px;">
+      <label class="label">מאיפה (מיקום הגרירה)</label>
+      <input type="text" class="input" value="רחוב יגאל אלון 94, תל אביב"/>
+      <div class="hint">📍 זוהה אוטומטית · לחץ לעדכון</div>
+    </div>
+    <div style="margin-bottom: 12px;">
+      <label class="label">לאן (יעד)</label>
+      <input type="text" class="input" value="מוסך הצפון, רמת גן"/>
+      <div class="hint">מרחק משוער: 8.4 ק"מ</div>
+    </div>
+    <div>
+      <label class="label">תמונות של האופנוע (מומלץ מאוד)</label>
+      <div class="photo-zone">
+        <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        <span style="font-size: 13px; font-weight: 500;">הוסף תמונות (לפני הגרירה)</span>
+      </div>
+      <div class="hint">תיעוד למניעת מחלוקות מאוחרות יותר</div>
+    </div>
+    <div class="actions">
+      <button class="btn-secondary" data-back="2">חזרה</button>
+      <button class="btn-primary" data-next="4">המשך<svg viewBox="0 0 24 24"><path d="M19 12H5M12 5l-7 7 7 7"/></svg></button>
+    </div>
+  </div>
+
+  <!-- STEP 4: TIMING -->
+  <div class="step" data-step="4">
+    <p class="step-label">שלב 4 מתוך 5</p>
+    <h2 class="step-title">מתי?</h2>
+    <p class="step-desc">בחר את דחיפות הגרירה</p>
+    <div class="urgency">
+      <div class="urgency-card on"><div class="urgency-title">מיד <span class="badge">+50%</span></div><div class="urgency-sub">הגעה תוך 22–35 דקות</div></div>
+      <div class="urgency-card"><div class="urgency-title">בשעה הקרובה</div><div class="urgency-sub">הגעה תוך 60–90 דקות</div></div>
+      <div class="urgency-card"><div class="urgency-title">במהלך היום</div><div class="urgency-sub">בחר חלון שעות</div></div>
+      <div class="urgency-card"><div class="urgency-title">לתכנן ליום אחר</div><div class="urgency-sub">בחר תאריך ושעה</div></div>
+    </div>
+    <div class="card" style="margin-top: 14px;">
+      <label class="label">פרטי קשר</label>
+      <input type="tel" class="input" value="050-1234567" style="margin-bottom: 8px;"/>
+      <input type="text" class="input" value="דני כהן"/>
+    </div>
+    <div class="actions">
+      <button class="btn-secondary" data-back="3">חזרה</button>
+      <button class="btn-primary" data-next="5">המשך לסיכום<svg viewBox="0 0 24 24"><path d="M19 12H5M12 5l-7 7 7 7"/></svg></button>
+    </div>
+  </div>
+
+  <!-- STEP 5: SUMMARY -->
+  <div class="step" data-step="5">
+    <p class="step-label">שלב 5 מתוך 5</p>
+    <h2 class="step-title">סיכום ההזמנה</h2>
+    <p class="step-desc">בדוק שהכל נכון לפני אישור</p>
+    <div class="card">
+      <div class="summary-row">
+        <div class="summary-icon"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 18L11 9h6l1 9"/></svg></div>
+        <div class="summary-content"><div class="summary-label">אופנוע</div><div class="summary-value">ספורט · Yamaha MT-07</div></div>
+      </div>
+      <div class="summary-row">
+        <div class="summary-icon"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg></div>
+        <div class="summary-content"><div class="summary-label">סיבת הגרירה</div><div class="summary-value">תקלת מנוע</div></div>
+      </div>
+      <div class="summary-row">
+        <div class="summary-icon"><svg viewBox="0 0 24 24"><path d="M12 2C8 2 5 5 5 9c0 5 7 13 7 13s7-8 7-13c0-4-3-7-7-7z"/></svg></div>
+        <div class="summary-content"><div class="summary-label">מסלול</div><div class="summary-value">יגאל אלון 94, ת"א ← מוסך הצפון, ר"ג</div></div>
+      </div>
+      <div class="summary-row">
+        <div class="summary-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <div class="summary-content"><div class="summary-label">זמן</div><div class="summary-value">מיד · ETA 22–35 דקות</div></div>
+      </div>
+    </div>
+    <div class="price-card">
+      <div class="price-row"><span>מחיר בסיס</span><span class="v">₪180</span></div>
+      <div class="price-row"><span>תוספת ק"מ (8.4 ק"מ)</span><span class="v">₪38</span></div>
+      <div class="price-row"><span>תוספת חירום מיידי (50%)</span><span class="v">₪109</span></div>
+      <div class="price-row total"><span>סה"כ משוער</span><span class="v">₪327</span></div>
+    </div>
+    <div style="font-size: 11px; color: var(--text-tertiary); text-align: center; margin-bottom: 12px; line-height: 1.5;">
+      ✓ ביטוח מלא בזמן הגרירה · ✓ מעקב GPS חי · ✓ תמונות לפני/אחרי
+    </div>
+    <div class="actions">
+      <button class="btn-secondary" data-back="4">חזרה</button>
+      <button class="btn-primary" data-next="6">אישור הזמנה<svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></button>
+    </div>
+  </div>
+
+  <!-- CONFIRMATION -->
+  <div class="step" data-step="6">
+    <div class="confirm">
+      <div class="confirm-icon"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
+      <h2>ההזמנה אושרה!</h2>
+      <p class="confirm-sub">סיגלית קיבלה את הקריאה ויוצאת לדרך</p>
+    </div>
+    <div class="eta-banner">
+      <div class="eta-banner-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+      <div class="eta-banner-content"><p class="eta-banner-label">זמן הגעה משוער</p><p class="eta-banner-value">28 דקות · 14:42</p></div>
+    </div>
+    <div class="actions">
+      <button class="btn-secondary" style="flex: 1;">ביטול הזמנה</button>
+      <button class="btn-primary"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>צ'אט עם סיגלית</button>
+    </div>
+    <p class="order-id" style="text-align: center;">מספר הזמנה: #SM-4827-2026</p>
+  </div>
+</div>
+
+<script>
+  let currentStep = 1;
+  function goToStep(n) {
+    document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+    document.querySelector(`[data-step="${n}"]`).classList.add('active');
+    currentStep = n;
+    document.querySelectorAll('.step-pill').forEach((p, i) => {
+      p.classList.toggle('done', i + 1 < Math.min(n, 5));
+      p.classList.toggle('active', i + 1 === Math.min(n, 5));
+    });
+  }
+  document.querySelectorAll('[data-next]').forEach(b => b.addEventListener('click', () => goToStep(parseInt(b.dataset.next))));
+  document.querySelectorAll('[data-back]').forEach(b => b.addEventListener('click', () => goToStep(parseInt(b.dataset.back))));
+</script>
+</body>
+</html>

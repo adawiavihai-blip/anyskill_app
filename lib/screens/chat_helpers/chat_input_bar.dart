@@ -159,7 +159,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (widget.isUploading) ...[
-            const LinearProgressIndicator(color: Color(0xFF6366F1)),
+            LinearProgressIndicator(color: p.accent),
             const SizedBox(height: 6),
           ],
           Row(
@@ -215,16 +215,21 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  color:
-                      hasText ? const Color(0xFF6366F1) : Colors.grey[200],
+                  color: hasText ? p.accent : p.surfaceMuted,
                   shape: BoxShape.circle,
                 ),
                 child: IconButton(
                   padding: EdgeInsets.zero,
+                  // tooltip doubles as the screen-reader label and the
+                  // long-press tooltip. "שלח" / "Send" — must work in
+                  // every locale; using a literal Hebrew here to match
+                  // the hintText above which is also a literal Hebrew
+                  // ("הקלד הודעה...") at line 201.
+                  tooltip: 'שלח',
                   icon: Icon(
                     Icons.send_rounded,
                     size: 18,
-                    color: hasText ? Colors.white : Colors.grey[400],
+                    color: hasText ? Colors.white : p.textMuted,
                   ),
                   onPressed: widget.onSend,
                 ),
@@ -252,6 +257,7 @@ class _AttachButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = ChatThemeScope.of(context).palette;
     return Tooltip(
       message: tooltip,
       child: AnimatedContainer(
@@ -261,7 +267,9 @@ class _AttachButton extends StatelessWidget {
         width: 44,
         height: 44,
         decoration: BoxDecoration(
-          color: active ? const Color(0xFFEDE9FE) : Colors.transparent,
+          color: active
+              ? p.accent.withValues(alpha: 0.15)
+              : Colors.transparent,
           shape: BoxShape.circle,
         ),
         child: IconButton(
@@ -273,9 +281,7 @@ class _AttachButton extends StatelessWidget {
             child: Icon(
               Icons.attach_file_rounded,
               size: 22,
-              color: active
-                  ? const Color(0xFF4F46E5)
-                  : const Color(0xFF6B7280),
+              color: active ? p.accent : p.textSecondary,
             ),
           ),
           onPressed: onTap,
@@ -335,6 +341,7 @@ class _AttachMenuState extends State<_AttachMenu>
   @override
   Widget build(BuildContext context) {
     final l10n = widget.l10n;
+    final p = ChatThemeScope.of(context).palette;
     final offerLabel = widget.isProvider
         ? l10n.chatAttachOffer
         : l10n.chatAttachPaymentRequest;
@@ -352,9 +359,9 @@ class _AttachMenuState extends State<_AttachMenu>
               width: 280,
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: p.surface,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFFE5E7EB)),
+                border: Border.all(color: p.border),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.18),
@@ -442,6 +449,7 @@ class _AttachItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = ChatThemeScope.of(context).palette;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
@@ -470,10 +478,10 @@ class _AttachItem extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF1F2937),
+                color: p.textPrimary,
               ),
             ),
           ],

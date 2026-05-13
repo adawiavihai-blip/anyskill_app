@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/firestore_map.dart';
 
 class ReviewModel {
   final String id;
@@ -33,7 +34,7 @@ class ReviewModel {
 
   factory ReviewModel.fromDoc(DocumentSnapshot doc) {
     final d = doc.data() as Map<String, dynamic>? ?? {};
-    final params = (d['ratingParams'] as Map<String, dynamic>? ?? {})
+    final params = safeMapOrEmpty(d['ratingParams'])
         .map((k, v) => MapEntry(k, (v as num? ?? 3).toDouble()));
     final overall = d['overallRating'] != null
         ? (d['overallRating'] as num).toDouble()

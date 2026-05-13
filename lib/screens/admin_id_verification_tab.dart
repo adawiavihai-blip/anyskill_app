@@ -4,7 +4,9 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../widgets/hint_icon.dart';
+import '../services/cached_readers.dart';
 import '../services/private_data_service.dart';
+import '../utils/safe_image_provider.dart';
 
 /// Self-contained ID Verification tab extracted from AdminScreen.
 /// Owns its own verifying/approved UID tracking sets and all approve/reject logic.
@@ -41,7 +43,7 @@ class _AdminIdVerificationTabState extends State<AdminIdVerificationTab> {
               children: const [
                 Text('🚀', style: TextStyle(fontSize: 20)),
                 SizedBox(width: 8),
-                Text('בקשות הצטרפות כמומחים',
+                Text('בקשות הצטרפות כנותני שירות',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ],
             ),
@@ -197,8 +199,15 @@ class _AdminIdVerificationTabState extends State<AdminIdVerificationTab> {
     final bankNumber       = (appData['bank_number']         as String? ?? '').trim();
     final branchNumber     = (appData['branch_number']       as String? ?? '').trim();
     final accountNumber    = (appData['account_number']      as String? ?? '').trim();
-    final phone      = ((data['phone'] as String?) ?? (data['phoneNumber'] as String?) ?? '').trim();
+    // Prefer the application-time phone (the value the customer entered in
+    // the wizard) — main-doc top-level `phone` is blocklisted for owner
+    // writes (CLAUDE.md §50), so it may lag behind the wizard input.
+    final phone      = ((appData['phone'] as String?)
+                          ?? (data['phone'] as String?)
+                          ?? (data['phoneNumber'] as String?)
+                          ?? '').trim();
     final isPending  = data['isPendingExpert'] as bool? ?? false;
+    final avatarProvider = safeImageProvider(photo);
 
     return Card(
       elevation: 2,
@@ -215,10 +224,8 @@ class _AdminIdVerificationTabState extends State<AdminIdVerificationTab> {
                 CircleAvatar(
                   radius: 24,
                   backgroundColor: Colors.purple.shade50,
-                  backgroundImage: (photo != null && photo.isNotEmpty)
-                      ? NetworkImage(photo)
-                      : null,
-                  child: (photo == null || photo.isEmpty)
+                  backgroundImage: avatarProvider,
+                  child: avatarProvider == null
                       ? Text(
                           name.isNotEmpty ? name[0] : '?',
                           style: const TextStyle(
@@ -443,7 +450,7 @@ class _AdminIdVerificationTabState extends State<AdminIdVerificationTab> {
                               strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.verified_rounded,
                           size: 16, color: Colors.white),
-                  label: const Text('אשר כספק מומחה',
+                  label: const Text('אשר כספק נותן שירות',
                       style: TextStyle(color: Colors.white)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.purple,
@@ -466,6 +473,8 @@ class _AdminIdVerificationTabState extends State<AdminIdVerificationTab> {
     final uid   = doc.id;
     final name  = data['name']  as String? ?? 'ללא שם';
     final email = data['email'] as String? ?? '';
+    final photo = data['profileImage'] as String?;
+    final avatarProvider = safeImageProvider(photo);
     // `idVerificationUrl` stayed on the main doc (legacy field, not part of PR 1).
     final idUrl = data['idVerificationUrl'] as String?;
 
@@ -484,12 +493,15 @@ class _AdminIdVerificationTabState extends State<AdminIdVerificationTab> {
                 CircleAvatar(
                   radius: 22,
                   backgroundColor: Colors.indigo.shade50,
-                  child: Text(
-                    name.isNotEmpty ? name[0] : '?',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.indigo),
-                  ),
+                  backgroundImage: avatarProvider,
+                  child: avatarProvider == null
+                      ? Text(
+                          name.isNotEmpty ? name[0] : '?',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.indigo),
+                        )
+                      : null,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -782,7 +794,7 @@ class _AdminIdVerificationTabState extends State<AdminIdVerificationTab> {
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('$name אושר/ה כספק מומחה -- התראה נשלחה'),
+          content: Text('$name אושר/ה כספק נותן שירות -- התראה נשלחה'),
           backgroundColor: Colors.purple.shade700,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -829,6 +841,7 @@ class _AdminIdVerificationTabState extends State<AdminIdVerificationTab> {
         'isPendingExpert':    false,
         'expertApplicationData': FieldValue.delete(),
       });
+      CachedReaders.invalidateProvider(uid); // §61
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('$name -- הבקשה נדחתה'),

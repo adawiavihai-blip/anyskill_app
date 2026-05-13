@@ -9,6 +9,7 @@ import 'chat_modules/location_module.dart';
 import '../services/cache_service.dart';
 import '../services/chat_theme_controller.dart';
 import 'chat_modules/image_module.dart';
+import 'chat_modules/video_module.dart';
 import 'chat_modules/chat_logic_module.dart';
 import 'chat_modules/safety_module.dart';
 import '../l10n/app_localizations.dart';
@@ -63,7 +64,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   // ── Chat Guard state ──────────────────────────────────────────────────────
   bool      _guardFlagged      = false;   // true while current input is flagged
-  bool      _showGuardBanner   = true;    // dismissible anti-bypass info banner
   int       _bypassAttempts    = 0;       // counts flagged sends this session
   DateTime? _lastGuardWarnTime;           // prevents SnackBar spam
   Timer?    _guardDebounce;               // delays detection until typing pauses
@@ -73,6 +73,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Timer? _markReadDebounce;
   Timer? _typingClearTimer;
   StreamSubscription<DocumentSnapshot>? _chatDocSub;
+
+  // ── Failed-message visibility (Fix 4) ─────────────────────────────────
+  // Tracks the local IDs of messages we've already shown a failure
+  // SnackBar for in this session, so a single failed message doesn't
+  // spam every queue tick.
+  final Set<String> _failureNotified = {};
+  VoidCallback? _queueListener;
 
   @override
   void initState() {
@@ -108,6 +115,46 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (widget.initialMessage?.isNotEmpty == true) {
       _msgCtrl.text = widget.initialMessage!;
     }
+    _attachQueueFailureListener();
+  }
+
+  /// Subscribe to the offline outbox and surface a SnackBar the first time
+  /// any message in THIS room transitions to `failed`. Without this,
+  /// failed messages render with a small red icon at the bottom of the
+  /// thread that's easy to miss when the user has scrolled — the customer
+  /// just thinks "I sent a message, why doesn't anything appear?".
+  void _attachQueueFailureListener() {
+    _queueListener = () {
+      if (!mounted) return;
+      final pending =
+          OfflineMessageQueue.instance.pendingFor(chatRoomId);
+      for (final m in pending) {
+        if (m.status == PendingStatus.failed &&
+            !_failureNotified.contains(m.localId)) {
+          _failureNotified.add(m.localId);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: Colors.red.shade600,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 5),
+              content: const Text(
+                'ההודעה לא נשלחה — בדוק חיבור או הקש על הבועה האדומה לנסות שוב',
+                textAlign: TextAlign.right,
+                style: TextStyle(color: Colors.white),
+              ),
+              action: SnackBarAction(
+                label: 'נסה שוב',
+                textColor: Colors.white,
+                onPressed: () => OfflineMessageQueue.instance.retry(m.localId),
+              ),
+            ),
+          );
+          // Only one SnackBar per tick — others queue normally.
+          break;
+        }
+      }
+    };
+    OfflineMessageQueue.instance.addListener(_queueListener!);
   }
 
   /// Load both parties' profile images once so message bubbles can show avatars.
@@ -163,10 +210,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           .set({
         'type':       'demo_contact',
         'priority':   'high',
-        'title':      '🔥 ביקוש אמיתי! משתמש פנה למומחה דמו',
+        'title':      '🔥 ביקוש אמיתי! משתמש פנה לנותן השירות דמו',
         'detail':
             'משתמש (${widget.currentUserName ?? currentUserId}) ניסה לפנות '
-            'למומחה דמו בקטגוריה "$category" — שקול לגייס ספק אמיתי בתחום זה!',
+            'לנותן השירות דמו בקטגוריה "$category" — שקול לגייס ספק אמיתי בתחום זה!',
         'userId':     currentUserId,
         'receiverId': widget.receiverId,
         'category':   category,
@@ -194,6 +241,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _typingClearTimer?.cancel();
     _guardDebounce?.cancel();
     _chatDocSub?.cancel();
+    if (_queueListener != null) {
+      OfflineMessageQueue.instance.removeListener(_queueListener!);
+    }
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
     _clearTypingIndicator();
@@ -843,11 +893,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ),
       body: Column(
         children: [
-          const ChatSafetyBanner(),
-          ChatGuardBanner(
-            showBanner: _showGuardBanner,
-            onDismiss: () => setState(() => _showGuardBanner = false),
-          ),
           ChatJobStatusBanner(
             chatRoomId: chatRoomId,
             currentUserId: currentUserId,
@@ -886,8 +931,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             },
             onSend: _handleSendButton,
             onSendLocation: () async {
-              final url = await LocationModule.getMapUrl();
-              if (url != null) _send(url, 'location');
+              final url = await LocationModule.getMapUrl(context);
+              if (!mounted) return;
+              if (url != null) {
+                _send(url, 'location');
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text(
+                      'לא הצלחנו לאתר את המיקום שלך. בדוק הרשאות ונסה שוב.'),
+                  duration: Duration(seconds: 3),
+                  behavior: SnackBarBehavior.floating,
+                ));
+              }
             },
             onSendImage: () async {
               setState(() => _isUploading = true);
@@ -895,14 +950,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               if (url != null) _send(url, 'image');
               if (mounted) setState(() => _isUploading = false);
             },
-            onSendVideoComingSoon: () {
+            onSendVideoComingSoon: () async {
+              setState(() => _isUploading = true);
+              final url = await VideoModule.uploadVideo(chatRoomId);
               if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text(
-                    AppLocalizations.of(context).chatAttachVideoComingSoon),
-                duration: const Duration(seconds: 2),
-                behavior: SnackBarBehavior.floating,
-              ));
+              setState(() => _isUploading = false);
+              if (url != null) {
+                _send(url, 'video');
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('לא הצלחנו להעלות את הווידאו. נסה שוב.'),
+                  duration: Duration(seconds: 3),
+                  behavior: SnackBarBehavior.floating,
+                ));
+              }
             },
             onShowOfferDialog: _isProvider
                 ? _showQuoteDialog
@@ -917,34 +978,59 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty) return;
 
+    // Clear input + typing indicator IMMEDIATELY so the user gets instant
+    // feedback that their tap registered. Even if the guard check below
+    // takes a moment, the message is already enqueued in the offline outbox
+    // (which renders the pending bubble), so the input is now safe to clear.
+    // Previously the input stayed full while the CF was in-flight, making
+    // the UI feel frozen and pushing users to retap "send" repeatedly.
+    _msgCtrl.clear();
+    _onTypingChanged('');
+    if (mounted) setState(() => _guardFlagged = false);
+
     // ── Phase 3 Chat Guard (server-side CF) ──────────────────────────────
     // Respects the admin kill-switch: when disabled, returns `skipped: true`
     // instantly and we fall through to the legacy regex masking below.
-    // Failure-open on network error (see ChatGuardClient).
-    final cfResult = await ChatGuardClient.check(
-      message: text,
-      chatId: chatRoomId,
-      receiverId: widget.receiverId,
-    );
+    // Failure-open on network error or cold-start (see ChatGuardClient
+    // — 4s hard timeout). The whole block is wrapped in try/catch so a
+    // bug in the guard never blocks an otherwise-valid message from
+    // reaching the queue.
+    ChatGuardCheckResult cfResult;
+    try {
+      cfResult = await ChatGuardClient.check(
+        message: text,
+        chatId: chatRoomId,
+        receiverId: widget.receiverId,
+      );
+    } catch (e) {
+      debugPrint('[ChatScreen] guard check threw — failing open: $e');
+      cfResult = const ChatGuardCheckResult.allowed(skipped: true);
+    }
 
     if (!cfResult.skipped) {
       switch (cfResult.action) {
         case ChatGuardAction.blocked:
         case ChatGuardAction.suspended:
-          if (mounted) _showGuardBlockedDialog(cfResult);
+          if (mounted) {
+            // Restore the input so the user can edit + try again.
+            _msgCtrl.text = text;
+            _showGuardBlockedDialog(cfResult);
+          }
           return; // do NOT send
         case ChatGuardAction.rewritten:
           final useRewrite = await _askGuardRewrite(cfResult);
-          if (useRewrite == null) return; // user cancelled
+          if (useRewrite == null) {
+            // User cancelled — restore input.
+            if (mounted) _msgCtrl.text = text;
+            return;
+          }
           final toSend = useRewrite ? (cfResult.rewrite ?? text) : text;
           _send(toSend, 'text');
-          _finishSend();
           return;
         case ChatGuardAction.warned:
           // Send as-is but show a discreet tip.
           if (mounted) _showGuardTip(cfResult);
           _send(text, 'text');
-          _finishSend();
           return;
         case ChatGuardAction.allowed:
           // Clean — fall through to legacy regex mask (defense in depth).
@@ -970,15 +1056,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     } else {
       _send(text, 'text');
     }
-
-    _finishSend();
-  }
-
-  /// Clears the input + typing indicator + flag state after a send.
-  void _finishSend() {
-    _msgCtrl.clear();
-    _onTypingChanged('');
-    if (mounted) setState(() => _guardFlagged = false);
   }
 
   // ── Phase 3 Chat Guard UI helpers ─────────────────────────────────────

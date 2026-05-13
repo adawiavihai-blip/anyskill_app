@@ -287,4 +287,33 @@ class ChatGuardSettings {
         detectPhoneNumbers: detectPhoneNumbers ?? this.detectPhoneNumbers,
         detectLinks: detectLinks ?? this.detectLinks,
       );
+
+  // Value equality — crucial for the admin Settings tab so the
+  // "Save changes" button correctly disables when there are no diffs
+  // between `_draft` and the current Firestore snapshot. Without this,
+  // identity equality treats every stream emission as a "different"
+  // ChatGuardSettings even when the values are identical.
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is ChatGuardSettings
+        && other.enabled == enabled
+        && other.sensitivity == sensitivity
+        && other.detectSpaces == detectSpaces
+        && other.detectLeetspeak == detectLeetspeak
+        && other.detectEmoji == detectEmoji
+        && other.detectPhoneNumbers == detectPhoneNumbers
+        && other.detectLinks == detectLinks;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        enabled,
+        sensitivity,
+        detectSpaces,
+        detectLeetspeak,
+        detectEmoji,
+        detectPhoneNumbers,
+        detectLinks,
+      );
 }

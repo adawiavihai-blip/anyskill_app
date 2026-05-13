@@ -72,7 +72,83 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
     final hasMore = ref.watch(
       adminUsersNotifierProvider.select((s) => s.hasMore),
     );
+    final error = ref.watch(
+      adminUsersNotifierProvider.select((s) => s.error),
+    );
     final notifier = ref.read(adminUsersNotifierProvider.notifier);
+
+    // ── Error state with retry ──────────────────────────────────────────
+    // If the initial load failed (no users AND error is set), show a clear
+    // error card with a "נסה שוב" button. Previously this path was silent —
+    // the tab looked empty and the user had no way to recover.
+    if (users.isEmpty && !isLoading && error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.cloud_off_rounded,
+                  size: 56, color: Color(0xFFEF4444)),
+              const SizedBox(height: 16),
+              const Text(
+                'לא הצלחנו לטעון משתמשים',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'ייתכן חיבור אינטרנט איטי או עומס זמני.\nנסה שוב או בדוק חיבור.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                onPressed: notifier.refresh,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('נסה שוב'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 24, vertical: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // ── Empty-but-not-error state (rare — fresh Firestore) ─────────────
+    if (users.isEmpty && !isLoading) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.group_outlined,
+                  size: 56, color: Color(0xFF9CA3AF)),
+              const SizedBox(height: 16),
+              const Text(
+                'אין משתמשים להצגה',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'אם זה לא נראה נכון — נסה לרענן.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 24),
+              OutlinedButton.icon(
+                onPressed: notifier.refresh,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('רענן'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: 100, top: 10),
@@ -165,7 +241,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                     color: Colors.blue),
                 title: Text(isVerified
                     ? 'בטל אימות (הסר וי כחול)'
-                    : 'אמת מומחה (הענק וי כחול)'),
+                    : 'אמת נותן שירות (הענק וי כחול)'),
                 onTap: () {
                   notifier.toggleVerified(uid, isVerified);
                   Navigator.pop(context);
@@ -422,48 +498,12 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
   }
 
   void _showAddBalanceDialog(String uid, String name) {
-    final messenger = ScaffoldMessenger.of(context);
-    final amountCtrl = TextEditingController();
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('הטענת ארנק ל-$name'),
-        content: TextField(
-            controller: amountCtrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-                hintText: 'סכום להוספה',
-                suffixText: '₪',
-                border: OutlineInputBorder())),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('ביטול')),
-          ElevatedButton(
-            onPressed: () async {
-              final val = double.tryParse(amountCtrl.text.trim());
-              if (val == null || val <= 0) return;
-              Navigator.pop(ctx);
-              await FirebaseFirestore.instance.runTransaction((tx) async {
-                final userRef =
-                    FirebaseFirestore.instance.collection('users').doc(uid);
-                tx.update(userRef, {'balance': FieldValue.increment(val)});
-                tx.set(
-                    FirebaseFirestore.instance.collection('transactions').doc(),
-                    {
-                      'userId': uid,
-                      'amount': val,
-                      'title': 'טעינת ארנק ע״י מנהל',
-                      'timestamp': FieldValue.serverTimestamp(),
-                      'type': 'admin_topup',
-                    });
-              });
-              messenger.showSnackBar(
-                  SnackBar(content: Text('נטענו ₪$val לארנק של $name')));
-            },
-            child: const Text('אשר והטען'),
-          ),
-        ],
+      barrierDismissible: false,
+      builder: (_) => _InlineGrantCreditDialog(
+        targetUserId: uid,
+        targetName: name,
       ),
     );
   }
@@ -519,7 +559,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
       if (mounted) setState(() => _approvedUids.add(uid));
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('$name אושר/ה כספק מומחה — התראה נשלחה'),
+          content: Text('$name אושר/ה כספק נותן שירות — התראה נשלחה'),
           backgroundColor: Colors.purple.shade700,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
@@ -683,15 +723,67 @@ class _UserCard extends StatelessWidget {
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(data['email'] ?? '',
-                    style: const TextStyle(fontSize: 12)),
-                // Phone
+                // Email
+                Builder(builder: (_) {
+                  final email = (data['email'] as String? ?? '').trim();
+                  if (email.isEmpty) {
+                    return const Row(
+                      children: [
+                        Icon(Icons.email_outlined,
+                            size: 12, color: Colors.grey),
+                        SizedBox(width: 3),
+                        Text('—',
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.grey)),
+                      ],
+                    );
+                  }
+                  return GestureDetector(
+                    onTap: () => launchUrl(Uri.parse('mailto:$email')),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.email_outlined,
+                            size: 12, color: Colors.blueGrey),
+                        const SizedBox(width: 3),
+                        Flexible(
+                          child: Text(email,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.blueGrey,
+                              ),
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+                const SizedBox(height: 2),
+                // Phone — shown for ALL users (customers + providers).
+                // When the doc field is empty (e.g. Google sign-up before
+                // the user completed the Phone Gap §21), show an explicit
+                // "טלפון לא הוגדר" hint instead of nothing — admin sees that
+                // the field is intentionally absent rather than wondering
+                // if there's a UI bug.
                 Builder(builder: (_) {
                   final phone = ((data['phone'] as String?) ??
                           (data['phoneNumber'] as String?) ??
                           '')
                       .trim();
-                  if (phone.isEmpty) return const SizedBox.shrink();
+                  if (phone.isEmpty) {
+                    return const Row(
+                      children: [
+                        Icon(Icons.phone_disabled_rounded,
+                            size: 12, color: Colors.grey),
+                        SizedBox(width: 3),
+                        Text('טלפון לא הוגדר',
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey,
+                                fontStyle: FontStyle.italic)),
+                      ],
+                    );
+                  }
                   return GestureDetector(
                     onTap: () => launchUrl(Uri.parse('tel:$phone')),
                     child: Row(
@@ -741,7 +833,7 @@ class _UserCard extends StatelessWidget {
                   activeIcon: Icons.verified,
                   inactiveIcon: Icons.verified_outlined,
                   activeColor: Colors.blue,
-                  tooltip: isVerified ? 'בטל אימות' : 'אמת מומחה',
+                  tooltip: isVerified ? 'בטל אימות' : 'אמת נותן שירות',
                   onTap: () => onVerifyToggle(uid, isVerified),
                 ),
                 // Promote toggle
@@ -1036,6 +1128,266 @@ class _QuickToggle extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _InlineGrantCreditDialog
+//
+// Inline credit-grant dialog used by the admin users-tab "Top up wallet"
+// button. Calls the secure `grantAdminCredit` Cloud Function (CLAUDE.md §4.6)
+// instead of writing balance directly — that older path bypassed the per-grant
+// cap, daily cap, audit log, and user notification.
+//
+// Mirrors the UX of the detail-screen `_GrantCreditDialog` (quick chips +
+// reason field + validation) without sharing code, since both files want to
+// stay self-contained.
+// ─────────────────────────────────────────────────────────────────────────────
+class _InlineGrantCreditDialog extends StatefulWidget {
+  const _InlineGrantCreditDialog({
+    required this.targetUserId,
+    required this.targetName,
+  });
+
+  final String targetUserId;
+  final String targetName;
+
+  @override
+  State<_InlineGrantCreditDialog> createState() =>
+      _InlineGrantCreditDialogState();
+}
+
+class _InlineGrantCreditDialogState extends State<_InlineGrantCreditDialog> {
+  final _amountCtrl = TextEditingController();
+  final _reasonCtrl = TextEditingController();
+  bool _submitting = false;
+  String? _errorText;
+
+  // Idempotency key for this dialog instance (survives accidental double-tap).
+  late final String _clientReqId;
+
+  static const _quickAmounts = [50.0, 100.0, 250.0, 500.0, 1000.0];
+
+  @override
+  void initState() {
+    super.initState();
+    _clientReqId =
+        'grant_${DateTime.now().millisecondsSinceEpoch}_'
+        '${widget.targetUserId.substring(0, widget.targetUserId.length < 6 ? widget.targetUserId.length : 6)}';
+  }
+
+  @override
+  void dispose() {
+    _amountCtrl.dispose();
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _canSubmit {
+    final amount = double.tryParse(_amountCtrl.text.trim());
+    return !_submitting &&
+        amount != null &&
+        amount > 0 &&
+        amount <= 5000 &&
+        _reasonCtrl.text.trim().length >= 10;
+  }
+
+  Future<void> _submit() async {
+    final amount = double.tryParse(_amountCtrl.text.trim());
+    final reason = _reasonCtrl.text.trim();
+
+    if (amount == null || amount <= 0) {
+      setState(() => _errorText = 'סכום לא תקין');
+      return;
+    }
+    if (amount > 5000) {
+      setState(() => _errorText = 'תקרה לזיכוי בודד: ₪5,000');
+      return;
+    }
+    if (reason.length < 10) {
+      setState(() => _errorText = 'הסיבה חייבת להיות לפחות 10 תווים');
+      return;
+    }
+
+    setState(() {
+      _submitting = true;
+      _errorText = null;
+    });
+
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+
+    try {
+      final result = await FirebaseFunctions.instance
+          .httpsCallable('grantAdminCredit')
+          .call({
+        'targetUserId': widget.targetUserId,
+        'amount': amount,
+        'reason': reason,
+        'clientReqId': _clientReqId,
+      }).timeout(const Duration(seconds: 30));
+
+      final data = Map<String, dynamic>.from(result.data as Map);
+      final newBalance = (data['afterBalance'] as num? ?? 0).toDouble();
+      final dailyRemaining =
+          (data['dailyCapRemaining'] as num? ?? 0).toDouble();
+
+      if (!mounted) return;
+      navigator.pop();
+      messenger.showSnackBar(SnackBar(
+        content: Text(
+          '✅ נטענו ₪${amount.toStringAsFixed(0)} ל-${widget.targetName}.\n'
+          'יתרה חדשה: ₪${newBalance.toStringAsFixed(0)} • '
+          'נותר היום: ₪${dailyRemaining.toStringAsFixed(0)}',
+        ),
+        backgroundColor: const Color(0xFF10B981),
+        duration: const Duration(seconds: 5),
+      ));
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        switch (e.code) {
+          case 'permission-denied':
+            _errorText = 'אין הרשאה לפעולה זו';
+            break;
+          case 'failed-precondition':
+            _errorText = 'הגעת למכסה היומית. ${e.message ?? ""}';
+            break;
+          case 'invalid-argument':
+            _errorText = e.message ?? 'נתונים לא תקינים';
+            break;
+          case 'not-found':
+            _errorText = 'המשתמש לא נמצא';
+            break;
+          default:
+            _errorText = 'שגיאה: ${e.message ?? e.code}';
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _errorText = 'שגיאה לא צפויה: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(
+        children: [
+          const Icon(Icons.add_card_rounded, color: Color(0xFF10B981)),
+          const SizedBox(width: 8),
+          Expanded(child: Text('טעינת ארנק — ${widget.targetName}')),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Quick-pick chips
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _quickAmounts.map((amt) {
+                return ActionChip(
+                  label: Text('₪${amt.toStringAsFixed(0)}'),
+                  onPressed: _submitting
+                      ? null
+                      : () => setState(() {
+                            _amountCtrl.text = amt.toStringAsFixed(0);
+                            _errorText = null;
+                          }),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 14),
+            // Amount field
+            TextField(
+              controller: _amountCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              enabled: !_submitting,
+              onChanged: (_) => setState(() => _errorText = null),
+              decoration: const InputDecoration(
+                labelText: 'סכום',
+                hintText: 'עד ₪5,000',
+                suffixText: '₪',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Reason field (mandatory ≥10 chars)
+            TextField(
+              controller: _reasonCtrl,
+              enabled: !_submitting,
+              minLines: 2,
+              maxLines: 3,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: 'סיבה',
+                hintText: 'מדוע מוענק הזיכוי?',
+                helperText:
+                    'חובה לפחות 10 תווים — נשמר ב-admin_audit_log',
+                helperMaxLines: 2,
+                border: const OutlineInputBorder(),
+                counterText:
+                    '${_reasonCtrl.text.trim().length} / 10 (מינימום)',
+              ),
+            ),
+            if (_errorText != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red.shade200),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline,
+                        color: Colors.red, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(_errorText!,
+                          style: const TextStyle(color: Colors.red)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _submitting ? null : () => Navigator.pop(context),
+          child: const Text('ביטול'),
+        ),
+        ElevatedButton.icon(
+          onPressed: _canSubmit ? _submit : null,
+          icon: _submitting
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Icon(Icons.check_rounded),
+          label: Text(_submitting ? 'מעבד...' : 'אשר וטען'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF10B981),
+            foregroundColor: Colors.white,
+          ),
+        ),
+      ],
     );
   }
 }

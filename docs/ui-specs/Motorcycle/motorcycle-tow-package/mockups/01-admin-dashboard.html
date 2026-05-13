@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Dashboard - ניהול גרר אופנועים</title>
+<style>
+  :root {
+    --purple-900: #26215C;
+    --purple-700: #3C3489;
+    --purple-500: #534AB7;
+    --purple-300: #7F77DD;
+    --purple-50: #EEEDFE;
+    --green-700: #0F6E56;
+    --green-500: #1D9E75;
+    --green-50: #E1F5EE;
+    --amber-800: #854F0B;
+    --amber-600: #BA7517;
+    --amber-50: #FAEEDA;
+    --red-500: #A32D2D;
+    --bg-primary: #FFFFFF;
+    --bg-secondary: #F5F4EE;
+    --text-primary: #2C2C2A;
+    --text-secondary: #5F5E5A;
+    --text-tertiary: #888780;
+    --border-tertiary: #E8E6DD;
+    --border-secondary: #D3D1C7;
+  }
+  * { box-sizing: border-box; }
+  body { direction: rtl; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg-secondary); color: var(--text-primary); margin: 0; padding: 20px; }
+  .container { max-width: 800px; margin: 0 auto; }
+
+  .admin-header { background: linear-gradient(135deg, #26215C 0%, #534AB7 100%); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; color: white; display: flex; align-items: center; gap: 14px; }
+  .admin-header-icon { width: 44px; height: 44px; border-radius: 10px; background: rgba(255,255,255,0.18); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .admin-header-icon svg { width: 22px; height: 22px; stroke: white; fill: none; stroke-width: 2; }
+  .admin-header-text h2 { font-size: 17px; font-weight: 500; margin: 0; }
+  .admin-header-text p { font-size: 12px; margin: 3px 0 0; opacity: 0.85; }
+
+  .admin-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+  .admin-stat-card { background: var(--bg-secondary); border-radius: 8px; padding: 12px; }
+  .admin-stat-label { font-size: 11px; color: var(--text-secondary); margin: 0; }
+  .admin-stat-value { font-size: 18px; font-weight: 500; margin: 4px 0 0; color: var(--text-primary); }
+  .admin-stat-value .pos { color: var(--green-500); font-size: 11px; font-weight: 500; }
+
+  .admin-info-banner { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; background: var(--purple-50); border-radius: 8px; margin-bottom: 14px; }
+  .admin-info-banner svg { width: 16px; height: 16px; stroke: var(--purple-500); fill: none; stroke-width: 2; flex-shrink: 0; margin-top: 1px; }
+  .admin-info-banner .text { font-size: 12px; color: var(--purple-700); line-height: 1.5; }
+  .admin-info-banner .text strong { font-weight: 500; }
+
+  .admin-section { background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 12px; padding: 18px; margin-bottom: 14px; }
+  .admin-section-title { font-size: 14px; font-weight: 500; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  .admin-section-title svg { width: 16px; height: 16px; stroke: var(--purple-500); fill: none; stroke-width: 2; }
+  .admin-section-desc { font-size: 12px; color: var(--text-secondary); margin: 0 0 14px; line-height: 1.5; }
+
+  .admin-bike-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .admin-bike-row { background: var(--bg-secondary); border: 0.5px solid var(--border-tertiary); border-radius: 8px; overflow: hidden; }
+  .admin-bike-image { position: relative; aspect-ratio: 16/9; background: var(--bg-primary); overflow: hidden; }
+  .admin-bike-image img { width: 100%; height: 100%; object-fit: cover; }
+
+  .admin-bike-overlay { position: absolute; inset: 0; background: rgba(38,33,92,0.6); display: flex; align-items: center; justify-content: center; gap: 6px; opacity: 0; transition: opacity 0.15s; }
+  .admin-bike-row:hover .admin-bike-overlay { opacity: 1; }
+  .admin-overlay-btn { padding: 7px 12px; background: white; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 5px; border: none; font-family: inherit; }
+  .admin-overlay-btn svg { width: 13px; height: 13px; fill: none; stroke-width: 2; stroke: currentColor; }
+  .admin-overlay-btn.replace { color: var(--purple-700); }
+  .admin-overlay-btn.delete { color: var(--red-500); }
+
+  .admin-bike-meta { padding: 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .admin-bike-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+  .admin-bike-name .name { font-size: 13px; font-weight: 500; }
+  .admin-bike-name .meta { font-size: 11px; color: var(--text-tertiary); }
+  .admin-bike-status { font-size: 10px; padding: 3px 8px; border-radius: 4px; font-weight: 500; flex-shrink: 0; }
+  .admin-bike-status.live { background: var(--green-50); color: var(--green-700); }
+
+  .admin-add-new { background: var(--bg-primary); border: 1px dashed var(--border-secondary); border-radius: 8px; padding: 16px; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; aspect-ratio: 16/9; flex-direction: column; }
+  .admin-add-new svg { width: 24px; height: 24px; stroke: var(--purple-500); fill: none; stroke-width: 2; }
+  .admin-add-new .t { font-size: 13px; font-weight: 500; color: var(--purple-500); }
+  .admin-add-new .s { font-size: 11px; color: var(--text-tertiary); }
+
+  .save-bar { display: grid; grid-template-columns: auto 1fr; gap: 8px; padding: 12px; background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: 12px; }
+  .save-secondary { padding: 10px 14px; background: transparent; border: 0.5px solid var(--border-secondary); border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit; }
+  .save-primary { padding: 10px; background: var(--purple-500); color: white; border: none; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; font-family: inherit; }
+  .save-primary svg { width: 14px; height: 14px; stroke: white; fill: none; stroke-width: 2.5; }
+
+  /* Modal */
+  .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 100; align-items: center; justify-content: center; padding: 20px; }
+  .modal-backdrop.open { display: flex; }
+  .modal { background: var(--bg-primary); border-radius: 12px; padding: 20px; max-width: 380px; width: 100%; }
+  .modal-title { font-size: 15px; font-weight: 500; margin: 0 0 6px; }
+  .modal-desc { font-size: 12px; color: var(--text-secondary); margin: 0 0 14px; line-height: 1.5; }
+  .modal-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+  .modal-option { padding: 16px 10px; background: var(--bg-secondary); border: 0.5px solid var(--border-tertiary); border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 6px; transition: all 0.15s; font-family: inherit; }
+  .modal-option:hover { border-color: var(--purple-300); background: var(--purple-50); }
+  .modal-option svg { width: 22px; height: 22px; stroke: var(--purple-500); fill: none; stroke-width: 2; }
+  .modal-option .t { font-size: 12px; font-weight: 500; }
+  .modal-option .s { font-size: 10px; color: var(--text-tertiary); }
+  .modal-cancel { width: 100%; padding: 10px; background: transparent; border: 0.5px solid var(--border-secondary); border-radius: 8px; font-size: 13px; cursor: pointer; font-family: inherit; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="admin-header">
+    <div class="admin-header-icon">
+      <svg viewBox="0 0 24 24"><path d="M12 2 L4 6 v6 c0 5 3.5 9 8 10 4.5-1 8-5 8-10 V6 z"/></svg>
+    </div>
+    <div class="admin-header-text">
+      <h2>ניהול קטגוריה: גרר אופנועים</h2>
+      <p>תמונות וסוגי אופנועים שיוצגו לכל נותני השירות בקטגוריה זו</p>
+    </div>
+  </div>
+
+  <div class="admin-stats">
+    <div class="admin-stat-card">
+      <p class="admin-stat-label">סוגי אופנועים פעילים</p>
+      <p class="admin-stat-value">6 <span class="pos">+1 השבוע</span></p>
+    </div>
+    <div class="admin-stat-card">
+      <p class="admin-stat-label">נותני שירות בקטגוריה</p>
+      <p class="admin-stat-value">42</p>
+    </div>
+    <div class="admin-stat-card">
+      <p class="admin-stat-label">סוגים ללא תמונה</p>
+      <p class="admin-stat-value" style="color: var(--amber-600);">0</p>
+    </div>
+  </div>
+
+  <div class="admin-info-banner">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+    <div class="text">
+      <strong>איך זה עובד:</strong> התמונות שתעלה כאן יוצגו לכל נותני השירות בקטגוריה ובכל פרופיל לקוח. שינוי תמונה כאן ישנה אותה אצל כולם באופן מיידי.
+    </div>
+  </div>
+
+  <div class="admin-section">
+    <h3 class="admin-section-title">
+      <svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 18L11 9h6l1 9"/></svg>
+      סוגי אופנועים בקטגוריה
+    </h3>
+    <p class="admin-section-desc">העלה, ערוך, או החלף את התמונה של כל סוג אופנוע. ניתן גם להוסיף סוג חדש או למחוק קיים.</p>
+
+    <div class="admin-bike-grid">
+      <div class="admin-bike-row">
+        <div class="admin-bike-image">
+          <img src="https://images.unsplash.com/photo-1568772585407-9361f9bf3a87?w=600&h=340&fit=crop" alt="ספורט"/>
+          <div class="admin-bike-overlay">
+            <button class="admin-overlay-btn replace" onclick="document.getElementById('upload-modal').classList.add('open')"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0115-6.7L21 8M21 3v5h-5M21 12a9 9 0 01-15 6.7L3 16M3 21v-5h5"/></svg>החלף תמונה</button>
+            <button class="admin-overlay-btn delete"><svg viewBox="0 0 24 24"><path d="M3 6h18M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>מחק</button>
+          </div>
+        </div>
+        <div class="admin-bike-meta">
+          <div class="admin-bike-name"><span class="name">ספורט</span><span class="meta">38 נותני שירות מסמנים את הסוג הזה</span></div>
+          <span class="admin-bike-status live">פעיל</span>
+        </div>
+      </div>
+
+      <div class="admin-bike-row">
+        <div class="admin-bike-image">
+          <img src="https://images.unsplash.com/photo-1558981403-c5f9899a28bc?w=600&h=340&fit=crop" alt="קרוזר"/>
+          <div class="admin-bike-overlay">
+            <button class="admin-overlay-btn replace"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0115-6.7L21 8M21 3v5h-5M21 12a9 9 0 01-15 6.7L3 16M3 21v-5h5"/></svg>החלף תמונה</button>
+            <button class="admin-overlay-btn delete"><svg viewBox="0 0 24 24"><path d="M3 6h18M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>מחק</button>
+          </div>
+        </div>
+        <div class="admin-bike-meta">
+          <div class="admin-bike-name"><span class="name">קרוזר</span><span class="meta">29 נותני שירות מסמנים את הסוג הזה</span></div>
+          <span class="admin-bike-status live">פעיל</span>
+        </div>
+      </div>
+
+      <div class="admin-bike-row">
+        <div class="admin-bike-image">
+          <img src="https://images.unsplash.com/photo-1599819811279-d5ad9cccf838?w=600&h=340&fit=crop" alt="אדוונצ'ר"/>
+          <div class="admin-bike-overlay">
+            <button class="admin-overlay-btn replace"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0115-6.7L21 8M21 3v5h-5M21 12a9 9 0 01-15 6.7L3 16M3 21v-5h5"/></svg>החלף תמונה</button>
+            <button class="admin-overlay-btn delete"><svg viewBox="0 0 24 24"><path d="M3 6h18M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>מחק</button>
+          </div>
+        </div>
+        <div class="admin-bike-meta">
+          <div class="admin-bike-name"><span class="name">אדוונצ'ר</span><span class="meta">22 נותני שירות מסמנים את הסוג הזה</span></div>
+          <span class="admin-bike-status live">פעיל</span>
+        </div>
+      </div>
+
+      <div class="admin-bike-row">
+        <div class="admin-bike-image">
+          <img src="https://images.unsplash.com/photo-1591216105232-d23bea36b827?w=600&h=340&fit=crop" alt="קטנוע"/>
+          <div class="admin-bike-overlay">
+            <button class="admin-overlay-btn replace"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0115-6.7L21 8M21 3v5h-5M21 12a9 9 0 01-15 6.7L3 16M3 21v-5h5"/></svg>החלף תמונה</button>
+            <button class="admin-overlay-btn delete"><svg viewBox="0 0 24 24"><path d="M3 6h18M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>מחק</button>
+          </div>
+        </div>
+        <div class="admin-bike-meta">
+          <div class="admin-bike-name"><span class="name">קטנוע</span><span class="meta">35 נותני שירות מסמנים את הסוג הזה</span></div>
+          <span class="admin-bike-status live">פעיל</span>
+        </div>
+      </div>
+
+      <div class="admin-bike-row">
+        <div class="admin-bike-image">
+          <img src="https://images.unsplash.com/photo-1547549082-6bc09f2049ae?w=600&h=340&fit=crop" alt="אופנועי שטח"/>
+          <div class="admin-bike-overlay">
+            <button class="admin-overlay-btn replace"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0115-6.7L21 8M21 3v5h-5M21 12a9 9 0 01-15 6.7L3 16M3 21v-5h5"/></svg>החלף תמונה</button>
+            <button class="admin-overlay-btn delete"><svg viewBox="0 0 24 24"><path d="M3 6h18M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>מחק</button>
+          </div>
+        </div>
+        <div class="admin-bike-meta">
+          <div class="admin-bike-name"><span class="name">אופנועי שטח</span><span class="meta">14 נותני שירות מסמנים את הסוג הזה</span></div>
+          <span class="admin-bike-status live">פעיל</span>
+        </div>
+      </div>
+
+      <div class="admin-bike-row">
+        <div class="admin-bike-image">
+          <img src="https://images.unsplash.com/photo-1609630875171-b1321377ee65?w=600&h=340&fit=crop" alt="וינטג'"/>
+          <div class="admin-bike-overlay">
+            <button class="admin-overlay-btn replace"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0115-6.7L21 8M21 3v5h-5M21 12a9 9 0 01-15 6.7L3 16M3 21v-5h5"/></svg>החלף תמונה</button>
+            <button class="admin-overlay-btn delete"><svg viewBox="0 0 24 24"><path d="M3 6h18M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>מחק</button>
+          </div>
+        </div>
+        <div class="admin-bike-meta">
+          <div class="admin-bike-name"><span class="name">וינטג'</span><span class="meta">8 נותני שירות מסמנים את הסוג הזה</span></div>
+          <span class="admin-bike-status live">פעיל</span>
+        </div>
+      </div>
+
+      <div class="admin-add-new" onclick="document.getElementById('upload-modal').classList.add('open')">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+        <span class="t">הוסף סוג אופנוע חדש</span>
+        <span class="s">למשל: טריילר, אטומטי, חשמלי</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="save-bar">
+    <button class="save-secondary">ביטול</button>
+    <button class="save-primary"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>שמור שינויים</button>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="upload-modal" onclick="if(event.target===this) this.classList.remove('open')">
+  <div class="modal">
+    <h3 class="modal-title">בחר תמונה</h3>
+    <p class="modal-desc">העלה תמונה משלך, או בחר מספריית התמונות של המערכת.</p>
+    <div class="modal-options">
+      <button class="modal-option"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg><span class="t">העלה קובץ</span><span class="s">JPG, PNG עד 5MB</span></button>
+      <button class="modal-option"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span class="t">ספריית מערכת</span><span class="s">תמונות שכבר העלית</span></button>
+      <button class="modal-option"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg><span class="t">חיפוש Stock</span><span class="s">תמונות חינמיות</span></button>
+      <button class="modal-option"><svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg><span class="t">URL חיצוני</span><span class="s">הדבק קישור לתמונה</span></button>
+    </div>
+    <button class="modal-cancel" onclick="document.getElementById('upload-modal').classList.remove('open')">ביטול</button>
+  </div>
+</div>
+</body>
+</html>

@@ -10,6 +10,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../services/cached_readers.dart';
 import 'support/support_bot_screen.dart' as support_bot;
 
 class SupportCenterScreen extends StatefulWidget {
@@ -26,8 +27,7 @@ class SupportCenterScreen extends StatefulWidget {
 class _SupportCenterScreenState extends State<SupportCenterScreen> {
   static final _db = FirebaseFirestore.instance;
   final _uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-  final _userName =
-      FirebaseAuth.instance.currentUser?.displayName ?? 'משתמש';
+  final _userName = FirebaseAuth.instance.currentUser?.displayName ?? 'משתמש';
 
   String? _selectedCategory;
   bool _showSelfService = false;
@@ -68,19 +68,22 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
     'payments': [
       _SelfServiceTip(
         titleHe: 'התשלום לא שוחרר?',
-        bodyHe: 'תשלומים משוחררים רק לאחר שהלקוח לוחץ "אשר ושחרר". '
+        bodyHe:
+            'תשלומים משוחררים רק לאחר שהלקוח לוחץ "אשר ושחרר". '
             'אם הלקוח לא אישר תוך 48 שעות, פנה אלינו.',
         icon: Icons.lock_clock,
       ),
       _SelfServiceTip(
         titleHe: 'רוצה ביטול והחזר?',
-        bodyHe: 'ביטול לפני מועד השירות = החזר מלא. '
+        bodyHe:
+            'ביטול לפני מועד השירות = החזר מלא. '
             'אחרי — לפי מדיניות הביטול של הספק (גמיש/מתון/קשיח).',
         icon: Icons.replay,
       ),
       _SelfServiceTip(
         titleHe: 'עמלה גבוהה מדי?',
-        bodyHe: 'עמלת הפלטפורמה נקבעת על ידי ההנהלה. '
+        bodyHe:
+            'עמלת הפלטפורמה נקבעת על ידי ההנהלה. '
             'תוכל לראות את האחוז המדויק בעמוד הפרופיל.',
         icon: Icons.percent,
       ),
@@ -88,13 +91,15 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
     'volunteer': [
       _SelfServiceTip(
         titleHe: 'המתנדב לא הגיע?',
-        bodyHe: 'ודא שהמתנדב אימת מיקום באמצעות GPS (כפתור "הגעתי"). '
+        bodyHe:
+            'ודא שהמתנדב אימת מיקום באמצעות GPS (כפתור "הגעתי"). '
             'אם לא — אל תאשר את ההתנדבות.',
         icon: Icons.location_off,
       ),
       _SelfServiceTip(
         titleHe: 'לא קיבלתי XP',
-        bodyHe: 'XP מוענק רק לאחר שהלקוח אישר את ההתנדבות. '
+        bodyHe:
+            'XP מוענק רק לאחר שהלקוח אישר את ההתנדבות. '
             'ודא שהלקוח לחץ "אשר סיום" בצ\'אט.',
         icon: Icons.star_border,
       ),
@@ -102,12 +107,13 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
     'account': [
       _SelfServiceTip(
         titleHe: 'רוצה לשנות קטגוריה?',
-        bodyHe: 'עבור להגדרות > ערוך פרופיל > שנה את סוג השירות.',
+        bodyHe: 'עבור לפרופיל > ערוך פרופיל > שנה את סוג השירות.',
         icon: Icons.category,
       ),
       _SelfServiceTip(
         titleHe: 'רוצה למחוק חשבון?',
-        bodyHe: 'עבור לפרופיל > הגדרות > מחק חשבון. '
+        bodyHe:
+            'עבור לפרופיל > ערוך פרופיל > מחק חשבון. '
             'לאחר המחיקה לא ניתן לשחזר נתונים.',
         icon: Icons.delete_forever,
       ),
@@ -115,7 +121,8 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
     'other': [
       _SelfServiceTip(
         titleHe: 'בעיה טכנית?',
-        bodyHe: 'נסה לרענן את האפליקציה. '
+        bodyHe:
+            'נסה לרענן את האפליקציה. '
             'אם הבעיה נמשכת — פתח פנייה ונטפל בזה.',
         icon: Icons.refresh,
       ),
@@ -156,11 +163,12 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) => _TicketChatScreen(
-            ticketId: ticketRef.id,
-            category: _selectedCategory!,
-            isAdmin: false,
-          ),
+          builder:
+              (_) => _TicketChatScreen(
+                ticketId: ticketRef.id,
+                category: _selectedCategory!,
+                isAdmin: false,
+              ),
         ),
       );
     } catch (e) {
@@ -185,12 +193,15 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
         foregroundColor: Colors.black,
         elevation: 0,
         centerTitle: true,
-        title: const Text('מרכז התמיכה',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        title: const Text(
+          'מרכז התמיכה',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+        ),
       ),
-      body: _showSelfService && _selectedCategory != null
-          ? _buildSelfServicePhase()
-          : _buildCategoryGrid(),
+      body:
+          _showSelfService && _selectedCategory != null
+              ? _buildSelfServicePhase()
+              : _buildCategoryGrid(),
     );
   }
 
@@ -219,11 +230,12 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
           const SizedBox(height: 14),
           // Phase 5 — Bot entry point (Wolt-style "Ask the bot")
           InkWell(
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => const support_bot.SupportBotScreen(),
-              ),
-            ),
+            onTap:
+                () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const support_bot.SupportBotScreen(),
+                  ),
+                ),
             borderRadius: BorderRadius.circular(14),
             child: Container(
               padding: const EdgeInsets.all(14),
@@ -241,8 +253,11 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
                       color: Colors.white.withValues(alpha: 0.18),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(Icons.smart_toy_rounded,
-                        color: Colors.white, size: 22),
+                    child: const Icon(
+                      Icons.smart_toy_rounded,
+                      color: Colors.white,
+                      size: 22,
+                    ),
                   ),
                   const SizedBox(width: 12),
                   const Expanded(
@@ -260,16 +275,16 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
                         SizedBox(height: 2),
                         Text(
                           'מענה מיידי 24/7 — פותר את רוב הבעיות בלי המתנה',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                          ),
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
                         ),
                       ],
                     ),
                   ),
-                  const Icon(Icons.arrow_back_ios_rounded,
-                      color: Colors.white, size: 14),
+                  const Icon(
+                    Icons.arrow_back_ios_rounded,
+                    color: Colors.white,
+                    size: 14,
+                  ),
                 ],
               ),
             ),
@@ -310,7 +325,8 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
             mainAxisSpacing: 14,
             crossAxisSpacing: 14,
             childAspectRatio: 1.3,
-            children: _categories.map((cat) => _buildCategoryCard(cat)).toList(),
+            children:
+                _categories.map((cat) => _buildCategoryCard(cat)).toList(),
           ),
 
           // ── Pre-filled context banner ───────────────────────────────
@@ -322,7 +338,8 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
                 color: const Color(0xFFECFDF5),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: const Color(0xFF10B981).withValues(alpha: 0.3)),
+                  color: const Color(0xFF10B981).withValues(alpha: 0.3),
+                ),
               ),
               child: Row(
                 children: [
@@ -412,12 +429,13 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
 
   Widget _buildMyTickets() {
     return StreamBuilder<QuerySnapshot>(
-      stream: _db
-          .collection('support_tickets')
-          .where('userId', isEqualTo: _uid)
-          .orderBy('createdAt', descending: true)
-          .limit(5)
-          .snapshots(),
+      stream:
+          _db
+              .collection('support_tickets')
+              .where('userId', isEqualTo: _uid)
+              .orderBy('createdAt', descending: true)
+              .limit(5)
+              .snapshots(),
       builder: (context, snap) {
         if (!snap.hasData || snap.data!.docs.isEmpty) {
           return Container(
@@ -427,71 +445,84 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Center(
-              child: Text('אין פניות פתוחות',
-                  style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 13)),
+              child: Text(
+                'אין פניות פתוחות',
+                style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 13),
+              ),
             ),
           );
         }
 
         return Column(
-          children: snap.data!.docs.map((doc) {
-            final d = doc.data() as Map<String, dynamic>? ?? {};
-            final status = d['status'] as String? ?? 'open';
-            final subject = d['subject'] as String? ?? '';
-            final category = d['category'] as String? ?? '';
-            final isOpen = status == 'open' || status == 'in_progress';
+          children:
+              snap.data!.docs.map((doc) {
+                final d = doc.data() as Map<String, dynamic>? ?? {};
+                final status = d['status'] as String? ?? 'open';
+                final subject = d['subject'] as String? ?? '';
+                final category = d['category'] as String? ?? '';
+                final isOpen = status == 'open' || status == 'in_progress';
 
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: isOpen
-                      ? const Color(0xFF6366F1).withValues(alpha: 0.2)
-                      : const Color(0xFFE5E7EB),
-                ),
-              ),
-              child: ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: isOpen
-                      ? const Color(0xFF6366F1).withValues(alpha: 0.1)
-                      : const Color(0xFF10B981).withValues(alpha: 0.1),
-                  child: Icon(
-                    isOpen ? Icons.chat_bubble_outline : Icons.check_circle,
-                    color: isOpen
-                        ? const Color(0xFF6366F1)
-                        : const Color(0xFF10B981),
-                    size: 20,
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color:
+                          isOpen
+                              ? const Color(0xFF6366F1).withValues(alpha: 0.2)
+                              : const Color(0xFFE5E7EB),
+                    ),
                   ),
-                ),
-                title: Text(
-                  subject.length > 40
-                      ? '${subject.substring(0, 40)}...'
-                      : subject,
-                  style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w600),
-                ),
-                subtitle: Text(
-                  _categoryLabel(category),
-                  style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
-                ),
-                trailing: _statusChip(status),
-                onTap: isOpen
-                    ? () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => _TicketChatScreen(
-                              ticketId: doc.id,
-                              category: category,
-                              isAdmin: false,
-                            ),
-                          ),
-                        )
-                    : null,
-              ),
-            );
-          }).toList(),
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor:
+                          isOpen
+                              ? const Color(0xFF6366F1).withValues(alpha: 0.1)
+                              : const Color(0xFF10B981).withValues(alpha: 0.1),
+                      child: Icon(
+                        isOpen ? Icons.chat_bubble_outline : Icons.check_circle,
+                        color:
+                            isOpen
+                                ? const Color(0xFF6366F1)
+                                : const Color(0xFF10B981),
+                        size: 20,
+                      ),
+                    ),
+                    title: Text(
+                      subject.length > 40
+                          ? '${subject.substring(0, 40)}...'
+                          : subject,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      _categoryLabel(category),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF9CA3AF),
+                      ),
+                    ),
+                    trailing: _statusChip(status),
+                    onTap:
+                        isOpen
+                            ? () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder:
+                                    (_) => _TicketChatScreen(
+                                      ticketId: doc.id,
+                                      category: category,
+                                      isAdmin: false,
+                                    ),
+                              ),
+                            )
+                            : null,
+                  ),
+                );
+              }).toList(),
         );
       },
     );
@@ -515,13 +546,20 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
             child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.arrow_forward_ios, size: 14, color: Color(0xFF6366F1)),
+                Icon(
+                  Icons.arrow_forward_ios,
+                  size: 14,
+                  color: Color(0xFF6366F1),
+                ),
                 SizedBox(width: 4),
-                Text('חזרה לקטגוריות',
-                    style: TextStyle(
-                        color: Color(0xFF6366F1),
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13)),
+                Text(
+                  'חזרה לקטגוריות',
+                  style: TextStyle(
+                    color: Color(0xFF6366F1),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
               ],
             ),
           ),
@@ -619,7 +657,9 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: const BorderSide(
-                          color: Color(0xFF6366F1), width: 1.5),
+                        color: Color(0xFF6366F1),
+                        width: 1.5,
+                      ),
                     ),
                     contentPadding: const EdgeInsets.all(14),
                   ),
@@ -629,37 +669,49 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton.icon(
-                    icon: _creatingTicket
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white))
-                        : const Icon(Icons.chat_bubble_rounded, size: 18),
-                    label: const Text('התחל שיחה עם התמיכה',
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 15)),
+                    icon:
+                        _creatingTicket
+                            ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                            : const Icon(Icons.chat_bubble_rounded, size: 18),
+                    label: const Text(
+                      'התחל שיחה עם התמיכה',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF6366F1),
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                       elevation: 0,
                     ),
-                    onPressed: _creatingTicket
-                        ? null
-                        : () {
-                            final text = subjectCtrl.text.trim();
-                            if (text.length < 5) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('נא לתאר את הבעיה (לפחות 5 תווים)'),
-                                ),
-                              );
-                              return;
-                            }
-                            _createTicket(text);
-                          },
+                    onPressed:
+                        _creatingTicket
+                            ? null
+                            : () {
+                              final text = subjectCtrl.text.trim();
+                              if (text.length < 5) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'נא לתאר את הבעיה (לפחות 5 תווים)',
+                                    ),
+                                  ),
+                                );
+                                return;
+                              }
+                              _createTicket(text);
+                            },
                   ),
                 ),
 
@@ -734,17 +786,18 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
 
   String _categoryLabel(String id) {
     return _categories
-        .where((c) => c.id == id)
-        .map((c) => c.nameHe)
-        .firstOrNull ?? id;
+            .where((c) => c.id == id)
+            .map((c) => c.nameHe)
+            .firstOrNull ??
+        id;
   }
 
   Widget _statusChip(String status) {
     final (label, color) = switch (status) {
-      'open'        => ('פתוח', const Color(0xFFF59E0B)),
+      'open' => ('פתוח', const Color(0xFFF59E0B)),
       'in_progress' => ('בטיפול', const Color(0xFF6366F1)),
-      'resolved'    => ('נפתר', const Color(0xFF10B981)),
-      _             => (status, Colors.grey),
+      'resolved' => ('נפתר', const Color(0xFF10B981)),
+      _ => (status, Colors.grey),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -755,7 +808,10 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
       child: Text(
         label,
         style: TextStyle(
-            fontSize: 11, fontWeight: FontWeight.bold, color: color),
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          color: color,
+        ),
       ),
     );
   }
@@ -795,8 +851,7 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
   final _msgCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   final _uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-  final _userName =
-      FirebaseAuth.instance.currentUser?.displayName ?? 'תמיכה';
+  final _userName = FirebaseAuth.instance.currentUser?.displayName ?? 'תמיכה';
   bool _sending = false;
 
   Future<void> _sendMessage() async {
@@ -811,12 +866,12 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
           .doc(widget.ticketId)
           .collection('messages')
           .add({
-        'senderId': _uid,
-        'senderName': widget.isAdmin ? 'צוות AnySkill' : _userName,
-        'isAdmin': widget.isAdmin,
-        'message': text,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+            'senderId': _uid,
+            'senderName': widget.isAdmin ? 'צוות AnySkill' : _userName,
+            'isAdmin': widget.isAdmin,
+            'message': text,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
 
       // Update ticket timestamp + status
       final updates = <String, dynamic>{
@@ -854,30 +909,36 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
         centerTitle: true,
         title: Column(
           children: [
-            const Text('שיחה עם התמיכה',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const Text(
+              'שיחה עם התמיכה',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
             Text(
               '#${widget.ticketId.substring(0, 8)}',
               style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
             ),
           ],
         ),
-        actions: widget.isAdmin
-            ? [
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert),
-                  onSelected: (val) => _handleAdminAction(val),
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(
-                        value: 'resolve',
-                        child: Text('✓ סמן כנפתר')),
-                    const PopupMenuItem(
-                        value: 'xp_comp',
-                        child: Text('🎁 פיצוי XP (+100)')),
-                  ],
-                ),
-              ]
-            : null,
+        actions:
+            widget.isAdmin
+                ? [
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert),
+                    onSelected: (val) => _handleAdminAction(val),
+                    itemBuilder:
+                        (_) => [
+                          const PopupMenuItem(
+                            value: 'resolve',
+                            child: Text('✓ סמן כנפתר'),
+                          ),
+                          const PopupMenuItem(
+                            value: 'xp_comp',
+                            child: Text('🎁 פיצוי XP (+100)'),
+                          ),
+                        ],
+                  ),
+                ]
+                : null,
       ),
       body: Column(
         children: [
@@ -900,13 +961,14 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
           // ── Messages list ───────────────────────────────────────────
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: _db
-                  .collection('support_tickets')
-                  .doc(widget.ticketId)
-                  .collection('messages')
-                  .orderBy('createdAt')
-                  .limit(100)
-                  .snapshots(),
+              stream:
+                  _db
+                      .collection('support_tickets')
+                      .doc(widget.ticketId)
+                      .collection('messages')
+                      .orderBy('createdAt')
+                      .limit(100)
+                      .snapshots(),
               builder: (context, snap) {
                 if (!snap.hasData) {
                   return const Center(child: CircularProgressIndicator());
@@ -915,8 +977,7 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
 
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                   if (_scrollCtrl.hasClients) {
-                    _scrollCtrl.jumpTo(
-                        _scrollCtrl.position.maxScrollExtent);
+                    _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
                   }
                 });
 
@@ -932,20 +993,21 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
                     final name = d['senderName'] as String? ?? '';
 
                     return Align(
-                      alignment: isMe
-                          ? AlignmentDirectional.centerEnd
-                          : AlignmentDirectional.centerStart,
+                      alignment:
+                          isMe
+                              ? AlignmentDirectional.centerEnd
+                              : AlignmentDirectional.centerStart,
                       child: Container(
                         margin: const EdgeInsets.only(bottom: 8),
                         constraints: BoxConstraints(
                           maxWidth: MediaQuery.of(context).size.width * 0.75,
                         ),
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 10),
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
                         decoration: BoxDecoration(
-                          color: isMe
-                              ? const Color(0xFF6366F1)
-                              : Colors.white,
+                          color: isMe ? const Color(0xFF6366F1) : Colors.white,
                           borderRadius: BorderRadius.circular(16),
                           boxShadow: [
                             BoxShadow(
@@ -963,9 +1025,10 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.bold,
-                                  color: isAdmin
-                                      ? const Color(0xFF6366F1)
-                                      : const Color(0xFF9CA3AF),
+                                  color:
+                                      isAdmin
+                                          ? const Color(0xFF6366F1)
+                                          : const Color(0xFF9CA3AF),
                                 ),
                               ),
                             if (!isMe) const SizedBox(height: 4),
@@ -974,7 +1037,9 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
                               style: TextStyle(
                                 fontSize: 14,
                                 color:
-                                    isMe ? Colors.white : const Color(0xFF1A1A2E),
+                                    isMe
+                                        ? Colors.white
+                                        : const Color(0xFF1A1A2E),
                                 height: 1.4,
                               ),
                             ),
@@ -1008,7 +1073,9 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
                         borderSide: BorderSide.none,
                       ),
                       contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 10),
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
                     ),
                   ),
                 ),
@@ -1022,8 +1089,11 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
                       color: Color(0xFF6366F1),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.send_rounded,
-                        color: Colors.white, size: 20),
+                    child: const Icon(
+                      Icons.send_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
                   ),
                 ),
               ],
@@ -1066,6 +1136,7 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
           await _db.collection('users').doc(userId).update({
             'xp': FieldValue.increment(100),
           });
+          CachedReaders.invalidateProvider(userId); // §61
           await ticketRef.collection('messages').add({
             'senderId': _uid,
             'senderName': 'מערכת',

@@ -12,8 +12,11 @@ import '../services/location_service.dart';
 import '../services/search_ranking_service.dart';
 import '../services/volunteer_service.dart';
 import '../services/category_service.dart';
+import '../widgets/community/heart_display_helper.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import '../widgets/category_specs_widget.dart';
+import '../widgets/search_card_price_pill.dart';
+import '../services/cached_readers.dart';
 import '../widgets/level_badge.dart';
 import '../constants/quick_tags.dart';
 import '../widgets/provider_category_tags_display.dart';
@@ -27,6 +30,16 @@ import '../services/provider_listing_service.dart';
 import '../widgets/providers_map_view.dart';
 import 'package:latlong2/latlong.dart';
 import '../theme/app_theme.dart';
+import '../widgets/dynamic_filter_sheet.dart';
+import '../widgets/subcategory_banner_header.dart';
+import '../models/filter_schema.dart';
+import '../models/motorcycle_tow_profile.dart';
+import '../models/babysitter_profile.dart';
+import '../models/delivery_profile.dart';
+import '../services/filter_schema_service.dart';
+import 'flash_auction/flash_auction_issue_screen.dart';
+import 'babysitter_emergency/babysitter_emergency_details_screen.dart';
+import 'delivery_express/delivery_express_package_screen.dart';
 
 // Brand colours (shared with the rest of the app)
 const _kPurple     = Color(0xFF6366F1);
@@ -54,7 +67,7 @@ const _kAlexAiTeacher = <String, dynamic>{
 class CategoryResultsScreen extends StatefulWidget {
   final String categoryName;
 
-  /// כאשר true — מציג רק מומחים עם isVolunteer==true (קהילה).
+  /// כאשר true — מציג רק נותני שירות עם isVolunteer==true (קהילה).
   final bool volunteerOnly;
 
   /// זרם אופציונלי — מוזרק בבדיקות במקום Firestore האמיתי.
@@ -88,6 +101,13 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   bool   _showAdvancedFilters = false;
   Position? _currentPosition;
 
+  // ── Dynamic filter system (CLAUDE.md §50) ─────────────────────────────────
+  // Stage 5: filterExperts() now consumes both the schema (for providerField
+  // resolution) and the active filters map. Schema is loaded once on initState
+  // and cached for 30 min by FilterSchemaService.
+  Map<String, dynamic> _dynamicFilters = {};
+  FilterSchema? _filterSchema;
+
   // v9.9.0: Map/List toggle
   bool _showMap = false;
 
@@ -109,8 +129,14 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   bool _hasMore       = true;
   DocumentSnapshot<Map<String, dynamic>>? _lastDoc;
 
-  /// Dynamic service schema for this category (loaded once from Firestore).
-  List<SchemaField> _categorySchema = [];
+  /// Full v2 ServiceSchema (depositPercent / priceLocked / bundles /
+  /// surcharge / fields). Used by [SearchCardPricePill] to render the
+  /// price + transparency badges below it (§62). Cached for 30 min via
+  /// CachedReaders.
+  ///
+  /// Replaced the legacy `_categorySchema` v1 fields-list — `_serviceSchema.fields`
+  /// is the same data and works for both v1 and v2 schema shapes.
+  ServiceSchema _serviceSchema = ServiceSchema.empty();
 
   late final ScrollController _scrollCtrl;
 
@@ -119,17 +145,48 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     super.initState();
     _scrollCtrl = ScrollController()..addListener(_onScroll);
     _loadInitial();
-    // Load category schema (fire-and-forget)
-    loadSchemaForCategory(widget.categoryName).then((schema) {
-      if (mounted) setState(() => _categorySchema = schema);
+    // §62: load the full v2 schema so the price pill can show transparency
+    // badges (depositPercent / priceLocked / bundles / surcharge) below
+    // the price. Cached 30 min via CachedReaders. Replaces the prior
+    // `loadSchemaForCategory` v1-only call which only loaded fields[].
+    CachedReaders.serviceSchemaForCategory(widget.categoryName).then((s) {
+      if (mounted) setState(() => _serviceSchema = s);
     });
-    // Use cached position instantly; fall back to a dialog-based request
+    // Load FilterSchema for DynamicFilterSheet (CLAUDE.md §50, stage 5).
+    // 30-min cache via FilterSchemaService — fire-and-forget is safe.
+    FilterSchemaService.instance
+        .getSchema(widget.categoryName)
+        .then((schema) {
+      if (mounted) setState(() => _filterSchema = schema);
+    });
+    // Use cached position instantly; fall back to a dialog-based request,
+    // and retry once after 1.5s if the first attempt returns null (web
+    // browsers sometimes need a beat to resolve permission state).
     final cached = LocationService.cached;
     if (cached != null) {
       _currentPosition = cached;
     } else {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
-        final pos = await LocationService.requestAndGet(context);
+        Position? pos;
+        try {
+          pos = await LocationService.requestAndGet(context);
+          // ignore: avoid_print
+          print('[CategoryResults/distance] requestAndGet (attempt 1) = '
+              '${pos == null ? "null" : "(${pos.latitude}, ${pos.longitude})"}');
+        } catch (e) {
+          // ignore: avoid_print
+          print('[CategoryResults/distance] requestAndGet threw: $e');
+        }
+        if (pos == null && mounted) {
+          await Future.delayed(const Duration(milliseconds: 1500));
+          if (!mounted) return;
+          try {
+            pos = await LocationService.getIfGranted();
+            // ignore: avoid_print
+            print('[CategoryResults/distance] getIfGranted (attempt 2) = '
+                '${pos == null ? "null" : "(${pos.latitude}, ${pos.longitude})"}');
+          } catch (_) {/* swallowed — keep null */}
+        }
         if (mounted && pos != null) setState(() => _currentPosition = pos);
       });
     }
@@ -630,7 +687,13 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                         ),
                       ),
                       // ── Volunteer Heart overlay (Metallic Gold) ─────────
-                      if (data['volunteerHeart'] == true || data['isVolunteer'] == true)
+                      // Phase B (v15.x): gated via [shouldShowHeartFor] —
+                      // v2 viewers see the new 30-day-expiry semantics,
+                      // v1 viewers keep the legacy permanent-heart behavior.
+                      if (shouldShowHeartFor(
+                        viewerUid: FirebaseAuth.instance.currentUser?.uid,
+                        ownerData: data,
+                      ))
                         Positioned(
                           bottom: 0,
                           right: 0,
@@ -804,13 +867,19 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     final l10n        = AppLocalizations.of(context);
     final isPro       = data['isAnySkillPro'] == true;
     final name        = data['name'] as String? ?? l10n.catResultsExpertDefault;
-    final (dynPrice, dynUnit) = primaryPriceDisplay(data, _categorySchema);
-    final price       = dynPrice;
-    final priceUnit   = dynUnit;
     final rating      = (data['rating'] as num?)?.toDouble() ?? 5.0;
     final reviewsCount = (data['reviewsCount'] as num?)?.toInt() ?? 0;
     final bio         = data['aboutMe'] as String? ?? '';
     final tagKeys     = ((data['quickTags'] as List?) ?? []).cast<String>();
+    // Mirror the profile's "specialist card" stats so the search card carries
+    // the same numbers (jobs / rating / reviews / volunteers). Volunteer count
+    // reads the denormalized `users/{uid}.volunteerTaskCount` (incremented in
+    // CommunityHubService — CLAUDE.md §7b) so we don't need a per-card stream.
+    final jobsCount = (data['completedJobsCount'] as num?
+            ?? data['orderCount'] as num?
+            ?? 0).toInt();
+    final volunteersCount =
+        (data['volunteerTaskCount'] as num? ?? 0).toInt();
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
@@ -834,29 +903,14 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                   if ((data['xp'] as num? ?? 0) > 0)
                     LevelBadge(xp: (data['xp'] as num).toInt(), size: 16),
 
-                  // Price
-                  RichText(
-                    text: TextSpan(
-                      style: const TextStyle(fontFamily: 'Heebo'),
-                      children: [
-                        TextSpan(
-                          text: '₪$price',
-                          style: const TextStyle(
-                              color: _kPurple,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 18),
-                        ),
-                        TextSpan(
-                          text: _categorySchema.isNotEmpty
-                              ? ' $priceUnit'
-                              : l10n.catResultsPerHour,
-                          style: const TextStyle(
-                              color: Colors.grey,
-                              fontSize: 11,
-                              fontWeight: FontWeight.normal),
-                        ),
-                      ],
-                    ),
+                  // Price + transparency badges (§62 — Wolt/Airbnb pattern).
+                  // The pill renders the big price line PLUS small badges
+                  // for deposit / price-locked / bundle savings / off-hours
+                  // surcharge — pricing signals that previously hid inside
+                  // the booking sheet.
+                  SearchCardPricePill(
+                    userData: data,
+                    schema: _serviceSchema,
                   ),
                 ],
               ),
@@ -895,7 +949,12 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                     const Icon(Icons.verified,
                         color: Color(0xFF1877F2), size: 15),
                   ],
-                  if (data['volunteerHeart'] == true || data['isVolunteer'] == true) ...[
+                  // Phase B (v15.x): viewer-gated. v2 viewers see the
+                  // 30-day-expiry semantics; v1 keeps legacy behavior.
+                  if (shouldShowHeartFor(
+                    viewerUid: FirebaseAuth.instance.currentUser?.uid,
+                    ownerData: data,
+                  )) ...[
                     const SizedBox(width: 4),
                     VolunteerService.hasActiveVolunteerBadge(data)
                         ? Container(
@@ -977,42 +1036,56 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                 const SizedBox(height: 4),
               ],
 
-              // ── Rating + location ──────────────────────────────────────
+              // ── Stats strip — mirrors the profile's specialist card ────
+              // 4 mini-chips matching expert_profile_screen._buildSpecialistCard
+              // stat rows: jobs / rating / reviews / volunteers. Each chip
+              // hides itself when its value is 0 so non-volunteers / new
+              // providers don't carry "0 0 0" visual noise. RTL-safe via
+              // MainAxisAlignment.end.
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  if (_currentPosition != null) ...() {
-                    final lat = (data['latitude']  as num?)?.toDouble();
-                    final lng = (data['longitude'] as num?)?.toDouble();
-                    if (lat == null || lng == null) return <Widget>[];
-                    final label = LocationService.distanceLabel(
-                        _currentPosition!.latitude,
-                        _currentPosition!.longitude,
-                        lat, lng);
-                    return [
-                      const Icon(Icons.location_on_rounded,
-                          size: 11, color: Colors.grey),
-                      const SizedBox(width: 2),
-                      Text(label,
-                          style: const TextStyle(
-                              fontSize: 11, color: Colors.grey)),
-                      const SizedBox(width: 8),
-                    ];
-                  }(),
-                  Icon(Icons.star_rounded, color: _kGold, size: 14),
-                  const SizedBox(width: 2),
-                  Text(
-                    rating.toStringAsFixed(1),
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 12),
+                  if (jobsCount > 0) ...[
+                    _MiniStatChip(
+                      icon: Icons.shield_outlined,
+                      value: '$jobsCount',
+                      color: _kPurple,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  _MiniStatChip(
+                    icon: Icons.star_rounded,
+                    value: rating.toStringAsFixed(1),
+                    color: _kGold,
                   ),
-                  const SizedBox(width: 3),
-                  Text(
-                    '($reviewsCount)',
-                    style: TextStyle(color: Colors.grey[500], fontSize: 11),
-                  ),
+                  if (reviewsCount > 0) ...[
+                    const SizedBox(width: 8),
+                    _MiniStatChip(
+                      icon: Icons.chat_bubble_outline_rounded,
+                      value: '$reviewsCount',
+                      color: Colors.teal,
+                    ),
+                  ],
+                  if (volunteersCount > 0) ...[
+                    const SizedBox(width: 8),
+                    _MiniStatChip(
+                      icon: Icons.favorite_rounded,
+                      value: '$volunteersCount',
+                      // Metallic gold — matches CLAUDE.md §9d "Luxury Metallic
+                      // Gold" volunteer brand color used on profile heart.
+                      color: const Color(0xFFD4AF37),
+                    ),
+                  ],
                 ],
               ),
+
+              // ── Distance from customer — dedicated row beneath rating ──
+              // Always renders a row so the UI position is visible; falls
+              // back to "מחשב מרחק..." when either side lacks coordinates
+              // so the operator (you) can confirm placement and then enable
+              // location permission to see the real number.
+              const SizedBox(height: 4),
+              _buildCardDistanceRow(data),
             ],
           ),
 
@@ -1072,6 +1145,56 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Distance chip rendered on its own row in the list card (below rating).
+  /// Always returns a widget so the position is visible — falls back to a
+  /// subtle "מחשב מרחק..." placeholder when either the customer location
+  /// or the provider coordinates are missing. Logs to the console so you
+  /// can diagnose which half is missing in DevTools.
+  Widget _buildCardDistanceRow(Map<String, dynamic> data) {
+    final lat = (data['latitude']  as num?)?.toDouble();
+    final lng = (data['longitude'] as num?)?.toDouble();
+    final uid = (data['uid'] as String?) ?? '?';
+    // ignore: avoid_print
+    print('[ListCard/distance] uid=$uid '
+        'my=${_currentPosition == null ? "null" : "(${_currentPosition!.latitude}, ${_currentPosition!.longitude})"} '
+        'provider=($lat, $lng) raw latitude=${data['latitude']} longitude=${data['longitude']}');
+    String label;
+    Color color;
+    if (_currentPosition == null) {
+      label = 'מחשב מרחק...';
+      color = Colors.grey.shade400;
+    } else if (lat == null || lng == null) {
+      label = 'מרחק לא ידוע';
+      color = Colors.grey.shade400;
+    } else {
+      try {
+        final meters = Geolocator.distanceBetween(
+            _currentPosition!.latitude, _currentPosition!.longitude, lat, lng);
+        // ignore: avoid_print
+        print('[ListCard/distance] uid=$uid distance = ${meters.toStringAsFixed(0)} m');
+        label = meters < 1000
+            ? 'בשכונתך'
+            : '${(meters / 1000).toStringAsFixed(1)} ק"מ';
+        color = const Color(0xFF10B981);
+      } catch (e) {
+        // ignore: avoid_print
+        print('[ListCard/distance] uid=$uid distanceBetween threw: $e');
+        label = 'מרחק לא ידוע';
+        color = Colors.grey.shade400;
+      }
+    }
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        Icon(Icons.location_on_rounded, size: 12, color: color),
+        const SizedBox(width: 3),
+        Text(label,
+            style: TextStyle(
+                fontSize: 11.5, color: color, fontWeight: FontWeight.w600)),
+      ],
     );
   }
 
@@ -1380,7 +1503,18 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     // AI teacher card — opens the lesson modal instead of profile
     if (isAiTeacher) return _buildAiTeacherCard(data);
 
-    return GestureDetector(
+    // Semantics: each expert card is a major navigation target. Without
+    // an explicit Semantics wrapper, screen readers announce a sea of
+    // text (name, rating, price, bio fragments) but never that it's
+    // tappable. EU EAA 2025 mandate.
+    final expertName = data['name'] as String? ?? l10n.catResultsExpertDefault;
+    final rating = (data['rating'] as num?)?.toStringAsFixed(1) ?? '0.0';
+    final priceHourly = (data['pricePerHour'] as num?)?.toInt() ?? 0;
+    return Semantics(
+      button: true,
+      label: 'Expert: $expertName, rating $rating, ₪$priceHourly per hour',
+      hint: 'Tap to view full profile',
+      child: GestureDetector(
       // Tap anywhere on card = open profile
       onTap: () => Navigator.push(
         context,
@@ -1468,6 +1602,112 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           ),
         ],
       ),
+    ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Bottom FAB
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Floating action button for the list view. By default just the "מפה" pill;
+  /// when the customer is browsing motorcycle towing we ALSO render an
+  /// "מצא גרר דחוף" urgent-search pill to its trailing side (RTL: visually
+  /// to the LEFT of "מפה"). The empty-onTap handler is intentional — the
+  /// destination screen for the urgent flow ships in a follow-up.
+  Widget _buildBottomFab() {
+    final l10n = AppLocalizations.of(context);
+    final mapButton = _OpenMapPillFab(
+      label: l10n.catMapButtonShort,
+      onTap: () => setState(() => _showMap = true),
+    );
+    // CSM-specific urgent dispatch pills. Each CSM that supports
+    // emergency dispatch (motorcycle towing §57, babysitter §76) gets
+    // its own pill BEFORE the map button. Add new CSMs here.
+    if (isMotorcycleTowingCategory(widget.categoryName)) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _UrgentTowSearchPillFab(
+            label: 'מצא גרר דחוף',
+            onTap: _onUrgentTowSearchPressed,
+          ),
+          const SizedBox(width: 10),
+          mapButton,
+        ],
+      );
+    }
+    if (isBabysitterCategory(widget.categoryName)) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _UrgentTowSearchPillFab(
+            // Same visual primitive — different label + handler. The
+            // pill is intentionally generic so future CSMs reuse it.
+            label: 'מצאי בייביסיטר עכשיו',
+            onTap: _onUrgentBabysitterPressed,
+            icon: Icons.child_care_rounded,
+          ),
+          const SizedBox(width: 10),
+          mapButton,
+        ],
+      );
+    }
+    if (isDeliveryCategory(widget.categoryName)) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _UrgentTowSearchPillFab(
+            // Same visual primitive — different label + handler. The
+            // pill is intentionally generic so future CSMs reuse it.
+            label: 'מצא שליח דחוף',
+            onTap: _onUrgentDeliveryPressed,
+            icon: Icons.delivery_dining_rounded,
+          ),
+          const SizedBox(width: 10),
+          mapButton,
+        ],
+      );
+    }
+    return mapButton;
+  }
+
+  /// Pushes the Flash Auction flow (CLAUDE.md §57 — see
+  /// docs/ui-specs/Motorcycle/Motorcycle 2/). The 4-step flow handles
+  /// everything from issue diagnosis through offer selection. After a
+  /// match the customer lands on the existing Pay & Secure flow.
+  void _onUrgentTowSearchPressed() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const FlashAuctionIssueScreen(),
+      ),
+    );
+  }
+
+  /// Pushes the Babysitter Emergency Dispatch flow (CLAUDE.md §76).
+  /// Same 4-step pattern as Flash Auction but tuned for childcare —
+  /// children + duration drive pricing, single home address, providers
+  /// must be background-checked + accept-last-minute.
+  void _onUrgentBabysitterPressed() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const BabysitterEmergencyDetailsScreen(),
+      ),
+    );
+  }
+
+  /// Pushes the Delivery Express Dispatch flow (CLAUDE.md §78).
+  /// Same 4-step pattern as Flash Auction but tuned for couriers —
+  /// package type + pickup/dropoff drive pricing, courier picks vehicle
+  /// + ETA. Filters: online + has deliveryProfile + eligible vehicle.
+  void _onUrgentDeliveryPressed() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const DeliveryExpressPackageScreen(),
+      ),
     );
   }
 
@@ -1489,95 +1729,52 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0.5,
-        actions: [
-          // v9.9.0: Map/List toggle
-          // v12.9.0: AppBar map toggle hidden while on the map itself —
-          // the new overlay top bar (_MapTopBar) holds the list toggle.
-          if (!widget.volunteerOnly && !_showMap)
-            Padding(
-              padding: const EdgeInsetsDirectional.only(end: 8),
-              child: IconButton(
-                icon: Icon(Icons.map_rounded,
-                    color: Colors.grey[600], size: 24),
-                tooltip: AppLocalizations.of(context).catMapView,
-                onPressed: () => setState(() => _showMap = true),
-              ),
-            ),
-        ],
+        // v15.x: AppBar map IconButton retired — replaced with the
+        // Airbnb-style floating pill button at bottom-center (see
+        // floatingActionButton below). On the map view itself the
+        // _MapTopBar still owns the list toggle.
       ),
       floatingActionButton: widget.volunteerOnly
           ? _WhatsAppSosButton()
-          : null,
+          : (_showMap ? null : _buildBottomFab()),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
       body: Column(
         children: [
           if (widget.volunteerOnly) _buildVolunteerHeader(),
           if (!_showMap) _buildSearchAndFilter(),
           Expanded(
             child: _showMap
-                ? Stack(
-                    children: [
-                      // The map itself.
-                      Positioned.fill(child: _buildMapView()),
-                      // v12.9.0 (PR-5): carousel of provider cards at bottom.
-                      _buildMapCarouselSheet(),
-                      // Fading gradient so the overlay pills stay readable.
-                      const Positioned(
-                        top: 0, left: 0, right: 0,
-                        child: IgnorePointer(child: _MapTopGradient()),
-                      ),
-                      // Floating top bar (back · search · list-toggle) +
-                      // filter chips + provider count badge.
-                      Positioned(
-                        top: 0, left: 0, right: 0,
-                        child: SafeArea(
-                          bottom: false,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _MapTopBar(
-                                initialQuery: _searchQuery,
-                                onBack: () =>
-                                    Navigator.of(context).maybePop(),
-                                onQueryChanged: (v) =>
-                                    setState(() => _searchQuery = v),
-                                onListPressed: () =>
-                                    setState(() => _showMap = false),
-                              ),
-                              const SizedBox(height: 10),
-                              _MapFilterChips(
-                                maxDistanceKm: _maxDistanceKm,
-                                minRating:     _minRating,
-                                under100:      _filterUnder100,
-                                onlineOnly:    _onlineOnly,
-                                onPickDistance: _pickMapDistance,
-                                onPickRating:   _pickMapRating,
-                                onToggleUnder100: () => setState(
-                                    () => _filterUnder100 = !_filterUnder100),
-                                onToggleOnline:   () => setState(
-                                    () => _onlineOnly = !_onlineOnly),
-                                onInstantBook: () {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(AppLocalizations.of(context).catInstantBookingSoon),
-                                      duration: const Duration(seconds: 2),
-                                    ),
-                                  );
-                                },
-                              ),
-                              const SizedBox(height: 10),
-                              Align(
-                                alignment: Alignment.topCenter,
-                                child: _ProviderCountBadge(
-                                  count: _mapFilteredCount(),
-                                  categoryName: widget.categoryName,
-                                  anyFilterActive: _mapAnyFilterActive(),
-                                ),
-                              ),
-                            ],
+                ? LayoutBuilder(
+                    builder: (ctx, c) {
+                      // v15.x — responsive map layout per user request:
+                      //   wide  (≥720): map on RIGHT, cards list on LEFT (Row, RTL)
+                      //   narrow (<720): existing full-screen map + bottom sheet
+                      if (c.maxWidth >= 720) {
+                        return _buildMapSideBySideLayout();
+                      }
+                      return Stack(
+                        children: [
+                          // The map itself.
+                          Positioned.fill(child: _buildMapView()),
+                          // v12.9.0 (PR-5): carousel of provider cards at bottom.
+                          _buildMapCarouselSheet(),
+                          // Fading gradient so the overlay pills stay readable.
+                          const Positioned(
+                            top: 0, left: 0, right: 0,
+                            child: IgnorePointer(child: _MapTopGradient()),
                           ),
-                        ),
-                      ),
-                    ],
+                          // Floating top bar (back · search · list-toggle) +
+                          // filter chips + provider count badge.
+                          Positioned(
+                            top: 0, left: 0, right: 0,
+                            child: SafeArea(
+                              bottom: false,
+                              child: _buildMapOverlayHeader(),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   )
                 : RefreshIndicator(
                     onRefresh: _loadInitial,
@@ -1725,20 +1922,20 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                   onTap: () => setState(() => _filterUnder100 = !_filterUnder100),
                 ),
                 const SizedBox(width: 8),
-                // Rating filter
+                // Rating filter — opens unified DynamicFilterSheet (CLAUDE.md §50)
                 _buildFilterChip(
                   label: _minRating > 0 ? '⭐ ${_minRating.toStringAsFixed(1)}+' : AppLocalizations.of(context).catFilterRating,
                   icon: Icons.star_rounded,
                   active: _minRating > 0,
-                  onTap: () => _showRatingFilterSheet(),
+                  onTap: _showDynamicFilterSheet,
                 ),
                 const SizedBox(width: 8),
-                // Distance filter
+                // Distance filter — opens unified DynamicFilterSheet (CLAUDE.md §50)
                 _buildFilterChip(
                   label: _maxDistanceKm != null ? '${_maxDistanceKm!.toInt()} ${AppLocalizations.of(context).catFilterKm}' : AppLocalizations.of(context).catFilterDistance,
                   icon: Icons.location_on_outlined,
                   active: _maxDistanceKm != null,
-                  onTap: () => _showDistanceFilterSheet(),
+                  onTap: _showDynamicFilterSheet,
                 ),
                 const SizedBox(width: 8),
                 // Advanced toggle
@@ -1787,6 +1984,44 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     );
   }
 
+  // ── Dynamic filter sheet (CLAUDE.md §50 — replaces legacy rating + ─────────
+  // distance modals with a per-category schema-driven sheet). The legacy
+  // `_showRatingFilterSheet` and `_showDistanceFilterSheet` below are kept
+  // intact for the map view (lines 2239/2288 still call them) and will be
+  // removed in stage 7 once the map view is migrated.
+  void _showDynamicFilterSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,        // חובה — בלי זה המודאל ייחתך
+      backgroundColor: Colors.transparent,
+      builder: (_) => DynamicFilterSheet(
+        categoryId: widget.categoryName,
+        initialFilters: _dynamicFilters,
+        estimatedResultCount: _allExperts.length,
+        onApply: (filters) {
+          setState(() {
+            _dynamicFilters = filters;
+            // Stage 4 back-fill: map known section IDs into the legacy
+            // state vars so `expert_filter.dart` keeps working unchanged.
+            // Stage 5 will extend `expert_filter.dart` to consume the full
+            // map and these back-fills will go away.
+            final ratingVal = filters['rating'];
+            _minRating = ratingVal is num ? ratingVal.toDouble() : 0;
+
+            final priceVal = filters['price'];
+            if (priceVal is Map) {
+              final to = priceVal['to'];
+              _filterUnder100 = to is num && to <= 100;
+            } else {
+              _filterUnder100 = false;
+            }
+          });
+        },
+      ),
+    );
+  }
+
+  // ignore: unused_element — kept until stage 7 (CLAUDE.md §50) cleanup
   void _showRatingFilterSheet() {
     double tempRating = _minRating;
     showModalBottomSheet(
@@ -1836,6 +2071,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     );
   }
 
+  // ignore: unused_element — kept until stage 7 (CLAUDE.md §50) cleanup
   void _showDistanceFilterSheet() {
     double tempKm = _maxDistanceKm ?? 15;
     final hasLocation = _currentPosition != null;
@@ -1926,10 +2162,175 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       maxDistanceKm: _maxDistanceKm,
       myPosition: _currentPosition,
       onlineOnly: _onlineOnly,
+      schema: _filterSchema,
+      dynamicFilters: _dynamicFilters,
     );
   }
 
   int _mapFilteredCount() => _mapFilteredExperts().length;
+
+  // ── v15.x: Shared map header overlay (top bar + chips + count) ───────────
+  // Extracted so both the mobile (Stack overlay) and the desktop/tablet
+  // (Column above split-view) layouts share exactly the same controls.
+  Widget _buildMapOverlayHeader() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _MapTopBar(
+          initialQuery: _searchQuery,
+          onBack: () => Navigator.of(context).maybePop(),
+          onQueryChanged: (v) => setState(() => _searchQuery = v),
+          onListPressed: () => setState(() => _showMap = false),
+        ),
+        const SizedBox(height: 10),
+        _MapFilterChips(
+          maxDistanceKm: _maxDistanceKm,
+          minRating:     _minRating,
+          under100:      _filterUnder100,
+          onlineOnly:    _onlineOnly,
+          onPickDistance: _pickMapDistance,
+          onPickRating:   _pickMapRating,
+          onToggleUnder100: () =>
+              setState(() => _filterUnder100 = !_filterUnder100),
+          onToggleOnline:   () =>
+              setState(() => _onlineOnly = !_onlineOnly),
+          onInstantBook: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                    AppLocalizations.of(context).catInstantBookingSoon),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.topCenter,
+          child: _ProviderCountBadge(
+            count: _mapFilteredCount(),
+            categoryName: widget.categoryName,
+            anyFilterActive: _mapAnyFilterActive(),
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  // ── v15.x: Side-by-side map layout (≥720px) ─────────────────────────────
+  // RTL Row → first child renders on the RIGHT (map), second on the LEFT
+  // (cards list). The cards list is a vertical ListView; tapping a card
+  // updates `_mapSelectedUid` + `_mapFocusedLatLng` so the map re-centers.
+  Widget _buildMapSideBySideLayout() {
+    final experts = _mapFilteredExperts();
+    final withCoords = experts.where((e) {
+      final lat = (e['latitude'] as num?)?.toDouble();
+      final lng = (e['longitude'] as num?)?.toDouble();
+      return lat != null && lng != null;
+    }).toList();
+
+    return Column(
+      children: [
+        Container(
+          color: Colors.white,
+          child: SafeArea(
+            bottom: false,
+            child: _buildMapOverlayHeader(),
+          ),
+        ),
+        Container(height: 0.5, color: const Color(0x1A000000)),
+        Expanded(
+          child: Row(
+            children: [
+              // RIGHT (RTL = first child) — map
+              Expanded(
+                flex: 6,
+                child: _buildMapView(),
+              ),
+              Container(width: 0.5, color: const Color(0x1A000000)),
+              // LEFT (RTL = second child) — vertical cards list
+              Expanded(
+                flex: 4,
+                child: Container(
+                  color: const Color(0xFFFAFAF9),
+                  child: withCoords.isEmpty
+                      ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(20),
+                            child: Text(
+                              'אין נותני שירות עם מיקום באזור',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Color(0xFF6B7280),
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 14),
+                          itemCount: withCoords.length,
+                          itemBuilder: (context, i) {
+                            final e = withCoords[i];
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: _MapProviderCard(
+                                expert: e,
+                                active:
+                                    (e['uid'] as String?) == _mapSelectedUid,
+                                myPosition: _currentPosition,
+                                onTapCard: () {
+                                  final lat =
+                                      (e['latitude'] as num?)?.toDouble();
+                                  final lng =
+                                      (e['longitude'] as num?)?.toDouble();
+                                  setState(() {
+                                    _mapSelectedUid = e['uid'] as String?;
+                                    if (lat != null && lng != null) {
+                                      _mapFocusedLatLng = LatLng(lat, lng);
+                                    }
+                                  });
+                                },
+                                onMessage: () {
+                                  Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => ChatScreen(
+                                          receiverId:
+                                              (e['uid'] as String?) ?? '',
+                                          receiverName:
+                                              (e['name'] as String?) ?? '',
+                                        ),
+                                      ));
+                                },
+                                onBookNow: () {
+                                  Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => ExpertProfileScreen(
+                                          expertId:
+                                              (e['uid'] as String?) ?? '',
+                                          expertName:
+                                              (e['name'] as String?) ?? '',
+                                          listingId:
+                                              e['listingId'] as String?,
+                                        ),
+                                      ));
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 
   // ── v12.9.0 (PR-5): Carousel of provider cards ───────────────────────────
   Widget _buildMapCarouselSheet() {
@@ -2272,6 +2673,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       minRating: _minRating,
       maxDistanceKm: _maxDistanceKm,
       myPosition: _currentPosition,
+      schema: _filterSchema,
+      dynamicFilters: _dynamicFilters,
     );
 
     // ── Inject Alex AI teacher into English category ───────────────────────
@@ -2343,14 +2746,25 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       );
     }
 
-    // +1 sentinel item for the load-more spinner / "all loaded" indicator
+    // +1 sentinel item for the load-more spinner / "all loaded" indicator.
+    // +1 header item (index 0) for the subcategory banner shelf — it
+    // collapses to SizedBox.shrink when no banner qualifies, so this
+    // never wastes vertical space on un-banner'd categories.
+    const headerCount = 1;
     final sentinelCount = (_isLoadingMore || _hasMore) ? 1 : 0;
     return ListView.builder(
       controller: _scrollCtrl,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-      itemCount: experts.length + sentinelCount,
+      itemCount: experts.length + headerCount + sentinelCount,
       itemBuilder: (_, index) {
-        if (index == experts.length) {
+        // ── Index 0 — banner header ────────────────────────────────────
+        if (index == 0) {
+          return SubcategoryBannerHeader(
+            subcategoryId: widget.categoryName,
+          );
+        }
+        final expertIdx = index - headerCount;
+        if (expertIdx == experts.length) {
           // Bottom sentinel
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 24),
@@ -2368,7 +2782,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
             ),
           );
         }
-        return RepaintBoundary(child: _buildExpertCard(experts[index]));
+        return RepaintBoundary(child: _buildExpertCard(experts[expertIdx]));
       },
     );
   }
@@ -2509,6 +2923,9 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
     setState(() => _submitting = true);
     final nav       = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
+    // Capture localized strings BEFORE async gaps (Section 9 async-safe pattern)
+    final l10n = AppLocalizations.of(context);
+    final sentMsg = l10n.catRequestSent;
 
     try {
       final uid      = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -2543,7 +2960,7 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                AppLocalizations.of(context).catRequestSent,
+                sentMsg,
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
             ),
@@ -2551,15 +2968,13 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
         ),
       );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(AppLocalizations.of(context).catRequestError(e.toString())),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(l10n.catRequestError(e.toString())),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -2837,6 +3252,246 @@ class _HelpRequestSheetState extends State<_HelpRequestSheet> {
                       ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Compact stat chip used by the search card — mirrors the profile's
+// specialist-card stat rows (expert_profile_screen._buildSpecialistCard).
+// Icon + bold number, no label (the icon implies the meaning). The chip
+// hides itself in the parent if its value is 0 so non-volunteers / new
+// providers don't carry "0 0 0" visual noise.
+// ═══════════════════════════════════════════════════════════════════════════
+class _MiniStatChip extends StatelessWidget {
+  const _MiniStatChip({
+    required this.icon,
+    required this.value,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 3),
+        Text(
+          value,
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 12,
+            color: Color(0xFF1F2937),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Motorcycle CSM (§55): "מצא גרר דחוף" urgent-search pill.
+// ═══════════════════════════════════════════════════════════════════════════
+// Mirrors the home tab's [_GlassUrgentSearchButton] (home_screen.dart:1974)
+// in *intent* — pulsing halos + pill + "urgent" feel — but adapts the visual
+// for the white scaffold of [CategoryResultsScreen]: red gradient pill with
+// red halos instead of the home button's glassmorphic white.
+//
+// Sits to the trailing side of the existing "מפה" pill (see
+// [_buildBottomFab]). Only mounted when the customer is browsing
+// motorcycle towing — gated by isMotorcycleTowingCategory().
+//
+// onTap is currently a placeholder snackbar — the destination screen ships
+// in a follow-up.
+class _UrgentTowSearchPillFab extends StatefulWidget {
+  const _UrgentTowSearchPillFab({
+    required this.label,
+    required this.onTap,
+    this.icon = Icons.bolt_rounded,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+
+  /// Leading icon. Defaults to a bolt for the motorcycle towing case;
+  /// the babysitter emergency variant overrides with a child-care icon.
+  final IconData icon;
+
+  @override
+  State<_UrgentTowSearchPillFab> createState() =>
+      _UrgentTowSearchPillFabState();
+}
+
+class _UrgentTowSearchPillFabState extends State<_UrgentTowSearchPillFab>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _haloCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _haloCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2500),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _haloCtrl.dispose();
+    super.dispose();
+  }
+
+  /// One pulsing halo. Two of these are stacked behind the pill, staggered by
+  /// half a cycle (phaseOffset 0 + 0.5) so the breathing rhythm never pauses.
+  Widget _halo(double phaseOffset) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: AnimatedBuilder(
+          animation: _haloCtrl,
+          builder: (_, __) {
+            final t = (_haloCtrl.value + phaseOffset) % 1.0;
+            final eased = Curves.easeInOut.transform(t);
+            final scale = 1.0 + 0.45 * eased;     // 1.0 → 1.45
+            final opacity = 0.55 * (1.0 - eased); // 0.55 → 0
+            return Transform.scale(
+              scale: scale,
+              child: Opacity(
+                opacity: opacity,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEF4444).withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(28),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.center,
+      children: [
+        _halo(0.0),
+        _halo(0.5),
+        Material(
+          color: Colors.transparent,
+          elevation: 0,
+          shadowColor: Colors.transparent,
+          borderRadius: BorderRadius.circular(28),
+          child: Ink(
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFFEF4444), Color(0xFFDC2626)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFDC2626).withValues(alpha: 0.35),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(28),
+              onTap: widget.onTap,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(widget.icon,
+                        color: Colors.white, size: 18),
+                    const SizedBox(width: 6),
+                    Text(
+                      widget.label,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v15.x: Airbnb-style "Map" pill — floating at bottom-center of the list view.
+// ═══════════════════════════════════════════════════════════════════════════
+// Replaces the small AppBar IconButton. Black capsule with white icon + label,
+// soft shadow for the floating feel. RTL-safe: in Hebrew/Arabic the row flips
+// so the icon ends up on the trailing (right) side automatically.
+class _OpenMapPillFab extends StatelessWidget {
+  const _OpenMapPillFab({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black,
+      elevation: 0,
+      shadowColor: Colors.transparent,
+      borderRadius: BorderRadius.circular(28),
+      child: Ink(
+        decoration: BoxDecoration(
+          color: Colors.black,
+          borderRadius: BorderRadius.circular(28),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.18),
+              blurRadius: 14,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(28),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.map_rounded, color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

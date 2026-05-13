@@ -353,18 +353,10 @@ class ServiceSchema {
   }
 }
 
-/// Loads the full v2 schema for a category by name. Returns
-/// [ServiceSchema.empty] when none exists.
-Future<ServiceSchema> loadServiceSchemaFor(String categoryName) async {
-  if (categoryName.trim().isEmpty) return ServiceSchema.empty();
-  final snap = await FirebaseFirestore.instance
-      .collection('categories')
-      .where('name', isEqualTo: categoryName)
-      .limit(1)
-      .get();
-  if (snap.docs.isEmpty) return ServiceSchema.empty();
-  return ServiceSchema.fromRaw(snap.docs.first.data()['serviceSchema']);
-}
+// `loadServiceSchemaFor` and `loadSchemaForCategory` were removed in the
+// post-§75 audit pass. Both bypassed the cache layer. All call sites
+// migrated to `CachedReaders.serviceSchemaForCategory()` (§61) — verified
+// zero references via grep across lib/ + test/ before removal.
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -379,6 +371,9 @@ List<SchemaField> parseSchema(List<dynamic>? raw) {
 }
 
 /// Loads schema for a category from Firestore. Returns empty list if none.
+/// **DEPRECATED** — kept only because `parseSchema` is still public API.
+/// The function below is unused as of the post-§75 audit.
+@Deprecated('Use CachedReaders.serviceSchemaForCategory() instead (§61)')
 Future<List<SchemaField>> loadSchemaForCategory(String categoryName) async {
   final snap = await FirebaseFirestore.instance
       .collection('categories')

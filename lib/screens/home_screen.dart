@@ -9,9 +9,20 @@ import 'package:image_picker/image_picker.dart';
 import 'package:showcaseview/showcaseview.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'profile_screen.dart';
-import 'admin_screen.dart';
+// 🚀 Lazy-load: admin_screen.dart + admin_vault_tab.dart pull in 23+
+// admin tab screens (Banners Studio, Sound Studio, Vault, Monetization,
+// CSM previews, etc.) — together ~30-50% of main.dart.js. The vast
+// majority of users never see this code; only ~3 admins per project.
+// Deferred imports = these chunks downloaded only when an admin
+// actually signs in, saving every other user's first-load time.
+//
+// Pre-loading happens in initState() for admin users (fire-and-forget
+// so it parallels initial UI render). The FutureBuilder fallback in
+// the tab builder shows a spinner only if the admin taps faster than
+// the load completes (rare).
+import 'admin_screen.dart' deferred as admin_lib;
 import 'chat_list_screen.dart';
-import 'admin_vault_tab.dart';
+import 'admin_vault_tab.dart' deferred as vault_lib;
 import 'finance_screen.dart';
 import 'my_bookings_screen.dart';
 import 'opportunities_screen.dart';
@@ -21,13 +32,17 @@ import '../services/view_mode_service.dart';
 import '../services/ai_analysis_service.dart';
 import '../services/matchmaker_service.dart';
 import '../services/job_broadcast_service.dart';
+import '../services/flash_auction_service.dart';
+import '../models/flash_auction.dart';
 import '../services/opportunity_hunter_service.dart';
 import '../services/audio_service.dart';
 import '../services/cache_service.dart';
+import '../services/cached_readers.dart';
 import '../services/auth_service.dart';
 import 'chat_screen.dart';
+import 'expert_profile_screen.dart';
 import '../onboarding/app_tour.dart';
-import '../main.dart' show PendingNotification;
+import '../main.dart' show PendingNotification, PendingDeepLink;
 import 'home_tab.dart';
 import '../constants.dart' show resolveCanonicalCategory;
 import '../l10n/app_localizations.dart';
@@ -47,6 +62,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       List.generate(8, (_) => GlobalKey<NavigatorState>());
   // Admin status — read from Firestore `users/{uid}.isAdmin` (not email)
   bool _isAdmin = false;
+
+  // 🚀 Lazy-loaded admin libraries. Triggered in initState() once
+  // _isAdmin becomes true (or in the StreamBuilder if admin status
+  // arrives later). Both load in parallel. Cached forever once loaded.
+  Future<void>? _adminLoadFuture;
+  Future<void>? _vaultLoadFuture;
 
   // ── Tab caching — prevents rebuilding the entire IndexedStack on every
   //    user doc stream event (isOnline toggle, XP update, etc.)
@@ -82,11 +103,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   StreamSubscription<QuerySnapshot>? _bookingsCustSub;
   StreamSubscription<QuerySnapshot>? _bookingsExpertSub;
   StreamSubscription<QuerySnapshot>? _opportunitiesSub;
+  StreamSubscription<List<FlashAuction>>? _flashAuctionsSub;
   Timer? _chatBadgeTimer;
   final GlobalKey<dynamic> _chatListKey = GlobalKey();
 
-  String    _oppServiceType = '';   // cached to detect serviceType changes
-  Timestamp? _oppLastViewed;        // users/{uid}.lastViewedOpportunitiesAt
+  String _oppServiceType = '';      // cached to detect serviceType changes
+  /// Live count of relevant open `job_requests` (canonicalized category,
+  /// last 24h, excludes self-clients + already-declined). Combined with
+  /// `_flashAuctionsCount` to produce the bottom-nav badge.
+  int _jobRequestsCount = 0;
+  /// Live count of Flash Auction emergency dispatches where this provider
+  /// is in `notifiedProviderIds` AND hasn't yet submitted an offer.
+  int _flashAuctionsCount = 0;
 
   // Streams מאוחסנים ב-initState — מניעת subscribe/unsubscribe מחדש בכל rebuild
   late final Stream<DocumentSnapshot> _userStream;
@@ -165,6 +193,41 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       PendingNotification.clear();
     }
 
+    // ── Deep link from shared expert URL (?id=<uid>) ────────────────────
+    // Populated in main() by PendingDeepLink.parseFromUrl(). Pushes
+    // ExpertProfileScreen on top of Home AFTER the first frame so the
+    // Home tab is in the back-stack — back button returns to Home.
+    final pendingExpertId = PendingDeepLink.expertId;
+    if (pendingExpertId != null && pendingExpertId.isNotEmpty) {
+      // Clear immediately so a HomeScreen rebuild can't re-fire the push.
+      PendingDeepLink.clear();
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        // Best-effort name fetch (3s timeout) so the AppBar title isn't
+        // empty on open. Falls through to '' if Firestore is slow/down —
+        // ExpertProfileScreen loads everything else from its own stream.
+        String name = '';
+        try {
+          final doc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(pendingExpertId)
+              .get()
+              .timeout(const Duration(seconds: 3));
+          name = (doc.data()?['name'] as String?) ?? '';
+        } catch (_) {/* keep empty */}
+        if (!mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ExpertProfileScreen(
+              expertId: pendingExpertId,
+              expertName: name,
+            ),
+          ),
+        );
+      });
+    }
+
     if (uid != null) {
       // Badge: bookings needing customer approval
       _bookingsCustSub = FirebaseFirestore.instance
@@ -197,6 +260,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _bookingsCustSub?.cancel();
     _bookingsExpertSub?.cancel();
     _opportunitiesSub?.cancel();
+    _flashAuctionsSub?.cancel();
     _chatBadgeTimer?.cancel();
     super.dispose();
   }
@@ -208,6 +272,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         'isOnline': isOnline,
         'lastSeen': FieldValue.serverTimestamp(),
       }).catchError((e) => debugPrint("Status error: $e"));
+      // §61 invalidation: online dot/badge is shown on search cards via
+      // CachedReaders.providerProfile — keep it fresh after toggling.
+      CachedReaders.invalidateProvider(uid);
 
       // v9.9.0: Start/stop location broadcasting for map view
       if (isOnline) {
@@ -372,11 +439,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           });
         }
 
-        // Setup opportunities badge whenever serviceType or lastViewed timestamp changes
-        final lastViewed = data['lastViewedOpportunitiesAt'] as Timestamp?;
-        if (isProvider && (serviceType != _oppServiceType || lastViewed != _oppLastViewed)) {
+        // Setup opportunities badge whenever serviceType changes. The badge
+        // counts CURRENTLY-RELEVANT open opportunities (matching the bell
+        // semantics) — no longer filters by `lastViewedOpportunitiesAt`.
+        if (isProvider && serviceType != _oppServiceType) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _setupOpportunitiesBadge(serviceType, lastViewed);
+            if (mounted) _setupOpportunitiesBadge(serviceType);
           });
         }
 
@@ -436,8 +504,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             )));
           }
           if (effectiveAdmin) {
-            newTabs.add(_nestedTab(6, const AdminScreen()));
-            newTabs.add(_nestedTab(7, const AdminVaultTab()));
+            // 🚀 Pre-load deferred admin chunks (idempotent — Dart caches
+            // the result, so calling loadLibrary() multiple times is safe).
+            _adminLoadFuture ??= admin_lib.loadLibrary();
+            _vaultLoadFuture ??= vault_lib.loadLibrary();
+            newTabs.add(_nestedTab(6, _LazyAdminTab(
+              future: _adminLoadFuture!,
+              builder: () => admin_lib.AdminScreen(),
+            )));
+            newTabs.add(_nestedTab(7, _LazyAdminTab(
+              future: _vaultLoadFuture!,
+              builder: () => vault_lib.AdminVaultTab(),
+            )));
           }
           _cachedTabs = newTabs;
         }
@@ -579,27 +657,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 duration: const Duration(milliseconds: 150),
                 child: IgnorePointer(
                   ignoring: !homeAtRoot,
-                  child: Transform.scale(
-                    scale: 0.8,
-                    child: FloatingActionButton.extended(
-                      onPressed: () => _showQuickRequestSheet(context, data),
-                      label: const Text(
-                        'חיפוש דחוף',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                          letterSpacing: 0.2,
-                        ),
-                      ),
-                      icon: const Icon(Icons.search_rounded, color: Colors.white, size: 16),
-                      backgroundColor: const Color(0xFF6366F1),
-                      foregroundColor: Colors.white,
-                      elevation: 3,
-                      extendedPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(50),
-                      ),
-                    ),
+                  child: _GlassUrgentSearchButton(
+                    onTap: () => _showQuickRequestSheet(context, data),
                   ),
                 ),
               ),
@@ -644,44 +703,101 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return pos + 1;                          // no Opp: pos5→key6(Admin), pos6→key7(System)
   }
 
-  /// (Re)builds the opportunities badge stream when serviceType or lastViewed changes.
-  void _setupOpportunitiesBadge(String serviceType, Timestamp? lastViewed) {
+  /// (Re)builds the opportunities-badge streams whenever the provider's
+  /// `serviceType` changes. Counts ALL currently-relevant open work —
+  /// matches the user-intent "אם יש עבודה בהזדמנויות תראה את הכמות"
+  /// (and the notification-bell pattern: the number reflects live state,
+  /// not "new since last viewed").
+  ///
+  /// Two live streams feed `_opportunitiesBadge`:
+  ///   1. `job_requests` matching the canonicalized category, last 24h,
+  ///      filtered client-side to skip self-clients, already-declined,
+  ///      and inactive requests (mirrors the OpportunitiesScreen filter).
+  ///   2. Flash Auctions where this provider is in `notifiedProviderIds`
+  ///      AND hasn't already responded — emergency motorcycle dispatch
+  ///      (CLAUDE.md §57). Filter step subtracts auctions the provider
+  ///      already submitted an offer to so the badge doesn't stick.
+  void _setupOpportunitiesBadge(String serviceType) {
     _oppServiceType = serviceType;
-    _oppLastViewed  = lastViewed;
     _opportunitiesSub?.cancel();
+    _flashAuctionsSub?.cancel();
 
-    if (serviceType.isEmpty) {
-      if (mounted) setState(() => _opportunitiesBadge = 0);
+    final uid = currentUser?.uid;
+    if (uid == null || serviceType.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _jobRequestsCount = 0;
+          _flashAuctionsCount = 0;
+          _opportunitiesBadge = 0;
+        });
+      }
       return;
     }
 
-    var query = FirebaseFirestore.instance
+    // Stream 1 — open job_requests in the provider's canonical category.
+    // Canonicalize so AI-generated names like 'כושר ואימון' resolve to the
+    // canonical 'אימון כושר' that customers actually post jobs under.
+    final canonical = resolveCanonicalCategory(serviceType);
+    final cutoff = Timestamp.fromDate(
+        DateTime.now().subtract(const Duration(hours: 24)));
+    _opportunitiesSub = FirebaseFirestore.instance
         .collection('job_requests')
         .where('status', isEqualTo: 'open')
-        .where('category', isEqualTo: serviceType);
-
-    if (lastViewed != null) {
-      query = query.where('createdAt', isGreaterThan: lastViewed);
-    }
-
-    _opportunitiesSub = query.limit(100).snapshots().listen((s) {
-      if (mounted) setState(() => _opportunitiesBadge = s.docs.length);
+        .where('category', isEqualTo: canonical)
+        .where('createdAt', isGreaterThan: cutoff)
+        .limit(100)
+        .snapshots()
+        .listen((s) {
+      final count = s.docs.where((doc) {
+        final d = doc.data();
+        if (d['isActive'] == false) return false;
+        if ((d['clientId'] ?? '') == uid) return false;
+        final declined = (d['declinedProviders'] as List?) ?? const [];
+        if (declined.contains(uid)) return false;
+        return true;
+      }).length;
+      if (mounted) {
+        setState(() {
+          _jobRequestsCount = count;
+          _opportunitiesBadge = _jobRequestsCount + _flashAuctionsCount;
+        });
+      }
     });
-  }
 
-  /// Called when provider enters the Opportunities tab — resets badge and
-  /// persists the "last viewed" timestamp to Firestore.
-  Future<void> _markOpportunitiesSeen() async {
-    if (_opportunitiesBadge == 0) return;
-    setState(() => _opportunitiesBadge = 0);
-    final uid = currentUser?.uid;
-    if (uid == null) return;
-    final now = Timestamp.now();
-    await FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .update({'lastViewedOpportunitiesAt': now});
-    _setupOpportunitiesBadge(_oppServiceType, now);
+    // Stream 2 — Flash Auctions where this provider was notified and the
+    // auction is still live (searching/has_offers). Filter out auctions
+    // where the provider already responded so the badge accurately
+    // reflects pending-action items.
+    _flashAuctionsSub =
+        FlashAuctionService.watchActiveAuctionsForProvider(uid).listen(
+      (auctions) async {
+        // Only count Flash Auctions the provider hasn't replied to. Reading
+        // the offer subcollection per auction is bounded (≤20 auctions per
+        // stream emit per service contract) — cheap enough for a badge.
+        int pending = 0;
+        for (final a in auctions) {
+          try {
+            final mySnap = await FirebaseFirestore.instance
+                .collection('flash_auctions')
+                .doc(a.id)
+                .collection('offers')
+                .where('providerId', isEqualTo: uid)
+                .limit(1)
+                .get();
+            if (mySnap.docs.isEmpty) pending += 1;
+          } catch (_) {
+            // Network error → still count it; better to over-notify than miss.
+            pending += 1;
+          }
+        }
+        if (mounted) {
+          setState(() {
+            _flashAuctionsCount = pending;
+            _opportunitiesBadge = _jobRequestsCount + _flashAuctionsCount;
+          });
+        }
+      },
+    );
   }
 
   /// v9.6.3: Polls chat unread count via one-shot get() instead of a
@@ -735,7 +851,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             _selectedIndex = pos;
             if (pos == 1) _bookingsLastCleared = _bookingsBadge;
           });
-          if (isProvider && pos == oppTabPos) _markOpportunitiesSeen();
+          // Opportunities tab tap no longer resets the badge — the badge now
+          // counts LIVE open work (job_requests + Flash Auctions) and stays
+          // until the provider actually claims/declines each opportunity.
           // v9.6.4: Trigger immediate refresh when switching to Messages tab
           if (pos == 2) {
             try {
@@ -1936,4 +2054,227 @@ class _HomeRouteObserver extends NavigatorObserver {
   void didReplace({Route? newRoute, Route? oldRoute}) => onChanged();
   @override
   void didRemove(Route route, Route? previousRoute) => onChanged();
+}
+
+/// Glassmorphism "Urgent Search" FAB with breathing halos.
+///
+/// Flutter translation of the CSS reference:
+///   • `backdrop-filter: blur(20) saturate(180%)` → BackdropFilter + ImageFilter.blur
+///   • `rgba(255,255,255,.18)` fill + `.35` border → Colors.white.withValues(alpha:)
+///   • `::before / ::after` halos staggered by half-cycle → two AnimatedBuilder
+///     layers reading `(t)` and `((t + 0.5) % 1.0)` from a single 2500ms
+///     repeating controller (cheaper than two separate controllers).
+///   • `ease-in-out` timing → `Curves.easeInOut.transform(t)` applied to the
+///     raw linear progress before interpolating scale (1.0→1.5) + opacity
+///     (0.6→0.0).
+///
+/// The halos render BEHIND the button via `Stack(clipBehavior: Clip.none)`
+/// + `Positioned.fill` — they expand 1.5× the button bounds and must not
+/// be clipped to the Stack. `IgnorePointer` on each halo keeps the tap
+/// target pinned to the button.
+class _GlassUrgentSearchButton extends StatefulWidget {
+  const _GlassUrgentSearchButton({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  State<_GlassUrgentSearchButton> createState() =>
+      _GlassUrgentSearchButtonState();
+}
+
+class _GlassUrgentSearchButtonState extends State<_GlassUrgentSearchButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _haloCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _haloCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2500),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _haloCtrl.dispose();
+    super.dispose();
+  }
+
+  Widget _halo(double phaseOffset) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: AnimatedBuilder(
+          animation: _haloCtrl,
+          builder: (_, __) {
+            final t = (_haloCtrl.value + phaseOffset) % 1.0;
+            final eased = Curves.easeInOut.transform(t);
+            final scale = 1.0 + 0.5 * eased;   // 1.0 → 1.5
+            final opacity = 0.6 * (1.0 - eased); // 0.6 → 0
+            return Transform.scale(
+              scale: scale,
+              child: Opacity(
+                opacity: opacity,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.25),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.center,
+      children: [
+        // Halo 1 — starts at phase 0
+        _halo(0.0),
+        // Halo 2 — starts at phase 0.5 (1.25s into the 2.5s cycle)
+        _halo(0.5),
+        // Glass pill button (non-positioned → defines Stack size)
+        Material(
+          color: Colors.transparent,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+              child: InkWell(
+                onTap: widget.onTap,
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  padding: const EdgeInsetsDirectional.symmetric(
+                    horizontal: 22,
+                    vertical: 11,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.35),
+                      width: 1,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.15),
+                        blurRadius: 20,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  // inner top highlight (CSS: inset 0 1px 0 rgba(255,255,255,.2))
+                  foregroundDecoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    border: const Border(
+                      top: BorderSide(color: Color(0x33FFFFFF), width: 1),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(
+                        Icons.search_rounded,
+                        color: Color(0xFF1E1B4B),
+                        size: 16,
+                      ),
+                      SizedBox(width: 8),
+                      Text(
+                        'חיפוש דחוף',
+                        textDirection: TextDirection.rtl,
+                        style: TextStyle(
+                          color: Color(0xFF1E1B4B),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🚀 Lazy-loaded admin tab wrapper.
+//
+// The AdminScreen + AdminVaultTab pull in 23+ admin tab files (~30-50%
+// of main.dart.js, per docs/work_plan/bundle_analysis_2026-05-09.md).
+// Most users (99%+) never visit these. Deferred imports defer the
+// download until an admin actually signs in.
+//
+// Behavior: while the deferred chunk is loading (typically <1s on a
+// good connection), shows a centered indigo spinner. Once loaded, the
+// FutureBuilder switches to the real screen. After first load, the
+// chunk is cached forever — subsequent renders are instant.
+//
+// On load failure (e.g., network error fetching the JS chunk), shows
+// a friendly Hebrew error with a retry hint.
+// ─────────────────────────────────────────────────────────────────────────────
+class _LazyAdminTab extends StatelessWidget {
+  const _LazyAdminTab({required this.future, required this.builder});
+
+  final Future<void> future;
+  final Widget Function() builder;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<void>(
+      future: future,
+      builder: (context, snap) {
+        if (snap.hasError) {
+          return Scaffold(
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.error_outline,
+                        size: 48, color: Color(0xFFEF4444)),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'שגיאה בטעינת פאנל הניהול',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'אנא רענן את הדף ונסה שוב.',
+                      style: TextStyle(fontSize: 13, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+        if (snap.connectionState != ConnectionState.done) {
+          return const Scaffold(
+            body: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(color: Color(0xFF6366F1)),
+                  SizedBox(height: 12),
+                  Text('טוען פאנל ניהול...', style: TextStyle(color: Colors.grey)),
+                ],
+              ),
+            ),
+          );
+        }
+        return builder();
+      },
+    );
+  }
 }

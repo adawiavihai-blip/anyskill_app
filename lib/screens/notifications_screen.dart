@@ -3,10 +3,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../l10n/app_localizations.dart';
+import '../services/cached_readers.dart';
+import '../services/notification_router.dart';
 import '../services/volunteer_service.dart';
 import '../services/job_broadcast_service.dart';
 import 'chat_screen.dart';
-import 'provider_ai_insights_screen.dart';
 import 'support/csat_survey_modal.dart';
 
 class NotificationsScreen extends StatefulWidget {
@@ -26,12 +27,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   @override
   void initState() {
     super.initState();
+    // Law 21 — every Firestore stream feeding a screen body MUST have a
+    // timeout fallback so a stalled WebChannel / missing index / cold
+    // connect surfaces as an empty/error state instead of an infinite
+    // spinner. The bell-inbox stuck-on-spinner bug surfaces here when the
+    // first snapshot never arrives within ~8s.
     _stream = FirebaseFirestore.instance
         .collection('notifications')
         .where('userId', isEqualTo: _uid)
         .orderBy('createdAt', descending: true)
         .limit(50)
-        .snapshots();
+        .snapshots()
+        .timeout(
+      const Duration(seconds: 8),
+      onTimeout: (sink) => sink.addError('notifications_stream_timeout_8s'),
+    );
 
     // Mark all as read when the screen opens so the badge resets immediately
     WidgetsBinding.instance.addPostFrameCallback((_) => _markAllRead());
@@ -101,87 +111,82 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     _navigate(type, title, data);
   }
 
-  void _navigate(String type, String title, Map<String, dynamic> data) {
+  Future<void> _navigate(
+      String type, String title, Map<String, dynamic> data) async {
+    // Legacy heuristic: older notifications sometimes only had a Hebrew
+    // title and no explicit type for AI insights. Normalize to 'ai_insight'
+    // so the router recognises them.
     final titleLower = title.toLowerCase();
-    final isAiNotif  = type == 'ai_insight' ||
-        type == 'ai_suggestion' ||
-        type == 'pro_granted'   ||
-        titleLower.contains('ai') ||
+    final looksLikeAi = titleLower.contains('ai') ||
         title.contains('בינה') ||
         title.contains('מצא דרך') ||
         title.contains('Pro');
+    final effectiveType = (type == 'general' && looksLikeAi)
+        ? 'ai_insight'
+        : type;
+    final payload =
+        Map<String, dynamic>.from(data)..['type'] = effectiveType;
 
-    if (isAiNotif) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => const ProviderAiInsightsScreen(),
-        ),
-      );
-      return;
-    }
-
-    // ── Volunteer flow notifications ──────────────────────────────────────
-    final relatedUserId = data['relatedUserId'] as String? ?? '';
-    final category = data['category'] as String? ?? '';
-
-    if (type == 'help_request' && relatedUserId.isNotEmpty) {
-      // Volunteer received a help request → show accept sheet
-      _showVolunteerAcceptSheet(relatedUserId, category);
-      return;
-    }
-
-    if ((type == 'volunteer_accepted' || type == 'volunteer_completed')
-        && relatedUserId.isNotEmpty) {
-      // Open chat with the related user
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ChatScreen(
-            receiverId: relatedUserId,
-            receiverName: data['body'] as String? ?? '',
-          ),
-        ),
-      );
-      return;
-    }
-
-    // ── Broadcast urgent → show claim sheet ────────────────────────────────
-    if (type == 'broadcast_urgent') {
-      final broadcastId = data['broadcastId'] as String? ?? '';
-      if (broadcastId.isNotEmpty) {
+    // ── Screen-local modals (router returns false for these) ─────────────
+    // Broadcast claim sheet + volunteer accept sheet + CSAT modal all need
+    // this screen's services (JobBroadcastService, VolunteerService, the
+    // local BuildContext) — keep them here, not in the router.
+    if (effectiveType == 'broadcast_urgent') {
+      final broadcastId = _readField(data, ['broadcastId']);
+      if (broadcastId != null && broadcastId.isNotEmpty) {
         _showBroadcastClaimSheet(broadcastId);
       }
       return;
     }
-
-    // ── Broadcast claimed → open chat with provider ───────────────────────
-    if (type == 'broadcast_claimed' && relatedUserId.isNotEmpty) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ChatScreen(
-            receiverId: relatedUserId,
-            receiverName: '',
-          ),
-        ),
-      );
+    if (effectiveType == 'help_request') {
+      final relatedUserId =
+          _readField(data, ['relatedUserId', 'senderId']) ?? '';
+      final category = _readField(data, ['category']) ?? '';
+      if (relatedUserId.isNotEmpty) {
+        _showVolunteerAcceptSheet(relatedUserId, category);
+      }
       return;
     }
-
-    // ── CSAT survey → show rating modal (v11.9.x) ─────────────────────────
-    if (type == 'csat_survey') {
-      // Notification's `data` field can contain the ticketId, OR (legacy)
-      // it might be at the top level. Check both.
-      final nestedData = data['data'] as Map<String, dynamic>? ?? {};
-      final ticketId = (nestedData['ticketId'] as String?) ??
-          (data['ticketId'] as String?) ??
-          '';
+    if (effectiveType == 'csat_survey') {
+      final ticketId = _readField(data, ['ticketId']) ?? '';
       if (ticketId.isNotEmpty) {
         showCsatSurveyModal(context: context, ticketId: ticketId);
       }
       return;
     }
+
+    // ── Everything else → shared smart router ────────────────────────────
+    final handled = await NotificationRouter.route(context, payload);
+    if (!handled && mounted) {
+      // Unknown type — show a gentle toast so the user knows the tap did
+      // something (vs silent no-op which feels broken).
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('ההתראה נפתחה. ניתן לחזור מאוחר יותר.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  /// Reads a field from EITHER the top level OR the nested `data` map —
+  /// same semantics as NotificationRouter._extractField, but local here
+  /// so the 3 modal branches above don't depend on the router.
+  String? _readField(Map<String, dynamic> raw, List<String> keys) {
+    for (final k in keys) {
+      final v = raw[k];
+      if (v is String && v.isNotEmpty) return v;
+      if (v != null && v.toString().isNotEmpty) return v.toString();
+    }
+    final nested = raw['data'];
+    if (nested is Map) {
+      for (final k in keys) {
+        final v = nested[k];
+        if (v is String && v.isNotEmpty) return v;
+        if (v != null && v.toString().isNotEmpty) return v.toString();
+      }
+    }
+    return null;
   }
 
   // ── Broadcast Claim Sheet ──────────────────────────────────────────────────
@@ -334,11 +339,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   // ── Volunteer Accept Sheet ──────────────────────────────────────────────
 
   void _showVolunteerAcceptSheet(String clientId, String category) async {
-    // Fetch client info
-    final clientDoc = await FirebaseFirestore.instance
-        .collection('users').doc(clientId).get();
-    final clientData = clientDoc.data() ?? {};
-    final clientName = clientData['name'] as String? ?? AppLocalizations.of(context).notifDefaultClient;
+    // Capture localized strings BEFORE async gaps (Section 9 async-safe pattern)
+    final defaultClientName = AppLocalizations.of(context).notifDefaultClient;
+    // §66: cached read — 5min TTL via §61. Notification taps for the
+    // same client (multiple urgent broadcasts during a busy hour) reuse
+    // the same fetch instead of paying network round-trip per tap.
+    final clientData = await CachedReaders.providerProfile(clientId);
+    final clientName = clientData['name'] as String? ?? defaultClientName;
 
     // Find the open help_request from this client in this category
     final helpSnap = await FirebaseFirestore.instance

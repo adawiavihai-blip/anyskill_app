@@ -104,7 +104,7 @@ class AppTour {
 /// ```dart
 /// AnyShowcase(
 ///   tourKey: tourClientSearchKey,
-///   title: '🔍 חיפוש מומחים',
+///   title: '🔍 חיפוש נותני שירות',
 ///   description: 'הקלידו שם, קטגוריה, או מיקום',
 ///   child: MySearchBar(),
 /// )

@@ -26,6 +26,106 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ─── Step 0: Pre-flight (CLAUDE.md §68) ──────────────────────────────────
+  # Cheap, fast-fail checks BEFORE the expensive Flutter / Jest / Emulator
+  # jobs run. Catches:
+  #   - functions/index.js syntax errors (node -c, < 1s)
+  #   - Malformed JSON in config files (firestore.indexes.json, firebase.json,
+  #     pubspec.lock, .firebaserc) — broken JSON causes silent deploy
+  #     failures that take minutes to surface in the heavier jobs.
+  #   - Accidental commits of .env files with secrets (security guard).
+  #
+  # Parallel to the heavy jobs — not a `needs:` dependency, just early
+  # signal. ~30 seconds total wall-clock.
+  preflight:
+    name: Pre-flight (syntax + JSON)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Cloud Functions syntax check (node -c)
+        run: node -c functions/index.js
+
+      - name: Validate JSON config files
+        # Note: firestore.indexes.json uses JSONC (with // line comments) so
+        # we use a tolerant parse for it. Strict pure-JSON for firebase.json
+        # + .firebaserc which Firebase tooling expects to be parseable by
+        # standard JSON.parse.
+        run: |
+          set -e
+          # Strict JSON files (no comments allowed)
+          for f in firebase.json .firebaserc functions/package.json; do
+            if [ -f "$f" ]; then
+              node -e "JSON.parse(require('fs').readFileSync('$f', 'utf8'))" \
+                && echo "✓ $f" \
+                || (echo "✗ $f is malformed JSON" && exit 1)
+            fi
+          done
+          # JSONC files (// comments OK) — strip line comments before parse.
+          # Audit fix (post-§75 review): the original regex `^\s*\/\/.*$`
+          # only handled FULL-LINE comments. Trailing comments like
+          # `"key": "value", // trailing` would still break JSON.parse.
+          # The new regex strips both, while staying defensive against
+          # `//` appearing inside strings (rare in config but possible).
+          for f in firestore.indexes.json; do
+            if [ -f "$f" ]; then
+              node -e "
+                const fs = require('fs');
+                const raw = fs.readFileSync('$f', 'utf8');
+                // Strip line comments — anywhere on a line, but only
+                // when NOT inside a string literal. Walk the file
+                // character-by-character to track string state.
+                let out = '';
+                let inStr = false;
+                let escape = false;
+                for (let i = 0; i < raw.length; i++) {
+                  const c = raw[i];
+                  if (inStr) {
+                    out += c;
+                    if (escape) { escape = false; continue; }
+                    if (c === '\\\\') { escape = true; continue; }
+                    if (c === '\"') inStr = false;
+                  } else if (c === '\"') {
+                    inStr = true;
+                    out += c;
+                  } else if (c === '/' && raw[i+1] === '/') {
+                    // Skip until end-of-line.
+                    while (i < raw.length && raw[i] !== '\\n') i++;
+                    if (raw[i] === '\\n') out += '\\n';
+                  } else {
+                    out += c;
+                  }
+                }
+                JSON.parse(out);
+              " \
+                && echo "✓ $f (JSONC)" \
+                || (echo "✗ $f is malformed JSONC" && exit 1)
+            fi
+          done
+
+      - name: Guard against committed secrets (.env files)
+        run: |
+          if git ls-files | grep -E '(^|/)\.env(\.|$)'; then
+            echo "ERROR: Committed .env file detected. Remove and rotate secrets."
+            exit 1
+          fi
+          echo "✓ No committed .env files"
+
+      - name: Guard against committed service account keys
+        run: |
+          if git ls-files | grep -E 'service-account.*\.json$|firebase-adminsdk.*\.json$'; then
+            echo "ERROR: Service account key detected in git. Rotate immediately."
+            exit 1
+          fi
+          echo "✓ No committed service account keys"
+
   # ─── Step 1: Analyze + Test ───────────────────────────────────────────────
   test:
     name: Analyze & Test
@@ -54,13 +154,117 @@ jobs:
       - name: Analyze (must be 0 errors)
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
-      - name: Run unit tests
-        run: flutter test test/unit/ --reporter expanded
+      - name: Run unit tests with coverage
+        run: flutter test test/unit/ --reporter expanded --coverage
+
+      # Widget tests (CLAUDE.md §64 + §65).
+      # Full `test/widget/` glob is now safe because §65 extracted every
+      # web-only import (`dart:html`, `dart:js_interop`, `package:web`,
+      # `dart:ui_web`) behind conditional-import bridges:
+      #   - sound_studio/tabs/audio_file_picker.dart
+      #   - sound_studio/tabs/_csv_downloader.dart
+      #   - _did_iframe_registry.dart
+      # Test VM picks the stub variant; web build picks the real impl.
+      - name: Run widget tests
+        run: flutter test test/widget/ --reporter expanded
+
+      - name: Upload Flutter coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-coverage
+          path: coverage/lcov.info
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ─── Step 1c: Cloud Functions Tests ──────────────────────────────────────
+  # 258 tests covering ALL 43 CFs in functions/index.js across 3 handler
+  # types: callable, onDocumentX trigger, onSchedule. Heavy mocking of
+  # firebase-admin so tests run in ~2s without an emulator. Per-test
+  # coverage reports uploaded as CI artifacts.
+  # See functions/__tests__/auth.test.js + TESTING.md for details.
+  cf-tests:
+    name: Cloud Functions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Run CF tests with coverage
+        working-directory: functions
+        run: npx jest __tests__/auth.test.js --coverage --coverageReporters=text-summary --coverageReporters=lcov
+
+      - name: Upload CF coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cf-coverage
+          path: functions/coverage/lcov.info
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ─── Step 1b: Firestore + Storage Rules Tests ────────────────────────────
+  # Security regression net for firestore.rules + storage.rules.
+  # Maps to CLAUDE.md §50 (security audit). Runs against the Firebase
+  # Emulator Suite — no network calls, deterministic in seconds.
+  # See firestore-rules-tests/README.md for the full coverage matrix.
+  rules-tests:
+    name: Firestore Rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 21 (required by Firestore Emulator)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: firestore-rules-tests/package-lock.json
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools@15
+
+      - name: Cache Firebase Emulator JARs
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-v1
+
+      - name: Install rules-tests dependencies
+        working-directory: firestore-rules-tests
+        run: npm ci
+
+      - name: Run rules tests
+        run: |
+          firebase emulators:exec \
+            --only firestore,storage \
+            --project=anyskill-rules-tests \
+            "cd firestore-rules-tests && npm test"
 
   # ─── Step 2: Build Web ───────────────────────────────────────────────────
   build:
     name: Build Web
-    needs: test
+    needs: [test, rules-tests, cf-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Only build on push (not on PR — PR just tests)
@@ -90,6 +294,30 @@ jobs:
           flutter build web --release \
             --dart-define=STRIPE_PUBLISHABLE_KEY=${{ secrets.STRIPE_PUBLISHABLE_KEY }}
 
+      # ─── Bundle size check ───────────────────────────────────────────────
+      # Catches accidental bundle bloat (e.g., a misimported library that
+      # adds 5MB to main.dart.js). Soft fail — prints to log + summary, but
+      # doesn't block the build until we have stable historical data.
+      - name: Report bundle size
+        run: |
+          echo "## 📦 Bundle Size Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Asset | Size |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|------|" >> $GITHUB_STEP_SUMMARY
+          TOTAL=$(du -sh build/web | cut -f1)
+          MAIN=$(du -sh build/web/main.dart.js 2>/dev/null | cut -f1 || echo "n/a")
+          CANVASKIT=$(du -sh build/web/canvaskit 2>/dev/null | cut -f1 || echo "n/a")
+          echo "| **Total** | $TOTAL |" >> $GITHUB_STEP_SUMMARY
+          echo "| main.dart.js | $MAIN |" >> $GITHUB_STEP_SUMMARY
+          echo "| canvaskit/ | $CANVASKIT |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Warn if main.dart.js exceeds 15MB (current ~9MB, room for growth)
+          MAIN_BYTES=$(stat -c '%s' build/web/main.dart.js 2>/dev/null || echo 0)
+          if [ "$MAIN_BYTES" -gt 15728640 ]; then
+            echo "::warning::main.dart.js is $MAIN ($MAIN_BYTES bytes) — exceeds 15MB threshold"
+          fi
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -97,10 +325,58 @@ jobs:
           path: build/web
           retention-days: 3
 
+  # ─── Step 2b: Lighthouse CI (perf + a11y + SEO + best-practices) ─────────
+  # Quality gate before deploy. Runs against a localhost server fed by the
+  # build artifact. Catches:
+  #   - Performance regressions (LCP, CLS, TBT, Speed Index)
+  #   - Accessibility regressions (WCAG-equivalent automated checks)
+  #   - SEO regressions (meta tags, robots.txt, semantic HTML)
+  #   - Best-practices violations (HTTPS, vulnerable libs, console errors)
+  # Reports are uploaded to temporary public storage; URL appears in job log.
+  # Budgets in .lighthouserc.json — currently warn-only, tighten over time.
+  lighthouse:
+    name: Lighthouse CI
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: build/web
+
+      - name: Install Lighthouse CI + serve
+        run: npm install -g @lhci/cli@0.14 serve
+
+      - name: Run Lighthouse CI
+        run: |
+          # Start a local server in the background to serve the build
+          serve -l 5000 build/web &
+          SERVE_PID=$!
+          # Wait for server readiness
+          until curl -sf http://localhost:5000/ > /dev/null; do sleep 1; done
+          echo "Server ready on :5000"
+          # Run Lighthouse against it (config in .lighthouserc.json)
+          lhci autorun --config=.lighthouserc.json || LHCI_EXIT=$?
+          # Stop server
+          kill $SERVE_PID || true
+          # Use the LHCI exit code (warn = 0, error = 1)
+          exit ${LHCI_EXIT:-0}
+
   # ─── Step 3a: Deploy to STAGING ──────────────────────────────────────────
   deploy-staging:
     name: Deploy → Staging
-    needs: build
+    needs: [build, lighthouse]   # gate deploys on Lighthouse quality scores
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/staging'
     environment: staging
@@ -125,7 +401,7 @@ jobs:
   # ─── Step 3b: Deploy to PRODUCTION ───────────────────────────────────────
   deploy-production:
     name: Deploy → Production
-    needs: build
+    needs: [build, lighthouse]   # gate prod deploys on Lighthouse quality scores
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master'
     environment: production

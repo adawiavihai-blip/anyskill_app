@@ -15,6 +15,7 @@ import 'utils/web_utils.dart';
 import 'services/permission_service.dart';
 import 'services/locale_provider.dart';
 import 'services/cache_service.dart';
+import 'services/cached_readers.dart';
 import 'services/audio_service.dart';
 import 'services/offline_message_queue.dart';
 import 'services/private_data_service.dart';
@@ -123,6 +124,47 @@ class PendingNotification {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PendingDeepLink — captures `?id=<uid>` deep-link targets parsed from the
+// page URL on cold start. Today we only handle the expert profile share
+// link (`https://anyskill-6fdf3.web.app/#/expert?id=<uid>` — see the share
+// button in expert_profile_screen.dart). Populated once in main() from
+// Uri.base; consumed in HomeScreen.initState in a post-frame callback that
+// pushes ExpertProfileScreen on top of Home and then `clear()`s.
+//
+// Web-only — native builds don't yet have URL routing wired up.
+// ─────────────────────────────────────────────────────────────────────────────
+class PendingDeepLink {
+  static String? expertId;
+
+  /// Parse the current page URL and capture any deep-link target.
+  /// No-op on native + on malformed URLs.
+  static void parseFromUrl() {
+    if (!kIsWeb) return;
+    try {
+      // Flutter web defaults to hash strategy, so the path lives in the
+      // fragment. Example URL parts:
+      //   Uri.base                = https://anyskill-6fdf3.web.app/#/expert?id=ABC
+      //   Uri.base.fragment       = "/expert?id=ABC"
+      final fragment = Uri.base.fragment;
+      if (fragment.isEmpty) return;
+      // Sub-parse the fragment as its own Uri so we can read path+query.
+      final fragUri = Uri.parse(fragment);
+      // Accept both "/expert" and "expert" paths (defensive).
+      final path = fragUri.path;
+      if (path != '/expert' && path != 'expert') return;
+      final id = fragUri.queryParameters['id']?.trim() ?? '';
+      if (id.isNotEmpty) {
+        expertId = id;
+      }
+    } catch (_) {/* malformed URL — silently ignore */}
+  }
+
+  static void clear() {
+    expertId = null;
+  }
+}
+
 // ── Background isolate handler ────────────────────────────────────────────────
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -190,6 +232,32 @@ Future<void> _ensureProfileExists(User user) async {
       phone: user.phoneNumber ?? '',
       email: user.email ?? '',
     );
+    // Activity_log entry — make sure this signup also appears in the admin
+    // Live Activity tab. Best-effort; identical schema to the phone-login +
+    // OTP paths so all signups are uniformly visible to the admin.
+    final providerId = user.providerData.isNotEmpty
+        ? user.providerData.first.providerId
+        : 'unknown';
+    final providerLabelHe = switch (providerId) {
+      'google.com' => 'Google',
+      'apple.com'  => 'Apple',
+      'phone'      => 'טלפון',
+      _            => providerId,
+    };
+    unawaited(FirebaseFirestore.instance.collection('activity_log').add({
+      'type':           'registration',
+      'userId':         user.uid,
+      'name':           user.displayName ?? '',
+      'phone':          user.phoneNumber ?? '',
+      'email':          user.email ?? '',
+      'signInProvider': providerId,
+      'role':           'customer',
+      'priority':       'normal',
+      'createdAt':      FieldValue.serverTimestamp(),
+      'message':        'משתמש חדש נרשם דרך $providerLabelHe: ${user.displayName ?? ""}',
+      'expireAt':       Timestamp.fromDate(
+          DateTime.now().add(const Duration(days: 30))),
+    }));
     // ignore: avoid_print
     print('✅ [Profile] Created for ${user.uid}');
   } catch (e) {
@@ -218,6 +286,12 @@ Future<void> _handleWebRedirectResult() async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // ── Step 0: parse any deep-link target from the URL (web only) ───────────
+  // Reads `?id=<uid>` from the page URL fragment and stores it in
+  // PendingDeepLink. HomeScreen.initState consumes it after auth completes.
+  // Web-only — no-op on native. Independent of Firebase/auth, so it runs
+  // first to capture the URL even if a later step fails.
+  PendingDeepLink.parseFromUrl();
 
   // ── Steps 1+2: PackageInfo + Locale (parallel — saves ~100ms) ─────────────
   await Future.wait([
@@ -1483,11 +1557,11 @@ class _OnboardingGateState extends State<OnboardingGate> {
           if (isProvider || isVerified) {
             debugPrint('[OnboardingGate] Provider/verified missing phone — '
                 'showing phone-only screen');
-            return _PhoneCollectionScreen(existingData: data);
+            return PhoneCollectionScreen(existingData: data);
           }
           if (hasRole) {
             debugPrint('[OnboardingGate] Customer missing phone — phone-only screen');
-            return _PhoneCollectionScreen(existingData: data);
+            return PhoneCollectionScreen(existingData: data);
           }
           debugPrint('[OnboardingGate] New user missing phone — onboarding');
           return const OnboardingScreen();
@@ -1504,7 +1578,7 @@ class _OnboardingGateState extends State<OnboardingGate> {
         if (email.isEmpty && phone.isNotEmpty && hasRole
             && !emailRecentlySkipped) {
           debugPrint('[OnboardingGate] Phone user missing email — email-collection screen');
-          return _EmailCollectionScreen(existingData: data);
+          return EmailCollectionScreen(existingData: data);
         }
 
         // ── PRIORITY 6: PERMISSIONS ──────────────────────────────────────
@@ -1573,15 +1647,31 @@ class _SplashLogoState extends State<_SplashLogo>
 ///
 /// "Skip for now" writes `phonePromptSkippedAt` so OnboardingGate honors
 /// a 7-day cooldown before re-prompting.
-class _PhoneCollectionScreen extends StatefulWidget {
+class PhoneCollectionScreen extends StatefulWidget {
   final Map<String, dynamic> existingData;
-  const _PhoneCollectionScreen({required this.existingData});
+
+  /// When provided, called instead of `pushAndRemoveUntil(HomeScreen)` after
+  /// a successful phone link. Use this when you want the screen to simply
+  /// pop back to the caller (e.g. the Edit Profile flow). The callback runs
+  /// AFTER `users/{uid}.phone` + `phoneVerifiedAt` have been persisted.
+  final VoidCallback? onSuccess;
+
+  /// When false, hides the "מאוחר יותר" skip button. Used by the Edit
+  /// Profile entry where phone verification is mandatory.
+  final bool showSkipButton;
+
+  const PhoneCollectionScreen({
+    super.key,
+    required this.existingData,
+    this.onSuccess,
+    this.showSkipButton = true,
+  });
 
   @override
-  State<_PhoneCollectionScreen> createState() => _PhoneCollectionScreenState();
+  State<PhoneCollectionScreen> createState() => _PhoneCollectionScreenState();
 }
 
-class _PhoneCollectionScreenState extends State<_PhoneCollectionScreen> {
+class _PhoneCollectionScreenState extends State<PhoneCollectionScreen> {
   final _phoneCtrl = TextEditingController();
   final _codeCtrl = TextEditingController();
   bool _sending = false;
@@ -1721,10 +1811,17 @@ class _PhoneCollectionScreenState extends State<_PhoneCollectionScreen> {
         'phoneVerifiedAt': FieldValue.serverTimestamp(),
       });
       await PrivateDataService.writeContactData(uid, phone: phone);
+      CachedReaders.invalidateProvider(uid); // §61
     } catch (e) {
       debugPrint('[PhoneCollection] Persist failed: $e');
     }
     if (!mounted) return;
+    // If a caller provided onSuccess (e.g. Edit Profile), let them handle the
+    // post-verification navigation. Otherwise fall back to legacy behavior.
+    if (widget.onSuccess != null) {
+      widget.onSuccess!();
+      return;
+    }
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const HomeScreen()),
       (_) => false,
@@ -1738,6 +1835,7 @@ class _PhoneCollectionScreenState extends State<_PhoneCollectionScreen> {
         await FirebaseFirestore.instance.collection('users').doc(uid).update({
           'phonePromptSkippedAt': FieldValue.serverTimestamp(),
         });
+        CachedReaders.invalidateProvider(uid); // §61
       } catch (_) {}
     }
     if (!mounted) return;
@@ -1844,14 +1942,16 @@ class _PhoneCollectionScreenState extends State<_PhoneCollectionScreen> {
                         ),
                 ),
               ),
-              const SizedBox(height: 12),
-              TextButton(
-                onPressed: (_sending || _verifying) ? null : _skipForNow,
-                child: Text(
-                  'מאוחר יותר',
-                  style: TextStyle(color: Colors.grey[600]),
+              if (widget.showSkipButton) ...[
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: (_sending || _verifying) ? null : _skipForNow,
+                  child: Text(
+                    'מאוחר יותר',
+                    style: TextStyle(color: Colors.grey[600]),
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
@@ -1909,15 +2009,37 @@ class _PhoneCollectionScreenState extends State<_PhoneCollectionScreen> {
 ///
 /// "מאוחר יותר" writes `emailPromptSkippedAt` so OnboardingGate honors a
 /// 7-day cooldown before re-prompting.
-class _EmailCollectionScreen extends StatefulWidget {
+/// Public so other screens (e.g. profile invoice-email toggle, §58/§76) can
+/// push it with their own success/skip routing. When both callbacks are null
+/// the original OnboardingGate behavior is preserved
+/// (`pushAndRemoveUntil(HomeScreen)` on both paths).
+class EmailCollectionScreen extends StatefulWidget {
   final Map<String, dynamic> existingData;
-  const _EmailCollectionScreen({required this.existingData});
+
+  /// Fires after `verifyEmailCode` succeeds. When null, defaults to
+  /// `pushAndRemoveUntil(HomeScreen)` (the original OnboardingGate behavior).
+  final VoidCallback? onSuccess;
+
+  /// Fires when the user taps "מאוחר יותר". When null, defaults to writing
+  /// `emailPromptSkippedAt` + `pushAndRemoveUntil(HomeScreen)`. Callers that
+  /// push this screen as a modal (e.g. from profile) should pass a callback
+  /// that just `Navigator.pop(false)`s — writing the 7-day skip timestamp
+  /// would silently suppress the next OnboardingGate prompt, which we don't
+  /// want for an opt-in flow.
+  final VoidCallback? onSkip;
+
+  const EmailCollectionScreen({
+    super.key,
+    required this.existingData,
+    this.onSuccess,
+    this.onSkip,
+  });
 
   @override
-  State<_EmailCollectionScreen> createState() => _EmailCollectionScreenState();
+  State<EmailCollectionScreen> createState() => _EmailCollectionScreenState();
 }
 
-class _EmailCollectionScreenState extends State<_EmailCollectionScreen> {
+class _EmailCollectionScreenState extends State<EmailCollectionScreen> {
   final _emailCtrl = TextEditingController();
   final _codeCtrl = TextEditingController();
   bool _sending = false;
@@ -1978,10 +2100,15 @@ class _EmailCollectionScreenState extends State<_EmailCollectionScreen> {
           backgroundColor: Color(0xFF10B981),
         ),
       );
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-        (_) => false,
-      );
+      final onSuccess = widget.onSuccess;
+      if (onSuccess != null) {
+        onSuccess();
+      } else {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+          (_) => false,
+        );
+      }
     } on FirebaseFunctionsException catch (e) {
       _snack(e.message ?? 'שגיאה: ${e.code}');
     } catch (e) {
@@ -1992,12 +2119,23 @@ class _EmailCollectionScreenState extends State<_EmailCollectionScreen> {
   }
 
   Future<void> _skipForNow() async {
+    // Caller-provided skip path (e.g. profile-toggle modal): just hand back
+    // control. We do NOT write `emailPromptSkippedAt` here because that
+    // field is OnboardingGate's anti-pestering mechanism — suppressing it
+    // from an opt-in screen would silently disable the post-login prompt.
+    final onSkip = widget.onSkip;
+    if (onSkip != null) {
+      onSkip();
+      return;
+    }
+
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
     if (uid.isNotEmpty) {
       try {
         await FirebaseFirestore.instance.collection('users').doc(uid).update({
           'emailPromptSkippedAt': FieldValue.serverTimestamp(),
         });
+        CachedReaders.invalidateProvider(uid); // §61
       } catch (_) {}
     }
     if (!mounted) return;

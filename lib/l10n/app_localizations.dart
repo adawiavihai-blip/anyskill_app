@@ -120,7 +120,7 @@ abstract class AppLocalizations {
   /// No description provided for @greetingAfternoon.
   ///
   /// In he, this message translates to:
-  /// **'אחה\"צ טובות'**
+  /// **'צהריים טובים'**
   String get greetingAfternoon;
 
   /// No description provided for @greetingEvening.
@@ -896,6 +896,72 @@ abstract class AppLocalizations {
   /// In he, this message translates to:
   /// **'הודעות'**
   String get chatListTitle;
+
+  /// No description provided for @postJobStoryTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'רוצים יותר עבודות כאלה?'**
+  String get postJobStoryTitle;
+
+  /// No description provided for @postJobStorySubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'שתפו את התוצאה בסטורי 🎬 ותגיעו ליותר לקוחות'**
+  String get postJobStorySubtitle;
+
+  /// No description provided for @postJobStoryPhotoBtn.
+  ///
+  /// In he, this message translates to:
+  /// **'📷 תמונה'**
+  String get postJobStoryPhotoBtn;
+
+  /// No description provided for @postJobStoryVideoBtn.
+  ///
+  /// In he, this message translates to:
+  /// **'🎥 וידאו'**
+  String get postJobStoryVideoBtn;
+
+  /// No description provided for @postJobStoryLater.
+  ///
+  /// In he, this message translates to:
+  /// **'אולי אחר כך'**
+  String get postJobStoryLater;
+
+  /// No description provided for @postJobStoryUploading.
+  ///
+  /// In he, this message translates to:
+  /// **'מעלה לסטורי...'**
+  String get postJobStoryUploading;
+
+  /// No description provided for @postJobStorySuccess.
+  ///
+  /// In he, this message translates to:
+  /// **'✨ הסטורי שלך שודר! זמין ל-24 שעות'**
+  String get postJobStorySuccess;
+
+  /// No description provided for @postJobStoryFileTooLarge.
+  ///
+  /// In he, this message translates to:
+  /// **'הקובץ גדול מדי (מקסימום 50MB)'**
+  String get postJobStoryFileTooLarge;
+
+  /// No description provided for @postJobStorySourceTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'בחר מקור'**
+  String get postJobStorySourceTitle;
+
+  /// No description provided for @postJobStorySourceGallery.
+  ///
+  /// In he, this message translates to:
+  /// **'מהגלריה'**
+  String get postJobStorySourceGallery;
+
+  /// No description provided for @postJobStorySourceCamera.
+  ///
+  /// In he, this message translates to:
+  /// **'מצלמה'**
+  String get postJobStorySourceCamera;
 
   /// No description provided for @expertSectionAbout.
   ///
@@ -1886,6 +1952,12 @@ abstract class AppLocalizations {
   /// In he, this message translates to:
   /// **'תמיכה מועדפת'**
   String get vipBenefit4;
+
+  /// No description provided for @vipBenefit5.
+  ///
+  /// In he, this message translates to:
+  /// **'הופעה בבאנר נותני שירות VIP של AnySkill'**
+  String get vipBenefit5;
 
   /// No description provided for @withdrawMinBalance.
   ///
@@ -4335,6 +4407,18 @@ abstract class AppLocalizations {
   /// **'לא תקבל חשבוניות במייל'**
   String get profInvoiceEmailSubOff;
 
+  /// No description provided for @profInvoiceEmailNeedsEmail.
+  ///
+  /// In he, this message translates to:
+  /// **'נדרשת כתובת מייל לקבלת חשבוניות — לחץ/י להוספה'**
+  String get profInvoiceEmailNeedsEmail;
+
+  /// No description provided for @profInvoiceEmailSkipped.
+  ///
+  /// In he, this message translates to:
+  /// **'לא נוסף מייל — קבלת חשבוניות נשארה כבויה'**
+  String get profInvoiceEmailSkipped;
+
   /// No description provided for @profSyncGooglePhoto.
   ///
   /// In he, this message translates to:
@@ -4593,6 +4677,30 @@ abstract class AppLocalizations {
   /// **'משימות מיקרו — הרווח מהיר'**
   String get homeMicroTasks;
 
+  /// No description provided for @anyTasksBannerProviderTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'משימות פתוחות'**
+  String get anyTasksBannerProviderTitle;
+
+  /// No description provided for @anyTasksBannerProviderSub.
+  ///
+  /// In he, this message translates to:
+  /// **'בחר/י עבודות וצבור/י הכנסה עכשיו'**
+  String get anyTasksBannerProviderSub;
+
+  /// No description provided for @anyTasksBannerCustomerTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'פרסם משימה'**
+  String get anyTasksBannerCustomerTitle;
+
+  /// No description provided for @anyTasksBannerCustomerSub.
+  ///
+  /// In he, this message translates to:
+  /// **'מצא נותן שירות תוך דקות'**
+  String get anyTasksBannerCustomerSub;
+
   /// No description provided for @anyTasksBannerTag.
   ///
   /// In he, this message translates to:
@@ -4608,7 +4716,7 @@ abstract class AppLocalizations {
   /// No description provided for @homeCommunityTitle.
   ///
   /// In he, this message translates to:
-  /// **'נתינה מהלב'**
+  /// **'קהילה'**
   String get homeCommunityTitle;
 
   /// No description provided for @homeCommunitySlogan.
@@ -4620,7 +4728,7 @@ abstract class AppLocalizations {
   /// No description provided for @homeDefaultExpert.
   ///
   /// In he, this message translates to:
-  /// **'המומחה'**
+  /// **'נותן השירות'**
   String get homeDefaultExpert;
 
   /// No description provided for @homeDefaultReengageMsg.
@@ -4650,7 +4758,7 @@ abstract class AppLocalizations {
   /// No description provided for @homeWelcomeSubtitle.
   ///
   /// In he, this message translates to:
-  /// **'מצא מומחים מהשכונה שלך'**
+  /// **'מצא נותני שירות מהשכונה שלך'**
   String get homeWelcomeSubtitle;
 
   /// No description provided for @homeServiceTitle.
@@ -4668,7 +4776,7 @@ abstract class AppLocalizations {
   /// No description provided for @homeBecomeExpertTitle.
   ///
   /// In he, this message translates to:
-  /// **'הפוך למומחה היום'**
+  /// **'הפוך לנותן השירות היום'**
   String get homeBecomeExpertTitle;
 
   /// No description provided for @homeBecomeExpertSubtitle.
@@ -4851,121 +4959,238 @@ abstract class AppLocalizations {
   /// **'הצעת מחיר'**
   String get chatQuoteLabel;
 
-  /// Attach menu — add attachment button tooltip.
+  /// No description provided for @chatAttachTooltip.
+  ///
+  /// In he, this message translates to:
+  /// **'הוסף'**
   String get chatAttachTooltip;
 
-  /// Attach menu — send GPS location item.
+  /// No description provided for @chatAttachLocation.
+  ///
+  /// In he, this message translates to:
+  /// **'שלח מיקום'**
   String get chatAttachLocation;
 
-  /// Attach menu — send image item.
+  /// No description provided for @chatAttachImage.
+  ///
+  /// In he, this message translates to:
+  /// **'שלח תמונה'**
   String get chatAttachImage;
 
-  /// Attach menu — send video item (PR-2a: shows snackbar; full impl deferred).
+  /// No description provided for @chatAttachVideo.
+  ///
+  /// In he, this message translates to:
+  /// **'שלח וידאו'**
   String get chatAttachVideo;
 
-  /// Attach menu — provider sends a price offer.
+  /// No description provided for @chatAttachOffer.
+  ///
+  /// In he, this message translates to:
+  /// **'הצעת מחיר'**
   String get chatAttachOffer;
 
-  /// Attach menu — customer requests payment from provider.
+  /// No description provided for @chatAttachPaymentRequest.
+  ///
+  /// In he, this message translates to:
+  /// **'בקש תשלום'**
   String get chatAttachPaymentRequest;
 
-  /// Snackbar shown when video attach is tapped (PR-2a placeholder).
+  /// No description provided for @chatAttachVideoComingSoon.
+  ///
+  /// In he, this message translates to:
+  /// **'שליחת וידאו תהיה זמינה בקרוב 🎥'**
   String get chatAttachVideoComingSoon;
 
-  /// Provider price-offer modal — service description placeholder.
+  /// No description provided for @chatQuoteServiceHint.
+  ///
+  /// In he, this message translates to:
+  /// **'טיול עם הכלב 30 דק׳'**
   String get chatQuoteServiceHint;
 
-  /// Provider price-offer modal — gross price field label.
+  /// No description provided for @chatQuoteRegularPrice.
+  ///
+  /// In he, this message translates to:
+  /// **'מחיר רגיל (₪)'**
   String get chatQuoteRegularPrice;
 
-  /// Provider price-offer modal — customer-discount field label.
+  /// No description provided for @chatQuoteDiscount.
+  ///
+  /// In he, this message translates to:
+  /// **'הנחה ללקוח (₪)'**
   String get chatQuoteDiscount;
 
-  /// Provider price-offer modal — expiry-window section title.
+  /// No description provided for @chatQuoteExpiryTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'זמן תוקף ההצעה'**
   String get chatQuoteExpiryTitle;
 
-  /// Provider price-offer modal — 30-minute expiry chip.
+  /// No description provided for @chatQuoteExpiry30m.
+  ///
+  /// In he, this message translates to:
+  /// **'30 דק׳'**
   String get chatQuoteExpiry30m;
 
-  /// Provider price-offer modal — 1-hour expiry chip.
+  /// No description provided for @chatQuoteExpiry1h.
+  ///
+  /// In he, this message translates to:
+  /// **'שעה'**
   String get chatQuoteExpiry1h;
 
-  /// Provider price-offer modal — 6-hour expiry chip.
+  /// No description provided for @chatQuoteExpiry6h.
+  ///
+  /// In he, this message translates to:
+  /// **'6 שעות'**
   String get chatQuoteExpiry6h;
 
-  /// Provider price-offer modal — 24-hour expiry chip.
+  /// No description provided for @chatQuoteExpiry24h.
+  ///
+  /// In he, this message translates to:
+  /// **'24 שעות'**
   String get chatQuoteExpiry24h;
 
-  /// Provider price-offer modal — validation error for invalid price/discount.
+  /// No description provided for @chatQuoteValidation.
+  ///
+  /// In he, this message translates to:
+  /// **'יש להזין מחיר חוקי והנחה הקטנה ממנו'**
   String get chatQuoteValidation;
 
-  /// Provider price-offer modal — primary "send to customer" button.
+  /// No description provided for @chatQuoteSendOffer.
+  ///
+  /// In he, this message translates to:
+  /// **'שלח הצעה ללקוח'**
   String get chatQuoteSendOffer;
 
-  /// Customer offer card — header title badge.
+  /// No description provided for @chatQuoteCardTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'הצעת מחיר מותאמת'**
   String get chatQuoteCardTitle;
 
-  /// Customer offer card — "regular price" struck-through label.
+  /// No description provided for @chatQuoteCardRegular.
+  ///
+  /// In he, this message translates to:
+  /// **'מחיר רגיל'**
   String get chatQuoteCardRegular;
 
-  /// Customer offer card — discount row label.
+  /// No description provided for @chatQuoteCardDiscount.
+  ///
+  /// In he, this message translates to:
+  /// **'הנחה אישית'**
   String get chatQuoteCardDiscount;
 
-  /// Customer offer card — total to pay label.
+  /// No description provided for @chatQuoteCardTotal.
+  ///
+  /// In he, this message translates to:
+  /// **'לתשלום'**
   String get chatQuoteCardTotal;
 
-  /// Customer offer card — accept button.
+  /// No description provided for @chatQuoteCardAccept.
+  ///
+  /// In he, this message translates to:
+  /// **'אישור ותשלום'**
   String get chatQuoteCardAccept;
 
-  /// Customer offer card — decline button.
+  /// No description provided for @chatQuoteCardDecline.
+  ///
+  /// In he, this message translates to:
+  /// **'דחה'**
   String get chatQuoteCardDecline;
 
-  /// Customer offer card — countdown prefix.
+  /// No description provided for @chatQuoteCardExpiresIn.
+  ///
+  /// In he, this message translates to:
+  /// **'ההצעה תפוג בעוד'**
   String get chatQuoteCardExpiresIn;
 
-  /// Customer offer card — expired badge.
+  /// No description provided for @chatQuoteCardExpired.
+  ///
+  /// In he, this message translates to:
+  /// **'ההצעה פגה'**
   String get chatQuoteCardExpired;
 
-  /// Customer offer card — declined badge.
+  /// No description provided for @chatQuoteCardDeclined.
+  ///
+  /// In he, this message translates to:
+  /// **'ההצעה נדחתה'**
   String get chatQuoteCardDeclined;
 
-  /// Customer offer card — decline confirmation dialog body.
+  /// No description provided for @chatQuoteDeclineConfirm.
+  ///
+  /// In he, this message translates to:
+  /// **'האם לדחות את ההצעה?'**
   String get chatQuoteDeclineConfirm;
 
-  /// EscrowService.payQuote — error returned when an expired quote is paid.
+  /// No description provided for @chatQuoteExpiredError.
+  ///
+  /// In he, this message translates to:
+  /// **'ההצעה פגה — יש לבקש מהנותן שירות הצעה חדשה'**
   String get chatQuoteExpiredError;
 
-  /// Chat settings bottom sheet — title (PR-3a).
+  /// No description provided for @chatSettingsTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'הגדרות שיחה'**
   String get chatSettingsTitle;
 
-  /// Chat settings — translation section heading.
+  /// No description provided for @chatSettingsTranslationSection.
+  ///
+  /// In he, this message translates to:
+  /// **'תרגום'**
   String get chatSettingsTranslationSection;
 
-  /// Chat settings — auto-translate toggle label.
+  /// No description provided for @chatSettingsAutoTranslate.
+  ///
+  /// In he, this message translates to:
+  /// **'תרגום אוטומטי'**
   String get chatSettingsAutoTranslate;
 
-  /// Chat settings — "coming soon" badge on disabled controls.
+  /// No description provided for @chatSettingsComingSoon.
+  ///
+  /// In he, this message translates to:
+  /// **'בקרוב'**
   String get chatSettingsComingSoon;
 
-  /// Chat settings — "my target language" dropdown label.
+  /// No description provided for @chatSettingsMyLanguage.
+  ///
+  /// In he, this message translates to:
+  /// **'השפה שלי'**
   String get chatSettingsMyLanguage;
 
-  /// Chat settings — appearance section heading.
+  /// No description provided for @chatSettingsAppearanceSection.
+  ///
+  /// In he, this message translates to:
+  /// **'מראה'**
   String get chatSettingsAppearanceSection;
 
-  /// Chat settings — light-mode theme option.
+  /// No description provided for @chatSettingsThemeLight.
+  ///
+  /// In he, this message translates to:
+  /// **'בהיר'**
   String get chatSettingsThemeLight;
 
-  /// Chat settings — dark-mode theme option.
+  /// No description provided for @chatSettingsThemeDark.
+  ///
+  /// In he, this message translates to:
+  /// **'כהה'**
   String get chatSettingsThemeDark;
 
-  /// Chat settings — auto-mode theme option (19:00-07:00 = dark).
+  /// No description provided for @chatSettingsThemeAuto.
+  ///
+  /// In he, this message translates to:
+  /// **'אוטומטי'**
   String get chatSettingsThemeAuto;
 
-  /// Chat settings — explanation under Auto option when selected.
+  /// No description provided for @chatSettingsAutoHint.
+  ///
+  /// In he, this message translates to:
+  /// **'כהה בערב, בהיר ביום'**
   String get chatSettingsAutoHint;
 
-  /// Chat settings — primary save-and-close button.
+  /// No description provided for @chatSettingsSave.
+  ///
+  /// In he, this message translates to:
+  /// **'שמור וסגור'**
   String get chatSettingsSave;
 
   /// No description provided for @chatOnMyWay.
@@ -4995,7 +5220,7 @@ abstract class AppLocalizations {
   /// No description provided for @expSlotTakenBody.
   ///
   /// In he, this message translates to:
-  /// **'מישהו כבר הזמין את המומחה לאותו מועד.\nאנא בחר תאריך או שעה אחרים.'**
+  /// **'מישהו כבר הזמין את נותן השירות לאותו מועד.\nאנא בחר תאריך או שעה אחרים.'**
   String get expSlotTakenBody;
 
   /// No description provided for @expUnderstood.
@@ -5267,6 +5492,12 @@ abstract class AppLocalizations {
   /// In he, this message translates to:
   /// **'תצוגת מפה'**
   String get catMapView;
+
+  /// No description provided for @catMapButtonShort.
+  ///
+  /// In he, this message translates to:
+  /// **'מפה'**
+  String get catMapButtonShort;
 
   /// No description provided for @catListView.
   ///
@@ -5613,7 +5844,7 @@ abstract class AppLocalizations {
   /// No description provided for @editApplicationMessage.
   ///
   /// In he, this message translates to:
-  /// **'בקשה להצטרפות כמומחה: {name}'**
+  /// **'בקשה להצטרפות כנותן שירות: {name}'**
   String editApplicationMessage(String name);
 
   /// No description provided for @editGenericError.
@@ -5835,7 +6066,7 @@ abstract class AppLocalizations {
   /// No description provided for @editApplyAsProvider.
   ///
   /// In he, this message translates to:
-  /// **'הגש מועמדות כמומחה'**
+  /// **'הגש מועמדות כנותן שירות'**
   String get editApplyAsProvider;
 
   /// No description provided for @editApplyDesc.
@@ -6545,6 +6776,390 @@ abstract class AppLocalizations {
   /// In he, this message translates to:
   /// **'הרוויח עם AnySkill ←'**
   String get phoneLoginBecomeProvider;
+
+  /// No description provided for @massageSettingsBannerTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'הגדרות ייעודיות לעיסוי'**
+  String get massageSettingsBannerTitle;
+
+  /// No description provided for @massageSettingsBannerDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'הלקוחות יראו רק את מה שתסמני כאן'**
+  String get massageSettingsBannerDesc;
+
+  /// No description provided for @massageSpecialtiesTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'סוגי טיפולים שאני מציעה'**
+  String get massageSpecialtiesTitle;
+
+  /// No description provided for @massageLocationsTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'איפה את נותנת טיפולים'**
+  String get massageLocationsTitle;
+
+  /// No description provided for @massageAddOnsTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'תוספות שאני מציעה'**
+  String get massageAddOnsTitle;
+
+  /// No description provided for @massageDurationsTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'משכי טיפול ומחירים'**
+  String get massageDurationsTitle;
+
+  /// No description provided for @massagePackagesTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'חבילות הנחה'**
+  String get massagePackagesTitle;
+
+  /// No description provided for @massagePreferencesTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'העדפות ושירות'**
+  String get massagePreferencesTitle;
+
+  /// No description provided for @massageBuildTreatmentTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'בנה את הטיפול שלך'**
+  String get massageBuildTreatmentTitle;
+
+  /// No description provided for @massageSectionType.
+  ///
+  /// In he, this message translates to:
+  /// **'סוג העיסוי'**
+  String get massageSectionType;
+
+  /// No description provided for @massageSectionLocation.
+  ///
+  /// In he, this message translates to:
+  /// **'איפה?'**
+  String get massageSectionLocation;
+
+  /// No description provided for @massageSectionDuration.
+  ///
+  /// In he, this message translates to:
+  /// **'משך'**
+  String get massageSectionDuration;
+
+  /// No description provided for @massageSectionPressure.
+  ///
+  /// In he, this message translates to:
+  /// **'עוצמת לחץ'**
+  String get massageSectionPressure;
+
+  /// No description provided for @massageSectionFocusAreas.
+  ///
+  /// In he, this message translates to:
+  /// **'איפה כואב?'**
+  String get massageSectionFocusAreas;
+
+  /// No description provided for @massageSectionAddOns.
+  ///
+  /// In he, this message translates to:
+  /// **'תוספות'**
+  String get massageSectionAddOns;
+
+  /// No description provided for @massageSectionPackages.
+  ///
+  /// In he, this message translates to:
+  /// **'חבילות הנחה'**
+  String get massageSectionPackages;
+
+  /// No description provided for @massageSectionAmbiance.
+  ///
+  /// In he, this message translates to:
+  /// **'אווירה'**
+  String get massageSectionAmbiance;
+
+  /// No description provided for @massageSectionNotes.
+  ///
+  /// In he, this message translates to:
+  /// **'הערות נוספות'**
+  String get massageSectionNotes;
+
+  /// No description provided for @massagePressureLight.
+  ///
+  /// In he, this message translates to:
+  /// **'עדין'**
+  String get massagePressureLight;
+
+  /// No description provided for @massagePressureMedium.
+  ///
+  /// In he, this message translates to:
+  /// **'בינוני'**
+  String get massagePressureMedium;
+
+  /// No description provided for @massagePressureStrong.
+  ///
+  /// In he, this message translates to:
+  /// **'חזק'**
+  String get massagePressureStrong;
+
+  /// No description provided for @massageMusicCalm.
+  ///
+  /// In he, this message translates to:
+  /// **'רגועה'**
+  String get massageMusicCalm;
+
+  /// No description provided for @massageMusicNature.
+  ///
+  /// In he, this message translates to:
+  /// **'טבע'**
+  String get massageMusicNature;
+
+  /// No description provided for @massageMusicClassical.
+  ///
+  /// In he, this message translates to:
+  /// **'קלאסי'**
+  String get massageMusicClassical;
+
+  /// No description provided for @massageMusicSilent.
+  ///
+  /// In he, this message translates to:
+  /// **'שקט'**
+  String get massageMusicSilent;
+
+  /// No description provided for @massageConvChatty.
+  ///
+  /// In he, this message translates to:
+  /// **'בכיף לדבר'**
+  String get massageConvChatty;
+
+  /// No description provided for @massageConvMinimal.
+  ///
+  /// In he, this message translates to:
+  /// **'מינימלי'**
+  String get massageConvMinimal;
+
+  /// No description provided for @massageSummaryTotal.
+  ///
+  /// In he, this message translates to:
+  /// **'סך הכל'**
+  String get massageSummaryTotal;
+
+  /// No description provided for @massageSummaryDuration.
+  ///
+  /// In he, this message translates to:
+  /// **'משך כולל'**
+  String get massageSummaryDuration;
+
+  /// No description provided for @massageTrustSignal.
+  ///
+  /// In he, this message translates to:
+  /// **'תשלום מאובטח · ביטול חינם עד 24 שעות לפני'**
+  String get massageTrustSignal;
+
+  /// No description provided for @pestSettingsBannerTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'הגדרות ייעודיות להדברה'**
+  String get pestSettingsBannerTitle;
+
+  /// No description provided for @pestSettingsBannerDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'הלקוחות יראו רק את מה שתסמן כאן · רישיון משרד הגנ\"ס נדרש'**
+  String get pestSettingsBannerDesc;
+
+  /// No description provided for @pestLicensesTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'רישיונות חובה'**
+  String get pestLicensesTitle;
+
+  /// No description provided for @pestLicensesWarning.
+  ///
+  /// In he, this message translates to:
+  /// **'חובה לפי חוק - אימות נדרש לפני אישור הפרופיל'**
+  String get pestLicensesWarning;
+
+  /// No description provided for @pestTypesTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'סוגי מזיקים שאני מטפל'**
+  String get pestTypesTitle;
+
+  /// No description provided for @pestTypesHelper.
+  ///
+  /// In he, this message translates to:
+  /// **'הלקוחות יראו את הסל שלך'**
+  String get pestTypesHelper;
+
+  /// No description provided for @pestMethodsTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'שיטות הטיפול שלי'**
+  String get pestMethodsTitle;
+
+  /// No description provided for @pestAvailabilityTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'זמינות ותגובה'**
+  String get pestAvailabilityTitle;
+
+  /// No description provided for @pestEmergencyLabel.
+  ///
+  /// In he, this message translates to:
+  /// **'שירות חירום'**
+  String get pestEmergencyLabel;
+
+  /// No description provided for @pestEmergencyDesc.
+  ///
+  /// In he, this message translates to:
+  /// **'תוך שעה - תוספת מחיר'**
+  String get pestEmergencyDesc;
+
+  /// No description provided for @pest247Label.
+  ///
+  /// In he, this message translates to:
+  /// **'זמין 24/7'**
+  String get pest247Label;
+
+  /// No description provided for @pestPricingTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'מחירון שקוף'**
+  String get pestPricingTitle;
+
+  /// No description provided for @pestPricingSubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'לקוחות סומכים על מחיר ברור'**
+  String get pestPricingSubtitle;
+
+  /// No description provided for @pestWarrantyTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'אחריות ושירות'**
+  String get pestWarrantyTitle;
+
+  /// No description provided for @pestWarrantyBasic.
+  ///
+  /// In he, this message translates to:
+  /// **'אחריות בסיסית'**
+  String get pestWarrantyBasic;
+
+  /// No description provided for @pestDigitalReport.
+  ///
+  /// In he, this message translates to:
+  /// **'דוח דיגיטלי אוטומטי'**
+  String get pestDigitalReport;
+
+  /// No description provided for @pestBeforeAfterPhotos.
+  ///
+  /// In he, this message translates to:
+  /// **'תמונות לפני/אחרי'**
+  String get pestBeforeAfterPhotos;
+
+  /// No description provided for @pestPackagesTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'חבילות תחזוקה'**
+  String get pestPackagesTitle;
+
+  /// No description provided for @pestPackagesHint.
+  ///
+  /// In he, this message translates to:
+  /// **'הכנסה קבועה · לקוחות חוזרים'**
+  String get pestPackagesHint;
+
+  /// No description provided for @pestInstructionsTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'הוראות והתנהלות לאחר טיפול'**
+  String get pestInstructionsTitle;
+
+  /// No description provided for @pestInstructionsSubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'מתורגם אוטומטית ללקוחות'**
+  String get pestInstructionsSubtitle;
+
+  /// No description provided for @pestInstructionsQuick.
+  ///
+  /// In he, this message translates to:
+  /// **'הוראות מהירות (סמן את הרלוונטיות)'**
+  String get pestInstructionsQuick;
+
+  /// No description provided for @pestInstructionsCustom.
+  ///
+  /// In he, this message translates to:
+  /// **'הוראות אישיות נוספות'**
+  String get pestInstructionsCustom;
+
+  /// No description provided for @pestClientBlockTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'בנה את הטיפול שלך'**
+  String get pestClientBlockTitle;
+
+  /// No description provided for @pestClientAiTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'לא יודע מה זה?'**
+  String get pestClientAiTitle;
+
+  /// No description provided for @pestClientAiSubtitle.
+  ///
+  /// In he, this message translates to:
+  /// **'צלם והAI יזהה תוך 2 שניות'**
+  String get pestClientAiSubtitle;
+
+  /// No description provided for @pestClientAiCapture.
+  ///
+  /// In he, this message translates to:
+  /// **'צלם עכשיו'**
+  String get pestClientAiCapture;
+
+  /// No description provided for @pestClientAiUpload.
+  ///
+  /// In he, this message translates to:
+  /// **'העלה תמונה'**
+  String get pestClientAiUpload;
+
+  /// No description provided for @pestClientInstructionsTitle.
+  ///
+  /// In he, this message translates to:
+  /// **'מה צריך לדעת לפני'**
+  String get pestClientInstructionsTitle;
+
+  /// No description provided for @pestClientInstructionsAcknowledge.
+  ///
+  /// In he, this message translates to:
+  /// **'קראתי והבנתי - אני מאשר את ההוראות'**
+  String get pestClientInstructionsAcknowledge;
+
+  /// No description provided for @pestClientBookNow.
+  ///
+  /// In he, this message translates to:
+  /// **'הזמן עכשיו'**
+  String get pestClientBookNow;
+
+  /// No description provided for @pestClientTrustPayment.
+  ///
+  /// In he, this message translates to:
+  /// **'תשלום אחרי'**
+  String get pestClientTrustPayment;
+
+  /// No description provided for @pestClientTrustReport.
+  ///
+  /// In he, this message translates to:
+  /// **'דוח דיגיטלי'**
+  String get pestClientTrustReport;
+
+  /// No description provided for @pestClientTrustCancel.
+  ///
+  /// In he, this message translates to:
+  /// **'ביטול חינם'**
+  String get pestClientTrustCancel;
 }
 
 class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

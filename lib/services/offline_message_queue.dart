@@ -74,6 +74,13 @@ class OfflineMessageQueue extends ChangeNotifier {
 
   /// Optimistic enqueue. Returns the created pending message so the caller
   /// can trigger a send attempt without reading the queue back.
+  ///
+  /// Order matters: `notifyListeners()` runs BEFORE `_persist()` so the
+  /// pending bubble appears in the chat the same frame the user taps send,
+  /// even on devices where SharedPreferences write is slow (some Android
+  /// builds defer prefs writes by 50-200ms). Persistence is best-effort —
+  /// if the app crashes before _persist completes, the message is lost,
+  /// which is acceptable for the bubble-visibility tradeoff.
   Future<PendingMessage> enqueue({
     required String chatRoomId,
     required String senderId,
@@ -93,8 +100,9 @@ class OfflineMessageQueue extends ChangeNotifier {
       attempts:    0,
     );
     _queue.add(msg);
-    await _persist();
-    notifyListeners();
+    notifyListeners();              // ← UI rebuilds with the pending stub immediately
+    // ignore: discarded_futures
+    _persist();                     // fire-and-forget — async, non-blocking
     // Attempt a send right away — if we're offline, it will fail fast
     // and the connectivity listener will retry.
     // ignore: discarded_futures

@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../services/cached_readers.dart';
 import '../services/category_service.dart';
 import '../services/settings_service.dart';
 import '../widgets/category_edit_sheet.dart';
@@ -31,8 +32,9 @@ class _SubCategoryScreenState extends State<SubCategoryScreen> {
     super.initState();
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
-      FirebaseFirestore.instance.collection('users').doc(uid).get().then((snap) {
-        if ((snap.data()?['isAdmin'] == true) && mounted) {
+      // §69: cached read — admin check on every sub-category page open.
+      CachedReaders.providerProfile(uid).then((data) {
+        if ((data['isAdmin'] == true) && mounted) {
           setState(() => _isAdmin = true);
         }
       });
@@ -72,33 +74,53 @@ class _SubCategoryScreenState extends State<SubCategoryScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.category_outlined, size: 56, color: Colors.grey[400]),
+                  Icon(
+                    Icons.category_outlined,
+                    size: 56,
+                    color: Colors.grey[400],
+                  ),
                   const SizedBox(height: 16),
                   const Text(
                     "אין תת-קטגוריות עדיין",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    "מציג את כל המומחים ב$parentName",
+                    "מציג את כל הנותני שירות ב$parentName",
                     style: TextStyle(fontSize: 14, color: Colors.grey[500]),
                   ),
                   const SizedBox(height: 24),
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.black,
-                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    ),
-                    onPressed: () => Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => CategoryResultsScreen(categoryName: parentName),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 28,
+                        vertical: 14,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
                       ),
                     ),
+                    onPressed:
+                        () => Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder:
+                                (_) => CategoryResultsScreen(
+                                  categoryName: parentName,
+                                ),
+                          ),
+                        ),
                     child: Text(
-                      "הצג מומחי $parentName",
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      "הצג נותני שירות $parentName",
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],
@@ -125,36 +147,39 @@ class _SubCategoryScreenState extends State<SubCategoryScreen> {
                           return GridView.builder(
                             gridDelegate:
                                 const SliverGridDelegateWithMaxCrossAxisExtent(
-                              maxCrossAxisExtent: 116,
-                              crossAxisSpacing:   spacing,
-                              mainAxisSpacing:    spacing,
-                              childAspectRatio:   100 / 128,
-                            ),
+                                  maxCrossAxisExtent: 116,
+                                  crossAxisSpacing: spacing,
+                                  mainAxisSpacing: spacing,
+                                  childAspectRatio: 100 / 128,
+                                ),
                             itemCount: subs.length,
                             itemBuilder: (context, index) {
-                              final sub          = subs[index];
-                              final name         = sub['name']      as String? ?? '';
-                              final imageUrl     = sub['img']       as String? ?? '';
-                              final iconName     = sub['iconName']  as String? ?? '';
-                              final icon         = CategoryService.getIcon(iconName);
+                              final sub = subs[index];
+                              final name = sub['name'] as String? ?? '';
+                              final imageUrl = sub['img'] as String? ?? '';
+                              final iconName = sub['iconName'] as String? ?? '';
+                              final icon = CategoryService.getIcon(iconName);
                               final perCardScale =
                                   (sub['cardScale'] as num? ?? 1.0).toDouble();
 
                               return _SubCategoryCard(
-                                docId:        sub['id'] as String? ?? '',
-                                name:         name,
-                                iconName:     iconName,
-                                imageUrl:     imageUrl,
-                                icon:         icon,
-                                isAdmin:      isAdmin,
+                                docId: sub['id'] as String? ?? '',
+                                name: name,
+                                iconName: iconName,
+                                imageUrl: imageUrl,
+                                icon: icon,
+                                isAdmin: isAdmin,
                                 perCardScale: perCardScale,
-                                onTap: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        CategoryResultsScreen(categoryName: name),
-                                  ),
-                                ),
+                                onTap:
+                                    () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder:
+                                            (_) => CategoryResultsScreen(
+                                              categoryName: name,
+                                            ),
+                                      ),
+                                    ),
                               );
                             },
                           );
@@ -173,13 +198,13 @@ class _SubCategoryScreenState extends State<SubCategoryScreen> {
 }
 
 class _SubCategoryCard extends StatefulWidget {
-  final String      docId;
-  final String      name;
-  final String      iconName;
-  final String      imageUrl;
-  final IconData    icon;
-  final bool        isAdmin;
-  final double      perCardScale; // visual zoom within fixed grid cell
+  final String docId;
+  final String name;
+  final String iconName;
+  final String imageUrl;
+  final IconData icon;
+  final bool isAdmin;
+  final double perCardScale; // visual zoom within fixed grid cell
   final VoidCallback onTap;
 
   const _SubCategoryCard({
@@ -189,7 +214,7 @@ class _SubCategoryCard extends StatefulWidget {
     required this.imageUrl,
     required this.icon,
     required this.onTap,
-    this.isAdmin      = false,
+    this.isAdmin = false,
     this.perCardScale = 1.0,
   });
 
@@ -207,156 +232,171 @@ class _SubCategoryCardState extends State<_SubCategoryCard> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (_) => CategoryEditSheet(
-        docId:            widget.docId,
-        initialName:      widget.name,
-        initialIconName:  widget.iconName,
-        initialImageUrl:  widget.imageUrl,
-        initialCardScale: widget.perCardScale,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
+      builder:
+          (_) => CategoryEditSheet(
+            docId: widget.docId,
+            initialName: widget.name,
+            initialIconName: widget.iconName,
+            initialImageUrl: widget.imageUrl,
+            initialCardScale: widget.perCardScale,
+          ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     // Card-level press-down scale.
-    final double cardScale  = _pressed ? 0.97 : 1.0;
+    final double cardScale = _pressed ? 0.97 : 1.0;
     // Image zoom on hover / press.
     final double imageScale = _hovered ? 1.06 : (_pressed ? 1.02 : 1.0);
 
     // perCardScale is intentionally NOT applied — all cells must be identical.
     return MouseRegion(
-      cursor:  SystemMouseCursors.click,
+      cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
-      onExit:  (_) => setState(() => _hovered = false),
+      onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
-      onTap: () {
-        CategoryService.incrementClickCount(widget.docId);
-        widget.onTap();
-      },
-      onTapDown:   (_) => setState(() => _pressed = true),
-      onTapUp:     (_) => setState(() => _pressed = false),
-      onTapCancel: () => setState(() => _pressed = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve:    Curves.easeOut,
-        transform: Matrix4.identity()
-          ..scaleByDouble(cardScale, cardScale, 1.0, 1.0),
-        transformAlignment: Alignment.center,
-        // ── White-square card layout: image on top, label below ──────
-        child: Column(
-          mainAxisSize: MainAxisSize.max,
-          children: [
-            // ── Fixed-ratio square image — uniform across all items ───
-            AspectRatio(
-              aspectRatio: 1.0,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  // White container with soft shadow
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOut,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(
-                              alpha: _hovered ? 0.14 : 0.07),
-                          blurRadius:   _hovered ? 18 : 8,
-                          spreadRadius: 0,
-                          offset: Offset(0, _hovered ? 6 : 3),
-                        ),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
-                      child: widget.imageUrl.isNotEmpty
-                          ? AnimatedScale(
-                              scale:    imageScale,
-                              duration: const Duration(milliseconds: 320),
-                              curve:    Curves.easeOutCubic,
-                              child: CachedNetworkImage(
-                                imageUrl:       widget.imageUrl,
-                                fit:            BoxFit.cover,
-                                memCacheWidth:  300,
-                                memCacheHeight: 300,
-                                fadeInDuration: const Duration(
-                                    milliseconds: 260),
-                                placeholder: (_, __) => Container(
-                                  color: const Color(0xFFF5F5F5),
-                                ),
-                                errorWidget: (_, __, ___) => Container(
+        onTap: () {
+          CategoryService.incrementClickCount(widget.docId);
+          widget.onTap();
+        },
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapUp: (_) => setState(() => _pressed = false),
+        onTapCancel: () => setState(() => _pressed = false),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          transform:
+              Matrix4.identity()..scaleByDouble(cardScale, cardScale, 1.0, 1.0),
+          transformAlignment: Alignment.center,
+          // ── White-square card layout: image on top, label below ──────
+          child: Column(
+            mainAxisSize: MainAxisSize.max,
+            children: [
+              // ── Fixed-ratio square image — uniform across all items ───
+              AspectRatio(
+                aspectRatio: 1.0,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // White container with soft shadow
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeOut,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(
+                              alpha: _hovered ? 0.14 : 0.07,
+                            ),
+                            blurRadius: _hovered ? 18 : 8,
+                            spreadRadius: 0,
+                            offset: Offset(0, _hovered ? 6 : 3),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child:
+                            widget.imageUrl.isNotEmpty
+                                ? AnimatedScale(
+                                  scale: imageScale,
+                                  duration: const Duration(milliseconds: 320),
+                                  curve: Curves.easeOutCubic,
+                                  child: CachedNetworkImage(
+                                    imageUrl: widget.imageUrl,
+                                    fit: BoxFit.cover,
+                                    memCacheWidth: 300,
+                                    memCacheHeight: 300,
+                                    fadeInDuration: const Duration(
+                                      milliseconds: 260,
+                                    ),
+                                    placeholder:
+                                        (_, __) => Container(
+                                          color: const Color(0xFFF5F5F5),
+                                        ),
+                                    errorWidget:
+                                        (_, __, ___) => Container(
+                                          color: const Color(0xFFF0F0FF),
+                                          child: Center(
+                                            child: Icon(
+                                              widget.icon,
+                                              size: 32,
+                                              color: const Color(0xFF6366F1),
+                                            ),
+                                          ),
+                                        ),
+                                  ),
+                                )
+                                : Container(
                                   color: const Color(0xFFF0F0FF),
                                   child: Center(
-                                    child: Icon(widget.icon,
-                                        size: 32,
-                                        color: const Color(0xFF6366F1)),
+                                    child: Icon(
+                                      widget.icon,
+                                      size: 32,
+                                      color: const Color(0xFF6366F1),
+                                    ),
                                   ),
                                 ),
-                              ),
-                            )
-                          : Container(
-                              color: const Color(0xFFF0F0FF),
-                              child: Center(
-                                child: Icon(widget.icon,
-                                    size: 32,
-                                    color: const Color(0xFF6366F1)),
-                              ),
-                            ),
-                    ),
-                  ),
-
-                  // ── ✏️ Admin edit button — top-right ─────────────────
-                  if (widget.isAdmin)
-                    Positioned(
-                      top:   8,
-                      right: 8,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: _openEditSheet,
-                        child: Container(
-                          padding: const EdgeInsets.all(7),
-                          decoration: BoxDecoration(
-                            color:  Colors.black.withValues(alpha: 0.55),
-                            shape:  BoxShape.circle,
-                            border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.30)),
-                          ),
-                          child: const Icon(Icons.edit_rounded,
-                              size: 14, color: Colors.white),
-                        ),
                       ),
                     ),
-                ],
-              ),
-            ),
 
-            // ── Sub-category name below the square ────────────────────
-            const SizedBox(height: 6),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Text(
-                widget.name,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color:      Color(0xFF111827),
-                  fontSize:   11.5,
-                  fontWeight: FontWeight.w600,
-                  height:     1.2,
+                    // ── ✏️ Admin edit button — top-right ─────────────────
+                    if (widget.isAdmin)
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _openEditSheet,
+                          child: Container(
+                            padding: const EdgeInsets.all(7),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.55),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.30),
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.edit_rounded,
+                              size: 14,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
-            ),
-            const SizedBox(height: 4),
-          ],
-        ),
-      ),         // closes AnimatedContainer
-      ),         // closes GestureDetector
-    );           // closes MouseRegion
+
+              // ── Sub-category name below the square ────────────────────
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Text(
+                  widget.name,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF111827),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.2,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+            ],
+          ),
+        ), // closes AnimatedContainer
+      ), // closes GestureDetector
+    ); // closes MouseRegion
   }
 }
 
@@ -368,27 +408,38 @@ class _SubCategoryShimmerGrid extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final w    = constraints.maxWidth;
-          final cols = w >= 900 ? 4 : w >= 600 ? 3 : 2;
+          final w = constraints.maxWidth;
+          final cols =
+              w >= 900
+                  ? 4
+                  : w >= 600
+                  ? 3
+                  : 2;
           return GridView.builder(
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount:   cols,
+              crossAxisCount: cols,
               crossAxisSpacing: 14,
-              mainAxisSpacing:  14,
-              childAspectRatio: w >= 900 ? 1.0 : w >= 600 ? 0.90 : 0.85,
+              mainAxisSpacing: 14,
+              childAspectRatio:
+                  w >= 900
+                      ? 1.0
+                      : w >= 600
+                      ? 0.90
+                      : 0.85,
             ),
             itemCount: cols * 2, // fill two rows
-            itemBuilder: (_, __) => Shimmer.fromColors(
-              baseColor:      const Color(0xFFE2E8F0),
-              highlightColor: const Color(0xFFF8FAFC),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE2E8F0),
-                  borderRadius: BorderRadius.circular(22),
+            itemBuilder:
+                (_, __) => Shimmer.fromColors(
+                  baseColor: const Color(0xFFE2E8F0),
+                  highlightColor: const Color(0xFFF8FAFC),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE2E8F0),
+                      borderRadius: BorderRadius.circular(22),
+                    ),
+                  ),
                 ),
-              ),
-            ),
           );
         },
       ),

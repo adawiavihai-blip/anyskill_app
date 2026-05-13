@@ -4,13 +4,16 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'account_settings_screen.dart';
 import 'chat_screen.dart';
 import 'my_bookings_screen.dart';
 import '../models/pricing_model.dart';
 import '../services/volunteer_service.dart';
 import '../widgets/xp_progress_bar.dart';
 import '../widgets/category_specs_widget.dart';
+import '../services/cached_readers.dart';
 import '../utils/safe_image_provider.dart';
+import '../widgets/community/heart_display_helper.dart';
 
 class PublicProfileScreen extends StatefulWidget {
   final String userId;
@@ -28,8 +31,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   int _refreshTrigger = 0;
 
   final List<String> _availableSlots = [
-    "08:00", "09:00", "10:00", "11:00",
-    "16:00", "17:00", "18:00", "19:00",
+    "08:00",
+    "09:00",
+    "10:00",
+    "11:00",
+    "16:00",
+    "17:00",
+    "18:00",
+    "19:00",
   ];
 
   @override
@@ -41,7 +50,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   // ── Escrow booking flow ────────────────────────────────────────────────────
 
   Future<void> _processEscrowOrder(
-      BuildContext context, Map<String, dynamic> expertData) async {
+    BuildContext context,
+    Map<String, dynamic> expertData,
+  ) async {
     final pricing = PricingModel.fromFirestore(expertData);
     final Set<int> selectedAddOns = {};
 
@@ -49,165 +60,200 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) {
-          final addOnTotal = selectedAddOns.fold<double>(
-              0.0,
-              (s, i) =>
-                  s + (i < pricing.addOns.length ? pricing.addOns[i].price : 0.0));
-          final total = pricing.basePrice + addOnTotal;
+      builder:
+          (context) => StatefulBuilder(
+            builder: (context, setModalState) {
+              final addOnTotal = selectedAddOns.fold<double>(
+                0.0,
+                (s, i) =>
+                    s +
+                    (i < pricing.addOns.length ? pricing.addOns[i].price : 0.0),
+              );
+              final total = pricing.basePrice + addOnTotal;
 
-          return Container(
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-            ),
-            padding: const EdgeInsets.fromLTRB(25, 15, 25, 40),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+              return Container(
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
                 ),
-                const SizedBox(height: 20),
-                const Text("סיכום הזמנה מאובטחת",
-                    style:
-                        TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Text(
-                  "${expertData['name']} • ${_selectedDay?.day}/${_selectedDay?.month} בשעה $_selectedTimeSlot",
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.grey, fontSize: 13),
-                ),
-                const Divider(height: 32),
-                _summaryRow(
-                    "מחיר בסיס (${pricing.unitLabel})",
-                    "₪${pricing.basePrice.toStringAsFixed(0)}"),
-                if (pricing.addOns.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  const Align(
-                    alignment: AlignmentDirectional.centerEnd,
-                    child: Text("תוספות אופציונליות",
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 13)),
-                  ),
-                  const SizedBox(height: 6),
-                  ...pricing.addOns.asMap().entries.map((entry) {
-                    final i = entry.key;
-                    final ao = entry.value;
-                    final checked = selectedAddOns.contains(i);
-                    return GestureDetector(
-                      onTap: () => setModalState(() {
-                        if (checked) {
-                          selectedAddOns.remove(i);
-                        } else {
-                          selectedAddOns.add(i);
-                        }
-                      }),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 140),
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: checked
-                              ? const Color(0xFFF0F0FF)
-                              : Colors.grey[50],
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: checked
-                                ? const Color(0xFF6366F1)
-                                : Colors.grey.shade200,
+                padding: const EdgeInsets.fromLTRB(25, 15, 25, 40),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    const Text(
+                      "סיכום הזמנה מאובטחת",
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "${expertData['name']} • ${_selectedDay?.day}/${_selectedDay?.month} בשעה $_selectedTimeSlot",
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.grey, fontSize: 13),
+                    ),
+                    const Divider(height: 32),
+                    _summaryRow(
+                      "מחיר בסיס (${pricing.unitLabel})",
+                      "₪${pricing.basePrice.toStringAsFixed(0)}",
+                    ),
+                    if (pricing.addOns.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      const Align(
+                        alignment: AlignmentDirectional.centerEnd,
+                        child: Text(
+                          "תוספות אופציונליות",
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
                           ),
                         ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              checked
-                                  ? Icons.check_box_rounded
-                                  : Icons.check_box_outline_blank_rounded,
-                              color: checked
-                                  ? const Color(0xFF6366F1)
-                                  : Colors.grey,
-                              size: 20,
+                      ),
+                      const SizedBox(height: 6),
+                      ...pricing.addOns.asMap().entries.map((entry) {
+                        final i = entry.key;
+                        final ao = entry.value;
+                        final checked = selectedAddOns.contains(i);
+                        return GestureDetector(
+                          onTap:
+                              () => setModalState(() {
+                                if (checked) {
+                                  selectedAddOns.remove(i);
+                                } else {
+                                  selectedAddOns.add(i);
+                                }
+                              }),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 140),
+                            margin: const EdgeInsets.only(bottom: 6),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
                             ),
-                            const SizedBox(width: 10),
-                            Text(
-                              '+₪${ao.price.toStringAsFixed(0)}',
-                              style: const TextStyle(
-                                color: Color(0xFF6366F1),
-                                fontWeight: FontWeight.w900,
-                                fontSize: 14,
+                            decoration: BoxDecoration(
+                              color:
+                                  checked
+                                      ? const Color(0xFFF0F0FF)
+                                      : Colors.grey[50],
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color:
+                                    checked
+                                        ? const Color(0xFF6366F1)
+                                        : Colors.grey.shade200,
                               ),
                             ),
-                            const Spacer(),
-                            Text(ao.title,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600, fontSize: 13)),
-                          ],
+                            child: Row(
+                              children: [
+                                Icon(
+                                  checked
+                                      ? Icons.check_box_rounded
+                                      : Icons.check_box_outline_blank_rounded,
+                                  color:
+                                      checked
+                                          ? const Color(0xFF6366F1)
+                                          : Colors.grey,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 10),
+                                Text(
+                                  '+₪${ao.price.toStringAsFixed(0)}',
+                                  style: const TextStyle(
+                                    color: Color(0xFF6366F1),
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  ao.title,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                    ],
+                    const SizedBox(height: 6),
+                    _summaryRow("הגנת AnySkill", "כלול", isGreen: true),
+                    const Divider(height: 24),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      child: KeyedSubtree(
+                        key: ValueKey(total),
+                        child: _summaryRow(
+                          "סה\"כ לתשלום",
+                          "₪${total.toStringAsFixed(0)}",
+                          isBold: true,
                         ),
                       ),
-                    );
-                  }),
-                ],
-                const SizedBox(height: 6),
-                _summaryRow("הגנת AnySkill", "כלול", isGreen: true),
-                const Divider(height: 24),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: KeyedSubtree(
-                    key: ValueKey(total),
-                    child: _summaryRow(
-                      "סה\"כ לתשלום",
-                      "₪${total.toStringAsFixed(0)}",
-                      isBold: true,
                     ),
-                  ),
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        minimumSize: const Size(double.infinity, 60),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                      ),
+                      onPressed:
+                          _isProcessing
+                              ? null
+                              : () async {
+                                setModalState(() => _isProcessing = true);
+                                await _executeEscrow(
+                                  context,
+                                  total,
+                                  expertData['name'] ?? "נותן שירות",
+                                );
+                                if (mounted) {
+                                  setModalState(() => _isProcessing = false);
+                                }
+                              },
+                      child:
+                          _isProcessing
+                              ? const CircularProgressIndicator(
+                                color: Colors.white,
+                              )
+                              : const Text(
+                                "אשר תשלום ושריין מועד",
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 24),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.black,
-                    minimumSize: const Size(double.infinity, 60),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15)),
-                  ),
-                  onPressed: _isProcessing
-                      ? null
-                      : () async {
-                          setModalState(() => _isProcessing = true);
-                          await _executeEscrow(
-                              context, total, expertData['name'] ?? "מומחה");
-                          if (mounted) {
-                            setModalState(() => _isProcessing = false);
-                          }
-                        },
-                  child: _isProcessing
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text("אשר תשלום ושריין מועד",
-                          style: TextStyle(
-                              fontSize: 18,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold)),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
+              );
+            },
+          ),
     );
   }
 
   Future<void> _executeEscrow(
-      BuildContext context, double amount, String expertName) async {
+    BuildContext context,
+    double amount,
+    String expertName,
+  ) async {
     final firestore = FirebaseFirestore.instance;
-    final String currentUserId =
-        FirebaseAuth.instance.currentUser?.uid ?? "";
+    final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? "";
     final List<String> ids = [currentUserId, widget.userId]..sort();
     final String chatRoomId = ids.join("_");
     final adminSettingsRef = firestore
@@ -220,17 +266,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
       await firestore.runTransaction((transaction) async {
         final adminSnap = await transaction.get(adminSettingsRef);
         final double feePercentage =
-            ((adminSnap.exists ? adminSnap.get('feePercentage') : null) ??
-                    0.10)
+            ((adminSnap.exists ? adminSnap.get('feePercentage') : null) ?? 0.10)
                 .toDouble();
         final double commission = amount * feePercentage;
         final double netToExpert = amount - commission;
 
-        final customerRef =
-            firestore.collection('users').doc(currentUserId);
+        final customerRef = firestore.collection('users').doc(currentUserId);
         final customerSnap = await transaction.get(customerRef);
-        final double balance =
-            (customerSnap['balance'] ?? 0.0).toDouble();
+        final double balance = (customerSnap['balance'] ?? 0.0).toDouble();
 
         if (balance < amount) {
           throw "אין מספיק יתרה בארנק. טען כסף והמשך.";
@@ -253,8 +296,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           'createdAt': FieldValue.serverTimestamp(),
         });
 
-        transaction.update(
-            customerRef, {'balance': FieldValue.increment(-amount)});
+        transaction.update(customerRef, {
+          'balance': FieldValue.increment(-amount),
+        });
 
         transaction.set(firestore.collection('transactions').doc(), {
           'userId': currentUserId,
@@ -270,27 +314,32 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           .doc(chatRoomId)
           .collection('messages')
           .add({
-        'senderId': 'system',
-        'message':
-            "🔒 שוריין תור לתאריך ${_selectedDay?.day}/${_selectedDay?.month} בשעה $_selectedTimeSlot. התשלום הופקד בנאמנות.",
-        'timestamp': FieldValue.serverTimestamp(),
-        'type': 'text',
-      });
+            'senderId': 'system',
+            'message':
+                "🔒 שוריין תור לתאריך ${_selectedDay?.day}/${_selectedDay?.month} בשעה $_selectedTimeSlot. התשלום הופקד בנאמנות.",
+            'timestamp': FieldValue.serverTimestamp(),
+            'type': 'text',
+          });
 
       if (context.mounted) {
         Navigator.pop(context);
-        Navigator.pushReplacement(context,
-            MaterialPageRoute(builder: (_) => const MyBookingsScreen()));
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const MyBookingsScreen()),
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
             backgroundColor: Colors.green,
-            content: Text("התור שוריין בהצלחה!")));
+            content: Text("התור שוריין בהצלחה!"),
+          ),
+        );
       }
     } catch (e) {
       if (context.mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            backgroundColor: Colors.red,
-            content: Text(e.toString())));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(backgroundColor: Colors.red, content: Text(e.toString())),
+        );
       }
     }
   }
@@ -301,17 +350,18 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   Widget build(BuildContext context) {
     return FutureBuilder<DocumentSnapshot>(
       key: ValueKey(_refreshTrigger),
-      future: FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .get(),
+      future:
+          FirebaseFirestore.instance
+              .collection('users')
+              .doc(widget.userId)
+              .get(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
           return const Scaffold(
-              body: Center(child: CircularProgressIndicator()));
+            body: Center(child: CircularProgressIndicator()),
+          );
         }
-        final data =
-            snapshot.data!.data() as Map<String, dynamic>? ?? {};
+        final data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
 
         return Scaffold(
           // ── Light grey background matches ProfileScreen ──────────────
@@ -324,12 +374,27 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
               icon: const Icon(Icons.arrow_back, color: Colors.black),
               onPressed: () => Navigator.pop(context),
             ),
+            actions: [
+              // Account Settings entry — visible ONLY when the viewer is
+              // looking at their own public profile (e.g. tapping a
+              // review_received notification per §43 NotificationRouter).
+              if ((FirebaseAuth.instance.currentUser?.uid ?? '') ==
+                  widget.userId)
+                IconButton(
+                  tooltip: 'הגדרות חשבון',
+                  icon: const Icon(Icons.manage_accounts_rounded,
+                      size: 22, color: Color(0xFF6366F1)),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const AccountSettingsScreen()),
+                  ),
+                ),
+            ],
           ),
           body: Stack(
             children: [
               RefreshIndicator(
-                onRefresh: () async =>
-                    setState(() => _refreshTrigger++),
+                onRefresh: () async => setState(() => _refreshTrigger++),
                 child: CustomScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
                   slivers: [
@@ -342,30 +407,40 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                         _buildActionSquares(context, data),
                         const Padding(
                           padding: EdgeInsets.symmetric(
-                              horizontal: 25, vertical: 10),
+                            horizontal: 25,
+                            vertical: 10,
+                          ),
                           child: Divider(),
                         ),
                         // ── 3. Calendar & time-slot booking ───────────
                         const Padding(
                           padding: EdgeInsets.symmetric(
-                              horizontal: 25, vertical: 10),
-                          child: Text("בחר מועד לאימון",
-                              style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold)),
+                            horizontal: 25,
+                            vertical: 10,
+                          ),
+                          child: Text(
+                            "בחר מועד לאימון",
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ),
                         _buildCalendar(_parseUnavailableDates(data)),
                         if (_selectedDay != null) _buildTimeSlots(),
                         // ── 4. About & inline gallery ─────────────────
                         const Padding(
                           padding: EdgeInsets.symmetric(
-                              horizontal: 25, vertical: 25),
+                            horizontal: 25,
+                            vertical: 25,
+                          ),
                           child: Divider(thickness: 0.8),
                         ),
-                        _buildSection("אודות המאמן",
-                            data['bio'] ?? "אין תיאור זמין"),
-                        _buildGallerySection(
-                            data['gallery'] as List<dynamic>?),
+                        _buildSection(
+                          "אודות המאמן",
+                          data['bio'] ?? "אין תיאור זמין",
+                        ),
+                        _buildGallerySection(data['gallery'] as List<dynamic>?),
                         const SizedBox(height: 150),
                       ]),
                     ),
@@ -388,7 +463,15 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     // hasImg check removed — safeImageProvider handles both HTTPS + base64
     final name = data['name'] as String? ?? '';
     final isVerified = data['isVerified'] == true;
-    final isVolunteer = data['isVolunteer'] == true || data['volunteerHeart'] == true;
+    // Phase B (v15.x): viewer-gated heart icon. v2 viewers see the
+    // 30-day-expiry semantics; v1 viewers keep the legacy permanent-flag
+    // behavior. The `hasVolunteerBadge` derivation below routes through
+    // [VolunteerService] which is universally on the new helper but is
+    // behaviorally identical under realistic data (legacy fallback path).
+    final isVolunteer = shouldShowHeartFor(
+      viewerUid: FirebaseAuth.instance.currentUser?.uid,
+      ownerData: data,
+    );
     final serviceType = data['serviceType'] as String? ?? '';
     final bio = ((data['aboutMe'] ?? data['bio'] ?? '') as Object).toString();
     final xp = (data['xp'] as num? ?? 0).toInt();
@@ -429,22 +512,29 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                     Row(
                       children: [
                         if (isVerified) ...[
-                          const Icon(Icons.verified,
-                              color: Colors.blue, size: 18),
+                          const Icon(
+                            Icons.verified,
+                            color: Colors.blue,
+                            size: 18,
+                          ),
                           const SizedBox(width: 5),
                         ],
                         if (isVolunteer) ...[
-                          const Icon(Icons.favorite,
-                              color: Colors.red, size: 16),
+                          const Icon(
+                            Icons.favorite,
+                            color: Colors.red,
+                            size: 16,
+                          ),
                           const SizedBox(width: 5),
                         ],
                         Flexible(
                           child: Text(
                             name,
                             style: const TextStyle(
-                                fontSize: 19,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black),
+                              fontSize: 19,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black,
+                            ),
                           ),
                         ),
                       ],
@@ -453,53 +543,65 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                     const Text(
                       'נותן שירות',
                       style: TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF9CA3AF),
-                          fontWeight: FontWeight.w400),
+                        fontSize: 12,
+                        color: Color(0xFF9CA3AF),
+                        fontWeight: FontWeight.w400,
+                      ),
                     ),
                     if (serviceType.isNotEmpty) ...[
                       const SizedBox(height: 3),
-                      Text(serviceType,
-                          style: const TextStyle(
-                              color: Color(0xFF6366F1),
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600)),
+                      Text(
+                        serviceType,
+                        style: const TextStyle(
+                          color: Color(0xFF6366F1),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ],
                     if (bio.isNotEmpty) ...[
                       const SizedBox(height: 5),
-                      Text(bio,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 12.5,
-                              height: 1.4)),
+                      Text(
+                        bio,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          fontSize: 12.5,
+                          height: 1.4,
+                        ),
+                      ),
                     ],
                     const SizedBox(height: 14),
                     // Stats
                     _statRow(
-                        label: 'עבודות',
-                        value: '$jobsCount',
-                        icon: Icons.shield_outlined,
-                        iconColor: const Color(0xFF6366F1)),
+                      label: 'עבודות',
+                      value: '$jobsCount',
+                      icon: Icons.shield_outlined,
+                      iconColor: const Color(0xFF6366F1),
+                    ),
                     const Divider(
-                        height: 20,
-                        color: Color(0xFFF3F4F6),
-                        thickness: 1),
+                      height: 20,
+                      color: Color(0xFFF3F4F6),
+                      thickness: 1,
+                    ),
                     _statRow(
-                        label: 'דירוג',
-                        value: '$rating',
-                        icon: Icons.star_rounded,
-                        iconColor: Colors.amber),
+                      label: 'דירוג',
+                      value: '$rating',
+                      icon: Icons.star_rounded,
+                      iconColor: Colors.amber,
+                    ),
                     const Divider(
-                        height: 20,
-                        color: Color(0xFFF3F4F6),
-                        thickness: 1),
+                      height: 20,
+                      color: Color(0xFFF3F4F6),
+                      thickness: 1,
+                    ),
                     _statRow(
-                        label: 'ביקורות',
-                        value: '$reviewsCount',
-                        icon: Icons.chat_bubble_outline_rounded,
-                        iconColor: Colors.teal),
+                      label: 'ביקורות',
+                      value: '$reviewsCount',
+                      icon: Icons.chat_bubble_outline_rounded,
+                      iconColor: Colors.teal,
+                    ),
                   ],
                 ),
               ),
@@ -512,12 +614,16 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                     radius: 52,
                     backgroundColor: const Color(0xFFEEEBFF),
                     backgroundImage: safeImageProvider(profileImg),
-                    child: safeImageProvider(profileImg) == null
-                        ? Icon(Icons.person,
-                            size: 44,
-                            color: const Color(0xFF6366F1)
-                                .withValues(alpha: 0.5))
-                        : null,
+                    child:
+                        safeImageProvider(profileImg) == null
+                            ? Icon(
+                              Icons.person,
+                              size: 44,
+                              color: const Color(
+                                0xFF6366F1,
+                              ).withValues(alpha: 0.5),
+                            )
+                            : null,
                   ),
                   if (isVolunteer)
                     Positioned(
@@ -529,8 +635,11 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                           color: Colors.white,
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(Icons.favorite_rounded,
-                            color: Color(0xFFEF4444), size: 18),
+                        child: const Icon(
+                          Icons.favorite_rounded,
+                          color: Color(0xFFEF4444),
+                          size: 18,
+                        ),
                       ),
                     ),
                 ],
@@ -548,8 +657,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                   data['categoryDetails'] as Map<String, dynamic>? ?? {};
               if (details.isEmpty) return const SizedBox.shrink();
               return FutureBuilder<ServiceSchema>(
-                future: loadServiceSchemaFor(
-                    data['serviceType'] as String? ?? ''),
+                // §61: cached read — 30 min TTL.
+                future: CachedReaders.serviceSchemaForCategory(
+                  data['serviceType'] as String? ?? '',
+                ),
                 builder: (context, snap) {
                   if (!snap.hasData || snap.data!.isEmpty) {
                     return const SizedBox.shrink();
@@ -569,56 +680,70 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           // ── Community / Volunteer Badge ──────────────────────────
           if (hasVolunteerBadge || isVolunteer) ...[
             const SizedBox(height: 12),
-            Builder(builder: (_) {
-              final badges = data['communityBadges'] as List<dynamic>?;
-              final isAngel = badges != null && badges.contains('angel');
-              final isPillar = badges != null && badges.contains('pillar');
-              final badgeLabel = isAngel
-                  ? 'מלאך הקהילה'
-                  : isPillar
-                      ? 'עמוד תווך'
-                      : 'מתנדב פעיל';
-              final badgeIcon = isAngel
-                  ? Icons.auto_awesome_rounded
-                  : isPillar
-                      ? Icons.shield_rounded
-                      : Icons.favorite_rounded;
-              return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: isAngel
-                        ? [const Color(0xFFF59E0B), const Color(0xFFEF4444)]
-                        : [const Color(0xFFEF4444), const Color(0xFFEC4899)],
-                    begin: AlignmentDirectional.centerEnd,
-                    end: AlignmentDirectional.centerStart,
+            Builder(
+              builder: (_) {
+                final badges = data['communityBadges'] as List<dynamic>?;
+                final isAngel = badges != null && badges.contains('angel');
+                final isPillar = badges != null && badges.contains('pillar');
+                final badgeLabel =
+                    isAngel
+                        ? 'מלאך הקהילה'
+                        : isPillar
+                        ? 'עמוד תווך'
+                        : 'מתנדב פעיל';
+                final badgeIcon =
+                    isAngel
+                        ? Icons.auto_awesome_rounded
+                        : isPillar
+                        ? Icons.shield_rounded
+                        : Icons.favorite_rounded;
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
                   ),
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFFEF4444).withValues(alpha: 0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 3),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors:
+                          isAngel
+                              ? [
+                                const Color(0xFFF59E0B),
+                                const Color(0xFFEF4444),
+                              ]
+                              : [
+                                const Color(0xFFEF4444),
+                                const Color(0xFFEC4899),
+                              ],
+                      begin: AlignmentDirectional.centerEnd,
+                      end: AlignmentDirectional.centerStart,
                     ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(badgeIcon, color: Colors.white, size: 16),
-                    const SizedBox(width: 6),
-                    Text(
-                      badgeLabel,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFEF4444).withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
                       ),
-                    ),
-                  ],
-                ),
-              );
-            }),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(badgeIcon, color: Colors.white, size: 16),
+                      const SizedBox(width: 6),
+                      Text(
+                        badgeLabel,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
           ],
         ],
       ),
@@ -635,23 +760,26 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
       children: [
         Icon(icon, size: 16, color: iconColor),
         const SizedBox(width: 6),
-        Text(value,
-            style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87)),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
         const SizedBox(width: 5),
-        Text(label,
-            style: const TextStyle(
-                fontSize: 12, color: Color(0xFF9CA3AF))),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, color: Color(0xFF9CA3AF)),
+        ),
       ],
     );
   }
 
   // ── Action squares ─────────────────────────────────────────────────────────
 
-  Widget _buildActionSquares(
-      BuildContext context, Map<String, dynamic> data) {
+  Widget _buildActionSquares(BuildContext context, Map<String, dynamic> data) {
     final gallery = data['gallery'] as List<dynamic>? ?? [];
     final isPromoted = data['isPromoted'] == true;
     DateTime? expiryDate;
@@ -659,9 +787,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
       final ts = data['promotionExpiryDate'];
       if (ts != null) expiryDate = (ts as dynamic).toDate() as DateTime;
     } catch (_) {}
-    final isVipActive = isPromoted &&
-        expiryDate != null &&
-        expiryDate.isAfter(DateTime.now());
+    final isVipActive =
+        isPromoted && expiryDate != null && expiryDate.isAfter(DateTime.now());
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -670,9 +797,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           // Gallery square
           Expanded(
             child: InkWell(
-              onTap: gallery.isEmpty
-                  ? null
-                  : () => _showGallerySheet(context, gallery),
+              onTap:
+                  gallery.isEmpty
+                      ? null
+                      : () => _showGallerySheet(context, gallery),
               borderRadius: BorderRadius.circular(24),
               child: Container(
                 decoration: BoxDecoration(
@@ -688,15 +816,17 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                   ],
                 ),
                 padding: const EdgeInsets.symmetric(
-                    vertical: 28, horizontal: 16),
+                  vertical: 28,
+                  horizontal: 16,
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.photo_library_outlined,
-                        size: 32,
-                        color: gallery.isEmpty
-                            ? Colors.grey[300]
-                            : Colors.black),
+                    Icon(
+                      Icons.photo_library_outlined,
+                      size: 32,
+                      color: gallery.isEmpty ? Colors.grey[300] : Colors.black,
+                    ),
                     const SizedBox(height: 10),
                     Text(
                       'גלריית עבודות',
@@ -704,9 +834,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        color: gallery.isEmpty
-                            ? Colors.grey[300]
-                            : Colors.black,
+                        color:
+                            gallery.isEmpty ? Colors.grey[300] : Colors.black,
                       ),
                     ),
                   ],
@@ -719,9 +848,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           Expanded(
             child: Container(
               decoration: BoxDecoration(
-                color: isVipActive
-                    ? const Color(0xFFFBBF24)
-                    : Colors.white,
+                color: isVipActive ? const Color(0xFFFBBF24) : Colors.white,
                 borderRadius: BorderRadius.circular(24),
                 boxShadow: [
                   BoxShadow(
@@ -731,29 +858,28 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                     offset: const Offset(0, 6),
                   ),
                 ],
-                border: isVipActive
-                    ? null
-                    : Border.all(color: Colors.grey.shade200),
+                border:
+                    isVipActive
+                        ? null
+                        : Border.all(color: Colors.grey.shade200),
               ),
-              padding: const EdgeInsets.symmetric(
-                  vertical: 28, horizontal: 16),
+              padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.workspace_premium_rounded,
-                      size: 32,
-                      color: isVipActive
-                          ? Colors.white
-                          : Colors.amber[700]),
+                  Icon(
+                    Icons.workspace_premium_rounded,
+                    size: 32,
+                    color: isVipActive ? Colors.white : Colors.amber[700],
+                  ),
                   const SizedBox(height: 10),
                   Text(
-                    isVipActive ? 'מומחה VIP' : 'מומחה',
+                    isVipActive ? 'נותן שירות VIP' : 'נותן שירות',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color:
-                          isVipActive ? Colors.white : Colors.black,
+                      color: isVipActive ? Colors.white : Colors.black,
                     ),
                   ),
                 ],
@@ -765,58 +891,62 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     );
   }
 
-  void _showGallerySheet(
-      BuildContext context, List<dynamic> gallery) {
+  void _showGallerySheet(BuildContext context, List<dynamic> gallery) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (ctx) => Container(
-        height: MediaQuery.of(context).size.height * 0.65,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius:
-              BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(
-          children: [
-            const SizedBox(height: 12),
-            Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
+      builder:
+          (ctx) => Container(
+            height: MediaQuery.of(context).size.height * 0.65,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Column(
+              children: [
+                const SizedBox(height: 12),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
                     color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(10))),
-            const SizedBox(height: 16),
-            const Text('גלריית עבודות',
-                style: TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 18)),
-            const SizedBox(height: 12),
-            Expanded(
-              child: GridView.builder(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16),
-                gridDelegate:
-                    const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        mainAxisSpacing: 12,
-                        crossAxisSpacing: 12),
-                itemCount: gallery.length,
-                itemBuilder: (_, i) => ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: CachedNetworkImage(
-                    imageUrl: gallery[i].toString(),
-                    fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) =>
-                        Container(color: Colors.grey[200]),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-              ),
+                const SizedBox(height: 16),
+                const Text(
+                  'גלריית עבודות',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: GridView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                        ),
+                    itemCount: gallery.length,
+                    itemBuilder:
+                        (_, i) => ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: CachedNetworkImage(
+                            imageUrl: gallery[i].toString(),
+                            fit: BoxFit.cover,
+                            errorWidget:
+                                (_, __, ___) =>
+                                    Container(color: Colors.grey[200]),
+                          ),
+                        ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
             ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
+          ),
     );
   }
 
@@ -835,16 +965,19 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20),
       decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.grey[200]!)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
       child: TableCalendar(
         locale: 'he_IL',
         firstDay: DateTime.now(),
         lastDay: DateTime.now().add(const Duration(days: 30)),
         focusedDay: _focusedDay,
         headerStyle: const HeaderStyle(
-            formatButtonVisible: false, titleCentered: true),
+          formatButtonVisible: false,
+          titleCentered: true,
+        ),
         selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
         enabledDayPredicate: (day) {
           final n = DateTime.utc(day.year, day.month, day.day);
@@ -866,13 +999,17 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                    color: Colors.red.shade50,
-                    shape: BoxShape.circle),
+                  color: Colors.red.shade50,
+                  shape: BoxShape.circle,
+                ),
                 child: Center(
-                  child: Text('${day.day}',
-                      style: TextStyle(
-                          color: Colors.red.shade300,
-                          fontWeight: FontWeight.bold)),
+                  child: Text(
+                    '${day.day}',
+                    style: TextStyle(
+                      color: Colors.red.shade300,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               ),
             );
@@ -880,9 +1017,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         ),
         calendarStyle: const CalendarStyle(
           selectedDecoration: BoxDecoration(
-              color: Colors.black, shape: BoxShape.circle),
+            color: Colors.black,
+            shape: BoxShape.circle,
+          ),
           todayDecoration: BoxDecoration(
-              color: Colors.pinkAccent, shape: BoxShape.circle),
+            color: Colors.pinkAccent,
+            shape: BoxShape.circle,
+          ),
         ),
       ),
     );
@@ -900,28 +1041,25 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           final slot = _availableSlots[index];
           final isSelected = _selectedTimeSlot == slot;
           return GestureDetector(
-            onTap: () =>
-                setState(() => _selectedTimeSlot = slot),
+            onTap: () => setState(() => _selectedTimeSlot = slot),
             child: Container(
               margin: const EdgeInsets.only(top: 20, left: 10),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 25),
+              padding: const EdgeInsets.symmetric(horizontal: 25),
               decoration: BoxDecoration(
-                  color: isSelected
-                      ? Colors.black
-                      : Colors.white,
-                  borderRadius: BorderRadius.circular(15),
-                  border: Border.all(
-                      color: isSelected
-                          ? Colors.black
-                          : Colors.grey[300]!)),
+                color: isSelected ? Colors.black : Colors.white,
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(
+                  color: isSelected ? Colors.black : Colors.grey[300]!,
+                ),
+              ),
               child: Center(
-                child: Text(slot,
-                    style: TextStyle(
-                        color: isSelected
-                            ? Colors.white
-                            : Colors.black,
-                        fontWeight: FontWeight.bold)),
+                child: Text(
+                  slot,
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : Colors.black,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             ),
           );
@@ -932,10 +1070,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
 
   // ── Bottom sticky bar ──────────────────────────────────────────────────────
 
-  Widget _buildBottomAction(
-      BuildContext context, Map<String, dynamic> data) {
-    final isReady =
-        _selectedDay != null && _selectedTimeSlot != null;
+  Widget _buildBottomAction(BuildContext context, Map<String, dynamic> data) {
+    final isReady = _selectedDay != null && _selectedTimeSlot != null;
     return Positioned(
       bottom: 0,
       left: 0,
@@ -946,49 +1082,53 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           color: Colors.white,
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 20,
-                offset: const Offset(0, -5))
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 20,
+              offset: const Offset(0, -5),
+            ),
           ],
         ),
         child: Row(
           children: [
             Container(
               decoration: BoxDecoration(
-                  border: Border.all(color: Colors.black12),
-                  borderRadius: BorderRadius.circular(15)),
+                border: Border.all(color: Colors.black12),
+                borderRadius: BorderRadius.circular(15),
+              ),
               child: IconButton(
                 icon: const Icon(Icons.chat_bubble_outline),
-                onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => ChatScreen(
-                            receiverId: widget.userId,
-                            receiverName:
-                                data['name'] ?? "מומחה"))),
+                onPressed:
+                    () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder:
+                            (_) => ChatScreen(
+                              receiverId: widget.userId,
+                              receiverName: data['name'] ?? "נותן שירות",
+                            ),
+                      ),
+                    ),
               ),
             ),
             const SizedBox(width: 15),
             Expanded(
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                      isReady ? Colors.black : Colors.grey[300],
+                  backgroundColor: isReady ? Colors.black : Colors.grey[300],
                   minimumSize: const Size(0, 60),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15)),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
                 ),
-                onPressed: isReady
-                    ? () => _processEscrowOrder(context, data)
-                    : null,
+                onPressed:
+                    isReady ? () => _processEscrowOrder(context, data) : null,
                 child: Text(
-                  isReady
-                      ? "הזמן ל-$_selectedTimeSlot"
-                      : "בחר תאריך וזמן",
+                  isReady ? "הזמן ל-$_selectedTimeSlot" : "בחר תאריך וזמן",
                   style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16),
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
                 ),
               ),
             ),
@@ -1006,14 +1146,20 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Text(title,
-              style: const TextStyle(
-                  fontSize: 20, fontWeight: FontWeight.bold)),
+          Text(
+            title,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 12),
-          Text(content,
-              style: const TextStyle(
-                  fontSize: 15, color: Colors.black87, height: 1.6),
-              textAlign: TextAlign.right),
+          Text(
+            content,
+            style: const TextStyle(
+              fontSize: 15,
+              color: Colors.black87,
+              height: 1.6,
+            ),
+            textAlign: TextAlign.right,
+          ),
         ],
       ),
     );
@@ -1028,37 +1174,43 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         reverse: true,
         padding: const EdgeInsets.symmetric(horizontal: 20),
         itemCount: gallery.length,
-        itemBuilder: (context, index) => Container(
-          width: 280,
-          margin: const EdgeInsets.only(left: 15),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            image: DecorationImage(
-              image: CachedNetworkImageProvider(
-                  gallery[index].toString()),
-              fit: BoxFit.cover,
+        itemBuilder:
+            (context, index) => Container(
+              width: 280,
+              margin: const EdgeInsets.only(left: 15),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                image: DecorationImage(
+                  image: CachedNetworkImageProvider(gallery[index].toString()),
+                  fit: BoxFit.cover,
+                ),
+              ),
             ),
-          ),
-        ),
       ),
     );
   }
 
   // ── Booking summary helpers ────────────────────────────────────────────────
 
-  Widget _summaryRow(String label, String value,
-      {bool isBold = false, bool isGreen = false}) {
+  Widget _summaryRow(
+    String label,
+    String value, {
+    bool isBold = false,
+    bool isGreen = false,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label),
-          Text(value,
-              style: TextStyle(
-                  fontWeight:
-                      isBold ? FontWeight.bold : FontWeight.normal,
-                  color: isGreen ? Colors.green : Colors.black)),
+          Text(
+            value,
+            style: TextStyle(
+              fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+              color: isGreen ? Colors.green : Colors.black,
+            ),
+          ),
         ],
       ),
     );

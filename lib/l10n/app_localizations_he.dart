@@ -18,7 +18,7 @@ class AppLocalizationsHe extends AppLocalizations {
   String get greetingMorning => 'בוקר טוב';
 
   @override
-  String get greetingAfternoon => 'אחה\"צ טובות';
+  String get greetingAfternoon => 'צהריים טובים';
 
   @override
   String get greetingEvening => 'ערב טוב';
@@ -422,6 +422,39 @@ class AppLocalizationsHe extends AppLocalizations {
 
   @override
   String get chatListTitle => 'הודעות';
+
+  @override
+  String get postJobStoryTitle => 'רוצים יותר עבודות כאלה?';
+
+  @override
+  String get postJobStorySubtitle => 'שתפו את התוצאה בסטורי 🎬 ותגיעו ליותר לקוחות';
+
+  @override
+  String get postJobStoryPhotoBtn => '📷 תמונה';
+
+  @override
+  String get postJobStoryVideoBtn => '🎥 וידאו';
+
+  @override
+  String get postJobStoryLater => 'אולי אחר כך';
+
+  @override
+  String get postJobStoryUploading => 'מעלה לסטורי...';
+
+  @override
+  String get postJobStorySuccess => '✨ הסטורי שלך שודר! זמין ל-24 שעות';
+
+  @override
+  String get postJobStoryFileTooLarge => 'הקובץ גדול מדי (מקסימום 50MB)';
+
+  @override
+  String get postJobStorySourceTitle => 'בחר מקור';
+
+  @override
+  String get postJobStorySourceGallery => 'מהגלריה';
+
+  @override
+  String get postJobStorySourceCamera => 'מצלמה';
 
   @override
   String get expertSectionAbout => 'אודות';
@@ -985,6 +1018,9 @@ class AppLocalizationsHe extends AppLocalizations {
 
   @override
   String get vipBenefit4 => 'תמיכה מועדפת';
+
+  @override
+  String get vipBenefit5 => 'הופעה בבאנר נותני שירות VIP של AnySkill';
 
   @override
   String withdrawMinBalance(int amount) {
@@ -2287,6 +2323,12 @@ class AppLocalizationsHe extends AppLocalizations {
   String get profInvoiceEmailSubOff => 'לא תקבל חשבוניות במייל';
 
   @override
+  String get profInvoiceEmailNeedsEmail => 'נדרשת כתובת מייל לקבלת חשבוניות — לחץ/י להוספה';
+
+  @override
+  String get profInvoiceEmailSkipped => 'לא נוסף מייל — קבלת חשבוניות נשארה כבויה';
+
+  @override
   String get profSyncGooglePhoto => 'סנכרן תמונה מ-Google';
 
   @override
@@ -2420,20 +2462,31 @@ class AppLocalizationsHe extends AppLocalizations {
   String get homeMicroTasks => 'משימות מיקרו — הרווח מהיר';
 
   @override
+  String get anyTasksBannerProviderTitle => 'משימות פתוחות';
+
+  @override
+  String get anyTasksBannerProviderSub => 'בחר/י עבודות וצבור/י הכנסה עכשיו';
+
+  @override
+  String get anyTasksBannerCustomerTitle => 'פרסם משימה';
+
+  @override
+  String get anyTasksBannerCustomerSub => 'מצא נותן שירות תוך דקות';
+
+  @override
   String get anyTasksBannerTag => 'משימות';
 
   @override
-  String get anyTasksBannerDescription =>
-      'יש לכם משימה? כתבו אותה ואת הסכום — ונותני שירות יפנו אליכם';
+  String get anyTasksBannerDescription => 'יש לכם משימה? כתבו אותה ואת הסכום — ונותני שירות יפנו אליכם';
 
   @override
-  String get homeCommunityTitle => 'נתינה מהלב';
+  String get homeCommunityTitle => 'קהילה';
 
   @override
   String get homeCommunitySlogan => 'כישרון אחד, לב אחד';
 
   @override
-  String get homeDefaultExpert => 'המומחה';
+  String get homeDefaultExpert => 'נותן השירות';
 
   @override
   String get homeDefaultReengageMsg => 'מוכן להזמין שוב?';
@@ -2448,7 +2501,7 @@ class AppLocalizationsHe extends AppLocalizations {
   String get homeWelcomeTitle => 'ברוכים הבאים ל-AnySkill';
 
   @override
-  String get homeWelcomeSubtitle => 'מצא מומחים מהשכונה שלך';
+  String get homeWelcomeSubtitle => 'מצא נותני שירות מהשכונה שלך';
 
   @override
   String get homeServiceTitle => 'שירות מקצועי בלחיצה אחת';
@@ -2457,7 +2510,7 @@ class AppLocalizationsHe extends AppLocalizations {
   String get homeServiceSubtitle => 'שיפוצים • ניקיון • צילום ועוד';
 
   @override
-  String get homeBecomeExpertTitle => 'הפוך למומחה היום';
+  String get homeBecomeExpertTitle => 'הפוך לנותן השירות היום';
 
   @override
   String get homeBecomeExpertSubtitle => 'פרסם את השירות שלך והתחל להרוויח';
@@ -2599,8 +2652,7 @@ class AppLocalizationsHe extends AppLocalizations {
   String get chatQuoteExpiry24h => '24 שעות';
 
   @override
-  String get chatQuoteValidation =>
-      'יש להזין מחיר חוקי והנחה הקטנה ממנו';
+  String get chatQuoteValidation => 'יש להזין מחיר חוקי והנחה הקטנה ממנו';
 
   @override
   String get chatQuoteSendOffer => 'שלח הצעה ללקוח';
@@ -2636,8 +2688,7 @@ class AppLocalizationsHe extends AppLocalizations {
   String get chatQuoteDeclineConfirm => 'האם לדחות את ההצעה?';
 
   @override
-  String get chatQuoteExpiredError =>
-      'ההצעה פגה — יש לבקש מהנותן שירות הצעה חדשה';
+  String get chatQuoteExpiredError => 'ההצעה פגה — יש לבקש מהנותן שירות הצעה חדשה';
 
   @override
   String get chatSettingsTitle => 'הגדרות שיחה';
@@ -2685,7 +2736,7 @@ class AppLocalizationsHe extends AppLocalizations {
   String get expSlotTakenTitle => 'המועד תפוס';
 
   @override
-  String get expSlotTakenBody => 'מישהו כבר הזמין את המומחה לאותו מועד.\nאנא בחר תאריך או שעה אחרים.';
+  String get expSlotTakenBody => 'מישהו כבר הזמין את נותן השירות לאותו מועד.\nאנא בחר תאריך או שעה אחרים.';
 
   @override
   String get expUnderstood => 'הבנתי';
@@ -2827,6 +2878,9 @@ class AppLocalizationsHe extends AppLocalizations {
 
   @override
   String get catMapView => 'תצוגת מפה';
+
+  @override
+  String get catMapButtonShort => 'מפה';
 
   @override
   String get catListView => 'תצוגת רשימה';
@@ -3007,7 +3061,7 @@ class AppLocalizationsHe extends AppLocalizations {
 
   @override
   String editApplicationMessage(String name) {
-    return 'בקשה להצטרפות כמומחה: $name';
+    return 'בקשה להצטרפות כנותן שירות: $name';
   }
 
   @override
@@ -3123,7 +3177,7 @@ class AppLocalizationsHe extends AppLocalizations {
   String get editUnnamedDog => 'ללא שם';
 
   @override
-  String get editApplyAsProvider => 'הגש מועמדות כמומחה';
+  String get editApplyAsProvider => 'הגש מועמדות כנותן שירות';
 
   @override
   String get editApplyDesc => 'מלא את הפרטים ואנחנו נבדוק את הבקשה שלך';
@@ -3494,4 +3548,196 @@ class AppLocalizationsHe extends AppLocalizations {
 
   @override
   String get phoneLoginBecomeProvider => 'הרוויח עם AnySkill ←';
+
+  @override
+  String get massageSettingsBannerTitle => 'הגדרות ייעודיות לעיסוי';
+
+  @override
+  String get massageSettingsBannerDesc => 'הלקוחות יראו רק את מה שתסמני כאן';
+
+  @override
+  String get massageSpecialtiesTitle => 'סוגי טיפולים שאני מציעה';
+
+  @override
+  String get massageLocationsTitle => 'איפה את נותנת טיפולים';
+
+  @override
+  String get massageAddOnsTitle => 'תוספות שאני מציעה';
+
+  @override
+  String get massageDurationsTitle => 'משכי טיפול ומחירים';
+
+  @override
+  String get massagePackagesTitle => 'חבילות הנחה';
+
+  @override
+  String get massagePreferencesTitle => 'העדפות ושירות';
+
+  @override
+  String get massageBuildTreatmentTitle => 'בנה את הטיפול שלך';
+
+  @override
+  String get massageSectionType => 'סוג העיסוי';
+
+  @override
+  String get massageSectionLocation => 'איפה?';
+
+  @override
+  String get massageSectionDuration => 'משך';
+
+  @override
+  String get massageSectionPressure => 'עוצמת לחץ';
+
+  @override
+  String get massageSectionFocusAreas => 'איפה כואב?';
+
+  @override
+  String get massageSectionAddOns => 'תוספות';
+
+  @override
+  String get massageSectionPackages => 'חבילות הנחה';
+
+  @override
+  String get massageSectionAmbiance => 'אווירה';
+
+  @override
+  String get massageSectionNotes => 'הערות נוספות';
+
+  @override
+  String get massagePressureLight => 'עדין';
+
+  @override
+  String get massagePressureMedium => 'בינוני';
+
+  @override
+  String get massagePressureStrong => 'חזק';
+
+  @override
+  String get massageMusicCalm => 'רגועה';
+
+  @override
+  String get massageMusicNature => 'טבע';
+
+  @override
+  String get massageMusicClassical => 'קלאסי';
+
+  @override
+  String get massageMusicSilent => 'שקט';
+
+  @override
+  String get massageConvChatty => 'בכיף לדבר';
+
+  @override
+  String get massageConvMinimal => 'מינימלי';
+
+  @override
+  String get massageSummaryTotal => 'סך הכל';
+
+  @override
+  String get massageSummaryDuration => 'משך כולל';
+
+  @override
+  String get massageTrustSignal => 'תשלום מאובטח · ביטול חינם עד 24 שעות לפני';
+
+  @override
+  String get pestSettingsBannerTitle => 'הגדרות ייעודיות להדברה';
+
+  @override
+  String get pestSettingsBannerDesc => 'הלקוחות יראו רק את מה שתסמן כאן · רישיון משרד הגנ\"ס נדרש';
+
+  @override
+  String get pestLicensesTitle => 'רישיונות חובה';
+
+  @override
+  String get pestLicensesWarning => 'חובה לפי חוק - אימות נדרש לפני אישור הפרופיל';
+
+  @override
+  String get pestTypesTitle => 'סוגי מזיקים שאני מטפל';
+
+  @override
+  String get pestTypesHelper => 'הלקוחות יראו את הסל שלך';
+
+  @override
+  String get pestMethodsTitle => 'שיטות הטיפול שלי';
+
+  @override
+  String get pestAvailabilityTitle => 'זמינות ותגובה';
+
+  @override
+  String get pestEmergencyLabel => 'שירות חירום';
+
+  @override
+  String get pestEmergencyDesc => 'תוך שעה - תוספת מחיר';
+
+  @override
+  String get pest247Label => 'זמין 24/7';
+
+  @override
+  String get pestPricingTitle => 'מחירון שקוף';
+
+  @override
+  String get pestPricingSubtitle => 'לקוחות סומכים על מחיר ברור';
+
+  @override
+  String get pestWarrantyTitle => 'אחריות ושירות';
+
+  @override
+  String get pestWarrantyBasic => 'אחריות בסיסית';
+
+  @override
+  String get pestDigitalReport => 'דוח דיגיטלי אוטומטי';
+
+  @override
+  String get pestBeforeAfterPhotos => 'תמונות לפני/אחרי';
+
+  @override
+  String get pestPackagesTitle => 'חבילות תחזוקה';
+
+  @override
+  String get pestPackagesHint => 'הכנסה קבועה · לקוחות חוזרים';
+
+  @override
+  String get pestInstructionsTitle => 'הוראות והתנהלות לאחר טיפול';
+
+  @override
+  String get pestInstructionsSubtitle => 'מתורגם אוטומטית ללקוחות';
+
+  @override
+  String get pestInstructionsQuick => 'הוראות מהירות (סמן את הרלוונטיות)';
+
+  @override
+  String get pestInstructionsCustom => 'הוראות אישיות נוספות';
+
+  @override
+  String get pestClientBlockTitle => 'בנה את הטיפול שלך';
+
+  @override
+  String get pestClientAiTitle => 'לא יודע מה זה?';
+
+  @override
+  String get pestClientAiSubtitle => 'צלם והAI יזהה תוך 2 שניות';
+
+  @override
+  String get pestClientAiCapture => 'צלם עכשיו';
+
+  @override
+  String get pestClientAiUpload => 'העלה תמונה';
+
+  @override
+  String get pestClientInstructionsTitle => 'מה צריך לדעת לפני';
+
+  @override
+  String get pestClientInstructionsAcknowledge => 'קראתי והבנתי - אני מאשר את ההוראות';
+
+  @override
+  String get pestClientBookNow => 'הזמן עכשיו';
+
+  @override
+  String get pestClientTrustPayment => 'תשלום אחרי';
+
+  @override
+  String get pestClientTrustReport => 'דוח דיגיטלי';
+
+  @override
+  String get pestClientTrustCancel => 'ביטול חינם';
 }

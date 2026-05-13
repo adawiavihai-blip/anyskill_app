@@ -464,7 +464,14 @@ class _FinanceScreenState extends State<FinanceScreen>
                   const SizedBox(height: 22),
                   SizedBox(
                     width: double.infinity,
-                    child: OutlinedButton.icon(
+                    // Semantics: withdrawal action — money leaves the
+                    // platform. Critical for screen-reader users to understand
+                    // they're triggering a financial transaction.
+                    child: Semantics(
+                      button: true,
+                      label: l10n.financeWithdrawButton,
+                      hint: 'Initiates withdrawal of available balance',
+                      child: OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.white,
                         side: BorderSide(
@@ -483,6 +490,7 @@ class _FinanceScreenState extends State<FinanceScreen>
                               fontWeight: FontWeight.bold, fontSize: 13)),
                       onPressed: () =>
                           showWithdrawalModal(context, uid, balance),
+                    ),
                     ),
                   ),
                 ],

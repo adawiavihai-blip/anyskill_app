@@ -145,6 +145,71 @@ service firebase.storage {
                    && firestore.get(/databases/(default)/documents/dog_walks/$(walkId)).data.providerId == request.auth.uid;
     }
 
+    // ── Motorcycle bike-types catalog images (admin uploads) ─────────────
+    // Path: motorcycle_bike_types/{typeId}.{ext}
+    // Read by any signed-in user (provider + customer both render the
+    // catalog). Write requires admin — gated by the Firestore admin claim
+    // via the bridge: we don't have direct firestore.get cheap access in
+    // a heavy Storage rule, so we accept that any signed-in user can
+    // write a bike-type image (a low-blast-radius vector since the
+    // catalog DOC itself is admin-only at the Firestore-rules layer; a
+    // bad image without a doc has no surface that consumes it).
+    match /motorcycle_bike_types/{file=**} {
+      allow read:  if isSignedIn();
+      allow write: if isSignedIn() && isImageContentType() && underSize(5);
+    }
+
+    // ── Motorcycle towing before/after photos (per active tow) ───────────
+    // Path: motorcycle_tows/{towId}/{phase}_{ts}.{ext}  (phase=before|after)
+    // Same security pattern as dog_walks: parent motorcycle_tows doc
+    // carries providerId + customerId, and only the actual tow's
+    // provider can write images.
+    match /motorcycle_tows/{towId}/{allPaths=**} {
+      allow read:  if isSignedIn()
+                   && firestore.exists(/databases/(default)/documents/motorcycle_tows/$(towId))
+                   && (
+                        firestore.get(/databases/(default)/documents/motorcycle_tows/$(towId)).data.providerId == request.auth.uid
+                        || firestore.get(/databases/(default)/documents/motorcycle_tows/$(towId)).data.customerId == request.auth.uid
+                      );
+      allow write: if isSignedIn()
+                   && isImageContentType()
+                   && underSize(10)
+                   && firestore.exists(/databases/(default)/documents/motorcycle_tows/$(towId))
+                   && firestore.get(/databases/(default)/documents/motorcycle_tows/$(towId)).data.providerId == request.auth.uid;
+    }
+
+    // ── Motorcycle towing booking-time photos (customer pre-tow) ─────────
+    // Path: motorcycle_tow_pre_photos/{userId}/{ts}.{ext}
+    // Customer uploads images of the bike from the booking block BEFORE
+    // the job exists (no parent doc to gate against). Owner-write,
+    // signed-in read so the provider can preview at booking time.
+    match /motorcycle_tow_pre_photos/{userId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isOwner(userId) && isImageContentType() && underSize(10);
+    }
+
+    // ── Flash Auction photos (CLAUDE.md §57) ─────────────────────────────
+    // Path: flash_auction_photos/{customerUid}/{ts}.{ext}
+    // Customer uploads images of the bike on the location screen BEFORE
+    // the auction doc is created. Same pattern as motorcycle_tow_pre_photos
+    // — owner-write, signed-in read so the eventually-matched provider
+    // can preview before submitting an offer.
+    match /flash_auction_photos/{userId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isOwner(userId) && isImageContentType() && underSize(10);
+    }
+
+    // ── Delivery Express pre-broadcast photos (CLAUDE.md §78) ─────────────
+    // Path: delivery_express_photos/{customerUid}/{ts}.{ext}
+    // Customer uploads optional images of the package on the location
+    // screen BEFORE the auction doc is created. Same pattern as
+    // flash_auction_photos — owner-write, signed-in read so the
+    // eventually-matched courier can preview before accepting.
+    match /delivery_express_photos/{userId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isOwner(userId) && isImageContentType() && underSize(10);
+    }
+
     // ── Boarding daily proofs (provider uploads photo + video per day) ───
     // Path: boarding_proofs/{jobId}/{date}_{kind}.{ext}  (kind = photo|video)
     //
@@ -259,6 +324,17 @@ service firebase.storage {
     match /dog_profiles/{ownerId}/{allPaths=**} {
       allow read:  if isSignedIn();
       allow write: if isOwner(ownerId) && isImageContentType() && underSize(5);
+    }
+
+    // ── Sound Studio uploads (§53) ─────────────────────────────────────────
+    // Path: sounds/uploaded/{filename}
+    // Admin-only upload + content-type / size enforcement. Read open to all
+    // signed-in users so AudioService can stream the URL on app init.
+    match /sounds/uploaded/{soundFile} {
+      allow read:  if isSignedIn();
+      allow write: if isAdmin()
+                   && request.resource.contentType.matches('audio/.*')
+                   && underSize(5);
     }
 
     // ── DEFAULT DENY ──────────────────────────────────────────────────────

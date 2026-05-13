@@ -11,6 +11,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
+import '../utils/gold_heart_helper.dart';
+import 'cached_readers.dart';
 import 'gamification_service.dart';
 
 class VolunteerService {
@@ -67,8 +69,10 @@ class VolunteerService {
   }) async {
     // ── Anti-fraud: self-assignment check ──────────────────────────────────
     if (clientId == providerId) {
-      debugPrint('[VolunteerService] BLOCKED: self-assignment attempt '
-          'client=$clientId provider=$providerId');
+      debugPrint(
+        '[VolunteerService] BLOCKED: self-assignment attempt '
+        'client=$clientId provider=$providerId',
+      );
       return null;
     }
 
@@ -153,7 +157,10 @@ class VolunteerService {
 
     if (clientLat != null && clientLng != null) {
       distanceMeters = Geolocator.distanceBetween(
-        providerLat, providerLng, clientLat, clientLng,
+        providerLat,
+        providerLng,
+        clientLat,
+        clientLng,
       );
       isValid = distanceMeters <= gpsProximityThreshold;
     }
@@ -203,8 +210,10 @@ class VolunteerService {
 
     // ── 1. Only the original client can confirm ──────────────────────────
     if (confirmingUserId != clientId) {
-      debugPrint('[VolunteerService] BLOCKED: non-client confirmation attempt '
-          'confirmer=$confirmingUserId client=$clientId');
+      debugPrint(
+        '[VolunteerService] BLOCKED: non-client confirmation attempt '
+        'confirmer=$confirmingUserId client=$clientId',
+      );
       return 'רק הלקוח המקורי יכול לאשר';
     }
 
@@ -252,18 +261,26 @@ class VolunteerService {
     // ── Award XP ──────────────────────────────────────────────────────────
     await _awardVolunteerXp(providerId, taskId);
 
-    // ── Update provider's volunteer badge timestamp ───────────────────────
+    // ── Update provider's gold heart + legacy badge fields (atomic) ───────
+    // Phase B (v15.x) dual-write: `goldHeartExpiresAt` is the new
+    // authoritative field — every completion grants a fresh 30-day heart
+    // (never additive). Legacy fields are kept for back-compat with v1
+    // readers + rollback safety; will be removed in Phase H.
     await _db.collection('users').doc(providerId).update({
-      'lastVolunteerTaskAt': FieldValue.serverTimestamp(),
+      'goldHeartExpiresAt': GoldHeartHelper.grantGoldHeart(),
       'volunteerTaskCount': FieldValue.increment(1),
+      // Legacy (deprecated):
+      'lastVolunteerTaskAt': FieldValue.serverTimestamp(),
       'hasActiveVolunteerBadge': true,
     });
+    CachedReaders.invalidateProvider(providerId); // §61
 
     // ── Notify the provider ──────────────────────────────────────────────
     await _db.collection('notifications').add({
       'userId': providerId,
       'title': '🎉 המשימה ההתנדבותית אושרה!',
-      'body': 'הלקוח אישר את ההתנדבות שלך! קיבלת +$volunteerXpReward XP '
+      'body':
+          'הלקוח אישר את ההתנדבות שלך! קיבלת +$volunteerXpReward XP '
           'ותג מתנדב פעיל.',
       'type': 'volunteer_completed',
       'relatedUserId': clientId,
@@ -277,18 +294,21 @@ class VolunteerService {
   // ── Anti-fraud: same-user cooldown ─────────────────────────────────────────
   /// Returns null if OK, or a Hebrew error string if blocked.
   static Future<String?> _checkSameUserCooldown(
-      String providerId, String clientId) async {
+    String providerId,
+    String clientId,
+  ) async {
     final cutoff = Timestamp.fromDate(
       DateTime.now().subtract(Duration(days: sameClientCooldownDays)),
     );
-    final snap = await _db
-        .collection('volunteer_tasks')
-        .where('providerId', isEqualTo: providerId)
-        .where('clientId', isEqualTo: clientId)
-        .where('status', isEqualTo: 'completed')
-        .where('completedAt', isGreaterThan: cutoff)
-        .limit(1)
-        .get();
+    final snap =
+        await _db
+            .collection('volunteer_tasks')
+            .where('providerId', isEqualTo: providerId)
+            .where('clientId', isEqualTo: clientId)
+            .where('status', isEqualTo: 'completed')
+            .where('completedAt', isGreaterThan: cutoff)
+            .limit(1)
+            .get();
     if (snap.docs.isNotEmpty) {
       return 'נותן השירות כבר קיבל אישור ממך ב-30 הימים האחרונים. '
           'נסה שוב מאוחר יותר.';
@@ -300,20 +320,23 @@ class VolunteerService {
   /// If the current *provider* was helped BY the current *client* (roles
   /// reversed) within the window, block. Prevents A↔B XP farming.
   static Future<String?> _checkReciprocalBlock(
-      String providerId, String clientId) async {
+    String providerId,
+    String clientId,
+  ) async {
     final cutoff = Timestamp.fromDate(
       DateTime.now().subtract(Duration(days: reciprocalBlockDays)),
     );
     // Reverse direction: the current client acted as PROVIDER for the current
     // provider (who acted as CLIENT).
-    final snap = await _db
-        .collection('volunteer_tasks')
-        .where('providerId', isEqualTo: clientId)
-        .where('clientId', isEqualTo: providerId)
-        .where('status', isEqualTo: 'completed')
-        .where('completedAt', isGreaterThan: cutoff)
-        .limit(1)
-        .get();
+    final snap =
+        await _db
+            .collection('volunteer_tasks')
+            .where('providerId', isEqualTo: clientId)
+            .where('clientId', isEqualTo: providerId)
+            .where('status', isEqualTo: 'completed')
+            .where('completedAt', isGreaterThan: cutoff)
+            .limit(1)
+            .get();
     if (snap.docs.isNotEmpty) {
       return 'לא ניתן לאשר — התנדבות הדדית אינה מותרת תוך 30 יום.';
     }
@@ -325,16 +348,21 @@ class VolunteerService {
   /// hit the daily cap.
   static Future<String?> _checkDailyXpCap(String providerId) async {
     final todayStart = DateTime.now();
-    final midnight = DateTime(todayStart.year, todayStart.month, todayStart.day);
+    final midnight = DateTime(
+      todayStart.year,
+      todayStart.month,
+      todayStart.day,
+    );
     final cutoff = Timestamp.fromDate(midnight);
 
-    final snap = await _db
-        .collection('volunteer_tasks')
-        .where('providerId', isEqualTo: providerId)
-        .where('status', isEqualTo: 'completed')
-        .where('completedAt', isGreaterThan: cutoff)
-        .limit(10)
-        .get();
+    final snap =
+        await _db
+            .collection('volunteer_tasks')
+            .where('providerId', isEqualTo: providerId)
+            .where('status', isEqualTo: 'completed')
+            .where('completedAt', isGreaterThan: cutoff)
+            .limit(10)
+            .get();
 
     int todayXp = 0;
     for (final doc in snap.docs) {
@@ -351,7 +379,10 @@ class VolunteerService {
 
   // ── XP Award ───────────────────────────────────────────────────────────────
 
-  static Future<void> _awardVolunteerXp(String providerId, String taskId) async {
+  static Future<void> _awardVolunteerXp(
+    String providerId,
+    String taskId,
+  ) async {
     // XP is awarded exclusively via Cloud Function (xp field is server-only
     // in security rules — client writes are blocked).
     await GamificationService.awardXP(providerId, evVolunteerTask);
@@ -364,16 +395,15 @@ class VolunteerService {
 
   // ── Dynamic Volunteer Badge ────────────────────────────────────────────────
 
-  /// Returns true if the user has completed at least 1 volunteer task
-  /// in the last [badgeWindowDays] days.
+  /// Returns true if the user has an active gold heart.
   ///
-  /// Fast path: checks `lastVolunteerTaskAt` on the user document.
-  /// The field is updated by [confirmCompletion].
+  /// Phase B (v15.x): delegates to [GoldHeartHelper] which prefers the
+  /// new `goldHeartExpiresAt` Timestamp and falls back to the legacy
+  /// `lastVolunteerTaskAt + 30d` window for users who haven't yet had a
+  /// completion under the new system. The semantics ("active in last 30
+  /// days") are unchanged — only the source field has shifted.
   static bool hasActiveVolunteerBadge(Map<String, dynamic> userData) {
-    final ts = userData['lastVolunteerTaskAt'] as Timestamp?;
-    if (ts == null) return false;
-    final daysSince = DateTime.now().difference(ts.toDate()).inDays;
-    return daysSince <= badgeWindowDays;
+    return GoldHeartHelper.hasActiveFromUserData(userData);
   }
 
   /// Checks badge status from Firestore directly (for cases where
@@ -396,6 +426,7 @@ class VolunteerService {
       await _db.collection('users').doc(userId).update({
         'hasActiveVolunteerBadge': isActive,
       });
+      CachedReaders.invalidateProvider(userId); // §61
     }
   }
 
@@ -427,13 +458,14 @@ class VolunteerService {
     final cutoff = Timestamp.fromDate(
       DateTime.now().subtract(Duration(days: badgeWindowDays)),
     );
-    final snap = await _db
-        .collection('volunteer_tasks')
-        .where('providerId', isEqualTo: providerId)
-        .where('status', isEqualTo: 'completed')
-        .where('completedAt', isGreaterThan: cutoff)
-        .limit(50)
-        .get();
+    final snap =
+        await _db
+            .collection('volunteer_tasks')
+            .where('providerId', isEqualTo: providerId)
+            .where('status', isEqualTo: 'completed')
+            .where('completedAt', isGreaterThan: cutoff)
+            .limit(50)
+            .get();
     return snap.size;
   }
 }

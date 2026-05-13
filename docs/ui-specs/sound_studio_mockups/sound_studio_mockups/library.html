@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ספריית צלילים — מסך 2</title>
+<link rel="stylesheet" href="assets/styles.css">
+<style>
+  .filter-chips {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+
+  .chip {
+    padding: 7px 14px;
+    font-size: 12px;
+    background: transparent;
+    color: var(--text-secondary);
+    border: 0.5px solid var(--border-light);
+    border-radius: 20px;
+    transition: all 0.15s ease;
+  }
+
+  .chip:hover { border-color: var(--border-medium); color: var(--text-primary); }
+  .chip.active {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-strong);
+    font-weight: 500;
+  }
+
+  .sound-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .sound-card {
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
+    border: 0.5px solid var(--border-light);
+    padding: 18px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .sound-card:hover { border-color: var(--border-medium); transform: translateY(-2px); box-shadow: var(--shadow-md); }
+
+  .sound-card.selected {
+    border: 2px solid var(--color-primary);
+    padding: 17px;
+  }
+
+  .sound-card.suggested {
+    border: 0.5px dashed var(--color-primary);
+  }
+
+  .sound-card.muted { opacity: 0.6; }
+
+  .sound-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+
+  .sound-card-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .icon-square {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .waveform-mini { width: 100%; height: 36px; margin-bottom: 12px; }
+
+  .sound-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .play-icon-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease;
+  }
+
+  .play-icon-btn:hover { transform: scale(1.1); }
+  .play-icon-btn:active { transform: scale(0.95); }
+
+  .deep-dive {
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
+    border: 0.5px solid var(--border-light);
+    padding: 24px;
+  }
+
+  .deep-dive-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+
+  .big-player {
+    background: var(--bg-muted);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .big-play-btn {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    color: white;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease;
+  }
+
+  .big-play-btn:hover { transform: scale(1.05); }
+  .big-play-btn:active { transform: scale(0.95); }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .stat-card {
+    background: var(--bg-muted);
+    border-radius: var(--radius-md);
+    padding: 14px;
+  }
+
+  .stat-label { font-size: 11px; color: var(--text-secondary); margin-bottom: 6px; }
+  .stat-value { font-size: 22px; font-weight: 500; line-height: 1; }
+  .stat-meta { font-size: 11px; color: var(--text-tertiary); margin-top: 6px; }
+
+  .analysis-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .analysis-card {
+    background: var(--bg-muted);
+    border-radius: var(--radius-md);
+    padding: 16px;
+  }
+
+  .progress-bar {
+    height: 6px;
+    background: var(--bg-surface);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--text-primary);
+    color: white;
+    padding: 12px 20px;
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    box-shadow: var(--shadow-lg);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 200;
+  }
+
+  .toast.show { opacity: 1; }
+
+  @media (max-width: 768px) {
+    .sound-grid { grid-template-columns: 1fr; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .analysis-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Tabs -->
+  <nav class="tabs">
+    <a href="index.html" class="tab" style="text-decoration: none;">סטודיו</a>
+    <button class="tab active">ספרייה</button>
+    <a href="analytics.html" class="tab" style="text-decoration: none;">אנליטיקס</a>
+    <a href="logs.html" class="tab" style="text-decoration: none;">לוג מערכת</a>
+  </nav>
+
+  <!-- Header -->
+  <header class="page-header">
+    <div>
+      <h1 class="page-title">ספריית הצלילים</h1>
+      <p class="page-subtitle"><span id="total-count">7</span> צלילים זמינים · <span id="active-count">4</span> פעילים · <span id="archived-count">3</span> בארכיון</p>
+    </div>
+    <button class="btn btn-primary" onclick="uploadSound()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+      העלה צליל חדש
+    </button>
+  </header>
+
+  <!-- Filter chips -->
+  <div class="filter-chips" id="filter-chips">
+    <button class="chip active" data-filter="all">הכל · 7</button>
+    <button class="chip" data-filter="active">פעילים · 4</button>
+    <button class="chip" data-filter="payments">תשלומים</button>
+    <button class="chip" data-filter="notifications">התראות</button>
+    <button class="chip" data-filter="achievements">הישגים</button>
+    <button class="chip" data-filter="archived">בארכיון</button>
+  </div>
+
+  <!-- Sound grid -->
+  <div class="sound-grid" id="sound-grid"></div>
+
+  <!-- Deep dive -->
+  <div class="deep-dive" id="deep-dive">
+    <!-- Populated by JS -->
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ============================
+  // DATA
+  // ============================
+  const SOUNDS_LIBRARY = [
+    {
+      id: 'wealthCrystal',
+      name: 'Wealth Crystal',
+      category: 'תשלומים',
+      categoryFilter: 'payments',
+      file: 'wealth_crystal.mp3',
+      size: '47 KB',
+      hz: '528 Hz',
+      duration: '1.2 שנ\'',
+      bpm: 72,
+      cogLoad: 'נמוך',
+      status: 'active',
+      color: 'purple',
+      colorVar: '#534AB7',
+      colorLight: '#EEEDFE',
+      tags: [
+        { label: 'סיפוק', class: 'pill-green' },
+        { label: 'שגשוג', class: 'pill-primary' },
+        { label: 'נמוך עומס', class: 'pill-gray' }
+      ],
+      emotionScores: { סיפוק: 92, שגשוג: 87, אמינות: 81 },
+      iconSvg: '<path d="M6 2l3 6h6l3-6H6zM3 9l9 13 9-13H3z"/>',
+      iconStroke: false,
+      psychDescription: '"תדר השגשוג"'
+    },
+    {
+      id: 'solutionSnap',
+      name: 'Solution Snap',
+      category: 'התאמת AI',
+      categoryFilter: 'notifications',
+      file: 'solution_snap.mp3',
+      size: '38 KB',
+      hz: '880 Hz',
+      duration: '0.4 שנ\'',
+      bpm: 110,
+      cogLoad: 'בינוני',
+      status: 'active',
+      color: 'blue',
+      colorVar: '#185FA5',
+      colorLight: '#E6F1FB',
+      tags: [
+        { label: 'התרגשות', class: 'pill-blue' },
+        { label: 'חד', class: 'pill-gray' }
+      ],
+      emotionScores: { התרגשות: 88, סקרנות: 79, ערנות: 91 },
+      iconSvg: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+      iconStroke: true,
+      psychDescription: 'תדר התרעה גבוה'
+    },
+    {
+      id: 'opportunityPulse',
+      name: 'Opportunity Pulse',
+      category: 'התראות',
+      categoryFilter: 'notifications',
+      file: 'opportunity_pulse.mp3',
+      size: '52 KB',
+      hz: '660 Hz',
+      duration: '0.8 שנ\'',
+      bpm: 96,
+      cogLoad: 'נמוך',
+      status: 'active',
+      color: 'green',
+      colorVar: '#0F6E56',
+      colorLight: '#E1F5EE',
+      tags: [
+        { label: 'דחיפות', class: 'pill-green' },
+        { label: 'אורגני', class: 'pill-gray' }
+      ],
+      emotionScores: { דחיפות: 85, סקרנות: 78, אופטימיות: 82 },
+      iconSvg: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/>',
+      iconStroke: true,
+      psychDescription: 'פעימה אורגנית'
+    },
+    {
+      id: 'growthAscend',
+      name: 'Growth Ascend',
+      category: 'עלייה ב-XP',
+      categoryFilter: 'achievements',
+      file: 'growth_ascend.mp3',
+      size: '64 KB',
+      hz: '440→880 Hz',
+      duration: '1.5 שנ\'',
+      bpm: 88,
+      cogLoad: 'בינוני',
+      status: 'active',
+      color: 'amber',
+      colorVar: '#854F0B',
+      colorLight: '#FAEEDA',
+      tags: [
+        { label: 'הישג', class: 'pill-amber' },
+        { label: 'עולה', class: 'pill-gray' }
+      ],
+      emotionScores: { הישג: 94, גאווה: 86, מוטיבציה: 89 },
+      iconSvg: '<path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M12 12v9M8 17l4-5 4 5"/>',
+      iconStroke: true,
+      psychDescription: 'גליסנדו עולה'
+    },
+    {
+      id: 'crystalBell',
+      name: 'Crystal Bell',
+      category: 'חלופה לתשלומים',
+      categoryFilter: 'payments',
+      file: 'crystal_bell.mp3',
+      size: '41 KB',
+      hz: '528 Hz',
+      duration: '1.0 שנ\'',
+      bpm: 70,
+      cogLoad: 'נמוך',
+      status: 'archived',
+      color: 'gray',
+      colorVar: '#888780',
+      colorLight: '#F4F3EE',
+      tags: [
+        { label: 'בודהיסטי', class: 'pill-gray' },
+        { label: 'רך', class: 'pill-gray' }
+      ],
+      emotionScores: { רוגע: 92, סיפוק: 84, אמינות: 76 },
+      iconSvg: '<circle cx="12" cy="12" r="10"/>',
+      iconStroke: true,
+      psychDescription: 'פעמון מדיטציה'
+    },
+    {
+      id: 'coinDrop',
+      name: 'Coin Drop',
+      category: 'הצעת AI · 89% התאמה',
+      categoryFilter: 'payments',
+      file: 'coin_drop.mp3',
+      size: '34 KB',
+      hz: '640 Hz',
+      duration: '0.8 שנ\'',
+      bpm: 80,
+      cogLoad: 'נמוך',
+      status: 'suggested',
+      color: 'purple',
+      colorVar: '#534AB7',
+      colorLight: '#EEEDFE',
+      tags: [],
+      emotionScores: { סיפוק: 88, שגשוג: 82, התרגשות: 76 },
+      iconSvg: '<path d="M12 2l2 7h7l-5.5 4 2 7L12 16l-5.5 4 2-7L3 9h7z"/>',
+      iconStroke: true,
+      psychDescription: 'מתכת חמה'
+    },
+    {
+      id: 'softChime',
+      name: 'Soft Chime',
+      category: 'חלופה רכה',
+      categoryFilter: 'achievements',
+      file: 'soft_chime.mp3',
+      size: '38 KB',
+      hz: '432 Hz',
+      duration: '1.4 שנ\'',
+      bpm: 68,
+      cogLoad: 'נמוך',
+      status: 'archived',
+      color: 'gray',
+      colorVar: '#888780',
+      colorLight: '#F4F3EE',
+      tags: [
+        { label: 'רך', class: 'pill-gray' }
+      ],
+      emotionScores: { רוגע: 88, גאווה: 70, אמינות: 81 },
+      iconSvg: '<circle cx="12" cy="12" r="10"/>',
+      iconStroke: true,
+      psychDescription: 'תדר טבעי'
+    }
+  ];
+
+  let selectedSoundId = 'wealthCrystal';
+  let activeFilter = 'all';
+
+  // ============================
+  // RENDER GRID
+  // ============================
+  function generateWaveform(color, pattern = 'crystal') {
+    const patterns = {
+      crystal: [4,8,16,24,28,20,12,18,10,6,4,6,4,2],
+      snap: [2,8,28,20,4,2,2,2,2],
+      pulse: [6,14,22,26,18,12,22,14,6],
+      ascend: [2,6,10,16,20,26,28,32],
+      bell: [2,6,18,28,16,6,2],
+      coin: [28,20,6,16,4,2]
+    };
+    const heights = patterns[pattern] || patterns.crystal;
+    const bars = heights.map((h, i) => `<rect x="${i * 6}" y="${(32 - h) / 2}" width="3" height="${h}" rx="1"/>`).join('');
+    return `<svg class="waveform-mini" viewBox="0 0 ${heights.length * 6} 32" preserveAspectRatio="none"><g fill="${color}">${bars}</g></svg>`;
+  }
+
+  function getWaveformPattern(soundId) {
+    const map = {
+      wealthCrystal: 'crystal', solutionSnap: 'snap', opportunityPulse: 'pulse',
+      growthAscend: 'ascend', crystalBell: 'bell', coinDrop: 'coin', softChime: 'bell'
+    };
+    return map[soundId] || 'crystal';
+  }
+
+  function renderGrid() {
+    const grid = document.getElementById('sound-grid');
+    const filtered = SOUNDS_LIBRARY.filter(s => {
+      if (activeFilter === 'all') return true;
+      if (activeFilter === 'active') return s.status === 'active';
+      if (activeFilter === 'archived') return s.status === 'archived';
+      return s.categoryFilter === activeFilter;
+    });
+
+    grid.innerHTML = filtered.map(sound => {
+      const isSelected = sound.id === selectedSoundId;
+      const isSuggested = sound.status === 'suggested';
+      const isMuted = sound.status === 'archived';
+      const cardClass = `sound-card fade-in${isSelected ? ' selected' : ''}${isSuggested ? ' suggested' : ''}${isMuted ? ' muted' : ''}`;
+      const statusBadge = sound.status === 'active' ? '<span class="pill pill-solid-green">פעיל</span>'
+        : sound.status === 'archived' ? '<span class="pill pill-gray">בארכיון</span>'
+        : '<span class="pill pill-primary">חדש</span>';
+
+      return `
+        <div class="${cardClass}" onclick="selectSound('${sound.id}')">
+          <div class="sound-card-header">
+            <div class="sound-card-title">
+              <div class="icon-square" style="background: ${sound.colorLight};">
+                <svg width="18" height="18" viewBox="0 0 24 24" ${sound.iconStroke ? `fill="none" stroke="${sound.colorVar}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"` : `fill="${sound.colorVar}"`}>${sound.iconSvg}</svg>
+              </div>
+              <div>
+                <div style="font-size: 14px; font-weight: 500;">${sound.name}</div>
+                <div style="font-size: 11px; color: ${isSuggested ? sound.colorVar : 'var(--text-tertiary)'};">${sound.category}</div>
+              </div>
+            </div>
+            ${statusBadge}
+          </div>
+          ${generateWaveform(sound.colorVar, getWaveformPattern(sound.id))}
+          <div class="sound-card-meta">
+            <button class="play-icon-btn" style="background: ${isSelected ? sound.colorVar : sound.colorLight}; color: ${isSelected ? 'white' : sound.colorVar};" onclick="event.stopPropagation(); previewSound('${sound.id}', this)">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+            <div style="font-size: 11px; color: var(--text-tertiary);">${sound.hz} · ${sound.duration} · ${sound.size}</div>
+          </div>
+          ${sound.tags.length > 0 ? `<div style="display: flex; gap: 6px; flex-wrap: wrap;">${sound.tags.map(t => `<span class="pill ${t.class}">${t.label}</span>`).join('')}</div>` : ''}
+          ${isSuggested ? `<button class="btn btn-primary" style="width: 100%; justify-content: center; margin-top: 12px;" onclick="event.stopPropagation(); addToLibrary('${sound.id}')">הוסף לספרייה</button>` : ''}
+        </div>
+      `;
+    }).join('');
+  }
+
+  // ============================
+  // RENDER DEEP DIVE
+  // ============================
+  function renderDeepDive() {
+    const sound = SOUNDS_LIBRARY.find(s => s.id === selectedSoundId);
+    if (!sound) return;
+
+    const container = document.getElementById('deep-dive');
+    const emotionEntries = Object.entries(sound.emotionScores);
+    const colors = [sound.colorVar, '#534AB7', '#185FA5'];
+
+    container.innerHTML = `
+      <div class="deep-dive-header">
+        <div>
+          <div style="font-size: 11px; color: var(--text-tertiary); margin-bottom: 4px;">תצוגת עומק</div>
+          <h2 style="font-size: 18px; font-weight: 500;">${sound.name}</h2>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary" onclick="compareSounds()">השווה</button>
+          <button class="btn btn-secondary" onclick="abTest()">A/B test</button>
+        </div>
+      </div>
+
+      <div class="big-player">
+        <button class="big-play-btn" onclick="previewSound('${sound.id}', this)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <div style="flex: 1;">
+          <svg width="100%" height="56" viewBox="0 0 600 56" preserveAspectRatio="none">
+            <g fill="${sound.colorVar}" opacity="0.7">
+              ${Array.from({length: 50}, (_, i) => {
+                const h = Math.abs(Math.sin(i * 0.4) * Math.cos(i * 0.2)) * 50 + 4;
+                return `<rect x="${i * 12}" y="${(56 - h) / 2}" width="4" height="${h}" rx="1"/>`;
+              }).join('')}
+            </g>
+          </svg>
+        </div>
+        <span style="font-size: 13px; font-weight: 500; color: var(--text-secondary); white-space: nowrap;">${sound.duration}</span>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">תדר עיקרי</div>
+          <div class="stat-value">${sound.hz.split(' ')[0]} <span style="font-size: 11px; color: var(--text-tertiary); font-weight: 400;">${sound.hz.split(' ')[1] || ''}</span></div>
+          <div class="stat-meta" style="color: ${sound.colorVar};">${sound.psychDescription}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">BPM שווה ערך</div>
+          <div class="stat-value">${sound.bpm}</div>
+          <div class="stat-meta">${sound.bpm < 80 ? 'קצב לב רגוע' : sound.bpm < 100 ? 'קצב פעיל' : 'קצב מואץ'}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">משך</div>
+          <div class="stat-value">${sound.duration}</div>
+          <div class="stat-meta">בטווח אופטימלי</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">עומס קוגניטיבי</div>
+          <div class="stat-value" style="color: ${sound.cogLoad === 'נמוך' ? 'var(--color-green-dark)' : 'var(--color-amber-dark)'};">${sound.cogLoad}</div>
+          <div class="stat-meta">${sound.cogLoad === 'נמוך' ? 'לא מעייף' : 'דורש קשב'}</div>
+        </div>
+      </div>
+
+      <div class="analysis-grid">
+        <div class="analysis-card">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 14px;">
+            <span style="font-size: 13px; font-weight: 500;">פרופיל תדר</span>
+            <span style="font-size: 11px; color: var(--text-tertiary);">Hz</span>
+          </div>
+          <svg width="100%" height="76" viewBox="0 0 280 76" preserveAspectRatio="none">
+            <path d="M 0,68 Q 20,60 40,46 T 80,22 T 120,14 T 160,26 T 200,42 T 240,56 T 280,68 L 280,76 L 0,76 Z" fill="${sound.colorLight}"/>
+            <path d="M 0,68 Q 20,60 40,46 T 80,22 T 120,14 T 160,26 T 200,42 T 240,56 T 280,68" stroke="${sound.colorVar}" stroke-width="1.5" fill="none"/>
+          </svg>
+          <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-tertiary); margin-top: 6px;">
+            <span>20</span><span>200</span><span>2K</span><span>20K</span>
+          </div>
+        </div>
+
+        <div class="analysis-card">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 14px;">
+            <span style="font-size: 13px; font-weight: 500;">טביעת רגש</span>
+            <span style="font-size: 11px; color: var(--color-green-dark); font-weight: 500;">ניתוח AI</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            ${emotionEntries.map(([emotion, score], i) => `
+              <div>
+                <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 5px;">
+                  <span>${emotion}</span><span style="color: var(--text-tertiary);">${score}%</span>
+                </div>
+                <div class="progress-bar"><div class="progress-bar-fill" style="width: ${score}%; background: ${colors[i]};"></div></div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // ============================
+  // INTERACTIONS
+  // ============================
+  function selectSound(id) {
+    selectedSoundId = id;
+    renderGrid();
+    renderDeepDive();
+  }
+
+  function previewSound(id, btn) {
+    const sound = SOUNDS_LIBRARY.find(s => s.id === id);
+    showToast(`▶ משמיע: ${sound.name}`);
+  }
+
+  function uploadSound() { showToast('📤 פותח חלון העלאת קובץ...'); }
+  function compareSounds() { showToast('🔀 פותח כלי השוואה...'); }
+  function abTest() { showToast('🧪 פותח הגדרת A/B test...'); }
+  function addToLibrary(id) {
+    const sound = SOUNDS_LIBRARY.find(s => s.id === id);
+    sound.status = 'active';
+    showToast(`✓ ${sound.name} נוסף לספרייה`);
+    renderGrid();
+  }
+
+  function showToast(message) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2500);
+  }
+
+  // Filter chips
+  document.getElementById('filter-chips').addEventListener('click', (e) => {
+    if (!e.target.classList.contains('chip')) return;
+    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+    e.target.classList.add('active');
+    activeFilter = e.target.dataset.filter;
+    renderGrid();
+  });
+
+  renderGrid();
+  renderDeepDive();
+</script>
+</body>
+</html>

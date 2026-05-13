@@ -736,7 +736,7 @@ class ChatJobStatusBanner extends StatelessWidget {
             borderColor: const Color(0xFF22C55E),
             icon:        Icons.check_circle_rounded,
             iconColor:   const Color(0xFF16A34A),
-            text:        'המומחה סיים! אשר לשחרור התשלום.',
+            text:        'נותן השירות סיים! אשר לשחרור התשלום.',
             buttonText:  'אשר ושחרר 💚',
             buttonColor: const Color(0xFF16A34A),
             onTap: () => _releaseEscrow(context, jobDocId, jobData),
@@ -771,7 +771,7 @@ class ChatJobStatusBanner extends StatelessWidget {
           .collection('messages')
           .add({
         'senderId':  'system',
-        'message':   '✅ המומחה סיים את העבודה! לחץ על "אשר ושחרר" כדי לשחרר את התשלום.',
+        'message':   '✅ נותן השירות סיים את העבודה! לחץ על "אשר ושחרר" כדי לשחרר את התשלום.',
         'type':      'text',
         'timestamp': FieldValue.serverTimestamp(),
       });
@@ -908,7 +908,7 @@ class ChatJobStatusBanner extends StatelessWidget {
                   style: TextStyle(
                       fontSize: 17, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              const Text('הכסף הועבר למומחה.',
+              const Text('הכסף הועבר לנותן השירות.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                       color: Color(0xFF64748B), fontSize: 13)),

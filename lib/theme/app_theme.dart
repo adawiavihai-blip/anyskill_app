@@ -49,16 +49,19 @@ abstract final class Brand {
   static const ctaGradient      = [indigo, indigoDark];
 }
 
-// ── Map screen palette (v12.9.0) ─────────────────────────────────────────────
+// ── Map screen palette (v12.9.0, primary unified to Brand.indigo §59) ────────
 // Scoped to the map view ONLY. Imports: providers_map_view.dart + the new
-// sections of category_results_screen.dart. Keeps the rest of the app on
-// Brand.* untouched so this experiment can be reverted in one commit.
-
+// sections of category_results_screen.dart.
+//
+// CHANGE 2026-05-10 (CLAUDE.md §59): primary unified with Brand.indigo so
+// the map view feels like the same product as the rest of the customer
+// surface. Other tokens (gold, online green, tag swatches) stay scoped —
+// they're domain-specific signals, not brand color.
 abstract final class MapPalette {
-  // Primary — CTA purple (matches the mockup)
-  static const primary       = Color(0xFF5B5FE6);
-  static const primaryLight  = Color(0xFFEDEDFD);  // selection / pill bg
-  static const primaryDark   = Color(0xFF4548C7);  // pressed state
+  // Primary — CTA color, unified with Brand.indigo (was #5B5FE6 in v12.9.0)
+  static const primary       = Brand.indigo;       // #6366F1
+  static const primaryLight  = Color(0xFFEEF2FF);  // selection / pill bg, ~indigo @ 5%
+  static const primaryDark   = Brand.indigoDark;   // #4F46E5
 
   // Semantic
   static const online        = Color(0xFF22C55E);  // availability dot

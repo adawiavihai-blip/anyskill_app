@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../l10n/app_localizations.dart';
 import '../services/visual_fetcher_service.dart';
 import 'category_results_screen.dart';
@@ -12,6 +13,10 @@ import 'sub_category_screen.dart';
 import 'search_screen/search_page.dart';
 import 'search_screen/widgets/stories_row.dart';
 import 'community_hub_screen.dart';
+import 'community/community_hub_screen_v2.dart';
+import 'community/feature_flag.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../theme/community_theme.dart';
 import '../features/any_tasks/screens/my_tasks_screen.dart';
 import '../widgets/skeleton_loader.dart';
 import '../widgets/global_search_bar.dart';
@@ -23,6 +28,11 @@ import '../services/auth_service.dart';
 import '../widgets/daily_drop_modal.dart';
 import '../utils/safe_image_provider.dart';
 import '../main.dart' show currentAppVersion;
+// Banners v2 (§49) — provider_carousel rail injected after the 4th category
+// row. Lives separately from the legacy _PromoCarousel (which still owns
+// the `home_carousel` placement).
+import '../models/banner_model.dart' show ProviderCarouselConfig;
+import '../widgets/provider_carousel_banner.dart';
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
@@ -82,6 +92,13 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   String      _profileImageUrl = '';   // live-synced from Firestore
   late final StreamSubscription<DocumentSnapshot> _onlineSub;
 
+  // Per-user category affinity — maps top-level category NAME → tap count.
+  // Live-synced from `users/{uid}.categoryTapCounts`. Used by the build
+  // method's sort comparator to push the categories THIS user clicks into
+  // most to the top of the home grid. Empty for brand-new users → grid
+  // falls back to global popularity (clickCount) order.
+  Map<String, int> _categoryTapCounts = {};
+
   @override
   void initState() {
     super.initState();
@@ -89,8 +106,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     // Seed from prop immediately — correct state on first paint.
     _isOnline        = widget.isOnline;
     _profileImageUrl = (widget.userData['profileImage'] as String? ?? '');
+    _categoryTapCounts = _parseTapCounts(widget.userData['categoryTapCounts']);
 
-    // Subscribe to the live user doc — updates both online status AND avatar.
+    // Subscribe to the live user doc — updates online status, avatar, AND
+    // per-user category affinity (so the home grid re-sorts the moment a
+    // tap is recorded, without waiting for a screen rebuild).
     _onlineSub = FirebaseFirestore.instance
         .collection('users')
         .doc(widget.currentUserId)
@@ -100,9 +120,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       final data = snap.data() ?? {};
       final live = data['isOnline'] == true;
       final img  = data['profileImage'] as String? ?? '';
+      final counts = _parseTapCounts(data['categoryTapCounts']);
       setState(() {
-        _isOnline        = live;
-        _profileImageUrl = img;
+        _isOnline          = live;
+        _profileImageUrl   = img;
+        _categoryTapCounts = counts;
       });
     });
 
@@ -254,6 +276,23 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     super.dispose();
   }
 
+  /// Parses a Firestore `Map<String, dynamic>?` of category → tap count into
+  /// a strongly-typed `Map<String, int>`. Tolerates missing fields, non-int
+  /// values (e.g. doubles), and entirely missing keys — returns {} on any
+  /// shape mismatch instead of throwing.
+  Map<String, int> _parseTapCounts(dynamic raw) {
+    if (raw is! Map) return {};
+    final out = <String, int>{};
+    raw.forEach((k, v) {
+      if (k == null) return;
+      final key = k.toString();
+      if (key.isEmpty) return;
+      final intVal = (v is num) ? v.toInt() : 0;
+      if (intVal > 0) out[key] = intVal;
+    });
+    return out;
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   void _openSearch({String? preselectedCategory}) {
@@ -304,15 +343,31 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     // This lets CustomScrollView use proper SliverGrid for performance.
     return Scaffold(
       backgroundColor: Colors.white,
-      body: SafeArea(
+      body: Stack(
+        children: [
+          // ── POC: pastel radial-gradient background (§glassmorphism) ─────
+          const Positioned.fill(
+            child: IgnorePointer(child: _PastelHomeBackground()),
+          ),
+          SafeArea(
         child: StreamBuilder<QuerySnapshot>(
           stream: _categoriesStream,
           builder: (context, catSnap) {
             // ── Pre-process category data ─────────────────────────────────
             final allDocs = catSnap.data?.docs ?? [];
 
-            // All top-level categories, sorted by popularity:
-            //   1. clickCount DESC  2. order ASC  3. name ASC
+            // All top-level categories, sorted into a "breathing" grid:
+            //   1. PER-USER affinity DESC   — this user's own tap counts
+            //   2. Global clickCount DESC   — platform-wide popularity
+            //   3. order ASC                — admin-configured order
+            //   4. name ASC                 — stable tie-breaker
+            //
+            // Sub-cat taps lift the PARENT (see recordCategoryTap call sites
+            // below — `affinityKey` is always the parent name), so opening
+            // "גרר אופנועים" pushes the whole "תחבורה" card to the top on
+            // the next render. For brand-new users _categoryTapCounts is
+            // empty, so the grid falls back to the global ordering it always
+            // had — no regression for fresh accounts.
             final mainDocs = allDocs
                 .where((d) {
                   final data = d.data() as Map;
@@ -322,18 +377,24 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                 })
                 .toList()
               ..sort((a, b) {
-                final cA =
-                    ((a.data() as Map)['clickCount'] as num? ?? 0).toInt();
-                final cB =
-                    ((b.data() as Map)['clickCount'] as num? ?? 0).toInt();
+                final dataA = a.data() as Map;
+                final dataB = b.data() as Map;
+                final nameA = (dataA['name'] as String?) ?? '';
+                final nameB = (dataB['name'] as String?) ?? '';
+
+                final userA = _categoryTapCounts[nameA] ?? 0;
+                final userB = _categoryTapCounts[nameB] ?? 0;
+                if (userA != userB) return userB.compareTo(userA);
+
+                final cA = (dataA['clickCount'] as num? ?? 0).toInt();
+                final cB = (dataB['clickCount'] as num? ?? 0).toInt();
                 if (cA != cB) return cB.compareTo(cA);
-                final oA =
-                    ((a.data() as Map)['order'] as num? ?? 999).toInt();
-                final oB =
-                    ((b.data() as Map)['order'] as num? ?? 999).toInt();
+
+                final oA = (dataA['order'] as num? ?? 999).toInt();
+                final oB = (dataB['order'] as num? ?? 999).toInt();
                 if (oA != oB) return oA.compareTo(oB);
-                return (((a.data() as Map)['name'] as String?) ?? '')
-                    .compareTo(((b.data() as Map)['name'] as String?) ?? '');
+
+                return nameA.compareTo(nameB);
               });
 
             final filteredDocs = mainDocs;
@@ -395,6 +456,18 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                 SliverToBoxAdapter(
                   key: const ValueKey('stories_row_slot'),
                   child: StoriesRow(key: const ValueKey('stories_row'), isProvider: isProvider),
+                ),
+
+                // ── Banners Studio §51 — provider_carousel rail ─────────────
+                // The rail widget owns its own section title and renders
+                // nothing at all when no qualifying banner exists, so we
+                // never see a stranded "נותני השירות ה-VIP שלנו" header
+                // sitting above an empty space.
+                const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(16, 0, 16, 0),
+                    child: _ProviderCarouselsRail(),
+                  ),
                 ),
 
                 // ── Loading shimmer ────────────────────────────────────────
@@ -482,6 +555,8 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
           },
         ),
       ),
+        ], // Stack children
+      ), // Stack
     );
   }
 
@@ -737,7 +812,13 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     final slivers       = <Widget>[];
     bool promoInserted  = false;
     for (int i = 0; i < filteredDocs.length; i++) {
-      // Inject promo carousel between 2nd and 3rd parent sections.
+      // Inject legacy promo carousel (`home_carousel` placement only)
+      // between 2nd and 3rd parent sections.
+      //
+      // NOTE: the provider_carousel rail (§49) was moved out of this
+      // function — it now renders at the build() top-level, right below
+      // the Stories row. See the SliverToBoxAdapter with key
+      // 'stories_row_slot' in the build() method.
       if (!promoInserted && i == 2) {
         slivers.add(const SliverToBoxAdapter(
           child: Padding(
@@ -752,8 +833,92 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       final parentData = parentDoc.data() as Map<String, dynamic>;
       final parentName = parentData['name']     as String? ?? '';
       final parentImg  = parentData['img']      as String? ?? '';
-      final subs       = subsByParent[parentDoc.id] ?? [];
-      final hasSubs    = subs.isNotEmpty;
+
+      // Per-user sub-category affinity — sort each parent's sub-cat strip
+      // so the sub-cats THIS user opens most inside this parent appear
+      // first (RTL → rightmost). Same 4-tier comparator as the top-level
+      // grid: personal taps DESC → global clickCount DESC → order ASC →
+      // name ASC. Brand-new users with empty _categoryTapCounts see the
+      // strip in the same order it had before this change.
+      final subs = List<QueryDocumentSnapshot>.from(
+          subsByParent[parentDoc.id] ?? const [])
+        ..sort((a, b) {
+          final dataA = a.data() as Map;
+          final dataB = b.data() as Map;
+          final nameA = (dataA['name'] as String?) ?? '';
+          final nameB = (dataB['name'] as String?) ?? '';
+
+          final userA = _categoryTapCounts[nameA] ?? 0;
+          final userB = _categoryTapCounts[nameB] ?? 0;
+          if (userA != userB) return userB.compareTo(userA);
+
+          final cA = (dataA['clickCount'] as num? ?? 0).toInt();
+          final cB = (dataB['clickCount'] as num? ?? 0).toInt();
+          if (cA != cB) return cB.compareTo(cA);
+
+          final oA = (dataA['order'] as num? ?? 999).toInt();
+          final oB = (dataB['order'] as num? ?? 999).toInt();
+          if (oA != oB) return oA.compareTo(oB);
+
+          return nameA.compareTo(nameB);
+        });
+      final hasSubs = subs.isNotEmpty;
+
+      // ── §glassmorphism — wrap EVERY hasSubs category in a glass card ─
+      // POC Phase 1 (i==0 only) proved the blur(24) BackdropFilter doesn't
+      // trigger the minified TypeError that killed Luxury Glass v3. Phase 2
+      // rolls out to all categories with sub-categories. Categories without
+      // subs keep the legacy header + full-width-tile path unchanged.
+      if (hasSubs) {
+        slivers.add(SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: _GlassCategoryCard(
+              title: parentName,
+              onShowAll: () {
+                OpportunityHunterService.recordCategoryTap(
+                    widget.currentUserId, parentName,
+                    affinityKey: parentName);
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => SubCategoryScreen(
+                      parentId: parentDoc.id, parentName: parentName),
+                ));
+              },
+              child: SizedBox(
+                height: 126,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  itemCount: subs.length,
+                  itemBuilder: (context, si) {
+                    final sub     = subs[si].data() as Map<String, dynamic>;
+                    final subName = sub['name'] as String? ?? '';
+                    final subImg  = sub['img']  as String? ?? '';
+                    return _buildSubCatCard(
+                      name:     subName,
+                      imageUrl: subImg,
+                      isAdmin:  isAdmin,
+                      docId:    subs[si].id,
+                      onTap: () {
+                        OpportunityHunterService.recordCategoryTap(
+                            widget.currentUserId, subName,
+                            affinityKey: parentName,
+                            subAffinityKey: subName);
+                        Navigator.push(context, MaterialPageRoute(
+                          builder: (_) =>
+                              CategoryResultsScreen(categoryName: subName),
+                        ));
+                      },
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ));
+        continue;
+      }
 
       // ── Section header with "הצג הכל" link ──────────────────────────
       slivers.add(SliverToBoxAdapter(
@@ -775,7 +940,8 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
               GestureDetector(
                 onTap: () {
                   OpportunityHunterService.recordCategoryTap(
-                      widget.currentUserId, parentName);
+                      widget.currentUserId, parentName,
+                      affinityKey: parentName);
                   if (hasSubs) {
                     Navigator.push(context, MaterialPageRoute(
                       builder: (_) => SubCategoryScreen(
@@ -792,7 +958,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   AppLocalizations.of(context).homeShowAll,
                   style: const TextStyle(
                     fontSize: 12,
-                    color: Color(0xFF6366F1),
+                    color: Color(0xFF1A1A2E),
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -823,7 +989,9 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   docId:        subs[si].id,
                   onTap: () {
                     OpportunityHunterService.recordCategoryTap(
-                        widget.currentUserId, subName);
+                        widget.currentUserId, subName,
+                        affinityKey: parentName,
+                        subAffinityKey: subName);
                     Navigator.push(context, MaterialPageRoute(
                       builder: (_) =>
                           CategoryResultsScreen(categoryName: subName),
@@ -844,7 +1012,8 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                 GestureDetector(
                   onTap: () {
                     OpportunityHunterService.recordCategoryTap(
-                        widget.currentUserId, parentName);
+                        widget.currentUserId, parentName,
+                        affinityKey: parentName);
                     Navigator.push(context, MaterialPageRoute(
                       builder: (_) =>
                           CategoryResultsScreen(categoryName: parentName),
@@ -935,6 +1104,8 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
         ),
       ));
     }
+    // Banners v2 (§49) rail moved to the build() top-level (below Stories
+    // row). No fallback needed here any more.
 
     // ── AnyTasks banner — dark premium "Apple Card" style ──────────
     // TODO(§35): Route providers to ProviderHubScreen, clients to MyTasksScreen
@@ -949,7 +1120,28 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       ),
     ));
 
-    // ── Community tile — "נתינה מהלב" with facepile + pulse ─────────
+    // ── Community tile — Phase D-1 (v15.x) gated swap ─────────────────
+    // v2 viewers (whitelist) see the new mockup-10 black card and are
+    // routed to [CommunityHubScreenV2]. Everyone else keeps the legacy
+    // pink-purple gradient banner that pushes the legacy 3,855-line hub.
+    final communityViewerUid = FirebaseAuth.instance.currentUser?.uid;
+    if (isCommunityV2EnabledFor(communityViewerUid)) {
+      slivers.add(SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+          child: _CommunityBannerV2(
+            volunteerCount: _volunteerCount,
+            recentAvatars: _recentVolunteerAvatars,
+            onTap: () => Navigator.of(context, rootNavigator: true).push(
+                MaterialPageRoute(
+                    builder: (_) => const CommunityHubScreenV2())),
+          ),
+        ),
+      ));
+      return slivers;
+    }
+
+    // Legacy v1 banner — UNCHANGED.
     slivers.add(SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
@@ -1205,7 +1397,15 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       builder: (context, snap) {
         if (snap.hasError) return const SizedBox.shrink();
         final unread = snap.data?.docs.length ?? 0;
-        return GestureDetector(
+        // Semantics: bell icon with optional unread count badge.
+        // Without an explicit Semantics wrapper, screen readers announce
+        // "image" and miss both the action AND the unread count.
+        return Semantics(
+          button: true,
+          label: unread > 0
+              ? 'Notifications, $unread unread'
+              : 'Notifications',
+          child: GestureDetector(
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const NotificationsScreen()),
@@ -1248,6 +1448,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                 ),
             ],
           ),
+        ),
         );
       },
     );
@@ -1565,6 +1766,176 @@ class _HeartPulseState extends State<_HeartPulse>
   }
 }
 
+// ── Pastel radial-gradient background for the Home tab ─────────────────────
+//
+// Base white + 4 soft radial blobs (lavender/pink/violet/sky) anchored at
+// corners. Translates the CSS:
+//   radial-gradient(circle at X% Y%, rgba(...), transparent 50%) × 4
+// into 4 stacked Positioned.fill DecoratedBox layers with RadialGradient
+// decorations, each fading to 00-alpha at radius 0.5 — so they compose
+// additively rather than clobbering each other.
+//
+// Important: this is static — no ImageFilter, no ColorFilter.matrix, no
+// saturate. Only pure decoration paint. Zero known release-build risk.
+class _PastelHomeBackground extends StatelessWidget {
+  const _PastelHomeBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    return const ColoredBox(
+      color: Colors.white,
+      child: Stack(
+        children: [
+          // Blob 1 — top-left @ 20% 20%, lavender bright
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment(-0.6, -0.6),
+                  radius: 0.5,
+                  colors: [Color(0x8CC4B5FD), Color(0x00C4B5FD)],
+                  stops: [0.0, 1.0],
+                ),
+              ),
+            ),
+          ),
+          // Blob 2 — top-right @ 80% 15%, soft lavender
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment(0.6, -0.8),
+                  radius: 0.5,
+                  colors: [Color(0x99DDD6FE), Color(0x00DDD6FE)],
+                  stops: [0.0, 1.0],
+                ),
+              ),
+            ),
+          ),
+          // Blob 3 — bottom-center @ 50% 85%, medium purple
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment(0.0, 0.6),
+                  radius: 0.5,
+                  colors: [Color(0x66A78BFA), Color(0x00A78BFA)],
+                  stops: [0.0, 1.0],
+                ),
+              ),
+            ),
+          ),
+          // Blob 4 — bottom-left @ 15% 85%, purplish lavender
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment(-0.8, 0.8),
+                  radius: 0.5,
+                  colors: [Color(0x80E9D5FF), Color(0x00E9D5FF)],
+                  stops: [0.0, 1.0],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Glass category card (POC — §glassmorphism phase 1) ─────────────────────
+//
+// Wraps a category row (header + horizontal sub-strip) in a frosted-glass
+// card. Direct Flutter translation of the CSS reference:
+//   background: rgba(255, 255, 255, 0.45)
+//   backdrop-filter: blur(24px)          ← NO saturate per user decision
+//   border: 0.5px solid rgba(255,255,255, 0.9)
+//   border-radius: 22px
+//   box-shadow: 0 8px 28px rgba(60,40,120,.12), 0 2px 6px rgba(0,0,0,.05)
+//
+// CSS `inset 0 1px 0 rgba(255,255,255,.95)` (top highlight) isn't natively
+// supported by Flutter BoxShadow — approximated via a thin white top border
+// through the standard `border`. Bottom inset highlight skipped.
+class _GlassCategoryCard extends StatelessWidget {
+  const _GlassCategoryCard({
+    required this.title,
+    required this.onShowAll,
+    required this.child,
+  });
+
+  final String title;
+  final VoidCallback onShowAll;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.45),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.9),
+              width: 0.5,
+            ),
+            boxShadow: const [
+              BoxShadow(
+                color: Color.fromRGBO(60, 40, 120, 0.12),
+                blurRadius: 28,
+                offset: Offset(0, 8),
+              ),
+              BoxShadow(
+                color: Color.fromRGBO(0, 0, 0, 0.05),
+                blurRadius: 6,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Title row: RTL = title on right, "הצג הכל" on left
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      textDirection: TextDirection.rtl,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF1E1B4B),
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: onShowAll,
+                    child: Text(
+                      AppLocalizations.of(context).homeShowAll,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF1A1A2E),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              child,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ── AnyTasks banner — Apple Card style (dark premium) ───────────────────────
 //
 // Dark gradient + subtle purple radial glow + glass-feel icon tile + 2-line
@@ -1622,8 +1993,9 @@ class _AnyTasksBannerState extends State<_AnyTasksBanner> {
           child: Stack(
             clipBehavior: Clip.none,
             children: [
-              // Soft purple radial glow near the top-left corner.
-              // Clipped by the Container's rounded rect → diffuse wedge.
+              // ── Soft purple radial glow anchored near the top-left corner.
+              // Clipped by the Container's rounded rect, so it reads as a
+              // diffuse wedge rather than a floating circle.
               Positioned(
                 left: -40,
                 top: -40,
@@ -1644,20 +2016,24 @@ class _AnyTasksBannerState extends State<_AnyTasksBanner> {
                   ),
                 ),
               ),
-              // Content row: [icon tile] [title + tag + description] [arrow]
+              // ── Content row: [icon tile] [title + tag + description] [arrow]
               Padding(
                 padding:
                     const EdgeInsetsDirectional.fromSTEB(22, 20, 22, 20),
                 child: Row(
                   children: [
-                    // Glass icon tile — 48×48, rounded 14, subtle blur
+                    // Glass CTA tile — rounded 14, subtle blur, "פרסם עכשיו"
+                    // text instead of an icon. Auto-sizes around its label.
                     ClipRRect(
                       borderRadius: BorderRadius.circular(14),
                       child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                        filter:
+                            ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                         child: Container(
-                          width: 48,
                           height: 48,
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12),
                           decoration: BoxDecoration(
                             color: Colors.white.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(14),
@@ -1666,10 +2042,15 @@ class _AnyTasksBannerState extends State<_AnyTasksBanner> {
                               width: 0.5,
                             ),
                           ),
-                          child: const Icon(
-                            Icons.task_alt_rounded,
-                            color: Colors.white,
-                            size: 22,
+                          child: const Text(
+                            '+ פרסם עכשיו',
+                            textDirection: TextDirection.rtl,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.1,
+                            ),
                           ),
                         ),
                       ),
@@ -1687,26 +2068,30 @@ class _AnyTasksBannerState extends State<_AnyTasksBanner> {
                                 'AnyTasks',
                                 style: TextStyle(
                                   color: Colors.white,
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w600,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w700,
                                   height: 1.2,
-                                  letterSpacing: -0.2,
+                                  letterSpacing: -0.3,
                                 ),
                               ),
                               const SizedBox(width: 8),
                               Container(
-                                padding: const EdgeInsets.symmetric(
+                                padding:
+                                    const EdgeInsets.symmetric(
                                   horizontal: 8,
                                   vertical: 2,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(8),
+                                  color: Colors.white
+                                      .withValues(alpha: 0.1),
+                                  borderRadius:
+                                      BorderRadius.circular(8),
                                 ),
                                 child: Text(
                                   l10n.anyTasksBannerTag,
                                   style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.6),
+                                    color: Colors.white
+                                        .withValues(alpha: 0.6),
                                     fontSize: 11,
                                     fontWeight: FontWeight.w500,
                                     letterSpacing: 0.2,
@@ -1715,12 +2100,13 @@ class _AnyTasksBannerState extends State<_AnyTasksBanner> {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 6),
                           Text(
                             l10n.anyTasksBannerDescription,
                             style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.75),
-                              fontSize: 13.5,
+                              color: Colors.white.withValues(alpha: 0.95),
+                              fontSize: 15.5,
+                              fontWeight: FontWeight.w700,
                               height: 1.45,
                               letterSpacing: -0.1,
                             ),
@@ -1748,6 +2134,50 @@ class _AnyTasksBannerState extends State<_AnyTasksBanner> {
 
 // Listens to Firestore 'banners' where placement == 'home_carousel'.
 // Falls back to 3 hardcoded gradient banners when Firestore returns 0 items.
+
+/// Banners Studio Phase 6 — schedule-hours runtime filter.
+///
+/// Returns true iff the banner should render at [now] given its
+/// `scheduleHours` map (`{sun: [8,12,16], mon: [...], ...}` — 4-hour
+/// buckets at 8/12/16/20). Empty/missing map = always-on.
+///
+/// Bucket assignment:
+///   hour 0-7   → none      (banner is OFF unless an admin picks 8 AND
+///                            we extend the schema later — for now,
+///                            schedule-hours providers off-hours always)
+///   hour 8-11  → bucket 8
+///   hour 12-15 → bucket 12
+///   hour 16-19 → bucket 16
+///   hour 20-23 → bucket 20
+bool _studioScheduleAllowsNow(dynamic raw, DateTime now) {
+  if (raw == null) return true;
+  if (raw is! Map) return true;
+  if (raw.isEmpty) return true;
+  const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  // DateTime.weekday: Mon=1..Sun=7. Map to our keys (sun-first).
+  final dayIdx = now.weekday == 7 ? 0 : now.weekday;
+  final key = dayKeys[dayIdx];
+  final list = raw[key];
+  if (list is! List) return false;
+  if (list.isEmpty) return false;
+  // Bucket the current hour
+  final h = now.hour;
+  int? bucket;
+  if (h >= 8 && h < 12) {
+    bucket = 8;
+  } else if (h >= 12 && h < 16) {
+    bucket = 12;
+  } else if (h >= 16 && h < 20) {
+    bucket = 16;
+  } else if (h >= 20 && h < 24) {
+    bucket = 20;
+  }
+  if (bucket == null) return false;
+  for (final v in list) {
+    if (v is num && v.toInt() == bucket) return true;
+  }
+  return false;
+}
 
 class _PromoCarousel extends StatefulWidget {
   const _PromoCarousel();
@@ -1828,7 +2258,13 @@ class _PromoCarouselState extends State<_PromoCarousel> {
       final m = d.data() as Map<String, dynamic>;
       final active    = m['isActive']  as bool?      ?? true;
       final expiresAt = (m['expiresAt'] as Timestamp?)?.toDate();
-      return active && (expiresAt == null || expiresAt.isAfter(now));
+      if (!active) return false;
+      if (expiresAt != null && !expiresAt.isAfter(now)) return false;
+      // Banners Studio Phase 6 — schedule-hours runtime filter.
+      // Admin can pin a banner to specific day-of-week + 4-hour windows.
+      // Empty/null = always-on (default behaviour).
+      if (!_studioScheduleAllowsNow(m['scheduleHours'], now)) return false;
+      return true;
     }).toList()
       ..sort((a, b) {
         final oa = (a.data() as Map<String, dynamic>)['order'] as int? ?? 999;
@@ -2030,6 +2466,523 @@ class _GradientBannerContent extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ─── Provider Carousel Rail (Banners v2 §49) ────────────────────────────────
+//
+// Streams `banners` where placement == 'provider_carousel', filters to
+// active + non-expired + has ≥2 providerIds, sorts by `order` client-side
+// (no orderBy = no composite index needed), and renders the first
+// qualifying banner via the existing ProviderCarouselBanner widget.
+//
+// The legacy `_PromoCarousel` keeps owning `placement == 'home_carousel'`
+// — the two surfaces are deliberately separate (user decision).
+
+class _ProviderCarouselsRail extends StatelessWidget {
+  const _ProviderCarouselsRail();
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('banners')
+          .where('placement', isEqualTo: 'provider_carousel')
+          .limit(10)
+          .snapshots(),
+      builder: (context, snap) {
+        if (snap.hasError) {
+          debugPrint('[ProviderCarouselsRail] stream error: ${snap.error}');
+          return const SizedBox.shrink();
+        }
+        if (!snap.hasData) return const SizedBox.shrink();
+
+        final now = DateTime.now();
+        final qualifying = snap.data!.docs.where((d) {
+          final m = d.data();
+          final active = m['isActive'] as bool? ?? true;
+          if (!active) return false;
+          final expiresAt = (m['expiresAt'] as Timestamp?)?.toDate();
+          if (expiresAt != null && !expiresAt.isAfter(now)) return false;
+          // Banners Studio Phase 6 schedule-hours filter
+          if (!_studioScheduleAllowsNow(m['scheduleHours'], now)) return false;
+          final pc = m['providerCarousel'];
+          if (pc is! Map<String, dynamic>) return false;
+          final ids = (pc['providerIds'] as List?) ?? const [];
+          // Banners Studio §51 — allow even a single VIP. Going from 2→1
+          // shouldn't make the whole banner vanish from the home tab; the
+          // ProviderCarouselBanner widget handles 1-provider mode by
+          // rendering a single static card (no rotation animation).
+          return ids.whereType<String>().isNotEmpty;
+        }).toList()
+          ..sort((a, b) {
+            final ao = (a.data()['order'] as num?)?.toInt() ?? 999;
+            final bo = (b.data()['order'] as num?)?.toInt() ?? 999;
+            return ao.compareTo(bo);
+          });
+
+        if (qualifying.isEmpty) return const SizedBox.shrink();
+
+        final doc = qualifying.first;
+        final data = doc.data();
+        final pc = data['providerCarousel'] as Map<String, dynamic>;
+        final config = ProviderCarouselConfig.fromMap(pc);
+
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Section title — bundled with the rail so it disappears
+            // automatically when no qualifying banner exists (the
+            // SizedBox.shrink branch above hides everything).
+            const Padding(
+              padding: EdgeInsetsDirectional.fromSTEB(0, 10, 0, 4),
+              child: Text(
+                'נותני השירות ה-VIP שלנו',
+                textDirection: TextDirection.rtl,
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF111827),
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 190,
+              child: ProviderCarouselBanner(
+                config: config,
+                title: (data['title'] as String?) ?? '',
+                bannerId: doc.id,
+                height: 190,
+                // Both events go through `recordVipBannerEvent` so the
+                // banner-level totals AND the per-provider VIP subscription
+                // counters stay in sync — the provider's profile VIP card
+                // reads `vip_subscriptions/{id}.totalImpressions / .totalClicks`
+                // and was stuck on "—" until this CF wired the analytics
+                // (§51 follow-up).
+                onImpression: (providerId) async {
+                  try {
+                    await FirebaseFunctions.instance
+                        .httpsCallable('recordVipBannerEvent')
+                        .call({
+                      'providerId': providerId,
+                      'eventType': 'impression',
+                      'bannerId': doc.id,
+                    });
+                  } catch (_) {
+                    // Fire-and-forget — never block the UI on analytics.
+                  }
+                },
+                onClick: (providerId) async {
+                  try {
+                    await FirebaseFunctions.instance
+                        .httpsCallable('recordVipBannerEvent')
+                        .call({
+                      'providerId': providerId,
+                      'eventType': 'click',
+                      'bannerId': doc.id,
+                    });
+                  } catch (_) {
+                    // Fire-and-forget — never block the UI on analytics.
+                  }
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mockup 10 — Community banner (v2). Black card with gold heart accent +
+// 3-stat strip below. Gated by [isCommunityV2EnabledFor] in the parent
+// sliver — non-whitelist users render the legacy gradient banner above.
+//
+// Counts:
+// - "8 פתוחות" + "8 בקשות התנדבות פעילות" — one-shot query for
+//   `community_requests where status==open` (limit 200).
+// - "147 החודש" — one-shot query for completed-this-month (limit 500).
+// - "42 מתנדבים" — comes from parent state ([_HomeTabState._volunteerCount]).
+//
+// Both queries are .get() not .snapshots() so we don't blow read costs
+// on a banner-level surface that the user glances at and moves on.
+// ─────────────────────────────────────────────────────────────────────────────
+class _CommunityBannerV2 extends StatefulWidget {
+  const _CommunityBannerV2({
+    required this.volunteerCount,
+    required this.recentAvatars,
+    required this.onTap,
+  });
+
+  final int volunteerCount;
+  final List<String?> recentAvatars;
+  final VoidCallback onTap;
+
+  @override
+  State<_CommunityBannerV2> createState() => _CommunityBannerV2State();
+}
+
+class _CommunityBannerV2State extends State<_CommunityBannerV2>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulseCtrl;
+
+  // Convenience getters so the helper methods below can stay almost
+  // identical to the pre-refactor StatelessWidget version.
+  int get volunteerCount => widget.volunteerCount;
+  List<String?> get recentAvatars => widget.recentAvatars;
+
+  @override
+  void initState() {
+    super.initState();
+    // Soft red breathing aura — 2.2 s per half-cycle.
+    // CLAUDE.md §49 memory rule: single AnimationController per instance,
+    // AnimatedBuilder scoped to the outer glow only, disposed in dispose().
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2200),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulseCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: AnimatedBuilder(
+        animation: _pulseCtrl,
+        builder: (context, child) {
+          final t = Curves.easeInOut.transform(_pulseCtrl.value);
+          // Outer red glow — alpha + blur + spread all breathe together.
+          final pulseAlpha = 0.20 + 0.28 * t; // 0.20 → 0.48
+          final blur = 18.0 + 18.0 * t;       // 18 → 36
+          final spread = 0.0 + 4.0 * t;       // 0 → 4
+          return Container(
+            decoration: BoxDecoration(
+              borderRadius: const BorderRadius.all(CommunityRadius.panel),
+              boxShadow: [
+                BoxShadow(
+                  color:
+                      const Color(0xFFEF4444).withValues(alpha: pulseAlpha),
+                  blurRadius: blur,
+                  spreadRadius: spread,
+                ),
+              ],
+            ),
+            child: child,
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: CommunityColors.primaryWhite,
+            borderRadius: const BorderRadius.all(CommunityRadius.panel),
+            border: Border.all(
+                color: CommunityColors.borderSubtle, width: 0.5),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x0F000000), // 6% black
+                blurRadius: 48,
+                offset: Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              _buildBlackCard(context),
+              _buildStatStrip(context),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBlackCard(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: const BoxDecoration(
+        // Deep red — pairs with the lighter red breathing aura around
+        // the outer card. Local override only; the global
+        // CommunityColors.darkSurface stays unchanged for other surfaces.
+        color: Color(0xFFB91C1C),
+        borderRadius: BorderRadius.all(CommunityRadius.cardLg),
+      ),
+      child: Stack(
+        children: [
+          // Top-end gold heart icon (RTL-aware via PositionedDirectional).
+          const PositionedDirectional(
+            top: -4, end: -4,
+            child: Opacity(
+              opacity: 0.9,
+              child: Icon(
+                Icons.favorite,
+                size: 20,
+                color: CommunityColors.goldHeart,
+              ),
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'הכוח לעזור בידיים שלך',
+                style: TextStyle(
+                  fontFamily: CommunityType.fontFamily,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.4,
+                  height: 1.2,
+                  color: CommunityColors.whiteHigh,
+                ),
+              ),
+              const SizedBox(height: 4),
+              FutureBuilder<int>(
+                future: _countOpenRequests(),
+                builder: (context, snap) {
+                  final n = snap.data;
+                  return Text(
+                    n == null
+                        ? 'בקשות התנדבות פעילות באזורך'
+                        : '$n בקשות התנדבות פעילות באזורך כעת',
+                    style: const TextStyle(
+                      fontFamily: CommunityType.fontFamily,
+                      fontSize: 12,
+                      color: CommunityColors.whiteMid,
+                      height: 1.5,
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  if (recentAvatars.isNotEmpty)
+                    _Facepile(
+                      avatars: recentAvatars,
+                      extraCount: volunteerCount > recentAvatars.length
+                          ? volunteerCount - recentAvatars.length
+                          : 0,
+                    ),
+                  const Spacer(),
+                  // CTA square — translucent white-on-red, matches the
+                  // AnyTasks "+ פרסם עכשיו" pill style for consistency.
+                  Container(
+                    height: 36,
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.28),
+                        width: 0.5,
+                      ),
+                    ),
+                    child: const Text(
+                      '+ אני רוצה להתנדב',
+                      textDirection: TextDirection.rtl,
+                      style: TextStyle(
+                        fontFamily: CommunityType.fontFamily,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: CommunityColors.whiteHigh,
+                        letterSpacing: -0.1,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatStrip(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 10, 4, 4),
+      child: FutureBuilder<int>(
+        future: _countMonthlyCompletions(),
+        builder: (context, snap) {
+          final monthly = snap.data;
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _miniStat(
+                value: monthly == null ? '—' : '$monthly',
+                label: 'החודש',
+                color: CommunityColors.textPrimary,
+              ),
+              _miniDivider(),
+              _miniStat(
+                value: '$volunteerCount',
+                label: 'מתנדבים',
+                color: CommunityColors.goldHeart,
+              ),
+              _miniDivider(),
+              FutureBuilder<int>(
+                future: _countOpenRequests(),
+                builder: (context, openSnap) {
+                  final open = openSnap.data;
+                  return _miniStat(
+                    value: open == null ? '—' : '$open',
+                    label: 'פתוחות',
+                    color: CommunityColors.success,
+                  );
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  static Widget _miniStat({
+    required String value,
+    required String label,
+    required Color color,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            fontFamily: CommunityType.fontFamily,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: color,
+          ),
+        ),
+        const SizedBox(height: 1),
+        Text(
+          label,
+          style: const TextStyle(
+            fontFamily: CommunityType.fontFamily,
+            fontSize: 10,
+            color: CommunityColors.textTertiary,
+          ),
+        ),
+      ],
+    );
+  }
+
+  static Widget _miniDivider() => Container(
+        width: 0.5,
+        height: 22,
+        color: CommunityColors.borderSubtle,
+      );
+
+  // ── Cheap one-shot count queries ────────────────────────────────────
+  static Future<int> _countOpenRequests() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('community_requests')
+          .where('status', isEqualTo: 'open')
+          .limit(200)
+          .get();
+      return snap.docs.length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  static Future<int> _countMonthlyCompletions() async {
+    try {
+      final startOfMonth = Timestamp.fromDate(
+        DateTime(DateTime.now().year, DateTime.now().month, 1),
+      );
+      final snap = await FirebaseFirestore.instance
+          .collection('community_requests')
+          .where('status', isEqualTo: 'completed')
+          .where('completedAt', isGreaterThanOrEqualTo: startOfMonth)
+          .limit(500)
+          .get();
+      return snap.docs.length;
+    } catch (_) {
+      return 0;
+    }
+  }
+}
+
+class _Facepile extends StatelessWidget {
+  const _Facepile({required this.avatars, required this.extraCount});
+
+  final List<String?> avatars;
+  final int extraCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = avatars.take(3).toList();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 26.0 + (visible.length - 1) * 18.0,
+          height: 26,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              for (int i = visible.length - 1; i >= 0; i--)
+                PositionedDirectional(
+                  start: i * 18.0,
+                  child: Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: CommunityColors.darkSurface,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: ClipOval(
+                      child: () {
+                        final img = safeImageProvider(visible[i]);
+                        if (img != null) {
+                          return Image(
+                            image: img,
+                            fit: BoxFit.cover,
+                          );
+                        }
+                        return Container(
+                          color: const Color(0xFF4F46E5),
+                          alignment: Alignment.center,
+                          child: const Icon(
+                            Icons.person_rounded,
+                            size: 14,
+                            color: Color(0xB3FFFFFF),
+                          ),
+                        );
+                      }(),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        if (extraCount > 0) ...[
+          const SizedBox(width: 10),
+          Text(
+            '+$extraCount פעילים',
+            style: const TextStyle(
+              fontFamily: CommunityType.fontFamily,
+              fontSize: 11,
+              color: CommunityColors.whiteAlt,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

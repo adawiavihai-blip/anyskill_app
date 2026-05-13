@@ -3,20 +3,22 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import '../services/cached_readers.dart';
 import 'business_ai_screen.dart';
 import 'xp_manager_screen.dart';
 import 'dispute_resolution_screen.dart';
-import 'system_performance_tab.dart';
+import 'performance/performance_tab.dart';
 import 'registration_funnel_tab.dart';
 import 'live_activity_tab.dart';
 import 'admin_design_tab.dart';
 import 'admin_demo_experts_tab.dart';
 import 'admin_brand_assets_tab.dart';
 import 'admin_payouts_tab.dart';
-import 'admin_banners_tab.dart';
+import 'admin_banners/admin_banners_dashboard_screen.dart';
 import 'admin_pro_tab.dart';
 import 'admin_billing_tab.dart';
-import 'admin_sounds_tab.dart';
+import 'sound_studio/sound_studio_screen.dart';
+import 'admin_motorcycle_bike_types_tab.dart';
 import 'admin_support_inbox_tab.dart';
 import 'admin_ai_ceo_tab.dart';
 import 'admin_insights_tab.dart';
@@ -33,7 +35,9 @@ import 'admin_active_chats_tab.dart';
 import 'admin_withdrawals_tab.dart';
 import 'admin_users_tab.dart';
 import 'admin_agent_management_tab.dart';
+import 'admin_csm_preview_tab.dart';
 import '../providers/admin_users_provider.dart';
+import '../widgets/admin/system_alerts_banner.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 
@@ -195,7 +199,14 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: IndexedStack(
+      body: Column(
+        children: [
+          // §73: surfaces unresolved system_alerts (e.g. backup_stale from
+          // §58 checkBackupHealth canary) at the top of every admin section.
+          // Renders zero height when no alerts.
+          const SystemAlertsBanner(),
+          Expanded(
+            child: IndexedStack(
               index: _sectionIndex,
               children: [
                 _buildManagementSection(),
@@ -204,8 +215,12 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
                 const AdminDesignTab(),
                 const AdminAiCeoTab(),
                 const AdminAgentManagementTab(),
+                _buildBannersSection(),
               ],
             ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -244,6 +259,11 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
           label: Text('סוכני תמיכה'),
           icon: Icon(Icons.support_agent_rounded, size: 15),
         ),
+        ButtonSegment(
+          value: 6,
+          label: Text('באנרים'),
+          icon: Icon(Icons.campaign_rounded, size: 15),
+        ),
       ],
       selected: {_sectionIndex},
       onSelectionChanged: (s) => setState(() => _sectionIndex = s.first),
@@ -267,7 +287,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
         adminUsersNotifierProvider.select((s) => s.totalProviders));
 
     return DefaultTabController(
-      length: 15,
+      length: 16,
       child: Column(
         children: [
           // Search bar — updates the Riverpod provider, NOT local setState
@@ -323,6 +343,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
               Tab(text: "Pro ⭐"),
               Tab(text: "בינה עסקית 🧠"),
               Tab(text: "תיבת פניות 📮"),
+              Tab(text: "CSM 🔧"),
             ],
           ),
           Expanded(
@@ -343,6 +364,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
                 const AdminProTab(),
                 const BusinessAiScreen(),
                 const AdminSupportInboxTab(),
+                const AdminCsmPreviewTab(),
               ],
             ),
           ),
@@ -386,11 +408,11 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
     );
   }
 
-  // ── System section (מערכת) — 7 tabs ──────────────────────────────────────
+  // ── System section (מערכת) — 9 tabs ──────────────────────────────────────
 
   Widget _buildSystemSection() {
     return DefaultTabController(
-      length: 10,
+      length: 9,
       child: Column(
         children: [
           const SizedBox(height: 8),
@@ -401,7 +423,6 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
             indicatorColor: Color(0xFF7C3AED),
             tabs: [
               Tab(text: "קטגוריות 🏷️"),
-              Tab(text: "באנרים 🎨"),
               Tab(text: "מוניטיזציה 💰"),
               Tab(text: "כספים 💵"),
               Tab(text: "תובנות 📊"),
@@ -410,6 +431,11 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
               Tab(text: "חסימות 🛡️"),
               Tab(text: "תשלומים 💳"),
               Tab(text: "צלילים 🔊"),
+              // CSM #8 (CLAUDE.md §55) — admin manages the bike-types
+              // catalog (image upload + active toggle + provider count).
+              // Lives in System because it's catalog management, not
+              // user/financial. See admin_motorcycle_bike_types_tab.dart.
+              Tab(text: "אופנועים 🏍️"),
             ],
           ),
           Expanded(
@@ -422,21 +448,35 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
                   const AdminCategoriesV3Tab()
                 else
                   const AdminCategoriesManagementTab(),
-                const AdminBannersTab(),
                 const AdminMonetizationTab(),
                 const AdminBillingTab(),
                 const AdminInsightsTab(),
-                const SystemPerformanceTab(),
+                const PerformanceTab(),
                 const AdminBrandAssetsTab(),
                 const AdminChatGuardTab(),
                 const AdminPayoutsTab(),
-                const AdminSoundsTab(),
+                const SoundStudioScreen(),
+                const AdminMotorcycleBikeTypesTab(),
               ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  // ── Banners section (באנרים) — single surface ───────────────────────────
+  // The redesigned Studio dashboard (`docs/ui-specs/Baner` Screen A) is
+  // now THE banners surface. v1 (admin_banners_tab.dart), v2 (admin_banners_v2/),
+  // and the per-VIP filter sub-tab are all retired in Phase 5 — Studio
+  // covers every flow:
+  //   - All banners list + KPIs + AI insight (Screen A)
+  //   - Banner editor with 6 sections + live preview (Screen B)
+  //   - VIP management, capacity ring, slot grid, payments (Screens C+D)
+  //   - Subcategory banners admin (Screen E)
+  // CLAUDE.md §49 (deprecation notes for §51).
+  Widget _buildBannersSection() {
+    return const AdminBannersDashboardScreen();
   }
 
   Widget _pulseBadge(String text) {
@@ -530,9 +570,10 @@ class _VideoVerificationTabContent extends StatelessWidget {
     await FirebaseFirestore.instance.collection('users').doc(uid).update({
       'videoVerifiedByAdmin': true,
     });
+    CachedReaders.invalidateProvider(uid); // §61
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('✅ הסרטון אושר — יופיע בפרופיל המומחה'),
+        content: Text('✅ הסרטון אושר — יופיע בפרופיל נותן השירות'),
         backgroundColor: Colors.green,
       ));
     }
@@ -543,6 +584,7 @@ class _VideoVerificationTabContent extends StatelessWidget {
       'verificationVideoUrl': FieldValue.delete(),
       'videoVerifiedByAdmin': false,
     });
+    CachedReaders.invalidateProvider(uid); // §61
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('🗑️ הסרטון נדחה והוסר'),

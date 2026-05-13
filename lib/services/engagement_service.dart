@@ -10,6 +10,7 @@ library;
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'cached_readers.dart';
 import 'gamification_service.dart';
 
 // ── Reward Types ─────────────────────────────────────────────────────────────
@@ -130,6 +131,7 @@ class EngagementService {
     await _db.collection('users').doc(userId).update({
       'lastDailyDropDate': today,
     });
+    CachedReaders.invalidateProvider(userId); // §61
 
     // ── Roll the dice (20% probability) ──────────────────────────────────
     if (_rng.nextDouble() > dailyDropProbability) return null;
@@ -151,6 +153,7 @@ class EngagementService {
       await _db.collection('users').doc(userId).update({
         'profileBoostUntil': Timestamp.fromDate(expiresAt),
       });
+      CachedReaders.invalidateProvider(userId); // §61
     }
 
     return reward;
@@ -221,6 +224,7 @@ class EngagementService {
       'lastStreakDate': today,
       'streakBestEver': newBest,
     });
+    CachedReaders.invalidateProvider(userId); // §61
 
     // ── Milestone check: 7-day streak → free profile boost ───────────────
     if (newStreak > 0 && newStreak % streakBoostMilestone == 0) {
@@ -249,6 +253,7 @@ class EngagementService {
     await _db.collection('users').doc(userId).update({
       'profileBoostUntil': Timestamp.fromDate(expiresAt),
     });
+    CachedReaders.invalidateProvider(userId); // §61
 
     await _db.collection('notifications').add({
       'userId': userId,

@@ -243,7 +243,7 @@ class JobBroadcastService {
         // Notify the client
         await _db.collection('notifications').add({
           'userId': clientId,
-          'title': '✅ מומחה תפס את המשרה שלך!',
+          'title': '✅ נותן שירות תפס את המשרה שלך!',
           'body': '$providerName קיבל/ה את הבקשה הדחופה שלך ב"$category".',
           'type': 'broadcast_claimed',
           'relatedUserId': providerId,

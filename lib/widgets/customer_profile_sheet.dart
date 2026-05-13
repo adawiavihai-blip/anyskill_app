@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../services/cached_readers.dart';
 import '../services/review_service.dart';
 
 // ── Public entry point ─────────────────────────────────────────────────────
@@ -142,7 +143,7 @@ class CustomerProfileSheet extends StatelessWidget {
                           d['comment'] as String? ??
                           '';
                       final reviewerName =
-                          d['reviewerName'] as String? ?? 'מומחה';
+                          d['reviewerName'] as String? ?? 'נותן שירות';
                       final ts = d['createdAt'] as Timestamp?;
                       final dateStr = ts != null
                           ? DateFormat('dd/MM/yy', 'he').format(ts.toDate())
@@ -234,14 +235,14 @@ class CustomerRatingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<DocumentSnapshot>(
-      future: FirebaseFirestore.instance
-          .collection('users')
-          .doc(customerId)
-          .get(),
+    // §72: cached read — same uid as sheet avatar above, so the second
+    // call hits the cache primed by `_CustomerAvatar`. Saves a Firestore
+    // read on every sheet open during a session.
+    return FutureBuilder<Map<String, dynamic>>(
+      future: CachedReaders.providerProfile(customerId),
       builder: (_, snap) {
         if (!snap.hasData) return const SizedBox.shrink();
-        final data = snap.data!.data() as Map<String, dynamic>? ?? {};
+        final data = snap.data ?? const <String, dynamic>{};
         final rating = (data['customerRating'] as num?)?.toDouble();
         final count = (data['customerReviewsCount'] as num?)?.toInt() ?? 0;
         if (rating == null || count == 0) {
@@ -281,10 +282,12 @@ class _CustomerAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<DocumentSnapshot>(
-      future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
+    // §72: cached read — sheet avatar reuses the same uid as outer
+    // booking card, so re-renders during the same view get cache hits.
+    return FutureBuilder<Map<String, dynamic>>(
+      future: CachedReaders.providerProfile(uid),
       builder: (_, snap) {
-        final data = snap.data?.data() as Map<String, dynamic>? ?? {};
+        final data = snap.data ?? const <String, dynamic>{};
         final url = data['profileImage'] as String?;
         return CircleAvatar(
           radius: size / 2,

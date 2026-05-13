@@ -1,0 +1,124 @@
+name: anyskill_app
+description: "A new Flutter project for AnySkill."
+publish_to: 'none'
+version: 11.9.0+1
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:      # i18n — Hebrew / English / Spanish RTL support
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  firebase_core: ^4.5.0
+  firebase_auth: ^6.2.0
+  cloud_firestore: ^6.1.3
+  firebase_storage: ^13.1.0
+  firebase_messaging: ^16.1.2
+  image_picker: ^1.2.1
+  video_player: ^2.10.1
+  geolocator: ^14.0.2
+  # Direct JS interop fallback for browser navigator.geolocation —
+  # used when geolocator silently returns null on Flutter Web.
+  web: ^1.1.1
+  url_launcher: ^6.3.2
+  flutter_map: ^8.2.2
+  flutter_map_marker_cluster: ^8.2.2
+  cached_network_image: ^3.4.1
+  latlong2: ^0.9.1
+  http: ^1.6.0
+  intl: ^0.19.0
+  google_fonts: ^6.3.2
+  connectivity_plus: ^7.0.0
+  cloud_functions: ^6.0.7
+  table_calendar: ^3.1.2
+  showcaseview: ^3.0.0
+  google_sign_in: ^6.2.1
+  sign_in_with_apple: ^6.1.4
+  crypto: ^3.0.6
+  fl_chart: ^1.2.0
+  flutter_secure_storage: ^10.0.0
+  shimmer: ^3.0.0
+  shared_preferences: ^2.5.3
+  package_info_plus: ^9.0.0
+  firebase_performance: ^0.11.1+5
+  firebase_analytics: ^12.1.3
+  firebase_crashlytics: ^5.1.0
+  firebase_app_check: ^0.4.1+5      # caret — allows compatible upgrades
+  youtube_player_iframe: ^5.2.2
+  audioplayers: ^6.1.0
+  # Phase 2: flutter_stripe + webview_flutter (used for Stripe Express
+  # onboarding) were removed pending Israeli payment provider integration.
+  flutter_riverpod: ^2.6.1         # State management (Riverpod 2.x)
+  riverpod_annotation: ^2.6.1      # @riverpod code-gen annotations
+  sentry_flutter: ^9.0.0           # Crash reporting + performance tracing
+
+dependency_overrides:
+  # fl_chart 1.x calls translateByDouble/scaleByDouble which were added
+  # in vector_math 2.1.5. The Flutter SDK pins 2.1.4, so we unlock it here.
+  vector_math: ^2.1.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  fake_cloud_firestore: ^4.0.2
+  flutter_launcher_icons: ^0.14.2
+  flutter_native_splash: ^2.4.3
+  riverpod_generator: ^2.6.2       # @riverpod code generator
+  build_runner: ^2.4.13            # dart run build_runner build
+
+# ── App icon generation (run: dart run flutter_launcher_icons) ─────────────────
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  remove_alpha_ios: true
+  image_path: "assets/images/NEW_LOGO1.png.png"
+  min_sdk_android: 21
+  # Adaptive icon for Android 8.0+ — logo on white background, avoids "icon in a box"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/images/NEW_LOGO1.png.png"
+  web:
+    generate: true
+    image_path: "assets/images/NEW_LOGO1.png.png"
+    background_color: "#FFFFFF"
+    theme_color: "#6366F1"
+  windows:
+    generate: true
+    image_path: "assets/images/NEW_LOGO1.png.png"
+    icon_size: 48
+
+# ── Native splash screen (run: dart run flutter_native_splash:create) ──────────
+flutter_native_splash:
+  # White background — matches the Flutter splash screen
+  color: "#FFFFFF"
+  color_dark: "#FFFFFF"
+  image: assets/images/NEW_LOGO1.png.png
+  image_dark: assets/images/NEW_LOGO1.png.png
+  # Keep splash visible until Flutter marks it ready
+  android_12:
+    image: assets/images/NEW_LOGO1.png.png
+    icon_background_color: "#FFFFFF"
+    image_dark: assets/images/NEW_LOGO1.png.png
+    icon_background_color_dark: "#FFFFFF"
+  fullscreen: true
+  web: false
+
+flutter:
+  generate: true             # enables flutter gen-l10n for .arb → AppLocalizations
+  uses-material-design: true
+
+  assets:
+    - assets/images/NEW_LOGO1.png.png
+    - assets/fonts/
+    - assets/audio/
+
+  fonts:
+    - family: NotoSansHebrew
+      fonts:
+        - asset: assets/fonts/NotoSansHebrew-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/NotoSansHebrew-Bold.ttf
+          weight: 700

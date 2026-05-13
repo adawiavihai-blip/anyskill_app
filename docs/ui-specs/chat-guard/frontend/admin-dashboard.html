@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat Guard AI - ניהול</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, 'Segoe UI', sans-serif;
+      background: #F5F5F7;
+      color: #1a1a1a;
+      padding: 20px;
+      direction: rtl;
+    }
+    .container { max-width: 1400px; margin: 0 auto; }
+
+    /* Header */
+    .header {
+      background: linear-gradient(135deg, #26215C 0%, #3C3489 100%);
+      color: white;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .header h1 { font-size: 22px; font-weight: 500; margin-bottom: 4px; }
+    .header p { font-size: 13px; opacity: 0.8; }
+    .status-badge {
+      background: rgba(151, 196, 89, 0.25);
+      padding: 8px 14px;
+      border-radius: 20px;
+      border: 1px solid rgba(192, 221, 151, 0.4);
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #97C459;
+      box-shadow: 0 0 8px #97C459;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+    /* Tabs */
+    .tabs {
+      background: white;
+      border-radius: 12px;
+      padding: 4px;
+      margin-bottom: 16px;
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+    }
+    .tab {
+      padding: 10px 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      white-space: nowrap;
+      color: #666;
+      border: none;
+      background: transparent;
+      font-family: inherit;
+    }
+    .tab.active {
+      background: #534AB7;
+      color: white;
+    }
+
+    /* Cards */
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+      border: 0.5px solid #E5E5E7;
+    }
+    .card-title {
+      font-size: 16px;
+      font-weight: 500;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .kpi {
+      background: white;
+      border-radius: 10px;
+      padding: 14px;
+      border: 0.5px solid #E5E5E7;
+    }
+    .kpi-label { font-size: 11px; color: #666; margin-bottom: 6px; }
+    .kpi-value { font-size: 22px; font-weight: 500; }
+    .kpi-change { font-size: 11px; margin-top: 4px; }
+    .kpi-change.up { color: #A32D2D; }
+    .kpi-change.down { color: #173404; }
+
+    /* Word Management */
+    .word-input-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .word-input-row input, .word-input-row select {
+      padding: 10px 14px;
+      border: 1px solid #E5E5E7;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 13px;
+      background: white;
+    }
+    .word-input-row input { flex: 1; min-width: 200px; }
+    .btn {
+      padding: 10px 18px;
+      border-radius: 8px;
+      border: none;
+      font-family: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn-primary { background: #534AB7; color: white; }
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-secondary { background: #F5F5F7; color: #333; border: 1px solid #E5E5E7; }
+    .btn-danger { background: #FCEBEB; color: #501313; }
+    .btn-success { background: #EAF3DE; color: #173404; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Words List */
+    .words-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 10px;
+    }
+    .word-card {
+      background: #F5F5F7;
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-right: 3px solid;
+      transition: transform 0.15s;
+    }
+    .word-card:hover { transform: translateY(-1px); }
+    .word-card.severity-low { border-right-color: #97C459; }
+    .word-card.severity-medium { border-right-color: #EF9F27; }
+    .word-card.severity-high { border-right-color: #D85A30; }
+    .word-card.severity-critical { border-right-color: #E24B4A; }
+
+    .word-info { flex: 1; min-width: 0; }
+    .word-text {
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 2px;
+      word-break: break-word;
+    }
+    .word-meta {
+      font-size: 10px;
+      color: #888;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .word-actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .icon-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+    }
+    .icon-btn:hover { background: white; }
+    .icon-btn.delete:hover { background: #FCEBEB; color: #E24B4A; }
+
+    /* Search */
+    .search-bar {
+      position: relative;
+      margin-bottom: 12px;
+    }
+    .search-bar input {
+      width: 100%;
+      padding: 10px 40px 10px 14px;
+      border: 1px solid #E5E5E7;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 13px;
+    }
+
+    /* Filters */
+    .filters {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .filter-btn {
+      padding: 6px 14px;
+      border-radius: 20px;
+      border: 1px solid #E5E5E7;
+      background: white;
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .filter-btn.active {
+      background: #534AB7;
+      color: white;
+      border-color: #534AB7;
+    }
+
+    /* Empty State */
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: #888;
+    }
+    .empty-state-emoji { font-size: 48px; margin-bottom: 12px; }
+
+    /* Tab Content */
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: #173404;
+      color: white;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      opacity: 0;
+      transform: translateY(20px);
+      transition: all 0.3s;
+      pointer-events: none;
+      z-index: 1000;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.error { background: #791F1F; }
+
+    /* Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 500;
+    }
+    .modal-backdrop.show { display: flex; }
+    .modal {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      max-width: 500px;
+      width: 90%;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .modal h3 { font-size: 18px; margin-bottom: 16px; }
+    .modal-form { display: flex; flex-direction: column; gap: 12px; }
+    .modal-form label { font-size: 12px; color: #666; margin-bottom: -6px; }
+    .modal-form input, .modal-form select, .modal-form textarea {
+      padding: 10px 14px;
+      border: 1px solid #E5E5E7;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 13px;
+    }
+    .modal-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+      justify-content: flex-end;
+    }
+
+    /* Incidents */
+    .incident {
+      background: white;
+      border: 1px solid #E5E5E7;
+      border-right: 3px solid;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 8px;
+    }
+    .incident.critical { border-right-color: #E24B4A; }
+    .incident.high { border-right-color: #D85A30; }
+    .incident.medium { border-right-color: #EF9F27; }
+    .incident.low { border-right-color: #97C459; }
+    .incident-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .badges { display: flex; gap: 6px; flex-wrap: wrap; }
+    .badge {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 8px;
+      font-weight: 500;
+    }
+    .badge.critical { background: #FCEBEB; color: #501313; }
+    .badge.high { background: #FAECE7; color: #4A1B0C; }
+    .badge.medium { background: #FAEEDA; color: #412402; }
+    .badge.low { background: #EAF3DE; color: #173404; }
+    .badge.neutral { background: #EEEDFE; color: #3C3489; }
+    .incident-message {
+      background: #F5F5F7;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin: 8px 0;
+    }
+    .incident-highlight {
+      background: #FCEBEB;
+      color: #501313;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .incident-meta {
+      font-size: 11px;
+      color: #666;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    /* Test Panel */
+    .test-panel {
+      background: linear-gradient(135deg, #EEEDFE 0%, #E1F5EE 100%);
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid #CECBF6;
+    }
+    .test-input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid white;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 14px;
+      min-height: 80px;
+      resize: vertical;
+      direction: rtl;
+    }
+    .test-result {
+      margin-top: 12px;
+      padding: 14px;
+      border-radius: 8px;
+      display: none;
+    }
+    .test-result.show { display: block; }
+    .test-result.blocked { background: #FCEBEB; color: #501313; border: 1px solid #F09595; }
+    .test-result.warning { background: #FAECE7; color: #4A1B0C; border: 1px solid #F0997B; }
+    .test-result.safe { background: #EAF3DE; color: #173404; border: 1px solid #C0DD97; }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .header { flex-direction: column; gap: 12px; align-items: flex-start; }
+      .word-input-row input { min-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <h1>🛡️ Chat Guard AI · Enterprise</h1>
+      <p>מרכז הגנה על הצ'אט · ניהול מילות חסימה · זיהוי AI מתקדם</p>
+    </div>
+    <div class="status-badge">
+      <span class="status-dot"></span>
+      <span>פעיל · <span id="lastSync">נטען...</span></span>
+    </div>
+  </div>
+
+  <!-- KPIs -->
+  <div class="kpi-grid">
+    <div class="kpi">
+      <div class="kpi-label">סה"כ מילות חסימה</div>
+      <div class="kpi-value" id="kpiTotalWords">0</div>
+      <div class="kpi-change down">● פעילות</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">ניסיונות עקיפה היום</div>
+      <div class="kpi-value" id="kpiAttempts">0</div>
+      <div class="kpi-change up" id="kpiAttemptsChange">—</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">נחסמו אוטומטית</div>
+      <div class="kpi-value" id="kpiBlocked">0</div>
+      <div class="kpi-change down">דיוק 97%</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">משתמשים בסיכון</div>
+      <div class="kpi-value" id="kpiSuspicious">0</div>
+      <div class="kpi-change up">דורש בדיקה</div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" data-tab="words">📝 ניהול מילים</button>
+    <button class="tab" data-tab="test">🧪 בדיקת הודעות</button>
+    <button class="tab" data-tab="incidents">🚨 תקריות חיות</button>
+    <button class="tab" data-tab="settings">⚙️ הגדרות</button>
+  </div>
+
+  <!-- Tab: Words Management -->
+  <div class="tab-content active" id="tab-words">
+
+    <div class="card">
+      <div class="card-title">
+        <span>הוסף מילה חדשה לרשימה</span>
+        <span style="font-size: 11px; color: #888; font-weight: normal;">המילים נשמרות מיידית וחלות על כל הצ'אטים</span>
+      </div>
+
+      <div class="word-input-row">
+        <input type="text" id="newWordInput" placeholder="הקלד מילה או ביטוי (לדוגמה: מזומן, ביט, כסף)">
+        <select id="newWordCategory">
+          <option value="payment">תשלומים</option>
+          <option value="contact">פרטי קשר</option>
+          <option value="external">אפליקציות חיצוניות</option>
+          <option value="custom">מותאם אישית</option>
+        </select>
+        <select id="newWordSeverity">
+          <option value="low">נמוך - טיפ רך</option>
+          <option value="medium" selected>בינוני - החלפה</option>
+          <option value="high">גבוה - חסימה</option>
+          <option value="critical">קריטי - השעיה</option>
+        </select>
+        <button class="btn btn-primary" onclick="addWord()">+ הוסף</button>
+      </div>
+
+      <div style="font-size: 11px; color: #666; background: #F5F5F7; padding: 10px; border-radius: 8px;">
+        💡 <strong>טיפ:</strong> המערכת תזהה גם הסוואות של המילה - רווחים (מ ז ו מ ן), אימוג'ים (💵), ו-Leetspeak (m0z0m4n)
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>רשימת מילים פעילות</span>
+        <span id="wordCount" style="font-size: 12px; color: #666; font-weight: normal;">0 מילים</span>
+      </div>
+
+      <div class="search-bar">
+        <input type="text" id="searchWords" placeholder="🔍 חפש מילה..." oninput="renderWords()">
+      </div>
+
+      <div class="filters">
+        <button class="filter-btn active" data-filter="all">הכל</button>
+        <button class="filter-btn" data-filter="payment">תשלומים</button>
+        <button class="filter-btn" data-filter="contact">פרטי קשר</button>
+        <button class="filter-btn" data-filter="external">חיצוניות</button>
+        <button class="filter-btn" data-filter="custom">מותאם</button>
+      </div>
+
+      <div class="words-grid" id="wordsGrid">
+        <!-- Words will be rendered here -->
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Tab: Test Messages -->
+  <div class="tab-content" id="tab-test">
+    <div class="card">
+      <div class="card-title">
+        <span>🧪 בדיקת הודעה - איך המערכת תגיב?</span>
+      </div>
+      <p style="font-size: 13px; color: #666; margin-bottom: 16px;">
+        כתוב כאן הודעה ותראה איך המערכת תזהה אותה - באיזו רמת סיכון, האם תחסם, ומה הסיבה. זה מעולה לבדיקת כללים לפני שהם נכנסים לייצור.
+      </p>
+
+      <div class="test-panel">
+        <textarea class="test-input" id="testMessageInput" placeholder="לדוגמה: בוא נסדר את זה במזומן בצד" oninput="testMessage()"></textarea>
+
+        <div class="test-result" id="testResult">
+          <!-- Result appears here -->
+        </div>
+      </div>
+
+      <div style="margin-top: 16px;">
+        <p style="font-size: 12px; color: #666; margin-bottom: 8px;">דוגמאות לבדיקה:</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+          <button class="btn btn-secondary" style="font-size: 11px;" onclick="setTestText('בוא נשלם במזומן')">בוא נשלם במזומן</button>
+          <button class="btn btn-secondary" style="font-size: 11px;" onclick="setTestText('אפשר ב-ב י ט?')">אפשר ב-ב י ט?</button>
+          <button class="btn btn-secondary" style="font-size: 11px;" onclick="setTestText('תתקשר 050-1234567')">תתקשר 050-1234567</button>
+          <button class="btn btn-secondary" style="font-size: 11px;" onclick="setTestText('נפגש להעביר בצד')">נפגש להעביר בצד</button>
+          <button class="btn btn-secondary" style="font-size: 11px;" onclick="setTestText('שלום, הכל טוב?')">שלום, הכל טוב?</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab: Live Incidents -->
+  <div class="tab-content" id="tab-incidents">
+    <div class="card">
+      <div class="card-title">
+        <span>🚨 תקריות אחרונות</span>
+        <button class="btn btn-secondary" onclick="loadIncidents()">↻ רענן</button>
+      </div>
+
+      <div class="filters">
+        <button class="filter-btn active" data-incident-filter="all">הכל</button>
+        <button class="filter-btn" data-incident-filter="critical">קריטי</button>
+        <button class="filter-btn" data-incident-filter="high">גבוה</button>
+        <button class="filter-btn" data-incident-filter="medium">בינוני</button>
+        <button class="filter-btn" data-incident-filter="low">נמוך</button>
+      </div>
+
+      <div id="incidentsList">
+        <!-- Incidents rendered here -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab: Settings -->
+  <div class="tab-content" id="tab-settings">
+    <div class="card">
+      <div class="card-title">
+        <span>⚙️ הגדרות מערכת</span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <div>
+          <label style="font-size: 13px; font-weight: 500; display: block; margin-bottom: 8px;">רגישות זיהוי סמנטי</label>
+          <input type="range" min="0" max="100" value="65" id="sensitivitySlider" style="width: 100%;" oninput="updateSensitivity(this.value)">
+          <div style="display: flex; justify-content: space-between; font-size: 11px; color: #888; margin-top: 4px;">
+            <span>מתירני (פחות חסימות)</span>
+            <span id="sensitivityValue">65</span>
+            <span>קפדני (יותר חסימות)</span>
+          </div>
+        </div>
+
+        <div>
+          <label style="font-size: 13px; font-weight: 500; display: block; margin-bottom: 8px;">זיהוי הסוואות</label>
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 0;">
+            <input type="checkbox" checked id="detectSpaces"> רווחים בין אותיות (מ ז ו מ ן)
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 0;">
+            <input type="checkbox" checked id="detectLeetspeak"> Leetspeak (m0z0m4n)
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 0;">
+            <input type="checkbox" checked id="detectEmoji"> אימוג'ים (💵, 💰)
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 0;">
+            <input type="checkbox" checked id="detectPhoneNumbers"> מספרי טלפון (גם עם רווחים)
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 0;">
+            <input type="checkbox" checked id="detectLinks"> קישורים חיצוניים (wa.me, t.me)
+          </label>
+        </div>
+
+        <div>
+          <button class="btn btn-primary" onclick="saveSettings()">💾 שמור הגדרות</button>
+          <button class="btn btn-secondary" onclick="exportData()">📥 ייצא נתונים</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Edit Word Modal -->
+<div class="modal-backdrop" id="editModal">
+  <div class="modal">
+    <h3>עריכת מילה</h3>
+    <div class="modal-form">
+      <label>המילה / ביטוי</label>
+      <input type="text" id="editWordText">
+
+      <label>קטגוריה</label>
+      <select id="editWordCategory">
+        <option value="payment">תשלומים</option>
+        <option value="contact">פרטי קשר</option>
+        <option value="external">אפליקציות חיצוניות</option>
+        <option value="custom">מותאם אישית</option>
+      </select>
+
+      <label>רמת חומרה</label>
+      <select id="editWordSeverity">
+        <option value="low">נמוך - טיפ רך</option>
+        <option value="medium">בינוני - החלפה</option>
+        <option value="high">גבוה - חסימה</option>
+        <option value="critical">קריטי - השעיה</option>
+      </select>
+
+      <label>הערות (אופציונלי)</label>
+      <textarea id="editWordNotes" rows="3" style="resize:vertical"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">ביטול</button>
+      <button class="btn btn-primary" onclick="saveEdit()">שמור שינויים</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script src="chat-guard.js"></script>
+
+</body>
+</html>

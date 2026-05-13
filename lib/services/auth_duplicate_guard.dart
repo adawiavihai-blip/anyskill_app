@@ -1,17 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
-/// PR-A: Anti-Duplicate Guard for social sign-in (v12.4.0).
+/// Anti-Duplicate Guard for social sign-in.
 ///
 /// Belt-and-suspenders complement to the Firebase Console flag
 /// "One account per email" — catches edge cases where a NEW Firebase Auth
 /// uid is created for an email that already owns a `users/{otherUid}` doc
 /// (legacy email/password user, Console misconfigured, OAuth race, etc.).
 ///
-/// Policy (per user decision 2026-04-13): block, do NOT auto-merge.
-/// The just-signed-in user is signed back out and shown a Hebrew dialog
-/// instructing them to use their original sign-in method.
+/// Behavior (v15.x, post-Sigalit fix): when a duplicate is detected, the
+/// CF `selfHealAccountByEmail` automatically deletes the caller's new Auth
+/// account and returns a custom token for the legacy uid. The client then
+/// signs in seamlessly as the legacy user — preserving role, history, and
+/// verifications. The user sees a "Welcome back!" toast.
+///
+/// Falls back to the v12.4 "use original method" dialog if the heal fails
+/// (e.g. Cloud Functions unreachable, email_verified missing).
 class AuthDuplicateGuard {
   /// Returns the conflicting uid if [email] is already used by a doc with a
   /// DIFFERENT uid than [currentUid]. Returns null if no conflict, empty
@@ -45,8 +51,11 @@ class AuthDuplicateGuard {
     return null;
   }
 
-  /// Convenience: checks for a conflict; if found, signs the current user
-  /// out and shows the Hebrew "use your original method" dialog.
+  /// Checks for an email conflict, then attempts auto-heal via the
+  /// `selfHealAccountByEmail` CF. If the heal succeeds, the caller is
+  /// already signed in seamlessly as the legacy user (custom token) and
+  /// sees a Hebrew "Welcome back!" toast. If the heal fails, falls back
+  /// to the original sign-out + "use original method" dialog.
   ///
   /// Returns `true` if it is safe to proceed creating/updating the profile.
   /// Returns `false` if a conflict was found and handled (caller MUST stop).
@@ -63,7 +72,44 @@ class AuthDuplicateGuard {
     );
     if (conflictUid == null) return true;
 
-    // Conflict — sign back out so we don't leave a half-created session.
+    // ── Self-heal path ──
+    // CF deletes the caller's brand-new Auth account, returns a custom
+    // token for the legacy uid. We sign out + signInWithCustomToken so
+    // the user lands directly in their existing account.
+    try {
+      final result = await FirebaseFunctions.instance
+          .httpsCallable('selfHealAccountByEmail')
+          .call({})
+          .timeout(const Duration(seconds: 30));
+      final data = Map<String, dynamic>.from(result.data as Map);
+      if (data['healed'] == true && data['customToken'] is String) {
+        final token = data['customToken'] as String;
+        try { await FirebaseAuth.instance.signOut(); } catch (_) {}
+        try {
+          await FirebaseAuth.instance.signInWithCustomToken(token);
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: const Text('ברוכים השבים! 👋 זיהינו את החשבון שלך'),
+              backgroundColor: const Color(0xFF10B981),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ));
+          }
+          return false; // caller stops; AuthWrapper will route via legacy uid
+        } catch (signInErr) {
+          debugPrint('[AuthDuplicateGuard] custom-token signin failed: $signInErr');
+          // Fall through to dialog fallback below.
+        }
+      }
+    } catch (e) {
+      debugPrint('[AuthDuplicateGuard] self-heal CF failed: $e');
+    }
+
+    // ── Fallback ──
+    // Sign back out so we don't leave a half-created session, then show
+    // the legacy "use original method" dialog.
     try { await FirebaseAuth.instance.signOut(); } catch (_) {}
 
     if (context.mounted) {

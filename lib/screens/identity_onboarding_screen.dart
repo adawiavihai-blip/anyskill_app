@@ -844,7 +844,7 @@ class _IdentityOnboardingScreenState extends State<IdentityOnboardingScreen> {
         ? _selectedSubCatName
         : _selectedMainCatName;
     final userName =
-        FirebaseAuth.instance.currentUser?.displayName ?? 'המומחה שלך';
+        FirebaseAuth.instance.currentUser?.displayName ?? 'נותן השירות שלך';
     final price = double.tryParse(_priceCtrl.text.trim()) ?? 0;
 
     return Padding(

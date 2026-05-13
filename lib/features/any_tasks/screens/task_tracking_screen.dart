@@ -9,6 +9,7 @@ library;
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import '../../../utils/error_mapper.dart';
 import '../models/any_task.dart';
 import '../services/any_task_service.dart';
 import '../theme/any_tasks_palette.dart';
@@ -374,11 +375,7 @@ class _ConfirmButtonState extends State<_ConfirmButton> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text('שגיאה: $e'),
-            backgroundColor: TasksPalette.danger),
-      );
+      ErrorMapper.show(context, e);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

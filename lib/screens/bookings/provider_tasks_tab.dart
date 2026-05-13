@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../widgets/bookings/booking_shared_widgets.dart';
 import '../../widgets/bookings/expert_job_card.dart';
+import '../../widgets/post_job_story_prompt.dart';
 import '../review_screen.dart';
 
 /// Provider active-tasks tab — shows only jobs with active statuses.
@@ -111,19 +112,35 @@ class _ProviderTasksTabState extends State<ProviderTasksTab> {
         'providerReviewShown': true,
       }).catchError((_) {});
 
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Cache for the post-frame callback (doc may be invalidated by stream).
+      final jobId          = doc.id;
+      final customerName   = d['customerName']?.toString() ?? 'לקוח';
+      final storyAlreadyHandled =
+          d['storyPromptShown'] == true || d['storyPromptCompleted'] == true;
+
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
-        Navigator.push(
+        await Navigator.push(
             ctx,
             MaterialPageRoute(
               builder: (_) => ReviewScreen(
-                jobId: doc.id,
+                jobId: jobId,
                 revieweeId: jobCustomerId,
-                revieweeName: d['customerName']?.toString() ?? 'לקוח',
+                revieweeName: customerName,
                 revieweeAvatar: '',
                 isClientReview: false,
               ),
             ));
+
+        // After the review modal closes (submit OR pop), nudge the provider
+        // to share the result as a Skills Story. Idempotent via Firestore
+        // flag — same pattern as providerReviewShown above.
+        if (!mounted) return;
+        if (storyAlreadyHandled) return;
+        FirebaseFirestore.instance.collection('jobs').doc(jobId).update({
+          'storyPromptShown': true,
+        }).catchError((_) {});
+        await showPostJobStoryPrompt(context: ctx, jobId: jobId);
       });
       break; // only one popup at a time
     }

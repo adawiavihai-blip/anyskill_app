@@ -10,6 +10,8 @@ library;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
+import 'cached_readers.dart';
+
 class AnytaskAntifraudService {
   AnytaskAntifraudService._();
 
@@ -79,6 +81,7 @@ class AnytaskAntifraudService {
         await _db.collection('users').doc(userId).update({
           'anytaskSuspendedUntil': FieldValue.delete(),
         });
+        CachedReaders.invalidateProvider(userId); // §61
         return null;
       }
 
@@ -135,6 +138,7 @@ class AnytaskAntifraudService {
       await _db.collection('users').doc(userId).update({
         'fraudFlags': FieldValue.arrayUnion([flagType]),
       });
+      CachedReaders.invalidateProvider(userId); // §61
     } catch (e) {
       debugPrint('[AnytaskAntifraud] flagUser error: $e');
     }

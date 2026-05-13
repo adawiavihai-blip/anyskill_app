@@ -28,21 +28,19 @@ class AdminUsersRepository {
     Query<Map<String, dynamic>> q = _users.limit(limit);
     if (startAfter != null) q = q.startAfterDocument(startAfter);
 
-    // Three-tier fetch (same pattern as OnboardingGate — never hangs):
-    //   1. Server with 5s timeout
-    //   2. Cache fallback
-    //   3. Default get with 5s timeout
+    // Two-tier fetch. The old 3-tier with Source.server first was too aggressive:
+    // on web (CLAUDE.md §23 — IndexedDB persistence OFF), Source.cache returns
+    // empty, so a slow first-attempt timeout left the admin tab permanently
+    // blank. We now let Firestore pick the best source and give it 20s — the
+    // WebChannel long-polling handshake alone can take 3-8s on a cold start.
     try {
-      return await q.get(const GetOptions(source: Source.server))
-          .timeout(const Duration(seconds: 5));
-    } catch (_) {}
-    try {
-      return await q.get(const GetOptions(source: Source.cache));
-    } catch (_) {}
-    return q.get().timeout(
-      const Duration(seconds: 5),
-      onTimeout: () => q.get(const GetOptions(source: Source.cache)),
-    );
+      return await q.get().timeout(const Duration(seconds: 20));
+    } catch (_) {
+      // Best-effort fallback — on mobile Source.cache may have data from a
+      // prior session even when the server is unreachable. On web it's almost
+      // always empty (persistence OFF) but doesn't hurt to try.
+      return q.get(const GetOptions(source: Source.cache));
+    }
   }
 
   // ── Single-user stream ─────────────────────────────────────────────────

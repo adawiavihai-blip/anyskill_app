@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/firestore_map.dart';
 
 /// The type of log entry — determines which Firestore collection receives it.
 enum LogType {
@@ -139,7 +140,7 @@ class AppLog {
       platform:   d['platform']   as String? ?? '',
       appVersion: d['appVersion'] as String? ?? '',
       timestamp:  (d['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      extra:      (d['extra']     as Map<String, dynamic>?) ?? const {},
+      extra:      safeMapOrEmpty(d['extra']),
     );
   }
 

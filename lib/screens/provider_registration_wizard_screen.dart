@@ -24,7 +24,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/category.dart';
 import '../repositories/category_repository.dart';
+import '../services/cached_readers.dart';
 import '../services/private_data_service.dart';
+import '../utils/error_mapper.dart';
 import '../utils/image_compressor.dart';
 
 // ── Brand tokens (match HTML reference) ─────────────────────────────────────
@@ -322,63 +324,118 @@ class _ProviderRegistrationWizardScreenState
       _snack('לא מחובר/ת', isError: true);
       return;
     }
+
+    // Defensive guard — _validateStep should already block, but `!.` further
+    // down would crash with a less-helpful error if these slipped through.
+    if (_category == null || _subCategory == null) {
+      _snack('יש לבחור קטגוריה ותת-קטגוריה', isError: true);
+      return;
+    }
+
     setState(() => _submitting = true);
 
-    try {
-      final applicationData = <String, dynamic>{
-        'full_name':            _nameCtrl.text.trim(),
-        'phone':                _phoneCtrl.text.trim(),
-        'email':                _emailCtrl.text.trim(),
-        'category':             _category!.name,
-        'category_id':          _category!.id,
-        'subcategory':          _subCategory!.name,
-        'subcategory_id':       _subCategory!.id,
-        'bio_description':      _bioCtrl.text.trim(),
-        'country':              _country,
-        'city':                 _city,
-        'street_address':       _streetCtrl.text.trim(),
-        'id_document_url':      _idDocUrl,
-        'id_verification_status': 'pending_verification',
-        'business_type':        _businessType,
-        'business_document_url': _businessDocUrl,
-        'bank_name':            _bankName,
-        'bank_number':          _bankNumber,
-        'branch_number':        _branchCtrl.text.trim(),
-        'account_number':       _accountCtrl.text.trim(),
-        'terms_accepted':       true,
-        'terms_version':        '2.0',
-        'terms_accepted_at':    FieldValue.serverTimestamp(),
-        'terms_fully_scrolled': true,
-      };
+    final fullName = _nameCtrl.text.trim();
+    final phone    = _phoneCtrl.text.trim();
+    final email    = _emailCtrl.text.trim();
+    final categoryName    = _category!.name;
+    final subCategoryName = _subCategory!.name;
 
-      // Main user doc — flag pending + snapshot under expertApplicationData
+    final applicationData = <String, dynamic>{
+      'full_name':              fullName,
+      'phone':                  phone,
+      'email':                  email,
+      'category':               categoryName,
+      'category_id':            _category!.id,
+      'subcategory':            subCategoryName,
+      'subcategory_id':         _subCategory!.id,
+      'bio_description':        _bioCtrl.text.trim(),
+      'country':                _country,
+      'city':                   _city,
+      'street_address':         _streetCtrl.text.trim(),
+      'id_document_url':        _idDocUrl,
+      'id_verification_status': 'pending_verification',
+      'business_type':          _businessType,
+      'business_document_url':  _businessDocUrl,
+      'bank_name':              _bankName,
+      'bank_number':            _bankNumber,
+      'branch_number':          _branchCtrl.text.trim(),
+      'account_number':         _accountCtrl.text.trim(),
+      'terms_accepted':         true,
+      'terms_version':          '2.0',
+      'terms_accepted_at':      FieldValue.serverTimestamp(),
+      'terms_fully_scrolled':   true,
+    };
+
+    // ── Critical step: main user doc ────────────────────────────────────────
+    //
+    // If THIS write fails the application is not recorded — surface a friendly
+    // Hebrew error via ErrorMapper (Law 10) with internal-support fallback,
+    // and abort BEFORE navigating to the confirmation screen so the user
+    // doesn't think their bid landed.
+    //
+    // SECURITY (CLAUDE.md §50): top-level `phone` is in the owner
+    // doesNotTouch blocklist. Owners can only write phone via the OTP
+    // one-shot rule (onlyFields(['phone','phoneVerifiedAt']) +
+    // phoneVerifiedAt == null) — which fails for any multi-field merge.
+    // The phone is preserved in two allowed locations:
+    //   1. applicationData['phone']     — nested Map, not blocklisted
+    //   2. users/{uid}/private/identity — written below, owner-writable
+    // Admin verification tab + PrivateDataService.getContactData read
+    // private → appData → main with that fallback order, so the wizard's
+    // phone always reaches the admin reviewer.
+    try {
       await FirebaseFirestore.instance.collection('users').doc(uid).set({
-        'isPendingExpert':       true,
-        'isProvider':            false,
-        'name':                  _nameCtrl.text.trim(),
-        'phone':                 _phoneCtrl.text.trim(),
-        'email':                 _emailCtrl.text.trim(),
-        'serviceType':           _subCategory!.name,
-        'category':              _category!.name,
-        'aboutMe':               _bioCtrl.text.trim(),
-        'country':               _country,
-        'city':                  _city,
-        'businessType':          _businessType,
-        'expertApplicationData': applicationData,
+        'isPendingExpert':              true,
+        'isProvider':                   false,
+        'name':                         fullName,
+        'email':                        email,
+        'serviceType':                  subCategoryName,
+        'category':                     categoryName,
+        'aboutMe':                      _bioCtrl.text.trim(),
+        'country':                      _country,
+        'city':                         _city,
+        'businessType':                 _businessType,
+        'expertApplicationData':        applicationData,
         'expertApplicationSubmittedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      CachedReaders.invalidateProvider(uid); // §61
+    } catch (e, st) {
+      debugPrint('[ProviderWizard] CRITICAL — main user-doc write failed: $e\n$st');
+      if (mounted) {
+        setState(() => _submitting = false);
+        ErrorMapper.show(context, e);
+      }
+      return;
+    }
 
-      // Dual-write private subcollections (per Law Section 11)
+    // ── Non-critical side effects ───────────────────────────────────────────
+    //
+    // From here on, every step is best-effort. The application has been
+    // recorded; failures here just leave optional data missing (admin can
+    // collect from the user via support if needed) and MUST NOT block the
+    // success path. Each step is logged for diagnostics.
+
+    try {
       await PrivateDataService.writeContactData(
         uid,
-        phone: _phoneCtrl.text.trim(),
-        email: _emailCtrl.text.trim(),
+        phone: phone,
+        email: email,
       );
+    } catch (e) {
+      debugPrint('[ProviderWizard] writeContactData failed (non-blocking): $e');
+    }
+
+    try {
       await PrivateDataService.writeKycData(
         uid,
         idDocUrl: _idDocUrl,
         businessDocUrl: _businessDocUrl,
       );
+    } catch (e) {
+      debugPrint('[ProviderWizard] writeKycData failed (non-blocking): $e');
+    }
+
+    try {
       await FirebaseFirestore.instance
           .collection('users')
           .doc(uid)
@@ -390,23 +447,25 @@ class _ProviderRegistrationWizardScreenState
           'bankNumber':    _bankNumber,
           'branchNumber':  _branchCtrl.text.trim(),
           'accountNumber': _accountCtrl.text.trim(),
-          'accountHolder': _nameCtrl.text.trim(),
+          'accountHolder': fullName,
         },
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-
-      // Notify admins (in-app)
-      await _notifyAdmins(uid, _nameCtrl.text.trim(), _subCategory!.name);
-
-      if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const _ConfirmationScreen()),
-      );
     } catch (e) {
-      setState(() => _submitting = false);
-      _snack('שגיאה בשליחה: $e', isError: true);
+      debugPrint('[ProviderWizard] private/financial write failed (non-blocking): $e');
     }
+
+    try {
+      await _notifyAdmins(uid, fullName, subCategoryName);
+    } catch (e) {
+      debugPrint('[ProviderWizard] notifyAdmins failed (non-blocking): $e');
+    }
+
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const _ConfirmationScreen()),
+    );
   }
 
   Future<void> _notifyAdmins(String applicantUid, String name, String category) async {

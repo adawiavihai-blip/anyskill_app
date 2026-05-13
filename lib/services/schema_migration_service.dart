@@ -20,6 +20,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
 import '../widgets/category_specs_widget.dart';
+import 'cached_readers.dart';
 
 class SchemaMigrationService {
   static final _db = FirebaseFirestore.instance;
@@ -67,6 +68,9 @@ class SchemaMigrationService {
         try {
           final defaults = defaultSchemaFor(parentName: parentName, subName: subName);
           await doc.reference.update({'serviceSchema': defaults.toMap()});
+          // §61: bust this category's cached schema after migration so
+          // any open expert/edit profile re-fetches v2 immediately.
+          CachedReaders.invalidateServiceSchema(subName);
           upgraded++;
           debugPrint('[SchemaMigration] ✅ wrote v2 default for "$parentName › $subName"');
         } catch (e) {
@@ -74,6 +78,9 @@ class SchemaMigrationService {
           debugPrint('[SchemaMigration] ❌ failed for "$parentName › $subName": $e');
         }
       }
+      // §61: defensive global flush — bulk migration may have touched
+      // many names; safer to invalidate the whole prefix once.
+      CachedReaders.invalidateAllServiceSchemas();
     } catch (e) {
       errors.add('שגיאה כללית: $e');
       debugPrint('[SchemaMigration] ❌ outer failure: $e');

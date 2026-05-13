@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 part 'admin_user_detail_provider.g.dart';
@@ -6,7 +7,7 @@ part 'admin_user_detail_provider.g.dart';
 // ── User detail stream (.family — one per userId, autoDispose) ───────────────
 
 @riverpod
-Stream<Map<String, dynamic>> userDetail(UserDetailRef ref, String userId) {
+Stream<Map<String, dynamic>> userDetail(Ref ref, String userId) {
   return FirebaseFirestore.instance
       .collection('users')
       .doc(userId)
@@ -18,10 +19,15 @@ Stream<Map<String, dynamic>> userDetail(UserDetailRef ref, String userId) {
 
 @riverpod
 Future<List<Map<String, dynamic>>> userTransactions(
-    UserTransactionsRef ref, String userId) async {
+    Ref ref, String userId) async {
   final db = FirebaseFirestore.instance;
 
-  // Fetch both sent and received transactions
+  // Fetch transactions written under all 3 patterns:
+  //   - senderId / receiverId (legacy between-party logs)
+  //   - userId (newer single-user wallet logs, e.g. escrow / earning /
+  //     admin_credit_grant / withdrawal_request / dispute_resolved)
+  // Dedup by doc id when merging — a single tx may be written once but matched
+  // by multiple branches in unusual schemas.
   final results = await Future.wait([
     db
         .collection('transactions')
@@ -33,12 +39,20 @@ Future<List<Map<String, dynamic>>> userTransactions(
         .where('receiverId', isEqualTo: userId)
         .limit(100)
         .get(),
+    db
+        .collection('transactions')
+        .where('userId', isEqualTo: userId)
+        .limit(100)
+        .get(),
   ]);
 
+  final seen = <String>{};
   final all = <Map<String, dynamic>>[];
   for (final snap in results) {
     for (final doc in snap.docs) {
-      all.add({'id': doc.id, ...doc.data()});
+      if (seen.add(doc.id)) {
+        all.add({'id': doc.id, ...doc.data()});
+      }
     }
   }
   // Sort by timestamp descending
@@ -55,7 +69,7 @@ Future<List<Map<String, dynamic>>> userTransactions(
 
 @riverpod
 Future<List<Map<String, dynamic>>> userJobs(
-    UserJobsRef ref, String userId) async {
+    Ref ref, String userId) async {
   final db = FirebaseFirestore.instance;
 
   final results = await Future.wait([
@@ -91,7 +105,7 @@ Future<List<Map<String, dynamic>>> userJobs(
 
 @riverpod
 Future<List<Map<String, dynamic>>> userReviews(
-    UserReviewsRef ref, String userId) async {
+    Ref ref, String userId) async {
   final db = FirebaseFirestore.instance;
 
   // Query both field names for backward compatibility
@@ -132,7 +146,7 @@ Future<List<Map<String, dynamic>>> userReviews(
 
 @riverpod
 Stream<List<Map<String, dynamic>>> userAuditLog(
-    UserAuditLogRef ref, String userId) {
+    Ref ref, String userId) {
   return FirebaseFirestore.instance
       .collection('admin_audit_log')
       .where('targetUserId', isEqualTo: userId)

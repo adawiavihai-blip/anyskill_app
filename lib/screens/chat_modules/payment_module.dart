@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import '../../services/cached_readers.dart';
+
 /// Payment helpers used by the chat job lifecycle.
 ///
 /// **Phase 2 NOTE:** Stripe Connect was removed from the codebase pending
@@ -52,6 +54,8 @@ class PaymentModule {
           'jobId':     jobId,
         });
       });
+      // §61 invalidation — customer balance changed (outside tx, no retry hazard).
+      CachedReaders.invalidateProvider(customerId);
 
       if (chatRoomId.isNotEmpty) {
         await firestore
@@ -109,6 +113,8 @@ class PaymentModule {
           'jobId':     jobId,
         });
       });
+      // §61 invalidation — customer balance changed.
+      CachedReaders.invalidateProvider(customerId);
       return true;
     } catch (e) {
       debugPrint('refundDisputedJob error: $e');
@@ -126,6 +132,9 @@ class PaymentModule {
   }) async {
     try {
       // Legacy credits path: CF moves Firestore credits between balance fields.
+      // §60: jobId-derived clientReqId makes retries idempotent — two calls
+      // for the same job in <1h return the same success result instead of a
+      // confusing "status already changed" error.
       debugPrint("[RELEASE] calling processPaymentRelease: $jobId");
       await FirebaseFunctions.instance
           .httpsCallable('processPaymentRelease')
@@ -135,6 +144,7 @@ class PaymentModule {
         'expertName':   expertName,
         'customerName': customerName,
         'totalAmount':  totalAmount,
+        'clientReqId':  'release_$jobId',
       });
       return null;
     } on FirebaseFunctionsException catch (e) {
@@ -174,9 +184,16 @@ class PaymentModule {
     required String cancelledBy,
   }) async {
     try {
+      // §60: jobId-derived clientReqId makes the cancel idempotent so a
+      // network retry returns the original refund/penalty payout instead
+      // of a "status already changed" precondition error.
       final result = await FirebaseFunctions.instance
           .httpsCallable('processCancellation')
-          .call({'jobId': jobId, 'cancelledBy': cancelledBy});
+          .call({
+            'jobId':       jobId,
+            'cancelledBy': cancelledBy,
+            'clientReqId': 'cancel_${jobId}_$cancelledBy',
+          });
       return Map<String, dynamic>.from(result.data as Map);
     } on FirebaseFunctionsException catch (e) {
       throw (e.message ?? e.code);

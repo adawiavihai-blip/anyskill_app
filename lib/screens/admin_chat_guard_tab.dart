@@ -687,36 +687,85 @@ class _SettingsTab extends StatefulWidget {
 }
 
 class _SettingsTabState extends State<_SettingsTab> {
+  /// The local working copy. Tracks whatever the admin has typed/toggled
+  /// since the last server-confirmed value.
   ChatGuardSettings? _draft;
+
+  /// The last value confirmed by Firestore. We treat the explicit "Save"
+  /// button as committing only the *non-toggle* fields (sensitivity), and
+  /// every toggle (master kill-switch + per-layer) auto-saves immediately.
+  /// `_baseline` is what the save button compares against.
+  ChatGuardSettings? _baseline;
+
+  /// Cached stream — created ONCE in initState. The previous code called
+  /// `widget.svc.streamSettings()` inside `build()`, which created a new
+  /// Stream object on every rebuild and forced StreamBuilder to re-subscribe.
+  late final Stream<ChatGuardSettings> _stream;
+
+  /// Used to disable the master Switch + per-layer toggles momentarily
+  /// while the optimistic write is in flight. Prevents double-taps from
+  /// fighting each other for the same field.
+  String? _savingFieldKey;
+
+  @override
+  void initState() {
+    super.initState();
+    _stream = widget.svc.streamSettings();
+  }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<ChatGuardSettings>(
-      stream: widget.svc.streamSettings(),
+      stream: _stream,
       builder: (context, snap) {
         final current = snap.data ?? ChatGuardSettings.defaults;
-        _draft ??= current;
+
+        // First emission OR remote changed (e.g. another admin saved):
+        // sync the baseline. The local draft tracks unsaved sensitivity
+        // edits — for everything else, baseline === draft because toggles
+        // auto-save.
+        if (_baseline == null) {
+          _baseline = current;
+          _draft = current;
+        } else if (_baseline != current) {
+          // External change — preserve any in-flight sensitivity edit, but
+          // sync every other field so toggles always reflect the truth.
+          _baseline = current;
+          final localSensitivity = _draft?.sensitivity ?? current.sensitivity;
+          _draft = current.copyWith(sensitivity: localSensitivity);
+        }
+
         final d = _draft!;
+        final hasUnsavedSensitivity = d.sensitivity != current.sensitivity;
 
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // Master kill-switch
-            _SettingCard(
+            // ── Master kill-switch (auto-saves) ──────────────────────────
+            _AutoSaveSettingCard(
+              fieldKey: 'enabled',
+              activeKey: _savingFieldKey,
               child: SwitchListTile(
-                title: const Text('הפעל את Chat Guard',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: const Text(
-                    'כשמופעל — כל הודעה נבדקת לפני שליחה. כבוי = הדשבורד בלבד.',
-                    style: TextStyle(fontSize: 12)),
+                title: const Text(
+                  'הפעל את Chat Guard',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                subtitle: Text(
+                  d.enabled
+                      ? 'פעיל — כל הודעה נבדקת לפני שליחה'
+                      : 'מושבת — הדשבורד פעיל אך ההודעות לא נבדקות',
+                  style: const TextStyle(fontSize: 12),
+                ),
                 value: d.enabled,
                 activeColor: const Color(0xFF10B981),
-                onChanged: (v) => setState(
-                    () => _draft = d.copyWith(enabled: v)),
+                onChanged: _savingFieldKey == null
+                    ? (v) => _autoSaveToggle('enabled', d.copyWith(enabled: v))
+                    : null,
               ),
             ),
             const SizedBox(height: 12),
-            // Sensitivity
+
+            // ── Sensitivity (explicit save — continuous slider) ──────────
             _SettingCard(
               child: Padding(
                 padding: const EdgeInsets.all(14),
@@ -728,6 +777,24 @@ class _SettingsTabState extends State<_SettingsTab> {
                         const Text('רגישות',
                             style: TextStyle(fontWeight: FontWeight.bold)),
                         const Spacer(),
+                        if (hasUnsavedSensitivity) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFEF3C7),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text(
+                              'שינוי לא שמור',
+                              style: TextStyle(
+                                  fontSize: 10.5,
+                                  color: Color(0xFF92400E),
+                                  fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
                         Text('${d.sensitivity}%',
                             style: const TextStyle(
                                 fontWeight: FontWeight.bold,
@@ -758,62 +825,86 @@ class _SettingsTabState extends State<_SettingsTab> {
               ),
             ),
             const SizedBox(height: 12),
-            // Detection layers
+
+            // ── Detection layers (auto-save each) ───────────────────────
             _SettingCard(
               child: Column(
                 children: [
-                  _DetectToggle(
+                  _AutoSaveDetectToggle(
+                    fieldKey: 'detectSpaces',
+                    activeKey: _savingFieldKey,
                     label: 'זיהוי רווחים בין אותיות',
                     hint: '"מ ז ו מ ן" → "מזומן"',
                     value: d.detectSpaces,
-                    onChanged: (v) => setState(
-                        () => _draft = d.copyWith(detectSpaces: v)),
+                    onChanged: (v) => _autoSaveToggle(
+                        'detectSpaces', d.copyWith(detectSpaces: v)),
                   ),
-                  _DetectToggle(
+                  _AutoSaveDetectToggle(
+                    fieldKey: 'detectLeetspeak',
+                    activeKey: _savingFieldKey,
                     label: 'Leetspeak',
                     hint: '"c@sh" / "m0ney"',
                     value: d.detectLeetspeak,
-                    onChanged: (v) => setState(
-                        () => _draft = d.copyWith(detectLeetspeak: v)),
+                    onChanged: (v) => _autoSaveToggle(
+                        'detectLeetspeak', d.copyWith(detectLeetspeak: v)),
                   ),
-                  _DetectToggle(
+                  _AutoSaveDetectToggle(
+                    fieldKey: 'detectEmoji',
+                    activeKey: _savingFieldKey,
                     label: 'אימוג\'י',
                     hint: '"💵 💰" → "מזומן"',
                     value: d.detectEmoji,
-                    onChanged: (v) => setState(
-                        () => _draft = d.copyWith(detectEmoji: v)),
+                    onChanged: (v) => _autoSaveToggle(
+                        'detectEmoji', d.copyWith(detectEmoji: v)),
                   ),
-                  _DetectToggle(
+                  _AutoSaveDetectToggle(
+                    fieldKey: 'detectPhoneNumbers',
+                    activeKey: _savingFieldKey,
                     label: 'מספרי טלפון',
                     hint: 'ישראלי / בינלאומי / במילים',
                     value: d.detectPhoneNumbers,
-                    onChanged: (v) => setState(
-                        () => _draft = d.copyWith(detectPhoneNumbers: v)),
+                    onChanged: (v) => _autoSaveToggle('detectPhoneNumbers',
+                        d.copyWith(detectPhoneNumbers: v)),
                   ),
-                  _DetectToggle(
+                  _AutoSaveDetectToggle(
+                    fieldKey: 'detectLinks',
+                    activeKey: _savingFieldKey,
                     label: 'קישורים חיצוניים',
                     hint: 'wa.me · t.me · instagram.com · ...',
                     value: d.detectLinks,
-                    onChanged: (v) => setState(
-                        () => _draft = d.copyWith(detectLinks: v)),
+                    onChanged: (v) => _autoSaveToggle(
+                        'detectLinks', d.copyWith(detectLinks: v)),
                     isLast: true,
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 16),
-            // Save
+
+            // ── Save (only sensitivity needs an explicit save click) ────
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: _draft == current ? null : _save,
+                onPressed: hasUnsavedSensitivity ? _saveSensitivity : null,
                 icon: const Icon(Icons.save_rounded),
-                label: const Text('שמור שינויים'),
+                label: Text(hasUnsavedSensitivity
+                    ? 'שמור רגישות'
+                    : 'אין שינויים לשמירה'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF7C3AED),
                   foregroundColor: Colors.white,
+                  disabledBackgroundColor: const Color(0xFFE5E7EB),
+                  disabledForegroundColor: const Color(0xFF6B7280),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Center(
+              child: Text(
+                'הטוגלים נשמרים אוטומטית · רגישות דורשת לחיצה על "שמור"',
+                style: TextStyle(color: Colors.grey[600], fontSize: 11.5),
+                textAlign: TextAlign.center,
               ),
             ),
           ],
@@ -822,19 +913,82 @@ class _SettingsTabState extends State<_SettingsTab> {
     );
   }
 
-  Future<void> _save() async {
+  /// Optimistic save for any single boolean toggle (master kill-switch
+  /// + per-layer detection toggles).
+  ///
+  ///   1. Update the visible state immediately so the switch animates.
+  ///   2. Mark `_savingFieldKey` so other toggles disable until done.
+  ///   3. Write to Firestore.
+  ///   4. On success — leave the optimistic state in place; the stream
+  ///      will confirm it on the next emission.
+  ///   5. On failure — REVERT the visible state and show a snackbar.
+  Future<void> _autoSaveToggle(
+      String fieldKey, ChatGuardSettings next) async {
+    final previous = _draft ?? ChatGuardSettings.defaults;
+    setState(() {
+      _draft = next;
+      _baseline = next;
+      _savingFieldKey = fieldKey;
+    });
+    try {
+      await widget.svc.saveSettings(next);
+      if (!mounted) return;
+      setState(() => _savingFieldKey = null);
+    } catch (e) {
+      if (!mounted) return;
+      // Visual rollback so the switch returns to its real state.
+      setState(() {
+        _draft = previous;
+        _baseline = previous;
+        _savingFieldKey = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        backgroundColor: const Color(0xFFEF4444),
+        content: Text('שגיאה בשמירה: ${_friendlyError(e)}'),
+        action: SnackBarAction(
+          textColor: Colors.white,
+          label: 'נסה שוב',
+          onPressed: () => _autoSaveToggle(fieldKey, next),
+        ),
+      ));
+    }
+  }
+
+  Future<void> _saveSensitivity() async {
     final s = _draft;
     if (s == null) return;
+    setState(() => _savingFieldKey = 'sensitivity');
     try {
       await widget.svc.saveSettings(s);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ההגדרות נשמרו ✅')));
+      setState(() {
+        _baseline = s;
+        _savingFieldKey = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('הרגישות נשמרה ✅'),
+        backgroundColor: Color(0xFF10B981),
+        duration: Duration(seconds: 2),
+      ));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('שגיאה בשמירה: $e')));
+      setState(() => _savingFieldKey = null);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        backgroundColor: const Color(0xFFEF4444),
+        content: Text('שגיאה בשמירה: ${_friendlyError(e)}'),
+      ));
     }
+  }
+
+  String _friendlyError(Object e) {
+    final s = e.toString();
+    if (s.contains('permission-denied') || s.contains('PERMISSION_DENIED')) {
+      return 'אין הרשאת מנהל';
+    }
+    if (s.contains('unavailable') || s.contains('network')) {
+      return 'אין חיבור לרשת';
+    }
+    return s.length > 80 ? '${s.substring(0, 80)}…' : s;
   }
 }
 
@@ -855,14 +1009,68 @@ class _SettingCard extends StatelessWidget {
   }
 }
 
-class _DetectToggle extends StatelessWidget {
-  const _DetectToggle({
+/// Wraps a `_SettingCard` with a small "saving…" indicator on top-end
+/// while an auto-save write is in flight for this card's [fieldKey].
+class _AutoSaveSettingCard extends StatelessWidget {
+  const _AutoSaveSettingCard({
+    required this.fieldKey,
+    required this.activeKey,
+    required this.child,
+  });
+  final String fieldKey;
+  final String? activeKey;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final isSaving = activeKey == fieldKey;
+    return Stack(
+      children: [
+        _SettingCard(child: child),
+        if (isSaving)
+          PositionedDirectional(
+            top: 8,
+            end: 12,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.6,
+                    valueColor: AlwaysStoppedAnimation(Color(0xFF7C3AED)),
+                  ),
+                ),
+                SizedBox(width: 6),
+                Text('שומר…',
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF7C3AED),
+                        fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Auto-saving detection toggle row. Disables when ANY toggle on the
+/// page is currently saving (prevents racing parallel writes that would
+/// flip flags in unexpected order).
+class _AutoSaveDetectToggle extends StatelessWidget {
+  const _AutoSaveDetectToggle({
+    required this.fieldKey,
+    required this.activeKey,
     required this.label,
     required this.hint,
     required this.value,
     required this.onChanged,
     this.isLast = false,
   });
+  final String fieldKey;
+  final String? activeKey;
   final String label;
   final String hint;
   final bool value;
@@ -871,17 +1079,36 @@ class _DetectToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isSaving = activeKey == fieldKey;
+    final disabled = activeKey != null;
     return Column(
       children: [
-        SwitchListTile(
-          title: Text(label,
-              style: const TextStyle(
-                  fontWeight: FontWeight.w600, fontSize: 13)),
-          subtitle: Text(hint,
-              style: const TextStyle(fontSize: 11)),
-          value: value,
-          activeColor: const Color(0xFF7C3AED),
-          onChanged: onChanged,
+        Stack(
+          children: [
+            SwitchListTile(
+              title: Text(label,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 13)),
+              subtitle: Text(hint,
+                  style: const TextStyle(fontSize: 11)),
+              value: value,
+              activeColor: const Color(0xFF7C3AED),
+              onChanged: disabled ? null : onChanged,
+            ),
+            if (isSaving)
+              const PositionedDirectional(
+                top: 14,
+                end: 60,
+                child: SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.6,
+                    valueColor: AlwaysStoppedAnimation(Color(0xFF7C3AED)),
+                  ),
+                ),
+              ),
+          ],
         ),
         if (!isLast) const Divider(height: 1, color: Color(0xFFF3F4F6)),
       ],

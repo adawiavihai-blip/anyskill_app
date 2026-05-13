@@ -1,6 +1,42 @@
 {
   "indexes": [
     {
+      "_comment": "Flash Auction §57 — provider opportunities strip query: FlashAuctionService.watchActiveAuctionsForProvider does `.where('notifiedProviderIds', arrayContains: uid).orderBy('createdAt', desc)`. Without this composite index, Firestore silently returns 0 docs on web — provider gets FCM but the strip stays empty (real bug from live test on 2026-05-11).",
+      "collectionGroup": "flash_auctions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "notifiedProviderIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "createdAt",           "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "Babysitter Emergency §76 — sister-collection to flash_auctions. BabysitterEmergencyService.watchActiveEmergenciesForProvider runs the identical `arrayContains + orderBy(createdAt DESC)` pattern. Without this composite index, the provider's babysitter-emergency strip on opportunities stays empty even when the dispatch CF added their uid to notifiedProviderIds (re-bug of the same shape as §57 — 2026-05-12).",
+      "collectionGroup": "babysitter_emergencies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "notifiedProviderIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "createdAt",           "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "Banners Studio §51 — VIP active-subscription watcher (vip_upgrade_button._watchActiveSub). Without this the IN-clause query silently errors and the button stays stuck on 'Not VIP' even after a successful purchase.",
+      "collectionGroup": "vip_subscriptions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "providerId", "order": "ASCENDING" },
+        { "fieldPath": "status",     "order": "ASCENDING" }
+      ]
+    },
+    {
+      "_comment": "Community v2 (Phase H QA): monthly completion stats — used by community_hub_screen_v2._Hero + home_tab _CommunityBannerV2._countMonthlyCompletions. Without this, the hero shows '— התנדבויות' forever and the banner stat strip shows '—' for monthly count.",
+      "collectionGroup": "community_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",      "order": "ASCENDING" },
+        { "fieldPath": "completedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "users",
       "queryScope": "COLLECTION",
       "fields": [
@@ -72,6 +108,60 @@
         { "fieldPath": "selectedProviderId", "order": "ASCENDING" },
         { "fieldPath": "status",             "order": "ASCENDING" },
         { "fieldPath": "acceptedAt",         "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "AnyTasks §37 — expireOpenTasks Bucket 1 (deadline < now)",
+      "collectionGroup": "any_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",   "order": "ASCENDING" },
+        { "fieldPath": "deadline", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "_comment": "AnyTasks §37 — expireOpenTasks Bucket 2 (createdAt < cutoff). Range ASC on createdAt; existing DESC index does not satisfy.",
+      "collectionGroup": "any_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",    "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "_comment": "§40 — expireStories scheduled cleanup (hasActive + expiresAt range)",
+      "collectionGroup": "stories",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "hasActive", "order": "ASCENDING" },
+        { "fieldPath": "expiresAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "_comment": "§40 — reengageAbandonedLeads (isRegistrationComplete + lastUpdatedAt range)",
+      "collectionGroup": "incomplete_registrations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isRegistrationComplete", "order": "ASCENDING" },
+        { "fieldPath": "lastUpdatedAt",          "order": "ASCENDING" }
+      ]
+    },
+    {
+      "_comment": "§40 — detectMonetizationAnomalies dedupe query (resolved + detectedAt range)",
+      "collectionGroup": "monetization_alerts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "resolved",   "order": "ASCENDING" },
+        { "fieldPath": "detectedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "_comment": "§40 — generateDailyOpportunity dormant client sweep (isProvider==false + lastActiveAt < cutoff)",
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isProvider",   "order": "ASCENDING" },
+        { "fieldPath": "lastActiveAt", "order": "ASCENDING" }
       ]
     },
     {
@@ -430,6 +520,15 @@
       ]
     },
     {
+      "collectionGroup": "admin_audit_log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "adminUid",  "order": "ASCENDING" },
+        { "fieldPath": "action",    "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "reviews",
       "queryScope": "COLLECTION",
       "fields": [
@@ -467,6 +566,15 @@
       "fields": [
         { "fieldPath": "listingId",  "order": "ASCENDING" },
         { "fieldPath": "createdAt",  "order": "DESCENDING" }
+      ]
+    },
+    // ── reviews: stale-publish CF (isPublished=false + createdAt <= cutoff) ──
+    {
+      "collectionGroup": "reviews",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isPublished", "order": "ASCENDING" },
+        { "fieldPath": "createdAt",   "order": "ASCENDING" }
       ]
     },
 

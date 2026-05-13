@@ -6,7 +6,19 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ── REQUIRED APP VERSION — bump this on every deploy ────────────────────────
-var REQUIRED_VERSION = '10.5.1';
+// 10.5.6 (2026-05-11): Category dropdowns now have 3 layers of defense
+// against the "empty dropdown doesn't open" bug:
+//   1. One-shot .get() fetch in parallel with the snapshot stream —
+//      whichever returns first populates the items.
+//   2. Inline spinner + "loading" text INSIDE the dropdown hint when
+//      items are empty (instead of dead empty hint).
+//   3. `onChanged: null` while empty → Flutter greys out the dropdown
+//      so the user sees it as non-interactive (no false affordance).
+// 10.5.5 (2026-05-11): restored always-render dropdowns (fallback card regression).
+// 10.5.4 (2026-05-11): bulletproof category-section fallback (regressed).
+// 10.5.3 (2026-05-11): hide v2 schema form for motorcycle towing.
+// 10.5.2 (2026-05-11): force nuclear cache purge for motorcycle CSM fixes.
+var REQUIRED_VERSION = '10.5.9';
 
 // ── iOS PWA STANDALONE FIX ──────────────────────────────────────────────────
 // iOS PWA (Home Screen icon) aggressively caches the app shell. When opened

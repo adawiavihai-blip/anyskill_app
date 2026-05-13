@@ -66,11 +66,26 @@ service cloud.firestore {
     // without any Firestore read, so most admin requests skip the get()
     // calls below entirely.
     function isAdmin() {
+      // Defensive evaluation order (added 2026-05-08, same security):
+      //   1. `'admin' in token` guards against missing custom claim
+      //      (avoids "Property admin is undefined" error in test envs).
+      //   2. `exists()` guards against missing user doc — needed for
+      //      rules-unit-testing where docs aren't always pre-seeded
+      //      AND for the brief signup race window where Auth uid exists
+      //      but the users/{uid} doc hasn't been written yet.
+      //   3. `.data.get('isAdmin', false)` instead of `.data.isAdmin`
+      //      to handle docs missing the field.
+      // Same admin status as before — only the failure-path is safer.
       return isVerifiedAuth()
           && (
-               request.auth.token.admin == true
-               || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
-               || ('admin' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roles', []))
+               (('admin' in request.auth.token) && request.auth.token.admin == true)
+               || (
+                    exists(/databases/$(database)/documents/users/$(request.auth.uid))
+                    && (
+                         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isAdmin', false) == true
+                         || ('admin' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roles', []))
+                       )
+                  )
              );
     }
 
@@ -85,11 +100,17 @@ service cloud.firestore {
     //
     // v15.x audit Round C: same JWT-claim-first pattern as isAdmin().
     function isSupportAgent() {
+      // Same defensive pattern as isAdmin() — see comment there.
       return isVerifiedAuth()
           && (
-               request.auth.token.support_agent == true
-               || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'support_agent'
-               || ('support_agent' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roles', []))
+               (('support_agent' in request.auth.token) && request.auth.token.support_agent == true)
+               || (
+                    exists(/databases/$(database)/documents/users/$(request.auth.uid))
+                    && (
+                         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'support_agent'
+                         || ('support_agent' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roles', []))
+                       )
+                  )
              );
     }
 
@@ -236,7 +257,21 @@ service cloud.firestore {
           // are managed exclusively by MonetizationService.setUserCommission
           // (admin-only) → uses Admin SDK rule bypass.
           'customCommission', 'customCommissionActive',
+          // Phone is locked after first OTP verification. The dedicated
+          // PhoneCollectionScreen has a one-shot allowance below — once
+          // `phoneVerifiedAt` is set, only CF/admin can change either.
+          'phone', 'phoneVerifiedAt',
         ]))
+        // ── Phone OTP-link: one-shot first-time write ────────────────────
+        // PhoneCollectionScreen calls user.linkWithCredential() then writes
+        // {phone, phoneVerifiedAt} from the client. Allow this ONLY when
+        // the doc has no phoneVerifiedAt yet (i.e. first link). After that,
+        // future phone changes require CF/admin (rule bypass).
+        || (isOwner(uid)
+            && onlyFields(['phone', 'phoneVerifiedAt'])
+            && resource.data.get('phoneVerifiedAt', null) == null
+            && request.resource.data.phone is string
+            && request.resource.data.phone.size() >= 7)
         // ── Owner balance decrement (client-side escrow payment) ──────────
         // Owner may ONLY decrease their own balance. Increments are
         // handled exclusively by Cloud Functions via Admin SDK.
@@ -245,6 +280,17 @@ service cloud.firestore {
             && resource.data.balance is number
             && request.resource.data.balance is number
             && request.resource.data.balance <= resource.data.balance)
+        // ── Owner activeRole switch (RoleSwitcherScreen) ──────────────────
+        // Multi-role users can pick which role is active for the session.
+        // SECURITY: the new value MUST be a member of the user's `roles`
+        // array. Since `roles` is itself CF-only (blocked above), a user
+        // cannot bootstrap themselves into admin/support_agent via this
+        // branch — they can only switch among roles they were already
+        // granted by setUserRole CF.
+        || (isOwner(uid)
+            && onlyFields(['activeRole'])
+            && request.resource.data.activeRole is string
+            && (request.resource.data.activeRole in resource.data.get('roles', [])))
         // ── Admin full access ──────────────────────────────────────────────
         || isAdmin()
         // ── Review aggregation ────────────────────────────────────────────
@@ -258,9 +304,14 @@ service cloud.firestore {
         || (isVerifiedAuth() && onlyFields(['customerRating', 'customerReviewsCount']))
         // ── Volunteer / Community Hub badge update ─────────────────────
         // Client confirms volunteer task completion → updates provider's
-        // badge timestamp, count, heart, community badges, and community XP.
+        // gold heart, badge timestamp, count, community badges, XP.
         // Standard XP increment is handled by CF (updateUserXP).
+        //
+        // Phase B (v15.x): added `goldHeartExpiresAt` (NEW authoritative
+        // 30-day rolling timer). Legacy fields stay in the allowlist for
+        // dual-write back-compat — will be pruned in Phase H.
         || (isVerifiedAuth() && onlyFields([
+             'goldHeartExpiresAt',
              'lastVolunteerTaskAt', 'volunteerTaskCount', 'hasActiveVolunteerBadge',
              'volunteerHeart', 'communityBadges', 'communityXP'
            ]))
@@ -639,6 +690,19 @@ service cloud.firestore {
     // Anomaly / churn / growth alerts. Append-only from the CF; admins may
     // update to mark as resolved.
     match /monetization_alerts/{alertId} {
+      allow read:           if isAdmin();
+      allow create, delete: if false;
+      allow update:         if isAdmin();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SYSTEM ALERTS (§58) — infrastructure health alerts written by scheduled
+    // CFs (e.g. checkBackupHealth). Single doc per alert type at a fixed ID
+    // (e.g. system_alerts/backup_stale) so admin dashboards can stream the
+    // active alert set with predictable doc IDs. Admin reads + updates
+    // (mark resolved). CF-only writes via Admin SDK.
+    // ═══════════════════════════════════════════════════════════════════════
+    match /system_alerts/{alertId} {
       allow read:           if isAdmin();
       allow create, delete: if false;
       allow update:         if isAdmin();
@@ -1047,6 +1111,74 @@ service cloud.firestore {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // SOUND STUDIO §53 (admin "Sounds" tab — 4 sub-screens)
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // sound_metadata    — library of every sound the app COULD play
+    //                     (active + archived + AI suggestions). Read open
+    //                     to all auth users (analytics + onboarding may
+    //                     resolve labels). Write only admins.
+    //
+    // sound_events_log  — append-only record of every playEvent call.
+    //                     Each user records their OWN plays — required for
+    //                     CTR/mute analytics. Read restricted to admins
+    //                     (the data is per-user behavioural, not public).
+    //
+    // sound_system_log  — append-only audit of admin settings changes,
+    //                     uploads, warnings, lifecycle events. Admin
+    //                     read/write; clients cannot create system logs.
+    //
+    // All three carry `expireAt` timestamps so a future GCP TTL policy can
+    // auto-delete (same convention as error_logs / activity_log §19).
+
+    match /sound_metadata/{soundId} {
+      allow read:           if isVerifiedAuth();
+      allow create, update: if isAdmin();
+      allow delete:         if isAdmin();
+    }
+
+    match /sound_events_log/{logId} {
+      // Each authenticated user writes records about their OWN plays.
+      // userId on the doc must match the auth uid — prevents one user
+      // from inflating another user's analytics.
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.keys().hasAll(
+                         ['soundId', 'eventId', 'userId', 'timestamp']
+                       );
+      // Reads are admin-only (per-user listening behaviour is sensitive).
+      allow read:           if isAdmin();
+      allow update, delete: if false;
+    }
+
+    match /sound_system_log/{logId} {
+      allow read:   if isAdmin();
+      // Admin-driven actions write through the admin tab; the client
+      // shouldn't append to this log directly. (Cloud Functions bypass
+      // rules via Admin SDK, which is the correct path for system events.)
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CSM TEXT OVERRIDES (CLAUDE.md §54-area, 2026-04-29)
+    // ═══════════════════════════════════════════════════════════════════════
+    // Admin can edit visible labels on category-specific module (CSM)
+    // settings blocks (hero text, section titles, banners) from the admin
+    // "CSM 🔧" tab; providers consume the overrides when rendering their
+    // own settings block in edit-profile.
+    //
+    // Reads: any verified user (providers need them to render their block).
+    // Writes: admin-only (text content is non-trivial — hostile or sloppy
+    //         edits would break the entire provider-facing surface).
+    // Doc id = csmId (e.g. "fitness_trainer", "massage", "pest_control").
+    // Field map: {stringKey: overrideValue} — flat, single doc per CSM.
+    match /csm_text_overrides/{csmId} {
+      allow read:                   if isVerifiedAuth();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // AI TEACHERS (Alex profile — admin-managed, public read)
     // ═══════════════════════════════════════════════════════════════════════
     match /ai_teachers/{teacherId} {
@@ -1344,6 +1476,55 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ── VIP subscriptions (Banners Studio §51, Phase 3) ───────────────────
+    // Tracks who's in the 30-slot VIP carousel rail. Created by admin
+    // (admin-comp grants) or by `purchaseVipWithCredits` CF (Phase 5).
+    //
+    // Read: admin (full visibility) + the subscription owner (their own
+    //       subscription only).
+    // Create: admin only — paid subscriptions go through the CF which
+    //        bypasses rules via Admin SDK.
+    // Update: admin only at the rule layer. The `setAutoRenew` flow in
+    //         Phase 5 will widen this to the owner for the autoRenew
+    //         field; for Phase 3 we keep it strict.
+    // Delete: never — revokes write `status: 'expired'` instead so the
+    //         audit trail stays intact.
+    match /vip_subscriptions/{subId} {
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && resource.data.providerId == request.auth.uid);
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // ── VIP carousel state (singleton) ──────────────────────────────────────
+    // Aggregate of which providers are currently in the live 30-slot
+    // carousel + the waitlist. Phase 3 doesn't write this client-side —
+    // the rotation CF in Phase 6 owns it. Authenticated reads are fine
+    // (this powers the VIP screen + the customer-facing rail later).
+    match /vip_carousel_state/{docId} {
+      allow read: if isVerifiedAuth();
+      allow write: if false; // CF / Admin SDK only
+    }
+
+    // ── VIP payments (Banners Studio §51, Phase 5) ──────────────────────────
+    // Created by `purchaseVipWithCredits` CF when a provider buys VIP
+    // with internal credits, and later by the monthly billing CF
+    // (Phase 6). Stripe was removed in v11.9.x — see CLAUDE.md §2 for
+    // the replacement plan when the Israeli payment provider lands.
+    //
+    // Read: admin (full visibility for the Payments admin screen) +
+    //       the payment owner (their own history).
+    // Create / Update / Delete: never client-side. Even the admin client
+    //   doesn't write payment docs directly — they all flow through CFs
+    //   for atomicity (debit + subscription + payment + audit in one tx).
+    match /vip_payments/{paymentId} {
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && resource.data.providerId == request.auth.uid);
+      allow create, update, delete: if false; // CF only
+    }
+
     // ── Demo bookings ──────────────────────────────────────────────────────
     // Records every customer attempt to book a demo provider profile.
     // Created by the customer's client when they tap "Book Now" on a demo
@@ -1375,6 +1556,163 @@ service cloud.firestore {
                     || (isVerifiedAuth()
                         && resource.data.providerId == request.auth.uid);
       allow delete: if isAdmin();
+    }
+
+    // ── Motorcycle towing live tracking (CSM §motorcycle) ─────────────────
+    // Same shape as dog_walks. Provider creates on "התחל גרירה", appends to
+    // `path` + writes `providerLocation` on every GPS tick, finalizes on
+    // "סיים גרירה" or "בטל". Customer + provider can read; only the
+    // provider can write. Admin always read+write.
+    match /motorcycle_tows/{towId} {
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && (resource.data.customerId == request.auth.uid
+                          || resource.data.providerId == request.auth.uid));
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.providerId == request.auth.uid;
+      allow update: if isAdmin()
+                    || (isVerifiedAuth()
+                        && resource.data.providerId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // ── Motorcycle bike-types catalog (admin-managed) ─────────────────────
+    // Read by every authenticated client (provider settings block + customer
+    // booking block + customer profile view all stream this). Writes are
+    // admin-only via the dedicated admin tab.
+    match /motorcycle_bike_types/{typeId} {
+      allow read: if isAuth() || isAppCheckValid();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ── Flash Auction (CLAUDE.md §57) — emergency motorcycle towing ───────
+    // Customer creates the auction. Server-managed fields
+    // (`notifiedProviderIds`, `currentRadiusKm`, `expiresAt` after the
+    // dispatch CF runs) are written by Cloud Functions via Admin SDK so
+    // client rule enforcement covers only the customer-write fields.
+    //
+    // Read access:
+    //   • Customer (creator) — full read + cancel
+    //   • Notified providers — full read so they can see the auction in
+    //     their opportunities tab. They can update via offer creation
+    //     (subcollection rule below).
+    match /flash_auctions/{auctionId} {
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && (resource.data.customerId == request.auth.uid
+                          || request.auth.uid in resource.data.notifiedProviderIds));
+      // Customer creates with their own uid + initial state.
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.customerId == request.auth.uid
+                    && request.resource.data.status == 'searching'
+                    && request.resource.data.notifiedProviderIds.size() == 0;
+      // Updates:
+      //   • Admin always
+      //   • Customer can cancel + select an offer (status flips)
+      //   • Notified provider can update on selectOffer transaction
+      //     (selectedOfferId / selectedProviderId). Field-level
+      //     enforcement is loose here because offer selection is
+      //     mediated by a Firestore transaction in the client; tightening
+      //     to a fields allow-list ships in v2.
+      allow update: if isAdmin()
+                    || (isVerifiedAuth()
+                        && (resource.data.customerId == request.auth.uid
+                            || request.auth.uid in resource.data.notifiedProviderIds));
+      allow delete: if isAdmin();
+
+      // ── Offers subcollection ────────────────────────────────────────
+      match /offers/{offerId} {
+        allow read: if isAdmin()
+                    || (isVerifiedAuth()
+                        && (get(/databases/$(database)/documents/flash_auctions/$(auctionId)).data.customerId == request.auth.uid
+                            || resource.data.providerId == request.auth.uid));
+        // Provider creates their own offer with their uid.
+        allow create: if isVerifiedAuth()
+                      && request.resource.data.providerId == request.auth.uid
+                      && request.resource.data.status == 'pending';
+        // Update flips happen inside a transaction during selectOffer —
+        // both the customer and the offer-provider have read+write
+        // access. Field-level tightening is a v2 follow-up.
+        allow update: if isAdmin()
+                      || (isVerifiedAuth()
+                          && (get(/databases/$(database)/documents/flash_auctions/$(auctionId)).data.customerId == request.auth.uid
+                              || resource.data.providerId == request.auth.uid));
+        allow delete: if isAdmin();
+      }
+    }
+
+    // ─── Babysitter Emergency Dispatch (CLAUDE.md §76) ────────────────────
+    //
+    // Sister-collection to flash_auctions. Same rule shape — emergency
+    // doc + offers subcollection. Read access:
+    //   • Customer (creator) — full read + cancel
+    //   • Notified providers — full read + offer-write
+    match /babysitter_emergencies/{emergencyId} {
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && (resource.data.customerId == request.auth.uid
+                          || request.auth.uid in resource.data.notifiedProviderIds));
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.customerId == request.auth.uid
+                    && request.resource.data.status == 'searching'
+                    && request.resource.data.notifiedProviderIds.size() == 0;
+      allow update: if isAdmin()
+                    || (isVerifiedAuth()
+                        && (resource.data.customerId == request.auth.uid
+                            || request.auth.uid in resource.data.notifiedProviderIds));
+      allow delete: if isAdmin();
+
+      match /offers/{offerId} {
+        allow read: if isAdmin()
+                    || (isVerifiedAuth()
+                        && (get(/databases/$(database)/documents/babysitter_emergencies/$(emergencyId)).data.customerId == request.auth.uid
+                            || resource.data.providerId == request.auth.uid));
+        allow create: if isVerifiedAuth()
+                      && request.resource.data.providerId == request.auth.uid
+                      && request.resource.data.status == 'pending';
+        allow update: if isAdmin()
+                      || (isVerifiedAuth()
+                          && (get(/databases/$(database)/documents/babysitter_emergencies/$(emergencyId)).data.customerId == request.auth.uid
+                              || resource.data.providerId == request.auth.uid));
+        allow delete: if isAdmin();
+      }
+    }
+
+    // ─── Delivery Express Dispatch (CLAUDE.md §78) ────────────────────────
+    //
+    // Sister-collection to flash_auctions + babysitter_emergencies. Same
+    // rule shape — emergency doc + offers subcollection. Read access:
+    //   • Customer (creator) — full read + cancel
+    //   • Notified couriers — full read + offer-write
+    match /delivery_express/{auctionId} {
+      allow read: if isAdmin()
+                  || (isVerifiedAuth()
+                      && (resource.data.customerId == request.auth.uid
+                          || request.auth.uid in resource.data.notifiedProviderIds));
+      allow create: if isVerifiedAuth()
+                    && request.resource.data.customerId == request.auth.uid
+                    && request.resource.data.status == 'searching'
+                    && request.resource.data.notifiedProviderIds.size() == 0;
+      allow update: if isAdmin()
+                    || (isVerifiedAuth()
+                        && (resource.data.customerId == request.auth.uid
+                            || request.auth.uid in resource.data.notifiedProviderIds));
+      allow delete: if isAdmin();
+
+      match /offers/{offerId} {
+        allow read: if isAdmin()
+                    || (isVerifiedAuth()
+                        && (get(/databases/$(database)/documents/delivery_express/$(auctionId)).data.customerId == request.auth.uid
+                            || resource.data.providerId == request.auth.uid));
+        allow create: if isVerifiedAuth()
+                      && request.resource.data.providerId == request.auth.uid
+                      && request.resource.data.status == 'pending';
+        allow update: if isAdmin()
+                      || (isVerifiedAuth()
+                          && (get(/databases/$(database)/documents/delivery_express/$(auctionId)).data.customerId == request.auth.uid
+                              || resource.data.providerId == request.auth.uid));
+        allow delete: if isAdmin();
+      }
     }
 
     // ── Pet services: daily boarding proof (photo + video per day) ────────
@@ -1517,6 +1855,44 @@ service cloud.firestore {
     // Cloud Function writes only — clients must never touch this.
     match /admin_credit_idempotency/{docId} {
       allow read, write: if false; // Admin SDK only via grantAdminCredit CF
+    }
+
+    // ── Idempotency caches for money-writing CFs (CLAUDE.md §60) ────────────
+    // Each cache is keyed by `${callerUid}_${clientReqId}` and stores the
+    // success result for 1 hour so a network-retry returns the same payload
+    // instead of double-charging. Auto-cleaned by Firestore TTL on `expireAt`
+    // after 7 days. CF-only writes via Admin SDK — client never reads or
+    // writes.
+    match /payment_release_idempotency/{docId} {
+      allow read, write: if false; // CF-only via processPaymentRelease
+    }
+    match /cancellation_idempotency/{docId} {
+      allow read, write: if false; // CF-only via processCancellation
+    }
+    match /vip_purchase_idempotency/{docId} {
+      allow read, write: if false; // CF-only via purchaseVipWithCredits
+    }
+    match /dispute_resolution_idempotency/{docId} {
+      allow read, write: if false; // CF-only via resolveDisputeAdmin (§70)
+    }
+    match /flash_auction_book_idempotency/{docId} {
+      allow read, write: if false; // CF-only via bookFromFlashAuctionOffer (§57)
+    }
+    match /babysitter_emergency_book_idempotency/{docId} {
+      allow read, write: if false; // CF-only via bookFromBabysitterEmergencyOffer (§76)
+    }
+    match /delivery_express_book_idempotency/{docId} {
+      allow read, write: if false; // CF-only via bookFromDeliveryExpressOffer (§78)
+    }
+
+    // ── Holding account for deleted expert funds (§77 audit follow-up) ────────
+    // Written by processPaymentRelease CF when expertDataSnap.exists == false
+    // (the expert user doc was deleted between escrow and release). We still
+    // complete the job and credit a holding doc so an admin can reconcile.
+    // Admin-only read; CF-only write via Admin SDK.
+    match /deleted_expert_funds/{expertId} {
+      allow read:  if isAdmin();
+      allow write: if false; // CF-only via processPaymentRelease
     }
 
     // PR-C (v12.5.0): email verification codes — Cloud Function only.

@@ -88,12 +88,45 @@ class OpportunityHunterService {
 
   /// Records the category the user most recently searched / tapped.
   /// Throttled client-side: call on every category tap; the write is cheap.
-  static Future<void> recordCategoryTap(String uid, String category) async {
+  ///
+  /// `affinityKey` (optional) — when provided, also increments
+  /// `users/{uid}.categoryTapCounts.{affinityKey}` so the home tab can
+  /// reorder its grid based on this user's personal click history.
+  /// Pass the TOP-LEVEL category NAME (e.g. "תחבורה") even when the user
+  /// tapped a sub-category — sub-cat taps should lift the parent so the
+  /// whole bucket rises to the top.
+  ///
+  /// `subAffinityKey` (optional) — when provided, ALSO increments the
+  /// sub-category's own counter. This is what powers the in-card
+  /// sub-category strip reordering: the sub-cats the user opens most
+  /// inside a given parent rise toward the right (RTL = first position).
+  /// Pass the SUB-category NAME (e.g. "שליחויות"). All three writes ride
+  /// on the same atomic Firestore update — no extra round-trip cost.
+  static Future<void> recordCategoryTap(
+    String uid,
+    String category, {
+    String? affinityKey,
+    String? subAffinityKey,
+  }) async {
     if (uid.isEmpty || category.isEmpty) return;
     try {
-      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+      final updates = <String, dynamic>{
         'lastSearchedCategory': category,
-      });
+      };
+      final affKey = (affinityKey ?? '').trim();
+      if (affKey.isNotEmpty) {
+        updates['categoryTapCounts.$affKey'] = FieldValue.increment(1);
+        updates['lastCategoryTapAt'] = FieldValue.serverTimestamp();
+      }
+      final subKey = (subAffinityKey ?? '').trim();
+      if (subKey.isNotEmpty && subKey != affKey) {
+        updates['categoryTapCounts.$subKey'] = FieldValue.increment(1);
+        updates['lastCategoryTapAt'] = FieldValue.serverTimestamp();
+      }
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .update(updates);
     } catch (e) {
       debugPrint('OpportunityHunterService.recordCategoryTap error: $e');
     }

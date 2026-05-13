@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 
@@ -33,13 +35,26 @@ class ChatGuardClient {
       return const ChatGuardCheckResult.allowed(skipped: true);
     }
     try {
+      // Hard 4-second client timeout. The CF can cold-start at 5-30s on
+      // a fresh region; without a client cap, the user's send button
+      // appears frozen and the input doesn't clear, so they assume
+      // "messages aren't sending". The kill-switch and per-message audit
+      // run on the next call instead — failure-open is the right tradeoff
+      // because the local regex defense in `_handleSendButton` still runs
+      // after the skipped result, and the server-side rules still gate
+      // the actual message write.
       final res = await _fn
           .httpsCallable('checkChatMessage')
           .call(<String, dynamic>{
         'message': message,
         if (chatId != null)    'chatId':     chatId,
         if (receiverId != null) 'receiverId': receiverId,
-      });
+      }).timeout(
+        const Duration(seconds: 4),
+        onTimeout: () => throw TimeoutException(
+          'checkChatMessage exceeded 4s — failing open',
+        ),
+      );
       final data = res.data;
       if (data is! Map) return const ChatGuardCheckResult.allowed(skipped: true);
       return ChatGuardCheckResult._fromMap(Map<String, dynamic>.from(data));

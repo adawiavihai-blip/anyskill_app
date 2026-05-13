@@ -122,7 +122,7 @@ class CategoryTagsService {
       CategoryTag(id: 'work_warranty', label: 'אחריות על העבודה', iconName: 'verified_user'),
       CategoryTag(id: 'brings_materials', label: 'מביא/ה חומרים', iconName: 'hardware'),
       CategoryTag(id: 'old_buildings', label: 'ניסיון עם בניינים ישנים', iconName: 'apartment'),
-      CategoryTag(id: 'water_damage', label: 'מומחה/ית לנזקי מים', iconName: 'water_damage'),
+      CategoryTag(id: 'water_damage', label: 'נותן שירות/ית לנזקי מים', iconName: 'water_damage'),
       CategoryTag(id: 'same_day_service', label: 'שירות באותו יום', iconName: 'bolt'),
       CategoryTag(id: 'upfront_quote', label: 'הצעת מחיר מראש', iconName: 'request_quote'),
     ],

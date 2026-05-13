@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../repositories/admin_billing_repository.dart';
@@ -8,14 +9,14 @@ part 'admin_billing_provider.g.dart';
 // ── Repository provider (singleton) ──────────────────────────────────────────
 
 @Riverpod(keepAlive: true)
-AdminBillingRepository adminBillingRepository(AdminBillingRepositoryRef ref) {
+AdminBillingRepository adminBillingRepository(Ref ref) {
   return AdminBillingRepository();
 }
 
 // ── Billing KPI stream (autoDispose — cleaned up when tab is closed) ─────────
 
 @riverpod
-Stream<Map<String, dynamic>> billingStats(BillingStatsRef ref) {
+Stream<Map<String, dynamic>> billingStats(Ref ref) {
   final repo = ref.watch(adminBillingRepositoryProvider);
   return repo.watchBillingStats();
 }
@@ -23,7 +24,7 @@ Stream<Map<String, dynamic>> billingStats(BillingStatsRef ref) {
 // ── Monthly revenue (one-shot, autoDispose) ──────────────────────────────────
 
 @riverpod
-Future<double> monthlyRevenue(MonthlyRevenueRef ref) {
+Future<double> monthlyRevenue(Ref ref) {
   final repo = ref.read(adminBillingRepositoryProvider);
   return repo.fetchMonthlyRevenue();
 }

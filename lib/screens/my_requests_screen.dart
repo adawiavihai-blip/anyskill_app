@@ -6,6 +6,7 @@ import 'package:video_player/video_player.dart';
 import 'expert_profile_screen.dart';
 import 'chat_screen.dart';
 import '../services/ai_analysis_service.dart';
+import '../services/cached_readers.dart';
 import '../l10n/app_localizations.dart';
 
 class MyRequestsScreen extends StatelessWidget {
@@ -348,19 +349,18 @@ class _InterestedProvidersSheetState
       if (mounted) setState(() => _providers = []);
       return;
     }
-    final db = FirebaseFirestore.instance;
-    final snaps = await Future.wait(
-      widget.providerIds
-          .map((id) => db.collection('users').doc(id).get()),
-    );
-    final providers = snaps
-        .where((s) => s.exists)
-        .map((s) {
-          final d = Map<String, dynamic>.from(s.data()!);
-          d['uid'] = s.id;
-          return d;
-        })
-        .toList();
+    // Bulk-fetch with cache (5-min TTL per §61). Warm uids return instantly;
+    // cold ones fan out in parallel. Identical shape to the legacy
+    // Future.wait but with the §72-mandated CachedReaders layer in front.
+    final raw = await CachedReaders.providerProfiles(widget.providerIds);
+    final providers = <Map<String, dynamic>>[];
+    for (final id in widget.providerIds) {
+      final data = raw[id];
+      if (data == null || data.isEmpty) continue;
+      final m = Map<String, dynamic>.from(data);
+      m['uid'] = id;
+      providers.add(m);
+    }
 
     // Sort by AI match score (highest first)
     providers.sort((a, b) =>

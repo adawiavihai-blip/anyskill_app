@@ -1,5 +1,6 @@
 // ignore_for_file: use_build_context_synchronously
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'cached_readers.dart';
 
 class ReviewService {
   ReviewService._();
@@ -198,6 +199,7 @@ class ReviewService {
       'rating':       avg,
       'reviewsCount': count,
     });
+    CachedReaders.invalidateProvider(expertId); // §61
   }
 
   /// Recalculates the customer's aggregate rating from all published expert reviews.
@@ -232,6 +234,7 @@ class ReviewService {
       'customerRating':       avg,
       'customerReviewsCount': count,
     });
+    CachedReaders.invalidateProvider(customerId); // §61
   }
 
   /// v10.5.0: Recalculates rating/reviewsCount on a specific provider_listing doc.

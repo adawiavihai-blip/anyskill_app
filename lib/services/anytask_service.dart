@@ -22,6 +22,7 @@ import 'package:flutter/foundation.dart';
 import '../models/anytask.dart';
 import 'anytask_antifraud_service.dart';
 import 'anytask_cancellation_service.dart';
+import 'cached_readers.dart';
 
 class AnytaskService {
   AnytaskService._();
@@ -168,6 +169,8 @@ class AnytaskService {
         await _logActivity(createdTaskId!, user.uid, 'creator', 'created',
             'Task created: $trimTitle (₪${amount.toStringAsFixed(0)})');
       }
+      // §61 invalidation — balance changed
+      CachedReaders.invalidateProvider(user.uid);
 
       return createdTaskId ?? 'שגיאה ביצירת המשימה';
     } on FirebaseException catch (e) {
@@ -422,6 +425,7 @@ class AnytaskService {
       await _db.collection('users').doc(providerId).update({
         'anytaskCompletedCount': FieldValue.increment(1),
       });
+      CachedReaders.invalidateProvider(providerId); // §61
 
       // ── Notify provider ───────────────────────────────────────────────
       await _db.collection('notifications').add({
@@ -594,6 +598,13 @@ class AnytaskService {
       });
 
       await batch.commit();
+
+      // §61 invalidation — balances changed for creator (+refund) and
+      // provider (-pendingBalance, if assigned).
+      CachedReaders.invalidateProvider(creatorId);
+      if (providerId != null && providerId.isNotEmpty) {
+        CachedReaders.invalidateProvider(providerId);
+      }
 
       // Apply score penalty (async, non-blocking)
       if (penalty.scoreImpact != 0) {

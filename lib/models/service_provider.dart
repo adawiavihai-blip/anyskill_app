@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/firestore_map.dart';
 
 /// The verification lifecycle of a service provider.
 enum VerificationStatus {
@@ -170,7 +171,7 @@ class ServiceProvider {
       serviceType:            d['serviceType']            as String? ?? '',
       subCategory:            d['subCategory']            as String? ?? '',
       pricePerHour:           (d['pricePerHour']          as num?)?.toDouble() ?? 0,
-      categoryDetails:        (d['categoryDetails']       as Map<String, dynamic>?) ?? const {},
+      categoryDetails:        safeMapOrEmpty(d['categoryDetails']),
       aboutMe:                (d['aboutMe'] ?? d['bio'])  as String? ?? '',
       gallery:                (d['gallery']               as List?)?.cast<String>() ?? const [],
       quickTags:              (d['quickTags']             as List?)?.cast<String>() ?? const [],

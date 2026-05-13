@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import '../constants.dart';
+import '../services/cached_readers.dart';
 import '../services/category_service.dart';
 import '../services/provider_listing_service.dart';
 import '../services/private_data_service.dart';
@@ -323,6 +324,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
       debugPrint('[Onboarding] Writing fields: ${updates.keys.toList()}');
       await FirebaseFirestore.instance.collection('users').doc(uid).update(updates);
+      CachedReaders.invalidateProvider(uid); // §61
 
       // PR 1 (v11.9.x): Also mirror KYC fields into private/kyc subcollection.
       // This is a dual-write during migration — legacy readers still hit the

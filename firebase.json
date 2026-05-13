@@ -31,7 +31,9 @@
     "ignore": [
       "firebase.json",
       "**/.*",
-      "**/node_modules/**"
+      "**/node_modules/**",
+      "**/*.symbols",
+      "**/*.map"
     ],
     "headers": [
       {
@@ -41,7 +43,15 @@
           { "key": "Pragma", "value": "no-cache" },
           { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
           { "key": "X-Content-Type-Options", "value": "nosniff" },
-          { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+          { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+          {
+            "key": "Permissions-Policy",
+            "value": "geolocation=(self), camera=(self), microphone=(self), payment=(self), publickey-credentials-get=(self), accelerometer=(), gyroscope=(), magnetometer=(), usb=()"
+          },
+          {
+            "key": "Feature-Policy",
+            "value": "geolocation 'self'; camera 'self'; microphone 'self'; payment 'self'"
+          }
         ]
       },
       {
@@ -84,6 +94,19 @@
         "source": "assets/**",
         "headers": [
           { "key": "Cache-Control", "value": "public, max-age=86400" }
+        ]
+      },
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "Permissions-Policy",
+            "value": "geolocation=(self), camera=(self), microphone=(self), payment=(self), publickey-credentials-get=(self), accelerometer=(), gyroscope=(), magnetometer=(), usb=()"
+          },
+          {
+            "key": "Feature-Policy",
+            "value": "geolocation 'self'; camera 'self'; microphone 'self'; payment 'self'"
+          }
         ]
       }
     ],
