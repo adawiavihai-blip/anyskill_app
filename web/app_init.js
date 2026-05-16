@@ -304,7 +304,7 @@
 //   any client-code fix that users must receive.
 // 10.8.8 (2026-05-15): RoleSwitcherScreen — a failed `activeRole` write
 //   no longer blocks the user from entering the app (resilient _select).
-var REQUIRED_VERSION = '11.9.0+14';
+var REQUIRED_VERSION = '11.9.0+15';
 
 // ── iOS PWA STANDALONE FIX ──────────────────────────────────────────────────
 // iOS PWA (Home Screen icon) aggressively caches the app shell. When opened

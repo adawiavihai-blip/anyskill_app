@@ -414,21 +414,27 @@ class _GlobalSearchBarState extends State<GlobalSearchBar>
           curve: Curves.easeOut,
           height: 52,
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
+            // 2026-05-17: restyled to match the home-tab "חיפוש דחוף"
+            // glass pill — light-indigo translucent fill + indigo border
+            // + full-pill radius. The home tab background is white, so a
+            // literal translucent-white glass would be invisible; this is
+            // the glass-adapted-for-white variant (same call as the map
+            // pill in the sub-category AppBar).
+            color: _kIndigo.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(26),
             boxShadow: [
               BoxShadow(
                 color: _focus.hasFocus
-                    ? _kIndigo.withValues(alpha: 0.12)
-                    : Colors.black.withValues(alpha: 0.06),
-                blurRadius: _focus.hasFocus ? 16 : 10,
-                offset: const Offset(0, 2),
+                    ? _kIndigo.withValues(alpha: 0.16)
+                    : _kIndigo.withValues(alpha: 0.08),
+                blurRadius: _focus.hasFocus ? 16 : 12,
+                offset: const Offset(0, 4),
               ),
             ],
             border: Border.all(
               color: _focus.hasFocus
-                  ? _kIndigo.withValues(alpha: 0.3)
-                  : const Color(0xFFE5E7EB),
+                  ? _kIndigo.withValues(alpha: 0.6)
+                  : _kIndigo.withValues(alpha: 0.45),
               width: _focus.hasFocus ? 1.5 : 1,
             ),
           ),
@@ -445,7 +451,7 @@ class _GlobalSearchBarState extends State<GlobalSearchBar>
                       Icons.search_rounded,
                       size: 22,
                       color: Color.lerp(
-                        const Color(0xFF9CA3AF),
+                        const Color(0xFF1E1B4B),
                         _kIndigo,
                         _iconAnim.value,
                       ),
@@ -464,14 +470,17 @@ class _GlobalSearchBarState extends State<GlobalSearchBar>
                     focusNode: _focus,
                     textAlign: TextAlign.start,
                     textAlignVertical: TextAlignVertical.center,
-                    style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w400),
+                    style: const TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w400,
+                        color: Color(0xFF1E1B4B)),
                     onChanged: _onTextChanged,
                     decoration: InputDecoration(
                       border: InputBorder.none,
                       contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                       hintText: l10n.searchPlaceholder,
                       hintStyle: TextStyle(
-                        color: Colors.grey[400],
+                        color: const Color(0xFF1E1B4B).withValues(alpha: 0.55),
                         fontSize: 14,
                         fontWeight: FontWeight.w400,
                       ),

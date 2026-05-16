@@ -1,4 +1,0 @@
-{
-  "_comment": "Copy this file to mapbox_env.json (gitignored) and paste the real Mapbox pk.* public token. Build with: flutter build web --release --dart-define-from-file=mapbox_env.json",
-  "MAPBOX_TOKEN": "pk.PASTE_YOUR_MAPBOX_PUBLIC_TOKEN_HERE"
-}

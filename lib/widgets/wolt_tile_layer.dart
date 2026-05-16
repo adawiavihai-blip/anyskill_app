@@ -4,8 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 
-import '../config/mapbox_config.dart';
-
 /// Wolt-style raster tile layer for AnySkill.
 ///
 /// Drop-in replacement for any direct `TileLayer(...)` call. Every map in
@@ -49,19 +47,8 @@ import '../config/mapbox_config.dart';
 ///    * Painted under every tile via `tileBuilder` so the moment between
 ///      "tile requested" and "tile painted" reads as polished neutral.
 ///
-/// ## Mapbox opt-in
-///
-/// The Mapbox Studio Wolt-style raster is still wired up via
-/// [MapboxConfig]. Build with `--dart-define=USE_MAPBOX=true` to use it.
 class WoltTileLayer {
   WoltTileLayer._();
-
-  /// Compile-time opt-in to use Mapbox raster tiles instead of CartoDB.
-  /// Build with `flutter build web --dart-define=USE_MAPBOX=true`.
-  static const bool useMapbox = bool.fromEnvironment(
-    'USE_MAPBOX',
-    defaultValue: false,
-  );
 
   /// CartoDB Voyager raster — primary tile source. Retina (`{r}` → `@2x`)
   /// is handled by `TileLayer` itself when `retinaMode: true`.
@@ -110,13 +97,8 @@ class WoltTileLayer {
     required String? language,
     required double maxZoom,
   }) {
-    if (useMapbox) {
-      return _buildMapbox(
-        retinaMode: retinaMode,
-        language: language,
-        maxZoom: maxZoom,
-      );
-    }
+    // `language` is currently unused — the CartoDB Voyager style is
+    // self-localized. Kept on the signature for forward-compat.
     return _buildCartoDb(retinaMode: retinaMode, maxZoom: maxZoom);
   }
 
@@ -134,23 +116,6 @@ class WoltTileLayer {
       // Paint each tile the instant it decodes — no fade-in. The fade
       // animation depends on a ticker that web sometimes never advances,
       // which is one of the ways the map ended up looking grey.
-      tileDisplay: const TileDisplay.instantaneous(),
-      tileBuilder: _tileSkeletonBuilder,
-      errorTileCallback: _logTileError,
-    );
-  }
-
-  static TileLayer _buildMapbox({
-    required bool retinaMode,
-    required String? language,
-    required double maxZoom,
-  }) {
-    return TileLayer(
-      urlTemplate: MapboxConfig.buildTileUrlTemplate(language: language),
-      fallbackUrl: _osmFallbackUrl,
-      retinaMode: retinaMode,
-      userAgentPackageName: 'com.anyskill.app',
-      maxZoom: maxZoom,
       tileDisplay: const TileDisplay.instantaneous(),
       tileBuilder: _tileSkeletonBuilder,
       errorTileCallback: _logTileError,

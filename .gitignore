@@ -84,9 +84,5 @@ firestore-rules-tests/firestore-debug.log
 # Local test output captures
 pub_deps_*.txt
 
-# Mapbox token — injected at build via --dart-define-from-file.
-# Copy mapbox_env.example.json → mapbox_env.json and add the pk.* token.
-mapbox_env.json
-
 # Claude Code local settings — machine-local, must NEVER be committed.
 .claude/settings.local.json
