@@ -320,7 +320,9 @@
 //   below "צלילי האפליקציה" (mirrors the OS location permission). Every
 //   toggle in the screen now shows a "פעיל"/"כבוי" text pill instead of
 //   the round Switch thumb.
-var REQUIRED_VERSION = '11.9.0+20';
+// 11.9.0+21 (2026-05-17): the active "פעיל" pill is now black (#1A1A2E)
+//   instead of green.
+var REQUIRED_VERSION = '11.9.0+21';
 
 // ── iOS PWA STANDALONE FIX ──────────────────────────────────────────────────
 // iOS PWA (Home Screen icon) aggressively caches the app shell. When opened

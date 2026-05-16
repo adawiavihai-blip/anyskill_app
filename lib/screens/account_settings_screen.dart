@@ -891,7 +891,7 @@ class _OnOffPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = value ? const Color(0xFF10B981) : const Color(0xFFE5E7EB);
+    final bg = value ? const Color(0xFF1A1A2E) : const Color(0xFFE5E7EB);
     final fg = value ? Colors.white : const Color(0xFF6B7280);
     return AnimatedContainer(
       duration: const Duration(milliseconds: 180),
