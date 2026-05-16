@@ -13,8 +13,8 @@
 ///    they're past the threshold).
 /// 2. User picks a photo (camera by default, gallery as fallback) →
 ///    uploads to Firebase Storage at
-///    `community_evidence/{requestId}_{timestamp}.jpg` (matches the
-///    existing storage rule whitelist — see CLAUDE.md §50).
+///    `community_evidence/{requestId}/{timestamp}.jpg` — participant-
+///    gated by the parent community_requests doc (pen-test fix VULN-009).
 /// 3. User taps "סיימתי לעזור" → calls
 ///    [CommunityHubService.markTaskDone] with the URL. On success the
 ///    request transitions to `pending_confirmation` and the requester
@@ -97,9 +97,11 @@ class _CompleteVolunteeringScreenState
       _pickedBytes = Uint8ListLite(bytes);
 
       // Upload immediately so the submit CTA can fire fast.
+      // Pen-test fix VULN-009: nested-path layout so the Storage rule can
+      // gate read+write by the parent community_requests participants.
       final ts = DateTime.now().millisecondsSinceEpoch;
       final ref = FirebaseStorage.instance.ref(
-        'community_evidence/${widget.requestId}_$ts.jpg',
+        'community_evidence/${widget.requestId}/$ts.jpg',
       );
       await ref.putData(
         bytes,

@@ -24,27 +24,123 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   late final Stream<QuerySnapshot> _stream;
 
+  /// §15 Law 15 supervisor — the snapshot stream can stall on iOS Safari
+  /// WebChannel zombies and never deliver a first event. After 8s with no
+  /// data we flip this flag so the build path falls through to an empty
+  /// state with a retry CTA instead of the indefinite spinner that users
+  /// reported as "bell opens, gets stuck forever".
+  bool _streamTimedOut = false;
+  bool _streamResolved = false;
+  /// One-shot `.get()` fallback fired 1s after open if the snapshot stream
+  /// hasn't emitted yet. Lets the screen render REAL notifications even
+  /// when the stream is slow — the live stream wins when it eventually
+  /// fires (real-time updates).
+  List<QueryDocumentSnapshot>? _fallbackDocs;
+
   @override
   void initState() {
     super.initState();
-    // Law 21 — every Firestore stream feeding a screen body MUST have a
-    // timeout fallback so a stalled WebChannel / missing index / cold
-    // connect surfaces as an empty/error state instead of an infinite
-    // spinner. The bell-inbox stuck-on-spinner bug surfaces here when the
-    // first snapshot never arrives within ~8s.
+    // IMPORTANT: do NOT wrap the snapshot stream in `.timeout()` —
+    // Stream.timeout() puts the stream into a permanent error state
+    // when it fires, so even when the connection recovers the user
+    // stays stuck on the error screen. This was the "bell stuck"
+    // root cause: the 8s Stream.timeout() fired before the first
+    // snapshot arrived on slow connections, the StreamBuilder went
+    // to hasError, and subsequent snapshot events couldn't unstick
+    // it. Replaced with a manual supervisor + .get() fallback below.
     _stream = FirebaseFirestore.instance
         .collection('notifications')
         .where('userId', isEqualTo: _uid)
         .orderBy('createdAt', descending: true)
         .limit(50)
-        .snapshots()
-        .timeout(
-      const Duration(seconds: 8),
-      onTimeout: (sink) => sink.addError('notifications_stream_timeout_8s'),
-    );
+        .snapshots();
+
+    // ⚠️ DO NOT add a second `_stream.listen()` probe here.
+    //
+    // Root cause of the recurring "bell opens empty / stuck on spinner"
+    // bug (fixed 2026-05-16): a Firestore `.snapshots()` stream is a
+    // BROADCAST stream. A probe `.listen()` here AND the `StreamBuilder`
+    // in build() are two independent subscribers. Broadcast streams do
+    // NOT replay past events to a late subscriber — so if the probe
+    // received the first snapshot before the StreamBuilder subscribed,
+    // the StreamBuilder missed it permanently. Worse, the probe set
+    // `_streamResolved = true`, which SUPPRESSED the `.get()` fallback
+    // below — leaving the bell on an infinite spinner with no recovery
+    // until a notification doc happened to change.
+    //
+    // `_streamResolved` is now set from INSIDE the StreamBuilder builder
+    // (the one and only subscriber), so it reflects what is actually
+    // on screen — see build().
+
+    // §15 Law 15 supervisors — timeouts bumped after live user reports
+    // (רועי צברי, 2026-05-14) that the bell tap was showing "stuck
+    // spinner" → retry scaffold on a working internet connection. The
+    // previous 8s Tier-2 was firing on legitimate cold-start handshakes.
+    if (_uid.isNotEmpty) {
+      Future<void> kickFallback(Duration getTimeout) async {
+        if (!mounted || _streamResolved) return;
+        try {
+          final snap = await FirebaseFirestore.instance
+              .collection('notifications')
+              .where('userId', isEqualTo: _uid)
+              .orderBy('createdAt', descending: true)
+              .limit(50)
+              .get()
+              .timeout(getTimeout);
+          if (!mounted || _streamResolved) return;
+          setState(() => _fallbackDocs = snap.docs);
+        } catch (_) {/* next tier retries */}
+      }
+
+      // Tier 1 (2s) — first .get() fallback attempt.
+      Future.delayed(const Duration(seconds: 2),
+          () => kickFallback(const Duration(seconds: 6)));
+      // Tier 1.5 (10s) — silent auto-retry, no UI noise.
+      Future.delayed(const Duration(seconds: 10), () {
+        if (!mounted || _streamResolved || _fallbackDocs != null) return;
+        kickFallback(const Duration(seconds: 8));
+      });
+      // Tier 2 (25s) — only after this much patience do we surface the
+      // retry scaffold. Until then we keep the spinner so the user
+      // doesn't get a false-positive "בעיית חיבור" warning.
+      Future.delayed(const Duration(seconds: 25), () {
+        if (!mounted || _streamResolved) return;
+        if (_fallbackDocs != null) return;
+        setState(() => _streamTimedOut = true);
+      });
+    }
 
     // Mark all as read when the screen opens so the badge resets immediately
     WidgetsBinding.instance.addPostFrameCallback((_) => _markAllRead());
+  }
+
+  /// User-initiated retry — resets supervisor flags + re-fires the .get()
+  /// fallback so the next attempt actually retries instead of immediately
+  /// re-tripping the timeout flag.
+  Future<void> _retry() async {
+    if (!mounted) return;
+    setState(() {
+      _streamTimedOut = false;
+      _fallbackDocs = null;
+    });
+    // Re-arm Tier 2 supervisor (8s).
+    Future.delayed(const Duration(seconds: 8), () {
+      if (!mounted || _streamResolved) return;
+      if (_fallbackDocs != null) return;
+      setState(() => _streamTimedOut = true);
+    });
+    if (_uid.isEmpty) return;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('notifications')
+          .where('userId', isEqualTo: _uid)
+          .orderBy('createdAt', descending: true)
+          .limit(50)
+          .get()
+          .timeout(const Duration(seconds: 5));
+      if (!mounted) return;
+      setState(() => _fallbackDocs = snap.docs);
+    } catch (_) {/* timeout flag will eventually fire */}
   }
 
   Future<void> _markAllRead() async {
@@ -520,24 +616,44 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       body: StreamBuilder<QuerySnapshot>(
         stream: _stream,
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.wifi_off_rounded, size: 48, color: Colors.grey[400]),
-                const SizedBox(height: 12),
-                Text(AppLocalizations.of(context).notifLoadError, style: TextStyle(color: Colors.grey[600])),
-              ],
-            ));
-          }
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return _buildEmpty();
+          // ── §15 Law 15 supervisor — resolution logic ────────────────
+          // The StreamBuilder is the SOLE subscriber to `_stream`. The
+          // first time it actually receives data we record
+          // `_streamResolved` (post-frame — setState is illegal during
+          // build). The `.get()` fallback timers read this flag; keeping
+          // it driven by the real renderer (not a separate probe
+          // listener) is what fixes the "bell opens empty" race.
+          if (snapshot.hasData && !_streamResolved) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && !_streamResolved) {
+                setState(() => _streamResolved = true);
+              }
+            });
           }
 
-          final docs = snapshot.data!.docs;
+          // Branch priority:
+          //   1. live stream data        → render it (real-time path)
+          //   2. `.get()` fallback docs  → render them (stream stalled
+          //      OR errored, but the one-shot read still succeeded)
+          //   3. stream error / timeout  → retry scaffold
+          //   4. otherwise (early)       → spinner
+          final List<QueryDocumentSnapshot> docs;
+          if (snapshot.hasData) {
+            docs = snapshot.data!.docs;
+          } else if (_fallbackDocs != null) {
+            // `.get()` fallback delivered REAL notifications even though
+            // the live stream stalled or errored — render them so the
+            // bell is never stuck on a spinner with data available.
+            docs = _fallbackDocs!;
+          } else if (snapshot.hasError || _streamTimedOut) {
+            return _buildRetryScaffold(context);
+          } else {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (docs.isEmpty) {
+            return _buildEmpty();
+          }
           return ListView.separated(
             padding: const EdgeInsets.symmetric(vertical: 8),
             itemCount: docs.length,
@@ -651,6 +767,56 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// §15 Law 15 retry scaffold — shown when the snapshot stream errored
+  /// OR the 8s Tier-2 supervisor timed out before any data arrived.
+  /// Tap "נסה שוב" → `_retry()` re-fires the .get() fallback and re-arms
+  /// the timeout flag, so the user can recover without leaving the
+  /// screen.
+  Widget _buildRetryScaffold(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: const BoxDecoration(
+                color: Color(0xFFFEE2E2),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.wifi_off_rounded,
+                  size: 48, color: Color(0xFFEF4444)),
+            ),
+            const SizedBox(height: 20),
+            const Text('בעיית חיבור',
+                style: TextStyle(
+                    fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text('לא הצלחנו לטעון את ההתראות. נסה שוב.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: Colors.grey[600])),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6366F1),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('נסה שוב',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              onPressed: _retry,
+            ),
+          ],
+        ),
       ),
     );
   }

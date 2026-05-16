@@ -62,7 +62,16 @@ class HomeTab extends StatefulWidget {
   State<HomeTab> createState() => _HomeTabState();
 }
 
-class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
+class _HomeTabState extends State<HomeTab>
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+  // §51/§10.8.2 — keep alive so the cached VIP banner stream + last-snap
+  // cache survive bottom-nav tab switches. Without this, every "tap
+  // Bookings → tap Home" cycle recreated the State, cancelled the
+  // banner subscription, and showed SizedBox.shrink briefly during
+  // the re-subscribe window (user perception: "banner disappeared").
+  @override
+  bool get wantKeepAlive => true;
+
   // ── Pulse animation (urgent banner only) ───────────────────────────────────
   late final AnimationController _pulseCtrl;
 
@@ -98,6 +107,22 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   // most to the top of the home grid. Empty for brand-new users → grid
   // falls back to global popularity (clickCount) order.
   Map<String, int> _categoryTapCounts = {};
+
+  // ── Categories stream supervisor (§15 Law 15) ─────────────────────────────
+  // If the categories Firestore listener stalls (iOS Safari WebChannel
+  // zombie, App Check rejection, network drop) and never emits, the build
+  // shows `CategoryGridSkeleton` forever — user reports "page is thinking,
+  // doesn't show categories." 6s supervisor flips this flag and the build
+  // falls through to "noCategoriesYet" text + pull-to-refresh so the
+  // user has a clear escape hatch.
+  bool _categoriesTimedOut = false;
+
+  /// One-shot `.get()` fallback for the categories — fired 1s after mount
+  /// if the snapshot stream hasn't emitted yet. Lets the home tab render
+  /// real categories even when the WebChannel is slow / zombie. Once the
+  /// snapshot stream emits, that data wins (it's real-time).
+  List<QueryDocumentSnapshot>? _categoriesFallbackDocs;
+  bool _categoriesStreamResolved = false;
 
   @override
   void initState() {
@@ -142,9 +167,65 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
         .limit(100)
         .snapshots();
 
-    // Urgent banner — providers see open job requests, customers see pending approvals
+    // §15 Law 15 Tier 1 — one-shot `.get()` fallback after 2s. Bumped
+    // from 1s after live user reports (רועי צברי, 2026-05-14): cold-
+    // start connections often need 2-4s before the snapshot stream
+    // delivers its first event. 1s was racing legitimate slow handshakes.
+    // Real-time stream still wins when it eventually emits.
+    Future<void> kickCategoriesFallback(Duration getTimeout) async {
+      if (!mounted || _categoriesStreamResolved) return;
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('categories')
+            .limit(100)
+            .get(const GetOptions(source: Source.server))
+            .timeout(getTimeout);
+        if (!mounted || _categoriesStreamResolved) return;
+        if (snap.docs.isNotEmpty) {
+          setState(() => _categoriesFallbackDocs = snap.docs);
+        }
+      } catch (_) {/* next tier will retry */}
+    }
+
+    // Tier 1 (1s) — first `.get()` fallback. Categories is a tiny
+    // collection (~78 docs); a healthy connection resolves it in
+    // 1-2s. Starting at 1s (was 2s) gets the grid up faster.
+    Future.delayed(const Duration(seconds: 1),
+        () => kickCategoriesFallback(const Duration(seconds: 5)));
+    // Tier 1.5 (5s) — second `.get()` fallback with a longer timeout.
+    // The disableNetwork()/enableNetwork() "network bounce" that used to
+    // run here was REMOVED 2026-05-16 — it is GLOBAL (kills every
+    // Firestore listener app-wide) and, fired from a per-screen timer,
+    // cascaded across provider/admin sessions and broke every other
+    // screen's streams. See the full rationale in home_screen.dart.
+    Future.delayed(const Duration(seconds: 5), () {
+      if (!mounted ||
+          _categoriesStreamResolved ||
+          _categoriesFallbackDocs != null) {
+        return;
+      }
+      kickCategoriesFallback(const Duration(seconds: 8));
+    });
+
+    // §15 Law 15 Tier 2 — 12s (was 20s — too long, users thought the
+    // app froze). After this, the shimmer becomes the empty-state
+    // message with a pull-to-refresh affordance.
+    Future.delayed(const Duration(seconds: 12), () {
+      if (mounted && !_categoriesTimedOut) {
+        setState(() => _categoriesTimedOut = true);
+      }
+    });
+
+    // Urgent banner — providers see open job requests, customers see
+    // pending approvals. Admin gets NO banner here on purpose: the prior
+    // "admin sees system-wide job_requests" attempt borrowed the latest
+    // customer post's description and rendered next to an orange "פתח"
+    // button, so for an admin the banner read literally like "פתח [customer's
+    // job title]" — perceived as a phantom feature button. Admin platform
+    // monitoring belongs in the Admin panel, NOT on the customer home tab.
     final uid        = widget.currentUserId;
     final isProvider = widget.userData['isProvider'] == true;
+    final isAdmin    = widget.userData['isAdmin']    == true;
     final category   = (widget.userData['serviceType'] ?? '') as String;
 
     // Auth guard: all streams below require authenticated Firestore access.
@@ -156,41 +237,52 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       _remindersStream     = const Stream.empty();
       // _dealStream removed in v8.9.6
     } else {
-
-    if (isProvider && category.isNotEmpty) {
-      _urgentStream = FirebaseFirestore.instance
-          .collection('job_requests')
-          .where('status',   isEqualTo: 'open')
-          .where('category', isEqualTo: category)
-          .orderBy('createdAt', descending: true)
-          .limit(5)
-          .snapshots();
-    } else {
-      _urgentStream = FirebaseFirestore.instance
-          .collection('jobs')
-          .where('customerId', isEqualTo: uid)
-          .where('status',     isEqualTo: 'expert_completed')
-          .limit(3)
-          .snapshots();
-    }
-
-    // Notifications bell stream — cached here so build() never creates a new subscription
-    _notificationsStream = FirebaseFirestore.instance
-            .collection('notifications')
-            .where('userId', isEqualTo: uid)
-            .where('isRead', isEqualTo: false)
-            .limit(20)
+      // Urgent banner ─ admin gets nothing (no "ghost feature button" on
+      // the customer home tab), providers get matching open job_requests,
+      // everyone else gets their own pending-approval bookings.
+      if (isAdmin) {
+        // Hard-coded empty stream so this branch can never re-grow into
+        // the "ghost feature button" bug described above.
+        _urgentStream = const Stream.empty();
+      } else if (isProvider && category.isNotEmpty) {
+        _urgentStream = FirebaseFirestore.instance
+            .collection('job_requests')
+            .where('status',   isEqualTo: 'open')
+            .where('category', isEqualTo: category)
+            .orderBy('createdAt', descending: true)
+            .limit(5)
             .snapshots();
-
-    // AI Re-Engagement reminders — active, non-dismissed reminders for this user
-    _remindersStream = FirebaseFirestore.instance
-            .collection('scheduled_reminders')
-            .where('userId',      isEqualTo: uid)
-            .where('isDismissed', isEqualTo: false)
-            .where('isActive',    isEqualTo: true)
+      } else {
+        _urgentStream = FirebaseFirestore.instance
+            .collection('jobs')
+            .where('customerId', isEqualTo: uid)
+            .where('status',     isEqualTo: 'expert_completed')
             .limit(3)
             .snapshots();
+      }
 
+      // Notifications bell stream — cached here so build() never creates a
+      // new subscription. EVERY signed-in user (including admin) gets this
+      // — the admin still needs their personal notification bell, even
+      // though they don't get the urgent banner.
+      _notificationsStream = FirebaseFirestore.instance
+              .collection('notifications')
+              .where('userId', isEqualTo: uid)
+              .where('isRead', isEqualTo: false)
+              .limit(20)
+              .snapshots();
+
+      // AI Re-Engagement reminders — active, non-dismissed reminders for
+      // this user. Admin also subscribes (they're a normal user for
+      // re-engagement purposes — if anything, admin should see admin-
+      // specific reminders sooner).
+      _remindersStream = FirebaseFirestore.instance
+              .collection('scheduled_reminders')
+              .where('userId',      isEqualTo: uid)
+              .where('isDismissed', isEqualTo: false)
+              .where('isActive',    isEqualTo: true)
+              .limit(3)
+              .snapshots();
     } // end uid.isNotEmpty else block
 
     // Real-time volunteer stream for community banner (count + facepile)
@@ -325,16 +417,43 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     // What refresh does:
     //   1. Evict Flutter's in-memory image cache so updated images at the
     //      same URL are re-fetched from CachedNetworkImage's disk cache.
-    //   2. Force a rebuild so the UI reflects the latest stream data.
+    //   2. Reset the §15 Law 15 supervisor flag + re-arm the 6s timer so
+    //      the shimmer skeleton can show again if the stream is genuinely
+    //      retrying. Without the reset, the empty-state text would stick
+    //      forever on a connection that's already healed.
+    //   3. Force a one-shot `.get()` fetch RIGHT NOW (not after the usual
+    //      1s delay) so the user sees movement in <1 round-trip when they
+    //      pull to refresh on a stuck stream.
+    //   4. Force a rebuild so the UI reflects the latest stream data.
     PaintingBinding.instance.imageCache.clear();
     PaintingBinding.instance.imageCache.clearLiveImages();
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() => _categoriesTimedOut = false);
+    // Re-arm Tier 2 supervisor (6s timeout).
+    Future.delayed(const Duration(seconds: 6), () {
+      if (mounted && !_categoriesTimedOut) {
+        setState(() => _categoriesTimedOut = true);
+      }
+    });
+    // Re-fire Tier 1 fallback immediately on pull-to-refresh.
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('categories')
+          .limit(100)
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 4));
+      if (!mounted) return;
+      if (snap.docs.isNotEmpty) {
+        setState(() => _categoriesFallbackDocs = snap.docs);
+      }
+    } catch (_) {/* user can pull again; supervisor will surface empty-state */}
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // AutomaticKeepAliveClientMixin contract
     final isProvider = widget.userData['isProvider'] == true;
     final isAdmin =
         widget.userData['isAdmin'] == true;
@@ -353,8 +472,22 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
         child: StreamBuilder<QuerySnapshot>(
           stream: _categoriesStream,
           builder: (context, catSnap) {
+            // Law 4 §9b — stream error must collapse to a friendly empty
+            // state, not leave the user stuck on the shimmer skeleton.
+            // Combined with the §15 Law 15 supervisor below for the
+            // never-emits-at-all case.
+            final hasStreamError = catSnap.hasError;
+            // Mark the stream resolved once any non-error event arrives, so
+            // the Tier 1 .get() fallback knows not to fire.
+            if (catSnap.hasData && !_categoriesStreamResolved) {
+              _categoriesStreamResolved = true;
+            }
             // ── Pre-process category data ─────────────────────────────────
-            final allDocs = catSnap.data?.docs ?? [];
+            // Prefer real-time stream docs; fall back to one-shot .get() docs
+            // when the WebChannel is slow to deliver the first snapshot.
+            final List<QueryDocumentSnapshot> allDocs = catSnap.data?.docs
+                ?? _categoriesFallbackDocs
+                ?? const <QueryDocumentSnapshot>[];
 
             // All top-level categories, sorted into a "breathing" grid:
             //   1. PER-USER affinity DESC   — this user's own tap counts
@@ -428,16 +561,19 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                 ),
 
                 // ── Urgent / Pulse banner (error-safe) ────────────────────
+                // Note: providers see the banner regardless of online status —
+                // the online toggle only affects push notifications and
+                // broadcast eligibility (Law 9), not passive in-app surfaces.
+                // Hiding it for offline providers created a "ghost banner"
+                // perception (customer sees it, provider doesn't) — fixed.
+                // Admin: the urgent stream is forced empty in initState so
+                // this builder returns SizedBox.shrink automatically — see
+                // the comment above the `isAdmin` branch.
                 SliverToBoxAdapter(
                   child: StreamBuilder<QuerySnapshot>(
                     stream: _urgentStream,
                     builder: (context, urgSnap) {
                       if (urgSnap.hasError) return const SizedBox.shrink();
-                      // Offline providers don't receive the urgent pulse
-                      if (isProvider && !_isOnline) {
-                        if (_pulseCtrl.isAnimating) _pulseCtrl.stop();
-                        return const SizedBox.shrink();
-                      }
                       final docs = urgSnap.data?.docs ?? [];
                       if (docs.isEmpty) {
                         if (_pulseCtrl.isAnimating) _pulseCtrl.stop();
@@ -463,26 +599,59 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                 // nothing at all when no qualifying banner exists, so we
                 // never see a stranded "נותני השירות ה-VIP שלנו" header
                 // sitting above an empty space.
-                const SliverToBoxAdapter(
+                //
+                // `isAdminViewer` short-circuits the schedule-hours filter
+                // — admin should ALWAYS see their banner during QA so they
+                // can confirm placement + content without waiting for the
+                // next 4-hour bucket (CLAUDE.md §51 Phase 6).
+                SliverToBoxAdapter(
                   child: Padding(
-                    padding: EdgeInsets.fromLTRB(16, 0, 16, 0),
-                    child: _ProviderCarouselsRail(),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                    child: _ProviderCarouselsRail(
+                      isAdminViewer:
+                          widget.userData['isAdmin'] == true,
+                    ),
                   ),
                 ),
 
-                // ── Loading shimmer ────────────────────────────────────────
-                if (catSnap.connectionState == ConnectionState.waiting)
+                // ── Loading shimmer (only while we have NO docs at all AND
+                //    we haven't hit the §15 6s supervisor timeout) ──────────
+                // `allDocs.isEmpty` short-circuits when the .get() fallback
+                // already delivered — no point showing shimmer over real data.
+                if (catSnap.connectionState == ConnectionState.waiting
+                    && allDocs.isEmpty
+                    && !_categoriesTimedOut
+                    && !hasStreamError)
                   const CategoryGridSkeleton()
 
-                // ── Empty state ────────────────────────────────────────────
+                // ── Empty state (also covers: stream errored, OR supervisor
+                //    timed out with no docs yet). Pull-to-refresh retries. ──
                 else if (mainDocs.isEmpty)
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.only(top: 48),
                       child: Center(
-                        child: Text(
-                          AppLocalizations.of(context).noCategoriesYet,
-                          style: TextStyle(color: Colors.grey[400]),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              AppLocalizations.of(context).noCategoriesYet,
+                              style: TextStyle(color: Colors.grey[400]),
+                            ),
+                            if (hasStreamError ||
+                                (_categoriesTimedOut &&
+                                    catSnap.connectionState ==
+                                        ConnectionState.waiting)) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                'משוך מטה לרענון',
+                                style: TextStyle(
+                                    color: Colors.grey[500],
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                     ),
@@ -2135,20 +2304,16 @@ class _AnyTasksBannerState extends State<_AnyTasksBanner> {
 // Listens to Firestore 'banners' where placement == 'home_carousel'.
 // Falls back to 3 hardcoded gradient banners when Firestore returns 0 items.
 
-/// Banners Studio Phase 6 — schedule-hours runtime filter.
+/// REMOVED from active use 2026-05-15 — schedule-hours filter was
+/// hiding active banners from users during off-hours / 0-7am dead
+/// zone. Per user request, every active banner is now visible to
+/// every user at all times. Admins control visibility via `isActive`
+/// + `expiresAt` only.
 ///
-/// Returns true iff the banner should render at [now] given its
-/// `scheduleHours` map (`{sun: [8,12,16], mon: [...], ...}` — 4-hour
-/// buckets at 8/12/16/20). Empty/missing map = always-on.
-///
-/// Bucket assignment:
-///   hour 0-7   → none      (banner is OFF unless an admin picks 8 AND
-///                            we extend the schema later — for now,
-///                            schedule-hours providers off-hours always)
-///   hour 8-11  → bucket 8
-///   hour 12-15 → bucket 12
-///   hour 16-19 → bucket 16
-///   hour 20-23 → bucket 20
+/// Function kept behind `// ignore: unused_element` in case a future
+/// requirement re-enables it with a "single-banner fallback" rule
+/// (if only one banner matches, ignore the schedule and show it).
+// ignore: unused_element
 bool _studioScheduleAllowsNow(dynamic raw, DateTime now) {
   if (raw == null) return true;
   if (raw is! Map) return true;
@@ -2194,6 +2359,24 @@ class _PromoCarouselState extends State<_PromoCarousel> {
   StreamSubscription<QuerySnapshot>? _bannerSub;
   List<_PromoBanner> _liveBanners = const [];
   bool _firestoreLoaded = false;
+  // 2026-05-15 (live bug, רועי צברי): the FALLBACK banners (welcome /
+  // service / become-expert hardcoded copy) used to flash on screen
+  // for ~1s after login, then swap to the admin-configured banners
+  // once the Firestore stream emitted. The user perceived this as
+  // "OLD banner → NEW banner". Fix: hide ALL content for the first
+  // 1.5s after init. If the stream lands within that window, the live
+  // banners render directly with no flash. If not, the fallbacks
+  // appear AFTER the grace period — preserving the "always show
+  // something" guarantee for users with no admin banners configured.
+  bool _graceExpired = false;
+  Timer? _graceTimer;
+
+  /// True once the Firestore stream has delivered ≥1 real admin banner.
+  /// After that the hardcoded fallback ("old banner") is NEVER shown
+  /// again — a transient empty re-emit or a slow re-subscription can no
+  /// longer regress the carousel to the welcome/become-expert copy that
+  /// the user reported as "the banner changed to an old one".
+  bool _hadLiveBanners = false;
 
   // Icon name → IconData (mirrors the admin _iconLabels map)
   static const _icons = <String, IconData>{
@@ -2236,8 +2419,19 @@ class _PromoCarouselState extends State<_PromoCarousel> {
     ];
   }
 
-  List<_PromoBanner> _getBanners(BuildContext ctx) =>
-      (_firestoreLoaded && _liveBanners.isNotEmpty) ? _liveBanners : _fallbackBanners(ctx);
+  /// Resolves which banner list to render. Returns an empty list during
+  /// the grace period BEFORE either Firestore has loaded OR 1.5s has
+  /// elapsed — callers render `SizedBox(height: 190)` to keep layout
+  /// stable without flashing the fallback banners.
+  List<_PromoBanner> _getBanners(BuildContext ctx) {
+    if (_liveBanners.isNotEmpty) return _liveBanners;
+    // Once real admin banners have rendered at least once, NEVER regress
+    // to the hardcoded fallback — that regression IS the "banner changed
+    // to an old one" bug. Show a clean empty slot instead.
+    if (_hadLiveBanners) return const [];
+    if (_firestoreLoaded || _graceExpired) return _fallbackBanners(ctx);
+    return const [];
+  }
 
   @override
   void initState() {
@@ -2249,6 +2443,43 @@ class _PromoCarouselState extends State<_PromoCarousel> {
         .limit(20)
         .snapshots()
         .listen(_onBannerSnapshot);
+    // Grace period — 1.5s before the fallback banners are allowed to
+    // appear. Long enough that the Firestore stream USUALLY wins
+    // (admin banners render directly), short enough that users with no
+    // admin banners configured aren't stuck on a blank gap for long.
+    _graceTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (!mounted) return;
+      if (_firestoreLoaded) return; // stream already won — nothing to do
+      setState(() => _graceExpired = true);
+    });
+    // §15 Law 15 — `.get()` fallback. On a cold/zombie WebChannel the
+    // `.snapshots()` listener can stall forever → `_firestoreLoaded`
+    // never flips → the user sees the hardcoded fallback ("OLD")
+    // banner indefinitely (רועי צברי, recurring). The `.get()` re-runs
+    // the SDK connection logic and usually resolves. Retries at 1s/6s.
+    _kickBannerFallback(const Duration(seconds: 1));
+    _kickBannerFallback(const Duration(seconds: 6));
+  }
+
+  void _kickBannerFallback(Duration delay) {
+    Future.delayed(delay, () async {
+      if (!mounted || _firestoreLoaded) return;
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('banners')
+            .where('placement', isEqualTo: 'home_carousel')
+            .limit(20)
+            .get()
+            .timeout(const Duration(seconds: 8));
+        if (!mounted || _firestoreLoaded) return;
+        // Reuse the same parsing path as the stream listener.
+        _onBannerSnapshot(snap);
+        debugPrint(
+            '[PromoCarousel] .get() fallback delivered ${snap.docs.length} banner doc(s)');
+      } catch (e) {
+        debugPrint('[PromoCarousel] .get() fallback failed: $e');
+      }
+    });
   }
 
   void _onBannerSnapshot(QuerySnapshot snap) {
@@ -2260,10 +2491,10 @@ class _PromoCarouselState extends State<_PromoCarousel> {
       final expiresAt = (m['expiresAt'] as Timestamp?)?.toDate();
       if (!active) return false;
       if (expiresAt != null && !expiresAt.isAfter(now)) return false;
-      // Banners Studio Phase 6 — schedule-hours runtime filter.
-      // Admin can pin a banner to specific day-of-week + 4-hour windows.
-      // Empty/null = always-on (default behaviour).
-      if (!_studioScheduleAllowsNow(m['scheduleHours'], now)) return false;
+      // 2026-05-15: schedule-hours filter removed for all users. Same
+      // change as the VIP rail + SubcategoryBannerHeader — admins
+      // control visibility via isActive + expiresAt only, not by
+      // hour-of-day buckets that silently hide banners.
       return true;
     }).toList()
       ..sort((a, b) {
@@ -2288,7 +2519,15 @@ class _PromoCarouselState extends State<_PromoCarousel> {
 
     setState(() {
       _firestoreLoaded = true;
-      _liveBanners = parsed;
+      // Never overwrite a populated live-banner list with an empty one.
+      // A transient empty re-emit (Firestore re-evaluating a doc mid-edit,
+      // a metadata-only event, a re-subscription window) would otherwise
+      // blank the carousel or flip it to the hardcoded fallback. The
+      // FIRST load is always allowed to set whatever it gets.
+      if (parsed.isNotEmpty || _liveBanners.isEmpty) {
+        _liveBanners = parsed;
+      }
+      if (parsed.isNotEmpty) _hadLiveBanners = true;
       // When switching from fallback (3 items) to live data, reset page
       // if necessary. We use a safe fallback count of 3 (matches fallback list).
       final effectiveCount = _liveBanners.isNotEmpty ? _liveBanners.length : 3;
@@ -2322,6 +2561,7 @@ class _PromoCarouselState extends State<_PromoCarousel> {
   @override
   void dispose() {
     _timer?.cancel();
+    _graceTimer?.cancel();
     _bannerSub?.cancel();
     _ctrl.dispose();
     super.dispose();
@@ -2330,6 +2570,13 @@ class _PromoCarouselState extends State<_PromoCarousel> {
   @override
   Widget build(BuildContext context) {
     final banners = _getBanners(context);
+    // Empty list = grace period still active AND stream hasn't emitted.
+    // Render a SAME-HEIGHT empty placeholder so the page layout doesn't
+    // shift when banners arrive 1-2s later. No spinner — the carousel
+    // shouldn't draw attention to itself during loading.
+    if (banners.isEmpty) {
+      return const SizedBox(height: 190);
+    }
     return SizedBox(
       height: 190,
       child: Stack(
@@ -2480,33 +2727,110 @@ class _GradientBannerContent extends StatelessWidget {
 // The legacy `_PromoCarousel` keeps owning `placement == 'home_carousel'`
 // — the two surfaces are deliberately separate (user decision).
 
-class _ProviderCarouselsRail extends StatelessWidget {
-  const _ProviderCarouselsRail();
+class _ProviderCarouselsRail extends StatefulWidget {
+  /// When true, the schedule-hours filter is bypassed so the admin can
+  /// QA the banner outside its scheduled time-of-day windows. Defaults
+  /// to false so production renders match the admin's banner schedule
+  /// exactly for regular users.
+  final bool isAdminViewer;
+
+  const _ProviderCarouselsRail({this.isAdminViewer = false});
+
+  @override
+  State<_ProviderCarouselsRail> createState() =>
+      _ProviderCarouselsRailState();
+}
+
+class _ProviderCarouselsRailState extends State<_ProviderCarouselsRail> {
+  /// Stream cached in initState — CRITICAL. If we constructed the
+  /// stream inline in build(), every parent rebuild (e.g. pull-to-
+  /// refresh in home_tab, online-toggle update, search-bar focus,
+  /// `_categoriesTimedOut` flip, etc.) would create a NEW subscription
+  /// and cancel the previous one. During the brief snapshot-resolve
+  /// window, snap.hasData would be false → banner collapsed to
+  /// SizedBox.shrink → "banner disappears on refresh" bug reported
+  /// by רועי צברי (2026-05-14).
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _bannersStream;
+  /// Last successfully-resolved snapshot. We render from THIS during
+  /// any transient re-emit (no data temporarily) so the banner never
+  /// blinks out during refresh.
+  QuerySnapshot<Map<String, dynamic>>? _lastSnap;
+  /// §15 Law 15 — one-shot `.get()` fallback docs. On a cold/zombie
+  /// WebChannel the `.snapshots()` listener can stall indefinitely
+  /// (banner never appears until browser refresh — רועי צברי, recurring).
+  /// The `.get()` re-triggers the SDK's connection logic and usually
+  /// resolves even when the streaming channel is stuck. Whichever
+  /// source delivers first wins.
+  List<QueryDocumentSnapshot<Map<String, dynamic>>>? _fallbackDocs;
+
+  @override
+  void initState() {
+    super.initState();
+    _bannersStream = FirebaseFirestore.instance
+        .collection('banners')
+        .where('placement', isEqualTo: 'provider_carousel')
+        .limit(10)
+        .snapshots();
+    // §15 Law 15 — fire a `.get()` fallback after a 1s grace. If the
+    // snapshot stream already delivered, this is skipped. Retries twice
+    // (1s / 6s) so a cold WebChannel that needs the long-polling
+    // auto-detect to kick in still gets the banner up within ~10s.
+    _kickBannerFallback(const Duration(seconds: 1));
+    _kickBannerFallback(const Duration(seconds: 6));
+  }
+
+  void _kickBannerFallback(Duration delay) {
+    Future.delayed(delay, () async {
+      if (!mounted || _lastSnap != null) return;
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('banners')
+            .where('placement', isEqualTo: 'provider_carousel')
+            .limit(10)
+            .get()
+            .timeout(const Duration(seconds: 8));
+        if (!mounted || _lastSnap != null) return;
+        setState(() => _fallbackDocs = snap.docs);
+        debugPrint(
+            '[ProviderCarouselsRail] .get() fallback delivered ${snap.docs.length} banner doc(s)');
+      } catch (e) {
+        debugPrint('[ProviderCarouselsRail] .get() fallback failed: $e');
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('banners')
-          .where('placement', isEqualTo: 'provider_carousel')
-          .limit(10)
-          .snapshots(),
+      stream: _bannersStream,
       builder: (context, snap) {
         if (snap.hasError) {
           debugPrint('[ProviderCarouselsRail] stream error: ${snap.error}');
           return const SizedBox.shrink();
         }
-        if (!snap.hasData) return const SizedBox.shrink();
+        // Cache the latest non-error snapshot so a brief re-emit can't
+        // blink the banner out.
+        if (snap.hasData) _lastSnap = snap.data;
+        // Resolution priority: live stream snapshot → cached snapshot →
+        // `.get()` fallback docs (§15 Law 15 — covers a stalled
+        // WebChannel where the stream never delivered).
+        final List<QueryDocumentSnapshot<Map<String, dynamic>>> sourceDocs =
+            (snap.data ?? _lastSnap)?.docs ?? _fallbackDocs ?? const [];
+        if (sourceDocs.isEmpty) return const SizedBox.shrink();
 
         final now = DateTime.now();
-        final qualifying = snap.data!.docs.where((d) {
+        final qualifying = sourceDocs.where((d) {
           final m = d.data();
           final active = m['isActive'] as bool? ?? true;
           if (!active) return false;
           final expiresAt = (m['expiresAt'] as Timestamp?)?.toDate();
           if (expiresAt != null && !expiresAt.isAfter(now)) return false;
-          // Banners Studio Phase 6 schedule-hours filter
-          if (!_studioScheduleAllowsNow(m['scheduleHours'], now)) return false;
+          // 2026-05-15: schedule-hours filter REMOVED for all users
+          // (was hiding the VIP banner during off-hours / 0-7am dead
+          // zone). User explicitly requested every user always sees
+          // every active banner. Admins control visibility via
+          // `isActive` and `expiresAt` only. Same change applied to
+          // SubcategoryBannerHeader for consistency.
           final pc = m['providerCarousel'];
           if (pc is! Map<String, dynamic>) return false;
           final ids = (pc['providerIds'] as List?) ?? const [];
@@ -2529,67 +2853,49 @@ class _ProviderCarouselsRail extends StatelessWidget {
         final pc = data['providerCarousel'] as Map<String, dynamic>;
         final config = ProviderCarouselConfig.fromMap(pc);
 
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Section title — bundled with the rail so it disappears
-            // automatically when no qualifying banner exists (the
-            // SizedBox.shrink branch above hides everything).
-            const Padding(
-              padding: EdgeInsetsDirectional.fromSTEB(0, 10, 0, 4),
-              child: Text(
-                'נותני השירות ה-VIP שלנו',
-                textDirection: TextDirection.rtl,
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF111827),
-                ),
-              ),
-            ),
-            SizedBox(
-              height: 190,
-              child: ProviderCarouselBanner(
-                config: config,
-                title: (data['title'] as String?) ?? '',
-                bannerId: doc.id,
-                height: 190,
-                // Both events go through `recordVipBannerEvent` so the
-                // banner-level totals AND the per-provider VIP subscription
-                // counters stay in sync — the provider's profile VIP card
-                // reads `vip_subscriptions/{id}.totalImpressions / .totalClicks`
-                // and was stuck on "—" until this CF wired the analytics
-                // (§51 follow-up).
-                onImpression: (providerId) async {
-                  try {
-                    await FirebaseFunctions.instance
-                        .httpsCallable('recordVipBannerEvent')
-                        .call({
-                      'providerId': providerId,
-                      'eventType': 'impression',
-                      'bannerId': doc.id,
-                    });
-                  } catch (_) {
-                    // Fire-and-forget — never block the UI on analytics.
-                  }
-                },
-                onClick: (providerId) async {
-                  try {
-                    await FirebaseFunctions.instance
-                        .httpsCallable('recordVipBannerEvent')
-                        .call({
-                      'providerId': providerId,
-                      'eventType': 'click',
-                      'bannerId': doc.id,
-                    });
-                  } catch (_) {
-                    // Fire-and-forget — never block the UI on analytics.
-                  }
-                },
-              ),
-            ),
-          ],
+        // Section title now lives INSIDE ProviderCarouselBanner so it
+        // appears in lockstep with the resolved provider data — no more
+        // "stranded title above a grey square" while the user's slow
+        // network resolves the `users where documentId whereIn` fetch
+        // (fixed 2026-05-14, §15 Law 15 timeout + skeleton removal).
+        return ProviderCarouselBanner(
+          config: config,
+          sectionHeading: 'נותני השירות ה-VIP שלנו',
+          title: (data['title'] as String?) ?? '',
+          bannerId: doc.id,
+          height: 190,
+          // Both events go through `recordVipBannerEvent` so the
+          // banner-level totals AND the per-provider VIP subscription
+          // counters stay in sync — the provider's profile VIP card
+          // reads `vip_subscriptions/{id}.totalImpressions / .totalClicks`
+          // and was stuck on "—" until this CF wired the analytics
+          // (§51 follow-up).
+          onImpression: (providerId) async {
+            try {
+              await FirebaseFunctions.instance
+                  .httpsCallable('recordVipBannerEvent')
+                  .call({
+                'providerId': providerId,
+                'eventType': 'impression',
+                'bannerId': doc.id,
+              });
+            } catch (_) {
+              // Fire-and-forget — never block the UI on analytics.
+            }
+          },
+          onClick: (providerId) async {
+            try {
+              await FirebaseFunctions.instance
+                  .httpsCallable('recordVipBannerEvent')
+                  .call({
+                'providerId': providerId,
+                'eventType': 'click',
+                'bannerId': doc.id,
+              });
+            } catch (_) {
+              // Fire-and-forget — never block the UI on analytics.
+            }
+          },
         );
       },
     );

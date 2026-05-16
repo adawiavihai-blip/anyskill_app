@@ -141,3 +141,51 @@ test('Unauthenticated user CANNOT read other user docs', async () => {
   const db = testEnv.unauthenticatedContext().firestore();
   await assertFails(db.collection('users').doc('alice').get());
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// activeRole switch — RoleSwitcherScreen (live bug 2026-05-15, רועי צברי)
+// A legacy multi-role user (isProvider+isCustomer booleans, NO `roles` array)
+// must be able to switch their activeRole. The rule accepts BOTH schemas.
+// ═══════════════════════════════════════════════════════════════════════════
+test('Legacy multi-role user CAN switch activeRole to customer (boolean flag)', async () => {
+  const uid = 'roi';
+  await seedUser(uid, { isProvider: true, isCustomer: true, activeRole: 'provider' });
+
+  const db = testEnv.authenticatedContext(uid, { admin: false, support_agent: false }).firestore();
+  await assertSucceeds(
+    db.collection('users').doc(uid).update({ activeRole: 'customer' })
+  );
+});
+
+test('Legacy multi-role user CAN switch activeRole to provider (boolean flag)', async () => {
+  const uid = 'roi';
+  await seedUser(uid, { isProvider: true, isCustomer: true, activeRole: 'customer' });
+
+  const db = testEnv.authenticatedContext(uid, { admin: false, support_agent: false }).firestore();
+  await assertSucceeds(
+    db.collection('users').doc(uid).update({ activeRole: 'provider' })
+  );
+});
+
+test('New-schema user CAN switch activeRole within their roles array', async () => {
+  const uid = 'multi';
+  await seedUser(uid, { roles: ['customer', 'provider'], activeRole: 'customer' });
+
+  const db = testEnv.authenticatedContext(uid, { admin: false, support_agent: false }).firestore();
+  await assertSucceeds(
+    db.collection('users').doc(uid).update({ activeRole: 'provider' })
+  );
+});
+
+test('User CANNOT switch activeRole to a role they do NOT hold (admin escalation)', async () => {
+  const uid = 'attacker';
+  await seedUser(uid, { isCustomer: true });
+
+  const db = testEnv.authenticatedContext(uid, { admin: false, support_agent: false }).firestore();
+  await assertFails(
+    db.collection('users').doc(uid).update({ activeRole: 'admin' })
+  );
+  await assertFails(
+    db.collection('users').doc(uid).update({ activeRole: 'support_agent' })
+  );
+});

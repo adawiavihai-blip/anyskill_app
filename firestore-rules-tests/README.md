@@ -9,11 +9,20 @@ protects against an attack, the test fails immediately.
 
 | Metric | Value |
 |--------|-------|
-| Test suites | 11 |
-| Passing | **91** |
+| Test suites | 14 |
+| Passing | **163** |
 | Skipped | 20 (intermittently-failing control tests — see "Known limitation" below) |
-| Failing | **0** (verified across 5 consecutive runs) |
-| Total runtime | ~6-8 seconds (after first emulator boot) |
+| Failing | **0** |
+| Total runtime | ~23 seconds (after first emulator boot) |
+
+> **Run serially.** All 14 suites share one emulator + project ID; each
+> file's `clearFirestore()` in `beforeEach` wipes data mid-test for any
+> concurrent file. `npm test` now passes `--runInBand` so the suite is
+> deterministic regardless of CPU count. Never drop that flag.
+
+The newest suite — `pentest_2026_05_15.test.js` (26 tests) — covers the
+pen-test audit dated 2026-05-15 (`../SECURITY_AUDIT_REPORT.md`,
+VULN-001 … VULN-009).
 
 Files: `users`, `jobs`, `reviews`, `volunteer_tasks`, `support_tickets`,
 `storage`, `cf_only_collections`, `job_requests`, `misc_collections`,

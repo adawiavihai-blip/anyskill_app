@@ -10,8 +10,45 @@
       ]
     },
     {
+      "_comment": "SubcategoryBannerHeader (§52) — query `where('placement', isEqualTo: 'subcategory').where('subcategoryId', whereIn: candidateIds)`. Without this composite index the query silently errors → widget collapses to SizedBox.shrink → VIP banner missing on sub-category pages like גרר אופנועים. Fixed 2026-05-14 after live report from provider רועי צברי.",
+      "collectionGroup": "banners",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "placement",     "order": "ASCENDING" },
+        { "fieldPath": "subcategoryId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "_comment": "ProviderCarouselsRail (home tab §51) — query `where('placement', isEqualTo: 'provider_carousel')`. Single-field index is auto-created by Firestore, so this entry is for documentation only — listed here so a future contributor doesn't add a second filter that creates a missing-index bug.",
+      "collectionGroup": "banners",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "placement",     "order": "ASCENDING" },
+        { "fieldPath": "order",         "order": "ASCENDING" }
+      ]
+    },
+    {
+      "_comment": "Banners Studio fallback for default-global subcategory banner (SubcategoryBannerHeader → _GlobalDefaultSubcategoryBanner). Query: `where('placement', isEqualTo: 'subcategory').where('isDefaultGlobalSubcat', isEqualTo: true).where('isActive', isEqualTo: true)`.",
+      "collectionGroup": "banners",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "placement",             "order": "ASCENDING" },
+        { "fieldPath": "isDefaultGlobalSubcat", "order": "ASCENDING" },
+        { "fieldPath": "isActive",              "order": "ASCENDING" }
+      ]
+    },
+    {
       "_comment": "Babysitter Emergency §76 — sister-collection to flash_auctions. BabysitterEmergencyService.watchActiveEmergenciesForProvider runs the identical `arrayContains + orderBy(createdAt DESC)` pattern. Without this composite index, the provider's babysitter-emergency strip on opportunities stays empty even when the dispatch CF added their uid to notifiedProviderIds (re-bug of the same shape as §57 — 2026-05-12).",
       "collectionGroup": "babysitter_emergencies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "notifiedProviderIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "createdAt",           "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "Delivery Express §78 — sister-collection to flash_auctions + babysitter_emergencies. DeliveryExpressService.watchActiveAuctionsForProvider runs the identical `arrayContains + orderBy(createdAt DESC)` pattern. THIS INDEX WAS MISSING — §78 shipped on 2026-05-13 without it. CRITICAL: a `.snapshots()` listener on a query that needs a missing composite index gets a FAILED_PRECONDITION target error on the watch stream, and per firebase-js-sdk issue #9267 a watch-stream target error corrupts the SDK's internal target state (INTERNAL ASSERTION FAILED b815/ca9) — poisoning EVERY Firestore read app-wide. The Delivery Express provider strip mounts at startup for EVERY provider (Opportunities tab is in the IndexedStack), so every provider's whole app broke while customers were unaffected. Root cause of the 2026-05-16 'works only for the customer' incident.",
+      "collectionGroup": "delivery_express",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "notifiedProviderIds", "arrayConfig": "CONTAINS" },

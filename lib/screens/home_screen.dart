@@ -79,6 +79,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _isOffline = false;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
 
+  // ── User stream supervisor (§15 Law 15 — same pattern as OnboardingGate) ──
+  // The `_userStream` snapshot listener can stall indefinitely on iOS Safari
+  // (WebChannel zombie), App Check rejection mid-session, or transient
+  // network drops. Without a supervisor the StreamBuilder shows
+  // CircularProgressIndicator forever → user reports "page is thinking,
+  // never loads categories or anything". 5s timeout flips the flag and
+  // the build falls through to the retry screen.
+  bool _userStreamTimedOut = false;
+  bool _userStreamResolved = false; // true once we got our first snapshot
+  /// One-shot fallback data — pulled via `_resilientUserFetch` if the
+  /// stream is still waiting after 1s. Lets the screen render with cached
+  /// profile fields while the stream catches up.
+  Map<String, dynamic>? _userFallbackData;
+
   // ── Badge counters ─────────────────────────────────────────────────────────
   int _bookingsCustBadge   = 0;  // jobs needing customer approval (expert_completed)
   int _bookingsExpertBadge = 0;  // jobs needing expert to finish (paid_escrow)
@@ -146,12 +160,80 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     });
     _userStream = FirebaseFirestore.instance.collection('users').doc(uid).snapshots();
-    // Read isAdmin flag from Firestore (not email) — real-time sync
+    // Read isAdmin flag from Firestore (not email) — real-time sync.
+    // Also marks the stream as "resolved" so the supervisor timer below
+    // doesn't trip after a legit first emit. §15 Law 15 pattern.
     _adminFlagSub = _userStream.listen((snap) {
+      _userStreamResolved = true;
       final data = snap.data() as Map<String, dynamic>? ?? {};
       final flag = data['isAdmin'] == true;
       if (flag != _isAdmin && mounted) setState(() => _isAdmin = flag);
     });
+
+    // ── User stream supervisor (§15 Law 15) ──────────────────────────────
+    // Two-tier safety net. Timeouts revised UP after live user reports
+    // (רועי צברי, 2026-05-14): the previous 1s/5s window was too tight
+    // for legitimate cold-start connections — after the nuclear cache
+    // purge, fresh WebChannel handshakes regularly take 3-8s on slow
+    // connections. The old 5s Tier-2 was firing on healthy users and
+    // surfacing "בעיית חיבור" as a false positive.
+    //
+    // Tier 1 — 2s: kick off a one-shot resilient .get() fallback so we
+    //   have SOMETHING to render even before the snapshot stream emits.
+    // Tier 1.5 — auto-retry at 8s if still no data (no UI noise).
+    // Tier 2 — 25s: only NOW do we surface the retry scaffold. By then,
+    //   the connection is genuinely broken — not just slow.
+    if (uid != null) {
+      Future<void> kickFallback(Duration getTimeout) async {
+        if (!mounted || _userStreamResolved) return;
+        try {
+          final snap = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(uid)
+              .get(const GetOptions(source: Source.server))
+              .timeout(getTimeout);
+          if (!mounted || _userStreamResolved) return;
+          final data = snap.data() ?? const <String, dynamic>{};
+          if (data.isNotEmpty) {
+            setState(() => _userFallbackData = data);
+          }
+        } catch (_) {/* swallowed — next tier will retry */}
+      }
+
+      // Tier 1 (1s) — first `.get()` fallback. The user doc is a
+      // single small read; starting at 1s gets the app rendering fast.
+      Future.delayed(const Duration(seconds: 1),
+          () => kickFallback(const Duration(seconds: 5)));
+      // Tier 1.5 (5s) — second `.get()` fallback with a longer timeout.
+      //
+      // ⚠️ This used to call disableNetwork()/enableNetwork() ("network
+      // bounce"). REMOVED 2026-05-16 — it was the root cause of the
+      // "the app works only for the customer" bug. disableNetwork() is
+      // GLOBAL (it tears down EVERY Firestore listener in the whole app),
+      // yet it was fired from THREE screens on independent 5s timers. A
+      // provider/admin session runs 20-30 concurrent listeners, so the
+      // first sync legitimately takes >5s and the timers tripped — each
+      // bounce killed every other screen's streams, the reconnect burst
+      // congested the channel further, tripping the next bounce → a
+      // cascade that left notifications, sub-category and banners all
+      // intermittently empty. Customers (~6 listeners) synced in <2s and
+      // never tripped it. webExperimentalForceLongPolling (main.dart) is
+      // the real transport fix; a plain `.get()` retry is the only safe
+      // fallback.
+      Future.delayed(const Duration(seconds: 5), () {
+        if (!mounted || _userStreamResolved || _userFallbackData != null) {
+          return;
+        }
+        kickFallback(const Duration(seconds: 8));
+      });
+      // Tier 2 (14s) — after this, surface the retry scaffold. Was 25s,
+      // which left the user staring at a spinner thinking it froze.
+      Future.delayed(const Duration(seconds: 14), () {
+        if (!mounted || _userStreamResolved) return;
+        if (_userFallbackData != null) return;
+        setState(() => _userStreamTimedOut = true);
+      });
+    }
     // v9.6.3: Chat badge uses periodic get() instead of a snapshot listener.
     // This eliminates one of the 12+ concurrent Firestore listeners that were
     // overloading the AsyncQueue on Web and causing INTERNAL ASSERTION FAILED.
@@ -321,6 +403,74 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildBody(BuildContext context, bool isAdmin) {
+    // Reusable retry scaffold used for both stream errors AND the 5s
+    // supervisor timeout (§15 Law 15). Same UX in both cases — the user
+    // gets a clear "connection problem" message + retry + signOut.
+    Widget buildRetryScaffold() => Scaffold(
+          backgroundColor: Colors.white,
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.wifi_off_rounded,
+                    size: 56, color: Color(0xFF6366F1)),
+                const SizedBox(height: 16),
+                const Text('בעיית חיבור',
+                    style: TextStyle(
+                        fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text(
+                    'לא הצלחנו לטעון את הפרופיל. בדוק את החיבור לאינטרנט ונסה שוב.',
+                    textAlign: TextAlign.center,
+                    style:
+                        TextStyle(fontSize: 14, color: Colors.grey[600])),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6366F1),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon:
+                      const Icon(Icons.refresh_rounded, color: Colors.white),
+                  label: const Text('נסה שוב',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold)),
+                  onPressed: () {
+                    // Reset the supervisor flags + re-arm the timers so a
+                    // retry actually does something instead of immediately
+                    // re-tripping. The stream itself keeps listening; if
+                    // the WebChannel is still zombie, the user can tap
+                    // signOut as the final escape.
+                    if (!mounted) return;
+                    setState(() {
+                      _userStreamTimedOut = false;
+                      _userFallbackData = null;
+                    });
+                    final uid = currentUser?.uid;
+                    if (uid != null) {
+                      Future.delayed(const Duration(seconds: 5), () {
+                        if (!mounted || _userStreamResolved) return;
+                        if (_userFallbackData != null) return;
+                        setState(() => _userStreamTimedOut = true);
+                      });
+                    }
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: () => performSignOut(context),
+                  child: const Text('התנתקות',
+                      style: TextStyle(color: Color(0xFF6B7280))),
+                ),
+              ]),
+            ),
+          ),
+        );
+
     return StreamBuilder<DocumentSnapshot>(
       stream: _userStream,
       builder: (context, snapshot) {
@@ -329,43 +479,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           // v9.4.9: Do NOT auto-signOut on stream error — this caused a
           // logout loop on iPhone when Firestore returned 500s.
           // Show a retry screen instead. Only sign out if user taps the button.
-          return Scaffold(
-            backgroundColor: Colors.white,
-            body: Center(child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.wifi_off_rounded, size: 56, color: Color(0xFF6366F1)),
-                const SizedBox(height: 16),
-                const Text('בעיית חיבור', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Text('לא הצלחנו לטעון את הפרופיל. בדוק את החיבור לאינטרנט ונסה שוב.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 14, color: Colors.grey[600])),
-                const SizedBox(height: 24),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF6366F1),
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-                  label: const Text('נסה שוב', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                  onPressed: () {
-                    if (mounted) setState(() {}); // trigger StreamBuilder rebuild
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: () => performSignOut(context),
-                  child: const Text('התנתקות', style: TextStyle(color: Color(0xFF6B7280))),
-                ),
-              ]),
-            )),
-          );
+          return buildRetryScaffold();
         }
-        if (!snapshot.hasData) return const Scaffold(body: Center(child: CircularProgressIndicator()));
 
-        var data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
+        // ── §15 Law 15 supervisor — three branches ────────────────────────
+        // 1. Stream HAS data         → use it (normal path)
+        // 2. Stream waiting + fallback present → render with fallback data
+        //    so the user sees the home tab while the stream catches up.
+        // 3. Stream waiting + 5s elapsed + no fallback → retry screen
+        //    (avoids the infinite-spinner bug that caused
+        //    "page is thinking, doesn't show categories").
+        final Map<String, dynamic> data;
+        if (snapshot.hasData) {
+          data = (snapshot.data!.data() as Map<String, dynamic>?) ?? {};
+        } else if (_userFallbackData != null) {
+          data = _userFallbackData!;
+        } else if (_userStreamTimedOut) {
+          return buildRetryScaffold();
+        } else {
+          return const Scaffold(
+              body: Center(child: CircularProgressIndicator()));
+        }
 
         // Read isAdmin directly from stream data (avoids race with _adminFlagSub)
         final isAdminFromData = data['isAdmin'] == true;
@@ -768,36 +902,70 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // auction is still live (searching/has_offers). Filter out auctions
     // where the provider already responded so the badge accurately
     // reflects pending-action items.
-    _flashAuctionsSub =
-        FlashAuctionService.watchActiveAuctionsForProvider(uid).listen(
-      (auctions) async {
-        // Only count Flash Auctions the provider hasn't replied to. Reading
-        // the offer subcollection per auction is bounded (≤20 auctions per
-        // stream emit per service contract) — cheap enough for a badge.
-        int pending = 0;
-        for (final a in auctions) {
-          try {
-            final mySnap = await FirebaseFirestore.instance
-                .collection('flash_auctions')
-                .doc(a.id)
-                .collection('offers')
-                .where('providerId', isEqualTo: uid)
-                .limit(1)
-                .get();
-            if (mySnap.docs.isEmpty) pending += 1;
-          } catch (_) {
-            // Network error → still count it; better to over-notify than miss.
-            pending += 1;
-          }
-        }
-        if (mounted) {
+    //
+    // CLAUDE.md Law 12 ("Zero-Tolerance for Stale UI"): only subscribe if
+    // the provider has a `motorcycleTowProfile`. Without it, the
+    // `_FlashAuctionsStrip` in opportunities_screen silently returns
+    // SizedBox.shrink (defensive against stale `notifiedProviderIds`
+    // entries from providers who later un-ticked their bike types), so
+    // counting these auctions in the badge would create a "1 in
+    // Opportunities — but the screen is empty" ghost. Mirror the UI's
+    // hide logic at the badge level.
+    () async {
+      bool hasMotorcycleProfile = false;
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .get();
+        hasMotorcycleProfile =
+            (snap.data()?['motorcycleTowProfile'] as Map?) != null;
+      } catch (_) {
+        // On read failure, default to "no profile" so we don't risk
+        // showing a phantom badge. Provider can pull-to-refresh.
+      }
+      if (!mounted) return;
+      if (!hasMotorcycleProfile) {
+        // Make sure any prior count from a previous setup pass is cleared.
+        if (_flashAuctionsCount != 0) {
           setState(() {
-            _flashAuctionsCount = pending;
+            _flashAuctionsCount = 0;
             _opportunitiesBadge = _jobRequestsCount + _flashAuctionsCount;
           });
         }
-      },
-    );
+        return;
+      }
+      _flashAuctionsSub =
+          FlashAuctionService.watchActiveAuctionsForProvider(uid).listen(
+        (auctions) async {
+          // Only count Flash Auctions the provider hasn't replied to. Reading
+          // the offer subcollection per auction is bounded (≤20 auctions per
+          // stream emit per service contract) — cheap enough for a badge.
+          int pending = 0;
+          for (final a in auctions) {
+            try {
+              final mySnap = await FirebaseFirestore.instance
+                  .collection('flash_auctions')
+                  .doc(a.id)
+                  .collection('offers')
+                  .where('providerId', isEqualTo: uid)
+                  .limit(1)
+                  .get();
+              if (mySnap.docs.isEmpty) pending += 1;
+            } catch (_) {
+              // Network error → still count it; better to over-notify than miss.
+              pending += 1;
+            }
+          }
+          if (mounted) {
+            setState(() {
+              _flashAuctionsCount = pending;
+              _opportunitiesBadge = _jobRequestsCount + _flashAuctionsCount;
+            });
+          }
+        },
+      );
+    }();
   }
 
   /// v9.6.3: Polls chat unread count via one-shot get() instead of a
@@ -917,18 +1085,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     onTap: () => onNavTap(1),
                     badge: _bookingsVisibleBadge,
                   ),
-                  _navItem(
-                    icon: Icons.account_balance_wallet_outlined,
-                    activeIcon: Icons.account_balance_wallet,
-                    label: l10n.tabWallet,
-                    index: 3,
-                    currentIndex: safeIndex,
-                    onTap: () => onNavTap(3),
-                    tourKey: tourProviderWalletKey,
-                    tourTitle: 'ארנק שלי 💰',
-                    tourDesc:
-                        'כאן תראה את יתרתך, תוכל למשוך לחשבון בנק ולעקוב אחר כל תשלום',
-                  ),
+                  // Wallet — hidden from the bottom bar for pure customers
+                  // (moved into Profile → "הגדרות חשבון"). Providers + admins
+                  // keep quick wallet access here. The FinanceScreen tab still
+                  // exists at index 3 in the tab list — only the nav button is
+                  // hidden — so navigation keys/indices stay intact.
+                  if (isProvider || isAdmin)
+                    _navItem(
+                      icon: Icons.account_balance_wallet_outlined,
+                      activeIcon: Icons.account_balance_wallet,
+                      label: l10n.tabWallet,
+                      index: 3,
+                      currentIndex: safeIndex,
+                      onTap: () => onNavTap(3),
+                      tourKey: tourProviderWalletKey,
+                      tourTitle: 'ארנק שלי 💰',
+                      tourDesc:
+                          'כאן תראה את יתרתך, תוכל למשוך לחשבון בנק ולעקוב אחר כל תשלום',
+                    ),
                   // Opportunities (providers)
                   if (isProvider)
                     _navItem(

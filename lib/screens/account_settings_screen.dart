@@ -9,6 +9,7 @@ import '../main.dart' show EmailCollectionScreen, rootNavigatorKey;
 import '../services/account_deletion_service.dart';
 import '../services/audio_service.dart';
 import '../services/cached_readers.dart';
+import 'finance_screen.dart';
 import 'phone_login_screen.dart';
 
 /// Account Settings screen — entry point reachable from the Profile tab,
@@ -62,6 +63,25 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
           children: [
+            // ── My Account ───────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsetsDirectional.only(start: 4, bottom: 8),
+              child: Text(
+                'החשבון שלי',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[600],
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ),
+            // Wallet — moved here from the bottom navigation bar so the
+            // customer's nav stays focused on browse/book/chat.
+            _buildWalletEntry(),
+
+            const SizedBox(height: 28),
+
             // ── Preferences ──────────────────────────────────────────────
             Padding(
               padding: const EdgeInsetsDirectional.only(start: 4, bottom: 8),
@@ -150,6 +170,45 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  // ── Wallet Entry ────────────────────────────────────────────────────────
+  //
+  // The wallet ("ארנק") used to be a dedicated bottom-nav tab for every user.
+  // For customers it was moved here so their navigation bar stays focused on
+  // browse/book/chat. Tapping pushes [FinanceScreen] as a normal route.
+  Widget _buildWalletEntry() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: ListTile(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(15),
+        ),
+        leading: const Icon(
+          Icons.account_balance_wallet_rounded,
+          color: Color(0xFF6366F1),
+        ),
+        title: const Text(
+          'ארנק',
+          style: TextStyle(fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          'צפייה ביתרה ובהיסטוריית התשלומים',
+          style: TextStyle(color: Colors.grey[600], fontSize: 12),
+        ),
+        trailing: const Icon(
+          Icons.chevron_left_rounded,
+          color: Color(0xFF9CA3AF),
+        ),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const FinanceScreen()),
         ),
       ),
     );

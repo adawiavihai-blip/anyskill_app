@@ -23,18 +23,36 @@ class ProviderListingService {
   // ── Read ─────────────────────────────────────────────────────────────────
 
   /// Get all listings for a user (1 or 2 docs).
+  ///
+  /// 6s timeout + graceful empty-list fallback. Without this the call
+  /// could hang forever on a cold WebChannel (no per-call default).
+  /// Live bug report (רועי צברי 2026-05-15): EditProfile dropdown stuck
+  /// on first load — `_loadListingsAndApply` was awaiting this `.get()`
+  /// indefinitely, blocking the active-listing serviceType resolution.
+  /// Empty list is the right fallback semantic: caller falls back to
+  /// `users/{uid}.serviceType` (the v10.1.0 dual-identity contract).
   static Future<List<Map<String, dynamic>>> getListings(String uid) async {
-    final snap = await _db
-        .collection(_col)
-        .where('uid', isEqualTo: uid)
-        .orderBy('identityIndex')
-        .limit(maxIdentities)
-        .get();
-    return snap.docs.map((d) {
-      final m = d.data();
-      m['listingId'] = d.id;
-      return m;
-    }).toList();
+    try {
+      final snap = await _db
+          .collection(_col)
+          .where('uid', isEqualTo: uid)
+          .orderBy('identityIndex')
+          .limit(maxIdentities)
+          .get()
+          .timeout(const Duration(seconds: 6));
+      return snap.docs.map((d) {
+        final m = d.data();
+        m['listingId'] = d.id;
+        return m;
+      }).toList();
+    } catch (e) {
+      // Timeout / permission-denied / network blip → graceful empty
+      // fallback. The caller's flow tolerates an empty result (it falls
+      // back to the user-doc serviceType). A user with REAL listings
+      // will see them on the next stream emit / pull-to-refresh.
+      debugPrint('[ListingService] getListings($uid) failed: $e');
+      return const <Map<String, dynamic>>[];
+    }
   }
 
   /// Stream all listings for a user (real-time).

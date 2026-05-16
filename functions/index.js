@@ -10313,6 +10313,15 @@ exports.createTaskEscrow = onCall(
   },
 );
 
+// addTipToJob — Customer adds a post-completion tip to a provider.
+//
+// v15.x (§79.A.10, 2026-05-14): Hardened from `batch` → `transaction` with
+// three new guards. Pre-fix bugs found by the §79 test suite:
+//   • No balance pre-check → customer could go negative.
+//   • No idempotency → double-tap = double tip.
+//   • No job-status check → could tip a cancelled job.
+// All three closed below. Hard cap added (₪5,000) to match createEscrowPayment.
+// Self-tipping blocked. Same 3-layer atomic write pattern as processPaymentRelease.
 exports.addTipToJob = onCall(
   { region: "us-central1" },
   async (request) => {
@@ -10320,33 +10329,100 @@ exports.addTipToJob = onCall(
       throw new HttpsError("unauthenticated", "Must be signed in.");
     }
     const uid = request.auth.uid;
-    const { jobId, expertId, tipAmount, expertName } = request.data || {};
+    const { jobId, expertId, tipAmount, expertName, clientReqId } = request.data || {};
     if (!jobId || !expertId || typeof tipAmount !== "number" || tipAmount <= 0) {
       throw new HttpsError("invalid-argument", "Missing or invalid fields.");
     }
+    if (tipAmount > 5000) {
+      throw new HttpsError("invalid-argument", "סכום הטיפ חורג מהמקסימום (₪5,000).");
+    }
+    if (uid === expertId) {
+      throw new HttpsError("permission-denied", "לא ניתן לתת טיפ לעצמך.");
+    }
 
     const db = admin.firestore();
-    const batch = db.batch();
 
-    batch.set(db.collection("transactions").doc(), {
-      senderId: uid,
-      receiverId: expertId,
-      receiverName: expertName || "",
-      amount: tipAmount,
-      type: "tip",
-      jobId,
-      payoutStatus: "pending",
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
-    });
-    batch.update(db.collection("users").doc(expertId), {
-      pendingBalance: admin.firestore.FieldValue.increment(tipAmount),
-    });
-    batch.update(db.collection("users").doc(uid), {
-      balance: admin.firestore.FieldValue.increment(-tipAmount),
-    });
-    await batch.commit();
+    // §60 idempotency — same clientReqId returns cached result. Critical for
+    // tip flows because the customer often double-taps the celebration CTA.
+    const cached = await _checkIdempotency(
+      db, "tip_idempotency", uid, clientReqId,
+    );
+    if (cached) {
+      return cached;
+    }
 
-    return { success: true };
+    const jobRef = db.collection("jobs").doc(jobId);
+    const customerRef = db.collection("users").doc(uid);
+    const expertRef = db.collection("users").doc(expertId);
+
+    await db.runTransaction(async (tx) => {
+      // §79 fix 1: read job to verify (a) it exists, (b) caller is the
+      // customer, (c) expertId matches the job, (d) status is tippable.
+      // Prevents tipping a cancelled job or a stranger's job.
+      const jobSnap = await tx.get(jobRef);
+      if (!jobSnap.exists) {
+        throw new HttpsError("not-found", "ההזמנה לא נמצאה.");
+      }
+      const jobData = jobSnap.data() || {};
+      if (jobData.customerId !== uid) {
+        throw new HttpsError(
+          "permission-denied", "רק הלקוח של ההזמנה יכול לתת טיפ.",
+        );
+      }
+      if (jobData.expertId !== expertId) {
+        throw new HttpsError(
+          "invalid-argument", "ה-expertId לא תואם להזמנה.",
+        );
+      }
+      // Tippable statuses = the customer has confirmed work was done (release
+      // happened OR expert marked completed and waiting customer approval).
+      // Excluded: paid_escrow (work hasn't started yet), cancelled, refunded,
+      // disputed, expired.
+      const tippableStatuses = ["completed", "expert_completed"];
+      if (!tippableStatuses.includes(jobData.status)) {
+        throw new HttpsError(
+          "failed-precondition",
+          `לא ניתן לתת טיפ על הזמנה בסטטוס '${jobData.status}'.`,
+        );
+      }
+
+      // §79 fix 2: read customer balance inside tx to prevent negative
+      // balance. Firestore tx semantics guarantee that the value we read
+      // here is the value at write time (else tx retries) — so the
+      // subsequent increment(-tipAmount) cannot push balance below zero.
+      const customerSnap = await tx.get(customerRef);
+      const balance = Number((customerSnap.data() || {}).balance || 0);
+      if (balance < tipAmount) {
+        throw new HttpsError(
+          "failed-precondition",
+          `אין מספיק יתרה. נדרשת יתרה של ₪${tipAmount}.`,
+        );
+      }
+
+      // Writes — same shape as the pre-§79 batch version, just inside tx now.
+      tx.set(db.collection("transactions").doc(), {
+        senderId: uid,
+        receiverId: expertId,
+        receiverName: expertName || "",
+        amount: tipAmount,
+        type: "tip",
+        jobId,
+        payoutStatus: "pending",
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      tx.update(expertRef, {
+        pendingBalance: admin.firestore.FieldValue.increment(tipAmount),
+      });
+      tx.update(customerRef, {
+        balance: admin.firestore.FieldValue.increment(-tipAmount),
+      });
+    });
+
+    const result = { success: true };
+    await _saveIdempotencyResult(
+      db, "tip_idempotency", uid, clientReqId, result,
+    );
+    return result;
   },
 );
 
@@ -17597,7 +17673,19 @@ async function _faFindNearbyProviders({
         console.error('[FlashAuction] provider query failed:', e);
         return [];
     }
-    const candidates = [];
+    // Two buckets:
+    //   withCoords — provider has finite lat/lng → distance-ranked + radius
+    //                gated, escalated tier-by-tier.
+    //   noCoords   — provider is online + eligible but their users/{uid} doc
+    //                has no GPS coords (extremely common on web/PWA, where
+    //                LocationService's broadcast can silently fail). An
+    //                emergency tow call MUST still reach them — we can't
+    //                distance-rank them, so they're appended unconditionally.
+    //                Without this, a real provider whose coords never
+    //                broadcast is invisible to EVERY tier forever. (Live
+    //                bug — רועי צברי, 2026-05-15.)
+    const withCoords = [];
+    const noCoords = [];
     for (const doc of q.docs) {
         if (excludeUids.has(doc.id)) continue;
         const data = doc.data() || {};
@@ -17617,21 +17705,27 @@ async function _faFindNearbyProviders({
         if (!isMotorcycleTow) continue;
         const bikeIds = Array.isArray(profile.bikeTypeIds) ? profile.bikeTypeIds : [];
         if (bikeIds.length === 0) continue;
-        const lat = Number(data.latitude);
-        const lng = Number(data.longitude);
-        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-        const distance = _faHaversineKm(pickupLat, pickupLng, lat, lng);
-        if (distance > radiusKm) continue;
-        candidates.push({
+        const base = {
             uid: doc.id,
-            distance,
             fcmToken: data.fcmToken || data.deviceToken || null,
             profile,
             name: data.name || '',
-        });
+        };
+        const lat = Number(data.latitude);
+        const lng = Number(data.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+            noCoords.push({ ...base, distance: null });
+            continue;
+        }
+        const distance = _faHaversineKm(pickupLat, pickupLng, lat, lng);
+        if (distance > radiusKm) continue;
+        withCoords.push({ ...base, distance });
     }
-    candidates.sort((a, b) => a.distance - b.distance);
-    return candidates.slice(0, maxResults);
+    withCoords.sort((a, b) => a.distance - b.distance);
+    // Coord'd providers fill the slots first (closest wins); the no-coords
+    // fallback tops up any remaining capacity so a real provider is never
+    // silently skipped.
+    return [...withCoords, ...noCoords].slice(0, maxResults);
 }
 
 /// Sends FCM + writes the notifications/{id} inbox row for a single
@@ -17650,7 +17744,12 @@ async function _faNotifyProvider({
         feePercentage,
     );
     const title = 'קריאת גרר חדשה';
-    const body = `${candidate.distance.toFixed(1)} ק"מ ממך · ₪${Math.round(earnings)} הכנסה משוערת`;
+    // candidate.distance is null for providers without broadcast GPS coords
+    // — show a generic prefix instead of crashing on .toFixed().
+    const distancePrefix = Number.isFinite(candidate.distance)
+        ? `${candidate.distance.toFixed(1)} ק"מ ממך`
+        : 'קריאה דחופה באזורך';
+    const body = `${distancePrefix} · ₪${Math.round(earnings)} הכנסה משוערת`;
 
     // Inbox row first (durable even if FCM fails).
     try {

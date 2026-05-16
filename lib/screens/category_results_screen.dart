@@ -1,3 +1,8 @@
+// B.2 (§80 follow-up, 2026-05-14): the 13 helper widgets at the bottom of
+// this file moved to category_results/widgets/category_results_widgets.dart.
+// They stay private (`_XxxWidget`) and reachable thanks to the `part` directive.
+library;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -40,6 +45,8 @@ import '../services/filter_schema_service.dart';
 import 'flash_auction/flash_auction_issue_screen.dart';
 import 'babysitter_emergency/babysitter_emergency_details_screen.dart';
 import 'delivery_express/delivery_express_package_screen.dart';
+
+part 'category_results/widgets/category_results_widgets.dart';
 
 // Brand colours (shared with the rest of the app)
 const _kPurple     = Color(0xFF6366F1);
@@ -91,7 +98,10 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   double _minRating      = 0;        // 0 = no filter, 3/4/4.5 = minimum stars
   double? _maxDistanceKm;            // null = no radius limit
   // v12.9.0: Map filter chips
-  bool   _onlineOnly     = false;    // "🟢 זמינים עכשיו"
+  // "🟢 זמינים עכשיו" — defaults to TRUE so the map only ever shows
+  // providers available RIGHT NOW (2026-05-16, user request). The user
+  // can still toggle the chip off to also see offline providers.
+  bool   _onlineOnly     = true;
 
   // v12.9.0 (PR-5): Map bottom-sheet carousel state
   final PageController _mapPageCtrl =
@@ -129,6 +139,16 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   bool _hasMore       = true;
   DocumentSnapshot<Map<String, dynamic>>? _lastDoc;
 
+  /// Background retry timer — fires every 10s after a failed fetch so
+  /// the screen self-heals when the user's network recovers, WITHOUT
+  /// ever showing them an alarming error scaffold. Cancelled on dispose
+  /// and on successful load.
+  Timer? _backgroundRetryTimer;
+
+  /// True once the one-time failed/empty-load retry has run — guards the
+  /// periodic 10s background retry from re-retrying in a tight loop.
+  bool _bounceUsed = false;
+
   /// Full v2 ServiceSchema (depositPercent / priceLocked / bundles /
   /// surcharge / fields). Used by [SearchCardPricePill] to render the
   /// price + transparency badges below it (§62). Cached for 30 min via
@@ -140,11 +160,21 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
   late final ScrollController _scrollCtrl;
 
+  /// When true, [_fetchPage] skips the `isVerified == false` and
+  /// `isHidden == true` filters — admins must be able to see every
+  /// provider in a sub-category (including pending verifications and
+  /// hidden demos) so they can verify / manage them from the listing.
+  bool _isAdminViewer = false;
+
   @override
   void initState() {
     super.initState();
     _scrollCtrl = ScrollController()..addListener(_onScroll);
-    _loadInitial();
+    // Resolve the admin flag BEFORE the first page load so the page-
+    // level filter decisions are correct from the very first paint.
+    // Cached 5 min by CachedReaders, so this is typically <1ms on
+    // any tab return.
+    _detectAdminAndLoad();
     // §62: load the full v2 schema so the price pill can show transparency
     // badges (depositPercent / priceLocked / bundles / surcharge) below
     // the price. Cached 30 min via CachedReaders. Replaces the prior
@@ -196,6 +226,7 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
   void dispose() {
     _scrollCtrl.dispose();
     _mapPageCtrl.dispose();
+    _backgroundRetryTimer?.cancel();
     super.dispose();
   }
 
@@ -206,25 +237,177 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     }
   }
 
+  /// Resolves the viewer's `isAdmin` flag IN PARALLEL with the first
+  /// page load. The race-safe pattern (replacing v15.x serial-await):
+  ///
+  ///   1. Kick off `_loadInitial()` IMMEDIATELY with `_isAdminViewer =
+  ///      false` so the page never blocks on a slow network read.
+  ///   2. Concurrently fire the admin-detection read with a 2-second
+  ///      hard timeout (Firestore SDK has NO built-in timeout — a
+  ///      zombie WebChannel on iOS Safari / flaky network would
+  ///      otherwise hang here forever).
+  ///   3. If admin status flips to true AFTER the first page rendered,
+  ///      `_loadInitial()` is called again to re-fetch with the admin
+  ///      filter set (so demos / unverified providers materialize).
+  ///
+  /// Previously this was a serial `await detect → setState → load`.
+  /// On a slow first-time visit (cold cache) the page either hung on
+  /// the spinner forever (no timeout) OR silently fell through to
+  /// `_isAdminViewer = false` on a transient throw — which hid every
+  /// demo / pending-verification provider from admin view. The
+  /// inconsistency-by-network-quality is what produced the user-
+  /// visible "sometimes I see them, sometimes I don't" symptom.
+  Future<void> _detectAdminAndLoad() async {
+    // Phase 1 — start the page load immediately so the user gets
+    // SOMETHING on screen within the network's first response, even
+    // if admin status hasn't resolved yet.
+    unawaited(_loadInitial());
+
+    // Phase 2 — race the admin-detection read against a 2s timeout.
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return;
+
+    Map<String, dynamic> data;
+    try {
+      data = await CachedReaders.providerProfile(uid).timeout(
+        const Duration(seconds: 2),
+      );
+    } catch (_) {
+      // Network timeout / permission-denied / etc. → re-fetch with a
+      // longer timeout in the background. We DON'T re-throw; the
+      // first-page render is already safe with `_isAdminViewer = false`.
+      try {
+        data = await CachedReaders.providerProfile(uid).timeout(
+          const Duration(seconds: 8),
+        );
+      } catch (_) {
+        // Both attempts failed — admin will see the non-admin filter
+        // until they pull-to-refresh. Acceptable degradation.
+        return;
+      }
+    }
+    if (!mounted) return;
+    if (data['isAdmin'] == true && !_isAdminViewer) {
+      setState(() {
+        _isAdminViewer = true;
+        // Reset pagination so [_loadInitial] re-fetches the FIRST page
+        // with the admin filter set (demos + unverified providers now
+        // visible). The currently-rendered list is wiped before the
+        // refetch via the setState inside [_loadInitial] itself.
+        _lastDoc = null;
+        _hasMore = true;
+      });
+      unawaited(_loadInitial());
+    }
+  }
+
   Future<void> _loadInitial() async {
+    // CRITICAL UX: only show the spinner overlay when we have NO data
+    // yet. On pull-to-refresh, keep the existing providers visible so
+    // the user never sees a blank screen + spinner — they keep seeing
+    // the old list and it replaces in-place when the new fetch resolves.
+    // This was the root of the "stuck on spinner" complaint from
+    // רועי צברי (2026-05-14): every refresh wiped the visible providers
+    // and showed a centered spinner over an empty screen.
+    final bool firstLoad = _allExperts.isEmpty;
     setState(() {
-      _isLoading = true;
-      _allExperts.clear();
+      if (firstLoad) _isLoading = true;
       _lastDoc = null;
       _hasMore = true;
     });
-    try {
-      final page = await _fetchPage();
-      if (!mounted) return;
+    // Cancel any pending background retry — a new explicit load
+    // supersedes it.
+    _backgroundRetryTimer?.cancel();
+    // Single attempt with 12s timeout, then a brief retry. Total ~25s.
+    const backoffs = [Duration(seconds: 0), Duration(seconds: 3)];
+    List<Map<String, dynamic>>? successPage;
+    for (int attempt = 0; attempt < backoffs.length; attempt++) {
+      if (attempt > 0) {
+        await Future.delayed(backoffs[attempt]);
+        if (!mounted) return;
+      }
+      try {
+        final page = await _fetchPage();
+        successPage = page;
+        break;
+      } catch (e) {
+        debugPrint('⚠️ _loadInitial attempt ${attempt + 1} error: $e');
+        if (!mounted) return;
+        _lastDoc = null;
+      }
+    }
+    if (!mounted) return;
+
+    // ── Failed/empty first-load retry (2026-05-15, רועי צברי) ───────────
+    // A sub-category that comes back empty/stalled on the first try is
+    // often a transient strained-channel read, not a genuinely empty
+    // category — so retry the fetch ONCE.
+    //
+    // ⚠️ This used to disableNetwork()/enableNetwork() before the retry.
+    // REMOVED 2026-05-16 — that "bounce" is GLOBAL (it kills every
+    // Firestore listener in the whole app) and, fired from this and two
+    // other screens on independent timers, cascaded across provider/
+    // admin sessions: each bounce broke notifications, banners and every
+    // other screen's streams. See home_screen.dart for the full
+    // rationale. A plain re-fetch is the safe replacement.
+    final loadFailed =
+        successPage == null || (firstLoad && successPage.isEmpty);
+    if (loadFailed && !_bounceUsed) {
+      _bounceUsed = true;
+      try {
+        _lastDoc = null;
+        successPage = await _fetchPage();
+        debugPrint(
+            '[CategoryResults] Retry fetch: ${successPage.length} result(s)');
+      } catch (e) {
+        debugPrint('[CategoryResults] Retry fetch error: $e');
+        if (!mounted) return;
+      }
+    }
+
+    if (successPage != null) {
       setState(() {
-        _allExperts.addAll(page);
+        // Replace the old list ATOMICALLY with the new one — no flash
+        // of "empty" between clear() and addAll().
+        _allExperts
+          ..clear()
+          ..addAll(successPage!);
         _isLoading = false;
       });
-    } catch (e) {
-      debugPrint('⚠️ _loadInitial error: $e');
-      if (!mounted) return;
-      setState(() => _isLoading = false);
+      // Safety net: if the FIRST fetch (even after the bounce) came
+      // back empty, schedule ONE quick background re-check at ~4s.
+      // Genuinely-empty sub-categories are unaffected (the retry
+      // re-reads and stays empty, silently). Providers briefly
+      // invisible due to a strained channel materialize WITHOUT the
+      // user having to manually refresh.
+      if (firstLoad && successPage.isEmpty) {
+        _backgroundRetryTimer?.cancel();
+        _backgroundRetryTimer = Timer(const Duration(seconds: 4), () {
+          if (!mounted) return;
+          if (_allExperts.isEmpty) _loadInitial();
+        });
+      }
+      return;
     }
+    // Both attempts failed. Don't show a scary "בעיית חיבור" error.
+    // Just leave _allExperts empty + _hasMore=false so the neutral
+    // "no providers in this category" copy renders, AND schedule a
+    // SILENT background retry every 10s so the screen self-heals
+    // when the user's network recovers.
+    setState(() {
+      _isLoading = false;
+      if (firstLoad) _hasMore = false;
+    });
+    _backgroundRetryTimer = Timer.periodic(const Duration(seconds: 10),
+        (_) {
+      if (!mounted) {
+        _backgroundRetryTimer?.cancel();
+        return;
+      }
+      // Try once silently. On success the timer is cancelled at the
+      // top of _loadInitial (so no double-fire) and the list updates.
+      _loadInitial();
+    });
   }
 
   Future<void> _loadMore() async {
@@ -263,6 +446,11 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       final db = FirebaseFirestore.instance;
       final seenListings = <String>{};
       final results = <Map<String, dynamic>>[];
+      // Admins see every provider in the sub-category, including those
+      // pending verification (isVerified==false) and hidden demos
+      // (isHidden==true). Resolved before the first page load by
+      // [_detectAdminAndLoad]. Non-admins keep the production filter.
+      final isAdmin = _isAdminViewer;
 
       // ── Primary: listings query ──────────────────────────────────────
       if (!widget.volunteerOnly) {
@@ -273,10 +461,11 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
         if (_lastDoc != null) q = q.startAfterDocument(_lastDoc!);
         q = q.limit(_kPageSize);
 
-        final snap = await q.get().timeout(
-          const Duration(seconds: 8),
-          onTimeout: () => q.get(const GetOptions(source: Source.cache)),
-        );
+        // Server-only fetch. Reduced from 20s → 12s after the user
+        // reported (2026-05-14) that 20s + retry = 43s of unblocking
+        // spinner was unusable. 12s + 3s backoff + 12s = 27s max, and
+        // most healthy connections complete in 1-3s anyway.
+        final snap = await q.get().timeout(const Duration(seconds: 12));
         debugPrint('[CategoryResults] Listings: ${snap.docs.length} for "${widget.categoryName}"');
 
         if (snap.docs.length < _kPageSize) {
@@ -286,8 +475,12 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
         for (final d in snap.docs) {
           final map = d.data();
-          if (map['isVerified'] == false) continue;
-          if (map['isHidden'] == true) continue;
+          // SOFT LAUNCH: per user request 2026-05-15, every user sees
+          // ALL providers (including demos AND pending-verification
+          // providers). Only `isHidden: true` records (admin spam
+          // blocks) are filtered for non-admins. Demos write
+          // `isVerified: true, isHidden: false` so they pass through.
+          if (!isAdmin && map['isHidden'] == true) continue;
           // v11.9.x: Demo profiles ARE shown in search (Soft Launch).
           // Booking interception in expert_profile_screen handles the
           // fake-success flow + admin notification. To filter them out,
@@ -299,6 +492,10 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
         }
 
         // ── Fallback: parentCategory match ────────────────────────────
+        // Bumped to 15s (was 10s) after live user reports of premature
+        // timeouts. Failure here is silently swallowed because the
+        // primary serviceType query is the canonical match — parent-
+        // Category is just a safety net for legacy listings.
         if (results.isEmpty && _lastDoc == null) {
           try {
             final parentSnap = await db
@@ -306,13 +503,14 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                 .where('parentCategory', isEqualTo: widget.categoryName)
                 .limit(_kPageSize)
                 .get()
-                .timeout(const Duration(seconds: 6),
+                .timeout(const Duration(seconds: 15),
                     onTimeout: () => throw TimeoutException('parentCategory'));
             for (final d in parentSnap.docs) {
               if (seenListings.contains(d.id)) continue;
               final map = d.data();
-              if (map['isVerified'] == false) continue;
-              if (map['isHidden'] == true) continue;
+              // Soft Launch: only filter `isHidden`. See primary
+              // listings loop above for full rationale.
+              if (!isAdmin && map['isHidden'] == true) continue;
               map['listingId'] = d.id;
               map['uid'] = map['uid'] ?? '';
               if (seenListings.add(d.id)) results.add(map);
@@ -340,8 +538,12 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
         for (final d in snap.docs) {
           final map = d.data();
           map['uid'] = d.id;
-          if (map['isVerified'] == false) continue;
-          if (map['isHidden'] == true) continue;
+          // SOFT LAUNCH: per user request 2026-05-15, every user sees
+          // ALL providers (including demos AND pending-verification
+          // providers). Only `isHidden: true` records (admin spam
+          // blocks) are filtered for non-admins. Demos write
+          // `isVerified: true, isHidden: false` so they pass through.
+          if (!isAdmin && map['isHidden'] == true) continue;
           if (seenListings.add(d.id)) results.add(map);
         }
       }
@@ -350,16 +552,25 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
       // and auto-create missing listings (the "ghost" fix) ─────────────
       if (results.isEmpty && !widget.volunteerOnly && _lastDoc == null) {
         debugPrint('[CategoryResults] No listings found — trying users fallback + auto-repair');
+        // 15s timeout — same reasoning as the parentCategory fallback
+        // above. Without this, a stuck connection could hang here
+        // indefinitely since this is the LAST fallback before returning
+        // an empty list.
         final userSnap = await db
             .collection('users')
             .where('isProvider', isEqualTo: true)
             .where('serviceType', isEqualTo: widget.categoryName)
             .limit(_kPageSize)
-            .get();
+            .get()
+            .timeout(const Duration(seconds: 15));
         for (final d in userSnap.docs) {
           final map = d.data();
-          if (map['isVerified'] == false) continue;
-          if (map['isHidden'] == true) continue;
+          // SOFT LAUNCH: per user request 2026-05-15, every user sees
+          // ALL providers (including demos AND pending-verification
+          // providers). Only `isHidden: true` records (admin spam
+          // blocks) are filtered for non-admins. Demos write
+          // `isVerified: true, isHidden: false` so they pass through.
+          if (!isAdmin && map['isHidden'] == true) continue;
           map['uid'] = d.id;
           results.add(map);
           // Fire-and-forget: auto-create listing for this provider
@@ -384,1292 +595,66 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
   /// Returns display time slots for a given [day] based on provider's
   /// [workingHours]. Falls back to 4 fixed slots if no hours are configured.
-  static List<String> _timesForDay(Map<String, dynamic>? workingHours, DateTime day) {
-    const fallback = ['09:00', '11:00', '14:00', '16:00'];
-    if (workingHours == null || workingHours.isEmpty) return fallback;
-    // Our schema: 0=Sunday..6=Saturday. DateTime.weekday: 1=Mon..7=Sun.
-    final dayIndex = day.weekday == 7 ? 0 : day.weekday;
-    final entry = workingHours['$dayIndex'] as Map<String, dynamic>?;
-    if (entry == null) return []; // provider doesn't work this day
-    final fromHour = int.tryParse((entry['from'] ?? '09:00').toString().split(':').first) ?? 9;
-    final toHour   = int.tryParse((entry['to']   ?? '17:00').toString().split(':').first) ?? 17;
-    // Generate slots every 2 hours within the range
-    final slots = <String>[];
-    for (int h = fromHour; h < toHour; h += 2) {
-      slots.add('${h.toString().padLeft(2, '0')}:00');
-    }
-    return slots.isEmpty ? fallback : slots;
-  }
 
-  void _showAvailabilitySheet(
-      BuildContext context, Map<String, dynamic> data, String expertId) {
-    final l10n = AppLocalizations.of(context);
-
-    // Parse the provider's blocked dates (ISO-8601 strings: 'YYYY-MM-DD')
-    final blocked = ((data['unavailableDates'] as List?) ?? [])
-        .map((d) => d.toString().substring(0, 10))
-        .toSet();
-
-    // Compute the next 7 calendar days, then keep only the 3 first available
-    final today = DateTime.now();
-    final slots = <DateTime>[];
-    for (int i = 1; i <= 14 && slots.length < 3; i++) {
-      final day = today.add(Duration(days: i));
-      final key = '${day.year.toString().padLeft(4, '0')}-'
-          '${day.month.toString().padLeft(2, '0')}-'
-          '${day.day.toString().padLeft(2, '0')}';
-      if (!blocked.contains(key)) slots.add(day);
-    }
-
-    // Dynamic time options based on provider's workingHours, with legacy fallback
-    final rawHours = data['workingHours'] as Map<String, dynamic>?;
-    final dayLabels = [
-      AppLocalizations.of(context).editDaySunday,
-      AppLocalizations.of(context).editDayMonday,
-      AppLocalizations.of(context).editDayTuesday,
-      AppLocalizations.of(context).editDayWednesday,
-      AppLocalizations.of(context).editDayThursday,
-      AppLocalizations.of(context).editDayFriday,
-      AppLocalizations.of(context).editDaySaturday,
-    ];
-    // Use short locale-aware month names via intl
-    final monthLabels = List<String>.generate(12, (i) {
-      final d = DateTime(2024, i + 1, 1);
-      return DateFormat.MMM(AppLocalizations.of(context).localeName).format(d);
-    });
-
-    final expertDefaultName = l10n.catResultsExpertDefault;
-    final availableSlotsTitle = l10n.catResultsAvailableSlots;
-    final noAvailabilityMsg = l10n.catResultsNoAvailability;
-    final fullBookingLabel = l10n.catResultsFullBooking;
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            // Drag handle
-            Center(
-              child: Container(
-                width: 40, height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  data['name'] ?? expertDefaultName,
-                  style: const TextStyle(color: Colors.grey, fontSize: 13),
-                ),
-                Text(
-                  availableSlotsTitle,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            if (slots.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 24),
-                child: Center(
-                  child: Text(noAvailabilityMsg,
-                      style: const TextStyle(color: Colors.grey, fontSize: 14)),
-                ),
-              )
-            else
-              SizedBox(
-                height: 130,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  reverse: true,             // RTL scroll feels natural
-                  itemCount: slots.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 12),
-                  itemBuilder: (ctx, i) {
-                    final day = slots[i];
-                    final dayName  = dayLabels[day.weekday % 7];
-                    final dateStr  = '${day.day} ${monthLabels[day.month - 1]}';
-                    return Container(
-                      width: 130,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: _kPurpleSoft,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: _kPurple.withValues(alpha: 0.25)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(dayName,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: _kPurple,
-                                  fontSize: 14)),
-                          Text(dateStr,
-                              style: TextStyle(
-                                  color: Colors.grey[600], fontSize: 12)),
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            alignment: WrapAlignment.end,
-                            children: _timesForDay(rawHours, day).map((t) => GestureDetector(
-                              onTap: () {
-                                Navigator.pop(ctx);
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => ExpertProfileScreen(
-                                      expertId: expertId,
-                                      expertName: data['name'] ?? expertDefaultName,
-                                      listingId: data['listingId'] as String?,
-                                    ),
-                                  ),
-                                );
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                      color: _kPurple.withValues(alpha: 0.4)),
-                                ),
-                                child: Text(t,
-                                    style: const TextStyle(
-                                        fontSize: 11,
-                                        color: _kPurple,
-                                        fontWeight: FontWeight.w600)),
-                              ),
-                            )).toList(),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
-
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _kPurple,
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size(double.infinity, 48),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                  elevation: 0,
-                ),
-                onPressed: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ExpertProfileScreen(
-                        expertId: expertId,
-                        expertName: data['name'] ?? expertDefaultName,
-                        listingId: data['listingId'] as String?,
-                      ),
-                    ),
-                  );
-                },
-                child: Text(fullBookingLabel,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Card: Action Image (left 38%)
-  // ─────────────────────────────────────────────────────────────────────────
-
-  /// Returns true when the expert has an active story uploaded in the last 24h.
-  bool _isStoryActive(Map<String, dynamic> data) {
-    if (data['hasActiveStory'] != true) return false;
-    final ts = (data['storyTimestamp'] as Timestamp?)?.toDate();
-    if (ts == null) return false;
-    return DateTime.now().difference(ts).inHours < 24;
-  }
-
-  Widget _buildActionImage(Map<String, dynamic> data, bool isOnline) {
-    final l10n        = AppLocalizations.of(context);
-    final hasStory    = _isStoryActive(data);
-    final profileImg  = data['profileImage'] as String? ?? '';
-    final hasImg      = profileImg.isNotEmpty;
-
-    // Trust badges
-    final orderCount   = (data['orderCount'] as num?)?.toInt() ?? 0;
-    final respTime     = (data['responseTimeMinutes'] as num?)?.toInt() ?? 0;
-    final rating       = (data['rating'] as num?)?.toDouble() ?? 0;
-    final reviewsCount = (data['reviewsCount'] as num?)?.toInt() ?? 0;
-
-    final badges = <String>[];
-    if (orderCount >= 5) badges.add(l10n.catResultsOrderCount(orderCount));
-    if (respTime > 0 && respTime <= 10) badges.add(l10n.catResultsResponseTime(respTime));
-    if (rating >= 4.8 && reviewsCount >= 3) badges.add(l10n.catResultsTopRated);
-
-    return ClipRRect(
-      borderRadius: const BorderRadius.only(
-        topRight: Radius.circular(16),
-        bottomRight: Radius.circular(16),
-      ),
-      child: SizedBox(
-        width: 130,
-        child: Stack(
-          children: [
-            // ── Background + centered CircleAvatar ───────────────────────
-            Positioned.fill(
-              child: Container(color: _kPurpleSoft),
-            ),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () async {
-                final expertId = data['uid'] as String? ?? '';
-                if (data['hasActiveStory'] != true || expertId.isEmpty) return;
-                final doc = await FirebaseFirestore.instance
-                    .collection('stories')
-                    .doc(expertId)
-                    .get();
-                if (!mounted || !doc.exists) return;
-                openStoryViewer(context, expertId, doc.data()!);
-              },
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 20),
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: hasStory
-                              ? null
-                              : Border.all(color: _kPurple.withValues(alpha: 0.18), width: 2),
-                          gradient: hasStory
-                              ? const LinearGradient(
-                                  colors: [Color(0xFF6366F1), Color(0xFFEC4899), Color(0xFFF59E0B)],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                )
-                              : null,
-                        ),
-                        padding: hasStory ? const EdgeInsets.all(3) : EdgeInsets.zero,
-                        child: CircleAvatar(
-                          radius: 46,
-                          backgroundColor: const Color(0xFFEEEBFF),
-                          backgroundImage: hasImg ? safeImageProvider(profileImg) : null,
-                          child: safeImageProvider(profileImg) == null
-                              ? Icon(Icons.person, size: 40,
-                                  color: _kPurple.withValues(alpha: 0.5))
-                              : null,
-                        ),
-                      ),
-                      // ── Volunteer Heart overlay (Metallic Gold) ─────────
-                      // Phase B (v15.x): gated via [shouldShowHeartFor] —
-                      // v2 viewers see the new 30-day-expiry semantics,
-                      // v1 viewers keep the legacy permanent-heart behavior.
-                      if (shouldShowHeartFor(
-                        viewerUid: FirebaseAuth.instance.currentUser?.uid,
-                        ownerData: data,
-                      ))
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: Container(
-                            padding: const EdgeInsets.all(2),
-                            decoration: const BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(Icons.favorite_rounded,
-                                color: Color(0xFFD4AF37), size: 16),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-            // ── Badge row (top, clean — no overlap with avatar) ───────────
-            Positioned(
-              top: 6,
-              left: 4,
-              right: 4,
-              child: Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 4,
-                runSpacing: 3,
-                children: [
-                  if (isOnline)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.50),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.circle, color: Color(0xFF22C55E), size: 7),
-                          const SizedBox(width: 3),
-                          Text(l10n.onlineStatus,
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    )
-                  else
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.50),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.circle, color: Color(0xFF9CA3AF), size: 7),
-                          const SizedBox(width: 3),
-                          Text(AppLocalizations.of(context).catDayOffline,
-                              style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    ),
-                  if (reviewsCount > 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.50),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.star_rounded,
-                              color: Color(0xFFFBBF24), size: 10),
-                          const SizedBox(width: 2),
-                          Text(rating.toStringAsFixed(1),
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    ),
-                  if (hasStory)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF6366F1), Color(0xFFEC4899)],
-                        ),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.play_circle_fill_rounded,
-                              color: Colors.white, size: 9),
-                          SizedBox(width: 2),
-                          Text('STORY',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 0.3)),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Quick Tags row (shown in the details panel)
-  // ─────────────────────────────────────────────────────────────────────────
-
-  Widget _buildQuickTagsRow(List<String> tagKeys) {
-    // Resolve keys → display data, ignore unknown keys, cap at 2
-    final resolved = tagKeys
-        .map(quickTagByKey)
-        .whereType<Map<String, String>>()
-        .take(2)
-        .toList();
-    if (resolved.isEmpty) return const SizedBox.shrink();
-
-    return Wrap(
-      spacing: 5,
-      runSpacing: 4,
-      alignment: WrapAlignment.end,
-      children: resolved.map((t) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-        decoration: BoxDecoration(
-          color: _kPurpleSoft,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: _kPurple.withValues(alpha: 0.18)),
-        ),
-        child: Text(
-          '${t['emoji']} ${t['label']}',
-          style: TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.w600,
-            color: _kPurple.withValues(alpha: 0.85),
-          ),
-        ),
-      )).toList(),
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Card: Details panel (right 62%)
-  // ─────────────────────────────────────────────────────────────────────────
-
-  Widget _buildExpertDetails(
-    Map<String, dynamic> data,
-    bool isVerified,
-    bool isPromoted,
-    bool isOnline,
-    String expertId,
-  ) {
-    final l10n        = AppLocalizations.of(context);
-    final isPro       = data['isAnySkillPro'] == true;
-    final name        = data['name'] as String? ?? l10n.catResultsExpertDefault;
-    final rating      = (data['rating'] as num?)?.toDouble() ?? 5.0;
-    final reviewsCount = (data['reviewsCount'] as num?)?.toInt() ?? 0;
-    final bio         = data['aboutMe'] as String? ?? '';
-    final tagKeys     = ((data['quickTags'] as List?) ?? []).cast<String>();
-    // Mirror the profile's "specialist card" stats so the search card carries
-    // the same numbers (jobs / rating / reviews / volunteers). Volunteer count
-    // reads the denormalized `users/{uid}.volunteerTaskCount` (incremented in
-    // CommunityHubService — CLAUDE.md §7b) so we don't need a per-card stream.
-    final jobsCount = (data['completedJobsCount'] as num?
-            ?? data['orderCount'] as num?
-            ?? 0).toInt();
-    final volunteersCount =
-        (data['volunteerTaskCount'] as num? ?? 0).toInt();
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
-      // mainAxisAlignment.spaceBetween pushes the CTA buttons to the card
-      // bottom without using Spacer(). Spacer inside IntrinsicHeight has
-      // zero intrinsic height, causing 1 px overflows on some text sizes.
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          // ── Top content group ────────────────────────────────────────────
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              // ── Price (top-right, most prominent) ─────────────────────
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // Level badge on the left
-                  if ((data['xp'] as num? ?? 0) > 0)
-                    LevelBadge(xp: (data['xp'] as num).toInt(), size: 16),
-
-                  // Price + transparency badges (§62 — Wolt/Airbnb pattern).
-                  // The pill renders the big price line PLUS small badges
-                  // for deposit / price-locked / bundle savings / off-hours
-                  // surcharge — pricing signals that previously hid inside
-                  // the booking sheet.
-                  SearchCardPricePill(
-                    userData: data,
-                    schema: _serviceSchema,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-
-              // ── Name + verification + promoted ───────────────────────
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  if (isPromoted)
-                    Container(
-                      margin: const EdgeInsets.only(left: 5),
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.amber[50],
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.amber.shade300),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.star_rounded,
-                              color: Colors.amber[700], size: 10),
-                          const SizedBox(width: 3),
-                          Text(l10n.catResultsRecommended,
-                              style: TextStyle(
-                                  fontSize: 9,
-                                  color: Colors.amber[800],
-                                  fontWeight: FontWeight.w700)),
-                        ],
-                      ),
-                    ),
-                  if (isVerified) ...[
-                    const SizedBox(width: 4),
-                    const Icon(Icons.verified,
-                        color: Color(0xFF1877F2), size: 15),
-                  ],
-                  // Phase B (v15.x): viewer-gated. v2 viewers see the
-                  // 30-day-expiry semantics; v1 keeps legacy behavior.
-                  if (shouldShowHeartFor(
-                    viewerUid: FirebaseAuth.instance.currentUser?.uid,
-                    ownerData: data,
-                  )) ...[
-                    const SizedBox(width: 4),
-                    VolunteerService.hasActiveVolunteerBadge(data)
-                        ? Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 5, vertical: 1),
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                colors: [
-                                  Color(0xFFD4AF37),
-                                  Color(0xFFB8860B),
-                                ],
-                              ),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(Icons.favorite_rounded,
-                                    color: Colors.white, size: 11),
-                                const SizedBox(width: 2),
-                                Text(
-                                  _communityBadgeLabel(data, context),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                        : const Icon(Icons.favorite,
-                            color: Color(0xFFD4AF37), size: 15),
-                  ],
-                  const SizedBox(width: 4),
-                  Flexible(
-                    child: Text(
-                      name,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 15),
-                    ),
-                  ),
-                ],
-              ),
-              if (isPro) ...[
-                const SizedBox(height: 5),
-                const Align(
-                  alignment: Alignment.centerRight,
-                  child: ProBadge(),
-                ),
-              ],
-              const SizedBox(height: 4),
-
-              // ── Bio (1 line) ───────────────────────────────────────────
-              if (bio.isNotEmpty)
-                Text(
-                  bio,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.right,
-                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                ),
-              if (bio.isNotEmpty) const SizedBox(height: 4),
-
-              // ── Quick Tags ─────────────────────────────────────────────
-              _buildQuickTagsRow(tagKeys),
-              if (tagKeys.isNotEmpty) const SizedBox(height: 4),
-
-              // ── Category-specific tags (max 5, compact) ────────────────
-              if ((data['categoryTags'] as List?)?.isNotEmpty == true) ...[
-                ProviderCategoryTagsDisplay(
-                  category:
-                      (data['serviceType'] as String? ?? '').trim(),
-                  tagIds: ((data['categoryTags'] as List?) ?? const [])
-                      .cast<String>(),
-                  maxVisible: 3,
-                ),
-                const SizedBox(height: 4),
-              ],
-
-              // ── Stats strip — mirrors the profile's specialist card ────
-              // 4 mini-chips matching expert_profile_screen._buildSpecialistCard
-              // stat rows: jobs / rating / reviews / volunteers. Each chip
-              // hides itself when its value is 0 so non-volunteers / new
-              // providers don't carry "0 0 0" visual noise. RTL-safe via
-              // MainAxisAlignment.end.
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  if (jobsCount > 0) ...[
-                    _MiniStatChip(
-                      icon: Icons.shield_outlined,
-                      value: '$jobsCount',
-                      color: _kPurple,
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  _MiniStatChip(
-                    icon: Icons.star_rounded,
-                    value: rating.toStringAsFixed(1),
-                    color: _kGold,
-                  ),
-                  if (reviewsCount > 0) ...[
-                    const SizedBox(width: 8),
-                    _MiniStatChip(
-                      icon: Icons.chat_bubble_outline_rounded,
-                      value: '$reviewsCount',
-                      color: Colors.teal,
-                    ),
-                  ],
-                  if (volunteersCount > 0) ...[
-                    const SizedBox(width: 8),
-                    _MiniStatChip(
-                      icon: Icons.favorite_rounded,
-                      value: '$volunteersCount',
-                      // Metallic gold — matches CLAUDE.md §9d "Luxury Metallic
-                      // Gold" volunteer brand color used on profile heart.
-                      color: const Color(0xFFD4AF37),
-                    ),
-                  ],
-                ],
-              ),
-
-              // ── Distance from customer — dedicated row beneath rating ──
-              // Always renders a row so the UI position is visible; falls
-              // back to "מחשב מרחק..." when either side lacks coordinates
-              // so the operator (you) can confirm placement and then enable
-              // location permission to see the real number.
-              const SizedBox(height: 4),
-              _buildCardDistanceRow(data),
-            ],
-          ),
-
-          // ── Bottom CTA group (pinned to card bottom by spaceBetween) ─────
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // ── "When are they free?" ghost button ───────────────────
-              SizedBox(
-                height: 32,
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    side: BorderSide(color: _kPurple.withValues(alpha: 0.45)),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
-                    foregroundColor: _kPurple,
-                  ),
-                  icon: const Icon(Icons.calendar_today_rounded, size: 13),
-                  label: Text(l10n.catResultsWhenFree,
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                  onPressed: () =>
-                      _showAvailabilitySheet(context, data, expertId),
-                ),
-              ),
-              const SizedBox(height: 6),
-
-              // ── Book Now — primary CTA ─────────────────────────────
-              SizedBox(
-                height: 36,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _kPurple,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
-                    padding: EdgeInsets.zero,
-                  ),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ExpertProfileScreen(
-                        expertId: expertId,
-                        expertName: name,
-                        listingId: data['listingId'] as String?,
-                      ),
-                    ),
-                  ),
-                  child: Text(l10n.bookNow,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 13)),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Distance chip rendered on its own row in the list card (below rating).
-  /// Always returns a widget so the position is visible — falls back to a
-  /// subtle "מחשב מרחק..." placeholder when either the customer location
-  /// or the provider coordinates are missing. Logs to the console so you
-  /// can diagnose which half is missing in DevTools.
-  Widget _buildCardDistanceRow(Map<String, dynamic> data) {
-    final lat = (data['latitude']  as num?)?.toDouble();
-    final lng = (data['longitude'] as num?)?.toDouble();
-    final uid = (data['uid'] as String?) ?? '?';
-    // ignore: avoid_print
-    print('[ListCard/distance] uid=$uid '
-        'my=${_currentPosition == null ? "null" : "(${_currentPosition!.latitude}, ${_currentPosition!.longitude})"} '
-        'provider=($lat, $lng) raw latitude=${data['latitude']} longitude=${data['longitude']}');
-    String label;
-    Color color;
-    if (_currentPosition == null) {
-      label = 'מחשב מרחק...';
-      color = Colors.grey.shade400;
-    } else if (lat == null || lng == null) {
-      label = 'מרחק לא ידוע';
-      color = Colors.grey.shade400;
-    } else {
-      try {
-        final meters = Geolocator.distanceBetween(
-            _currentPosition!.latitude, _currentPosition!.longitude, lat, lng);
-        // ignore: avoid_print
-        print('[ListCard/distance] uid=$uid distance = ${meters.toStringAsFixed(0)} m');
-        label = meters < 1000
-            ? 'בשכונתך'
-            : '${(meters / 1000).toStringAsFixed(1)} ק"מ';
-        color = const Color(0xFF10B981);
-      } catch (e) {
-        // ignore: avoid_print
-        print('[ListCard/distance] uid=$uid distanceBetween threw: $e');
-        label = 'מרחק לא ידוע';
-        color = Colors.grey.shade400;
-      }
-    }
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        Icon(Icons.location_on_rounded, size: 12, color: color),
-        const SizedBox(width: 3),
-        Text(label,
-            style: TextStyle(
-                fontSize: 11.5, color: color, fontWeight: FontWeight.w600)),
-      ],
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // AI Teacher card — special rendering for Alex
-  // ─────────────────────────────────────────────────────────────────────────
-
-  Widget _buildAiTeacherCard(Map<String, dynamic> data) {
-    final name  = data['name'] as String? ?? 'Alex';
-    final bio   = data['aboutMe'] as String? ?? '';
-    final price = (data['pricePerHour'] as num?)?.toInt() ?? 30;
-
-    return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const AlexProfileScreen()),
-      ),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: _kPurple.withValues(alpha: 0.4),
-            width: 1.5,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: _kPurple.withValues(alpha: 0.12),
-              blurRadius: 20,
-              spreadRadius: 1,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // ── Left: AI avatar ──────────────────────────────────────────
-              ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 185, maxWidth: 130),
-                child: SizedBox(
-                  width: 130,
-                  child: ClipRRect(
-                    borderRadius: const BorderRadius.only(
-                      topRight: Radius.circular(16),
-                      bottomRight: Radius.circular(16),
-                    ),
-                    child: Container(
-                      color: _kPurpleSoft,
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // Purple circle with "A"
-                            Container(
-                              width: 80,
-                              height: 80,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: const LinearGradient(
-                                  colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: _kPurple.withValues(alpha: 0.35),
-                                    blurRadius: 16,
-                                  ),
-                                ],
-                              ),
-                              child: const Center(
-                                child: Text('A',
-                                    style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 36,
-                                        fontWeight: FontWeight.bold)),
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            // Online badge
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.65),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.circle,
-                                      color: Color(0xFF22C55E), size: 7),
-                                  SizedBox(width: 4),
-                                  Text('Online 24/7',
-                                      style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w600)),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-
-              // ── Right: details ───────────────────────────────────────────
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      // Top content
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          // Price row
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              // AI Teacher badge
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  gradient: const LinearGradient(
-                                    colors: [
-                                      Color(0xFF6366F1),
-                                      Color(0xFF8B5CF6),
-                                    ],
-                                  ),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.auto_awesome,
-                                        color: Colors.white, size: 11),
-                                    SizedBox(width: 4),
-                                    Text('AI Teacher',
-                                        style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 9,
-                                            fontWeight: FontWeight.bold)),
-                                  ],
-                                ),
-                              ),
-                              // Price
-                              RichText(
-                                text: TextSpan(
-                                  style: const TextStyle(fontFamily: 'Heebo'),
-                                  children: [
-                                    TextSpan(
-                                      text: '₪$price',
-                                      style: const TextStyle(
-                                          color: _kPurple,
-                                          fontWeight: FontWeight.w900,
-                                          fontSize: 18),
-                                    ),
-                                    const TextSpan(
-                                      text: '/לשעה',
-                                      style: TextStyle(
-                                          color: Colors.grey,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.normal),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-
-                          // Name + verified
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              const Icon(Icons.verified,
-                                  color: Color(0xFF1877F2), size: 15),
-                              const SizedBox(width: 4),
-                              Text(name,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 15)),
-                            ],
-                          ),
-                          const SizedBox(height: 2),
-
-                          // Title
-                          const Text('AI English Teacher',
-                              style: TextStyle(
-                                  color: _kPurple,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 4),
-
-                          // Bio
-                          if (bio.isNotEmpty)
-                            Text(bio,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.right,
-                                style: TextStyle(
-                                    color: Colors.grey[600], fontSize: 12)),
-                          const SizedBox(height: 4),
-
-                          // Level chip
-                          Align(
-                            alignment: AlignmentDirectional.centerEnd,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: _kPurpleSoft,
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                    color: _kPurple.withValues(alpha: 0.2)),
-                              ),
-                              child: const Text('Intermediate (B1-B2)',
-                                  style: TextStyle(
-                                      fontSize: 10,
-                                      color: _kPurple,
-                                      fontWeight: FontWeight.w600)),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-
-                          // Rating
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              const Icon(Icons.star_rounded,
-                                  color: _kGold, size: 14),
-                              const SizedBox(width: 2),
-                              const Text('5.0',
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12)),
-                              const SizedBox(width: 3),
-                              Text('(128)',
-                                  style: TextStyle(
-                                      color: Colors.grey[500], fontSize: 11)),
-                            ],
-                          ),
-                        ],
-                      ),
-
-                      // ── Bottom CTA ─────────────────────────────────────────
-                      SizedBox(
-                        height: 38,
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _kPurple,
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                            padding: EdgeInsets.zero,
-                          ),
-                          icon: const Icon(Icons.play_circle_filled_rounded,
-                              size: 18),
-                          label: Text(AppLocalizations.of(context).catStartLesson,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold, fontSize: 13)),
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => const AlexProfileScreen()),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Full expert card
-  // ─────────────────────────────────────────────────────────────────────────
-
-  Widget _buildExpertCard(Map<String, dynamic> data) {
-    final l10n         = AppLocalizations.of(context);
-    final isVerified   = data['isVerified'] as bool? ?? false;
-    final isOnline     = data['isOnline']   as bool? ?? false;
-    final isPromoted   = data['isPromoted'] as bool? ?? false;
-    final isAiTeacher  = data['isAiTeacher'] == true;
-    final expertId     = data['uid'] as String? ?? '';
-    final currentUid   = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final isSelf       = expertId == currentUid;
-
-    // AI teacher card — opens the lesson modal instead of profile
-    if (isAiTeacher) return _buildAiTeacherCard(data);
-
-    // Semantics: each expert card is a major navigation target. Without
-    // an explicit Semantics wrapper, screen readers announce a sea of
-    // text (name, rating, price, bio fragments) but never that it's
-    // tappable. EU EAA 2025 mandate.
-    final expertName = data['name'] as String? ?? l10n.catResultsExpertDefault;
-    final rating = (data['rating'] as num?)?.toStringAsFixed(1) ?? '0.0';
-    final priceHourly = (data['pricePerHour'] as num?)?.toInt() ?? 0;
-    return Semantics(
-      button: true,
-      label: 'Expert: $expertName, rating $rating, ₪$priceHourly per hour',
-      hint: 'Tap to view full profile',
-      child: GestureDetector(
-      // Tap anywhere on card = open profile
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ExpertProfileScreen(
-            expertId: expertId,
-            expertName: data['name'] ?? l10n.catResultsExpertDefault,
-            listingId: data['listingId'] as String?,
-          ),
-        ),
-      ),
-      child: Stack(
-        children: [
-          Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: isPromoted
-              ? Border.all(color: Colors.amber.shade300, width: 1.5)
-              : Border.all(color: Colors.grey.shade100),
-          boxShadow: [
-            BoxShadow(
-              color: isPromoted
-                  ? Colors.amber.withValues(alpha: 0.18)
-                  : Colors.black.withValues(alpha: 0.07),
-              blurRadius: isPromoted ? 20 : 12,
-              spreadRadius: isPromoted ? 1 : 0,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        // IntrinsicHeight lets the image column match the details column height
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // ── Action image (left ~38%) ─────────────────────────────────
-              ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 185, maxWidth: 130),
-                child: SizedBox(
-                  width: 130,
-                  child: _buildActionImage(data, isOnline),
-                ),
-              ),
-              // ── Details (right ~62%) ──────────────────────────────────────
-              Expanded(
-                child: _buildExpertDetails(
-                    data, isVerified, isPromoted, isOnline, expertId),
-              ),
-            ],
-          ),
-        ),
-          ),
-          // ── "Your Profile" badge (self-booking prevention) ────────────────
-          if (isSelf)
-            Positioned(
-              top: 8,
-              left: 8,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF6366F1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.person_rounded, size: 12, color: Colors.white),
-                    const SizedBox(width: 4),
-                    Text(AppLocalizations.of(context).catYourProfile,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ),
-            ),
-          // ── Favorite heart ────────────────────────────────────────────────
-          Positioned(
-            bottom: 24,
-            right: 12,
-            child: FavoriteButton(providerId: expertId),
-          ),
-        ],
-      ),
-    ),
-    );
-  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Bottom FAB
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Floating action button for the list view. By default just the "מפה" pill;
-  /// when the customer is browsing motorcycle towing we ALSO render an
-  /// "מצא גרר דחוף" urgent-search pill to its trailing side (RTL: visually
-  /// to the LEFT of "מפה"). The empty-onTap handler is intentional — the
-  /// destination screen for the urgent flow ships in a follow-up.
-  Widget _buildBottomFab() {
-    final l10n = AppLocalizations.of(context);
-    final mapButton = _OpenMapPillFab(
-      label: l10n.catMapButtonShort,
-      onTap: () => setState(() => _showMap = true),
-    );
-    // CSM-specific urgent dispatch pills. Each CSM that supports
-    // emergency dispatch (motorcycle towing §57, babysitter §76) gets
-    // its own pill BEFORE the map button. Add new CSMs here.
+  /// Floating action button for the list view. As of 2026-05-16 the "מפה"
+  /// pill moved to the AppBar (see [build] → AppBar.actions), so the bottom
+  /// FAB is reserved purely for CSM-specific urgent-dispatch pills
+  /// (motorcycle towing §57, babysitter §76, delivery §78). Returns null for
+  /// ordinary categories — no bottom FAB at all.
+  Widget? _buildBottomFab() {
     if (isMotorcycleTowingCategory(widget.categoryName)) {
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _UrgentTowSearchPillFab(
-            label: 'מצא גרר דחוף',
-            onTap: _onUrgentTowSearchPressed,
-          ),
-          const SizedBox(width: 10),
-          mapButton,
-        ],
+      return _UrgentTowSearchPillFab(
+        label: 'מצא גרר דחוף',
+        onTap: _onUrgentTowSearchPressed,
       );
     }
     if (isBabysitterCategory(widget.categoryName)) {
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _UrgentTowSearchPillFab(
-            // Same visual primitive — different label + handler. The
-            // pill is intentionally generic so future CSMs reuse it.
-            label: 'מצאי בייביסיטר עכשיו',
-            onTap: _onUrgentBabysitterPressed,
-            icon: Icons.child_care_rounded,
-          ),
-          const SizedBox(width: 10),
-          mapButton,
-        ],
+      return _UrgentTowSearchPillFab(
+        // Same visual primitive — different label + handler. The
+        // pill is intentionally generic so future CSMs reuse it.
+        label: 'מצאי בייביסיטר עכשיו',
+        onTap: _onUrgentBabysitterPressed,
+        icon: Icons.child_care_rounded,
       );
     }
     if (isDeliveryCategory(widget.categoryName)) {
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _UrgentTowSearchPillFab(
-            // Same visual primitive — different label + handler. The
-            // pill is intentionally generic so future CSMs reuse it.
-            label: 'מצא שליח דחוף',
-            onTap: _onUrgentDeliveryPressed,
-            icon: Icons.delivery_dining_rounded,
-          ),
-          const SizedBox(width: 10),
-          mapButton,
-        ],
+      return _UrgentTowSearchPillFab(
+        // Same visual primitive — different label + handler. The
+        // pill is intentionally generic so future CSMs reuse it.
+        label: 'מצא שליח דחוף',
+        onTap: _onUrgentDeliveryPressed,
+        icon: Icons.delivery_dining_rounded,
       );
     }
-    return mapButton;
+    return null;
+  }
+
+  /// The pill rendered in the AppBar actions slot. It SWAPS in place
+  /// (2026-05-16): in list mode it shows "מפה" (opens the map); once the
+  /// map is open the SAME slot shows the list-view toggle (back to the
+  /// list) — so the two controls feel like a single in-position toggle.
+  Widget _buildMapAppBarAction() {
+    final l10n = AppLocalizations.of(context);
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(end: 8),
+      child: Center(
+        child: _showMap
+            ? _OpenMapPillFab(
+                label: l10n.catListView,
+                icon: Icons.view_list_rounded,
+                onTap: () => setState(() => _showMap = false),
+              )
+            : _OpenMapPillFab(
+                label: l10n.catMapButtonShort,
+                onTap: () => setState(() => _showMap = true),
+              ),
+      ),
+    );
   }
 
   /// Pushes the Flash Auction flow (CLAUDE.md §57 — see
@@ -1729,10 +714,11 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0.5,
-        // v15.x: AppBar map IconButton retired — replaced with the
-        // Airbnb-style floating pill button at bottom-center (see
-        // floatingActionButton below). On the map view itself the
-        // _MapTopBar still owns the list toggle.
+        // 2026-05-16: the map/list toggle pill lives here in the AppBar
+        // actions — top-left in RTL, right next to the centred title.
+        // The single slot swaps "מפה" ⇄ "רשימה" depending on _showMap
+        // (see _buildMapAppBarAction). Hidden only on the volunteer screen.
+        actions: widget.volunteerOnly ? null : [_buildMapAppBarAction()],
       ),
       floatingActionButton: widget.volunteerOnly
           ? _WhatsAppSosButton()
@@ -1750,26 +736,21 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                       //   wide  (≥720): map on RIGHT, cards list on LEFT (Row, RTL)
                       //   narrow (<720): existing full-screen map + bottom sheet
                       if (c.maxWidth >= 720) {
-                        return _buildMapSideBySideLayout();
+                        return _libBuildMapSideBySideLayout(this);
                       }
                       return Stack(
                         children: [
-                          // The map itself.
-                          Positioned.fill(child: _buildMapView()),
-                          // v12.9.0 (PR-5): carousel of provider cards at bottom.
-                          _buildMapCarouselSheet(),
-                          // Fading gradient so the overlay pills stay readable.
+                          Positioned.fill(child: _libBuildMapView(this)),
+                          _libBuildMapCarouselSheet(this),
                           const Positioned(
                             top: 0, left: 0, right: 0,
                             child: IgnorePointer(child: _MapTopGradient()),
                           ),
-                          // Floating top bar (back · search · list-toggle) +
-                          // filter chips + provider count badge.
                           Positioned(
                             top: 0, left: 0, right: 0,
                             child: SafeArea(
                               bottom: false,
-                              child: _buildMapOverlayHeader(),
+                              child: _libBuildMapOverlayHeader(this),
                             ),
                           ),
                         ],
@@ -1780,6 +761,16 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                     onRefresh: _loadInitial,
                     color: _kPurple,
                     strokeWidth: 2.5,
+                    // The subcategory VIP/promo banner is the FIRST item
+                    // of the scroll view built by `_renderExperts` (and
+                    // the empty-state list) — NOT pinned above it. This
+                    // makes the whole page scroll as ONE continuous
+                    // surface: scrolling down hides the banner and reveals
+                    // more cards, instead of a fixed top half + a
+                    // separately-scrollable bottom half. `_renderExperts`
+                    // renders the banner in BOTH the populated list and
+                    // the empty-state list, so it no longer vanishes when
+                    // the experts list is empty.
                     child: _buildList(),
                   ),
           ),
@@ -2021,123 +1012,6 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     );
   }
 
-  // ignore: unused_element — kept until stage 7 (CLAUDE.md §50) cleanup
-  void _showRatingFilterSheet() {
-    double tempRating = _minRating;
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setLocal) => Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(AppLocalizations.of(context).catFilterRatingTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  for (final r in [0.0, 3.0, 3.5, 4.0, 4.5])
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: ChoiceChip(
-                        label: Text(r == 0 ? AppLocalizations.of(context).catFilterAll : '${r.toStringAsFixed(1)}+'),
-                        selected: tempRating == r,
-                        selectedColor: _kPurple,
-                        labelStyle: TextStyle(color: tempRating == r ? Colors.white : Colors.black87, fontSize: 13),
-                        onSelected: (_) => setLocal(() => tempRating = r),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: _kPurple, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                  onPressed: () { Navigator.pop(ctx); setState(() => _minRating = tempRating); },
-                  child: Text(AppLocalizations.of(context).catFilterApply, style: const TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ignore: unused_element — kept until stage 7 (CLAUDE.md §50) cleanup
-  void _showDistanceFilterSheet() {
-    double tempKm = _maxDistanceKm ?? 15;
-    final hasLocation = _currentPosition != null;
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setLocal) => Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(AppLocalizations.of(context).catFilterDistanceTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              const SizedBox(height: 8),
-              if (!hasLocation)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(AppLocalizations.of(context).catFilterNeedLocation, style: TextStyle(color: Colors.orange[700], fontSize: 13)),
-                ),
-              Text('${tempKm.toInt()} ק"מ', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: _kPurple)),
-              Slider(
-                value: tempKm,
-                min: 1,
-                max: 50,
-                divisions: 49,
-                activeColor: _kPurple,
-                label: '${tempKm.toInt()} ק"מ',
-                onChanged: hasLocation ? (v) => setLocal(() => tempKm = v) : null,
-              ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('50 ק"מ', style: TextStyle(color: Colors.grey[500], fontSize: 12)),
-                  Text('1 ק"מ', style: TextStyle(color: Colors.grey[500], fontSize: 12)),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                      onPressed: () { Navigator.pop(ctx); setState(() => _maxDistanceKm = null); },
-                      child: Text(AppLocalizations.of(context).catFilterClear),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: _kPurple, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                      onPressed: hasLocation ? () { Navigator.pop(ctx); setState(() => _maxDistanceKm = tempKm); } : null,
-                      child: Text(AppLocalizations.of(context).catFilterApply, style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
   // ── v9.9.0: Map View ────────────────────────────────────────────────────────
 
@@ -2167,282 +1041,18 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
     );
   }
 
-  int _mapFilteredCount() => _mapFilteredExperts().length;
-
-  // ── v15.x: Shared map header overlay (top bar + chips + count) ───────────
-  // Extracted so both the mobile (Stack overlay) and the desktop/tablet
-  // (Column above split-view) layouts share exactly the same controls.
-  Widget _buildMapOverlayHeader() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _MapTopBar(
-          initialQuery: _searchQuery,
-          onBack: () => Navigator.of(context).maybePop(),
-          onQueryChanged: (v) => setState(() => _searchQuery = v),
-          onListPressed: () => setState(() => _showMap = false),
-        ),
-        const SizedBox(height: 10),
-        _MapFilterChips(
-          maxDistanceKm: _maxDistanceKm,
-          minRating:     _minRating,
-          under100:      _filterUnder100,
-          onlineOnly:    _onlineOnly,
-          onPickDistance: _pickMapDistance,
-          onPickRating:   _pickMapRating,
-          onToggleUnder100: () =>
-              setState(() => _filterUnder100 = !_filterUnder100),
-          onToggleOnline:   () =>
-              setState(() => _onlineOnly = !_onlineOnly),
-          onInstantBook: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                    AppLocalizations.of(context).catInstantBookingSoon),
-                duration: const Duration(seconds: 2),
-              ),
-            );
-          },
-        ),
-        const SizedBox(height: 10),
-        Align(
-          alignment: Alignment.topCenter,
-          child: _ProviderCountBadge(
-            count: _mapFilteredCount(),
-            categoryName: widget.categoryName,
-            anyFilterActive: _mapAnyFilterActive(),
-          ),
-        ),
-        const SizedBox(height: 8),
-      ],
-    );
-  }
-
-  // ── v15.x: Side-by-side map layout (≥720px) ─────────────────────────────
-  // RTL Row → first child renders on the RIGHT (map), second on the LEFT
-  // (cards list). The cards list is a vertical ListView; tapping a card
-  // updates `_mapSelectedUid` + `_mapFocusedLatLng` so the map re-centers.
-  Widget _buildMapSideBySideLayout() {
-    final experts = _mapFilteredExperts();
-    final withCoords = experts.where((e) {
-      final lat = (e['latitude'] as num?)?.toDouble();
-      final lng = (e['longitude'] as num?)?.toDouble();
-      return lat != null && lng != null;
-    }).toList();
-
-    return Column(
-      children: [
-        Container(
-          color: Colors.white,
-          child: SafeArea(
-            bottom: false,
-            child: _buildMapOverlayHeader(),
-          ),
-        ),
-        Container(height: 0.5, color: const Color(0x1A000000)),
-        Expanded(
-          child: Row(
-            children: [
-              // RIGHT (RTL = first child) — map
-              Expanded(
-                flex: 6,
-                child: _buildMapView(),
-              ),
-              Container(width: 0.5, color: const Color(0x1A000000)),
-              // LEFT (RTL = second child) — vertical cards list
-              Expanded(
-                flex: 4,
-                child: Container(
-                  color: const Color(0xFFFAFAF9),
-                  child: withCoords.isEmpty
-                      ? const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(20),
-                            child: Text(
-                              'אין נותני שירות עם מיקום באזור',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: Color(0xFF6B7280),
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 14),
-                          itemCount: withCoords.length,
-                          itemBuilder: (context, i) {
-                            final e = withCoords[i];
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: _MapProviderCard(
-                                expert: e,
-                                active:
-                                    (e['uid'] as String?) == _mapSelectedUid,
-                                myPosition: _currentPosition,
-                                onTapCard: () {
-                                  final lat =
-                                      (e['latitude'] as num?)?.toDouble();
-                                  final lng =
-                                      (e['longitude'] as num?)?.toDouble();
-                                  setState(() {
-                                    _mapSelectedUid = e['uid'] as String?;
-                                    if (lat != null && lng != null) {
-                                      _mapFocusedLatLng = LatLng(lat, lng);
-                                    }
-                                  });
-                                },
-                                onMessage: () {
-                                  Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => ChatScreen(
-                                          receiverId:
-                                              (e['uid'] as String?) ?? '',
-                                          receiverName:
-                                              (e['name'] as String?) ?? '',
-                                        ),
-                                      ));
-                                },
-                                onBookNow: () {
-                                  Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => ExpertProfileScreen(
-                                          expertId:
-                                              (e['uid'] as String?) ?? '',
-                                          expertName:
-                                              (e['name'] as String?) ?? '',
-                                          listingId:
-                                              e['listingId'] as String?,
-                                        ),
-                                      ));
-                                },
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ── v12.9.0 (PR-5): Carousel of provider cards ───────────────────────────
-  Widget _buildMapCarouselSheet() {
-    final experts = _mapFilteredExperts();
-    // Only keep experts that have coordinates — must match marker list.
-    final withCoords = experts.where((e) {
-      final lat = (e['latitude'] as num?)?.toDouble();
-      final lng = (e['longitude'] as num?)?.toDouble();
-      return lat != null && lng != null;
-    }).toList();
-
-    if (withCoords.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return DraggableScrollableSheet(
-      initialChildSize: 0.38,
-      minChildSize:     0.16,
-      maxChildSize:     0.85,
-      snap:             true,
-      snapSizes:        const [0.16, 0.38, 0.85],
-      builder: (context, scrollCtrl) {
-        return Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            boxShadow: MapShadows.card,
-          ),
-          child: Column(
-            children: [
-              // Drag handle
-              Padding(
-                padding: const EdgeInsets.only(top: 10, bottom: 6),
-                child: Container(
-                  width: 34, height: 4,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFD1D5DB),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 4),
-              // Horizontal PageView of cards
-              Expanded(
-                child: ListView(
-                  controller: scrollCtrl,
-                  physics: const ClampingScrollPhysics(),
-                  children: [
-                    SizedBox(
-                      height: 320,
-                      child: PageView.builder(
-                        controller: _mapPageCtrl,
-                        itemCount: withCoords.length,
-                        onPageChanged: (i) {
-                          final e = withCoords[i];
-                          final lat = (e['latitude'] as num?)?.toDouble();
-                          final lng = (e['longitude'] as num?)?.toDouble();
-                          if (lat == null || lng == null) return;
-                          setState(() {
-                            _mapSelectedUid   = e['uid'] as String?;
-                            _mapFocusedLatLng = LatLng(lat, lng);
-                          });
-                        },
-                        itemBuilder: (context, i) {
-                          final e = withCoords[i];
-                          return Padding(
-                            padding: const EdgeInsetsDirectional.only(
-                                start: 6, end: 6, top: 4, bottom: 10),
-                            child: _MapProviderCard(
-                              expert: e,
-                              active: (e['uid'] as String?) == _mapSelectedUid,
-                              myPosition: _currentPosition,
-                              onTapCard: () {
-                                Navigator.push(context, MaterialPageRoute(
-                                  builder: (_) => ExpertProfileScreen(
-                                    expertId:   (e['uid'] as String?) ?? '',
-                                    expertName: (e['name'] as String?) ?? '',
-                                    listingId:  e['listingId'] as String?,
-                                  ),
-                                ));
-                              },
-                              onMessage: () {
-                                Navigator.push(context, MaterialPageRoute(
-                                  builder: (_) => ChatScreen(
-                                    receiverId:   (e['uid'] as String?) ?? '',
-                                    receiverName: (e['name'] as String?) ?? '',
-                                  ),
-                                ));
-                              },
-                              onBookNow: () {
-                                Navigator.push(context, MaterialPageRoute(
-                                  builder: (_) => ExpertProfileScreen(
-                                    expertId:   (e['uid'] as String?) ?? '',
-                                    expertName: (e['name'] as String?) ?? '',
-                                    listingId:  e['listingId'] as String?,
-                                  ),
-                                ));
-                              },
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
+  /// Count for the "$N {category} באזור שלך" badge. Counts ONLY providers
+  /// that actually appear as pins on the map — i.e. those with valid GPS
+  /// coordinates. `_mapFilteredExperts()` also returns coordinate-less
+  /// providers (they can never be pinned), so counting its raw length
+  /// overstated the badge. With `_onlineOnly` defaulting to true, this is
+  /// the true number of currently-available, mappable providers — and it
+  /// matches the marker / carousel count exactly.
+  int _mapFilteredCount() => _mapFilteredExperts().where((e) {
+        final lat = (e['latitude'] as num?)?.toDouble();
+        final lng = (e['longitude'] as num?)?.toDouble();
+        return lat != null && lng != null;
+      }).length;
 
   bool _mapAnyFilterActive() =>
       _searchQuery.isNotEmpty ||
@@ -2474,7 +1084,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                 child: Text(AppLocalizations.of(context).catMaxDistance,
                     textAlign: TextAlign.center,
                     style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
                         color: MapPalette.textPrimary)),
               ),
               for (final opt in options)
@@ -2486,7 +1097,8 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                     textDirection: TextDirection.rtl,
                   ),
                   trailing: _maxDistanceKm == opt
-                      ? const Icon(Icons.check_rounded, color: MapPalette.primary)
+                      ? const Icon(Icons.check_rounded,
+                          color: MapPalette.primary)
                       : null,
                   onTap: () {
                     setState(() => _maxDistanceKm = opt);
@@ -2523,17 +1135,21 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
                 child: Text(AppLocalizations.of(context).catMinRating,
                     textAlign: TextAlign.center,
                     style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
                         color: MapPalette.textPrimary)),
               ),
               for (final opt in options)
                 ListTile(
                   title: Text(
-                    opt == 0 ? AppLocalizations.of(context).catNoLimit : '${opt.toStringAsFixed(opt == 5 ? 0 : 1)}+ ⭐',
+                    opt == 0
+                        ? AppLocalizations.of(context).catNoLimit
+                        : '${opt.toStringAsFixed(opt == 5 ? 0 : 1)}+ ⭐',
                     textDirection: TextDirection.rtl,
                   ),
                   trailing: _minRating == opt
-                      ? const Icon(Icons.check_rounded, color: MapPalette.primary)
+                      ? const Icon(Icons.check_rounded,
+                          color: MapPalette.primary)
                       : null,
                   onTap: () {
                     setState(() => _minRating = opt);
@@ -2544,90 +1160,6 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildMapView() {
-    final experts = _mapFilteredExperts();
-    final markers = <MapProvider>[];
-    for (final e in experts) {
-      final lat = (e['latitude'] as num?)?.toDouble();
-      final lng = (e['longitude'] as num?)?.toDouble();
-      if (lat == null || lng == null) continue;
-      markers.add(MapProvider(
-        uid: e['uid'] as String? ?? '',
-        name: e['name'] as String? ?? '',
-        profileImage: e['profileImage'] as String?,
-        serviceType: e['serviceType'] as String?,
-        rating: (e['rating'] as num?)?.toDouble(),
-        reviewsCount: (e['reviewsCount'] as num?)?.toInt(),
-        lat: lat,
-        lng: lng,
-        isOnline: e['isOnline'] == true,
-        pricePerHour: (e['pricePerHour'] as num?)?.toDouble(),
-      ));
-    }
-
-    return ProvidersMapView(
-      providers: markers,
-      userLocation: _currentPosition != null
-          ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
-          : null,
-      radiusKm: _maxDistanceKm ?? 20,
-      // PR-5: carousel drives selection + camera focus.
-      externalSelectedUid: _mapSelectedUid,
-      focusedLatLng:       _mapFocusedLatLng,
-      bottomSafeArea:      320,  // lift side controls above the sheet
-      // v12.11.0 (PR-4): enable "search this area" pill. The pill hides itself
-      // after tap; we just nudge a rebuild so the card list refreshes.
-      onSearchThisArea: () {
-        setState(() {});
-      },
-      onMarkerTap: (uid) {
-        // Find the matching card index and sync the PageView.
-        final idx = markers.indexWhere((m) => m.uid == uid);
-        if (idx < 0) return;
-        setState(() {
-          _mapSelectedUid  = uid;
-          _mapFocusedLatLng = markers[idx].latLng;
-        });
-        if (_mapPageCtrl.hasClients) {
-          _mapPageCtrl.animateToPage(
-            idx,
-            duration: const Duration(milliseconds: 280),
-            curve: Curves.easeOutCubic,
-          );
-        }
-      },
-      onProviderTap: (uid) {
-        final expert = experts.firstWhere(
-          (e) => e['uid'] == uid,
-          orElse: () => <String, dynamic>{},
-        );
-        if (expert.isNotEmpty) {
-          Navigator.push(context, MaterialPageRoute(
-            builder: (_) => ExpertProfileScreen(
-              expertId: uid,
-              expertName: expert['name'] as String? ?? '',
-              listingId: expert['listingId'] as String?,
-            ),
-          ));
-        }
-      },
-      onQuickChat: (uid) {
-        final expert = experts.firstWhere(
-          (e) => e['uid'] == uid,
-          orElse: () => <String, dynamic>{},
-        );
-        if (expert.isNotEmpty) {
-          Navigator.push(context, MaterialPageRoute(
-            builder: (_) => ChatScreen(
-              receiverId: uid,
-              receiverName: expert['name'] as String? ?? '',
-            ),
-          ));
-        }
-      },
     );
   }
 
@@ -2649,7 +1181,27 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
   Widget _buildContent(BuildContext context) {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      // More informative spinner — shows the user we're still working
+      // and reassures them on slow connections. The previous unlabeled
+      // CircularProgressIndicator was giving the impression the app
+      // was frozen (רועי צברי report 2026-05-14).
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(strokeWidth: 2.5, color: _kPurple),
+            const SizedBox(height: 16),
+            Text(
+              'טוען נותני שירות...',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
     }
 
     final all = List<Map<String, dynamic>>.from(_allExperts);
@@ -2687,81 +1239,112 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
 
   Widget _renderExperts(BuildContext context, List<Map<String, dynamic>> experts) {
     final l10n = AppLocalizations.of(context);
+    // The subcategory VIP/promo banner is the FIRST item of the scroll
+    // view — it scrolls together with the provider cards so the page
+    // reads as ONE continuous surface (scrolling down hides the banner),
+    // instead of a fixed top half + a separately-scrollable bottom half.
+    // volunteerOnly screens have no provider listings to promote.
+    final showBanner = !widget.volunteerOnly;
+    final headerCount = showBanner ? 1 : 0;
+
     if (experts.isEmpty && !_isLoadingMore && !_hasMore) {
       final hasFilters = _searchQuery.isNotEmpty || _filterUnder100 || _minRating > 0 || _maxDistanceKm != null;
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                    color: _kPurpleSoft, shape: BoxShape.circle),
-                child: Icon(Icons.person_search_outlined,
-                    size: 56, color: _kPurple.withValues(alpha: 0.5)),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                hasFilters
-                    ? l10n.catResultsNoResults
-                    : l10n.catResultsNoExperts(widget.categoryName),
-                style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                hasFilters
-                    ? l10n.catResultsNoResultsHint
-                    : l10n.catResultsBeFirst,
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, color: Colors.grey[500]),
-              ),
-              if (hasFilters) ...[
-                const SizedBox(height: 28),
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 12),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                  icon: const Icon(Icons.filter_alt_off),
-                  label: Text(l10n.catResultsClearFilters),
-                  onPressed: () => setState(() {
-                    _searchQuery = '';
-                    _filterUnder100 = false;
-                    _minRating = 0;
-                    _maxDistanceKm = null;
-                  }),
+      // 2026-05-14 — ROOT FIX after the user's frustration:
+      // STOP showing "בעיית חיבור" scaffolds. They were generating
+      // false alarms on every slow connection and confusing the user.
+      // ALWAYS show the neutral "no providers" copy — the
+      // RefreshIndicator (parent) and the auto-retry inside
+      // `_loadInitial` already handle the failed-load case
+      // silently. If providers genuinely arrive later, the
+      // StreamBuilder rebuilds and they appear.
+      //
+      // The empty state is itself a ListView so (a) the subcategory
+      // banner still renders + scrolls with the page, and (b)
+      // pull-to-refresh keeps working (RefreshIndicator needs a
+      // scrollable child).
+      return ListView(
+        controller: _scrollCtrl,
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [
+          if (showBanner)
+            SubcategoryBannerHeader(subcategoryId: widget.categoryName),
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: MediaQuery.of(context).size.height * 0.5,
+            ),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(24),
+                      decoration: BoxDecoration(
+                          color: _kPurpleSoft, shape: BoxShape.circle),
+                      child: Icon(Icons.person_search_outlined,
+                          size: 56, color: _kPurple.withValues(alpha: 0.5)),
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      hasFilters
+                          ? l10n.catResultsNoResults
+                          : l10n.catResultsNoExperts(widget.categoryName),
+                      style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      hasFilters
+                          ? l10n.catResultsNoResultsHint
+                          : 'משוך מטה לרענון',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+                    ),
+                    if (hasFilters) ...[
+                      const SizedBox(height: 28),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 24, vertical: 12),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                        ),
+                        icon: const Icon(Icons.filter_alt_off),
+                        label: Text(l10n.catResultsClearFilters),
+                        onPressed: () => setState(() {
+                          _searchQuery = '';
+                          _filterUnder100 = false;
+                          _minRating = 0;
+                          _maxDistanceKm = null;
+                        }),
+                      ),
+                    ],
+                  ],
                 ),
-              ],
-            ],
+              ),
+            ),
           ),
-        ),
+        ],
       );
     }
 
-    // +1 sentinel item for the load-more spinner / "all loaded" indicator.
-    // +1 header item (index 0) for the subcategory banner shelf — it
-    // collapses to SizedBox.shrink when no banner qualifies, so this
-    // never wastes vertical space on un-banner'd categories.
-    const headerCount = 1;
+    // The subcategory banner header lives at index 0 of this ListView so
+    // it scrolls together with the cards. A trailing +1 sentinel item
+    // drives the load-more spinner / "all loaded" indicator.
     final sentinelCount = (_isLoadingMore || _hasMore) ? 1 : 0;
     return ListView.builder(
       controller: _scrollCtrl,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-      itemCount: experts.length + headerCount + sentinelCount,
+      itemCount: headerCount + experts.length + sentinelCount,
       itemBuilder: (_, index) {
-        // ── Index 0 — banner header ────────────────────────────────────
-        if (index == 0) {
-          return SubcategoryBannerHeader(
-            subcategoryId: widget.categoryName,
-          );
+        // Index 0 → subcategory banner (scrolls with the list).
+        if (showBanner && index == 0) {
+          return SubcategoryBannerHeader(subcategoryId: widget.categoryName);
         }
         final expertIdx = index - headerCount;
         if (expertIdx == experts.length) {
@@ -2782,82 +1365,12 @@ class _CategoryResultsScreenState extends State<CategoryResultsScreen> {
             ),
           );
         }
-        return RepaintBoundary(child: _buildExpertCard(experts[expertIdx]));
-      },
-    );
-  }
-}
-
-// ── Community action button ───────────────────────────────────────────────────
-class _CommunityActionButton extends StatelessWidget {
-  const _CommunityActionButton({
-    required this.label,
-    required this.icon,
-    required this.gradient,
-    required this.onTap,
-  });
-  final String       label;
-  final IconData     icon;
-  final LinearGradient gradient;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          gradient: gradient,
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: [
-            BoxShadow(
-              color: gradient.colors.first.withValues(alpha: 0.35),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: Colors.white, size: 26),
-            const SizedBox(height: 6),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── Internal Support FAB (replaces WhatsApp — v9.0.8) ───────────────────────
-class _WhatsAppSosButton extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return FloatingActionButton.extended(
-      backgroundColor: const Color(0xFF6366F1),
-      elevation: 6,
-      icon: const Icon(Icons.support_agent_rounded, color: Colors.white),
-      label: Text(
-        AppLocalizations.of(context).catSupport,
-        style: const TextStyle(
-            color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-      ),
-      onPressed: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => const SupportCenterScreen(
-              jobCategory: 'volunteer',
-            ),
+        return RepaintBoundary(
+          child: _libBuildExpertCard(
+            context,
+            experts[expertIdx],
+            _serviceSchema,
+            _currentPosition,
           ),
         );
       },
@@ -2865,1635 +1378,3 @@ class _WhatsAppSosButton extends StatelessWidget {
   }
 }
 
-// ── Help request form sheet ───────────────────────────────────────────────────
-class _HelpRequestSheet extends StatefulWidget {
-  const _HelpRequestSheet({required this.forOther});
-  final bool forOther;
-
-  @override
-  State<_HelpRequestSheet> createState() => _HelpRequestSheetState();
-}
-
-class _HelpRequestSheetState extends State<_HelpRequestSheet> {
-  final _descCtrl        = TextEditingController();
-  final _locationCtrl    = TextEditingController();
-  final _phoneCtrl       = TextEditingController();
-  final _beneficiaryCtrl = TextEditingController();
-
-  String? _selectedCategory;
-  bool    _iAmContact  = true;
-  bool    _submitting  = false;
-
-  List<Map<String, dynamic>> _mainCategories = [];
-
-  @override
-  void initState() {
-    super.initState();
-    // Load category list once for the picker
-    // .first throws "Bad state: No element" if the stream closes empty.
-    // .catchError silently ignores that case — the picker just stays empty.
-    CategoryService.streamMainCategories().first.then((cats) {
-      if (mounted) setState(() => _mainCategories = cats);
-    }).catchError((_) {});
-  }
-
-  @override
-  void dispose() {
-    _descCtrl.dispose();
-    _locationCtrl.dispose();
-    _phoneCtrl.dispose();
-    _beneficiaryCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    if (_selectedCategory == null ||
-        _descCtrl.text.trim().isEmpty ||
-        _phoneCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(AppLocalizations.of(context).catFillFields),
-          backgroundColor: Colors.orange,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
-
-    setState(() => _submitting = true);
-    final nav       = Navigator.of(context);
-    final messenger = ScaffoldMessenger.of(context);
-    // Capture localized strings BEFORE async gaps (Section 9 async-safe pattern)
-    final l10n = AppLocalizations.of(context);
-    final sentMsg = l10n.catRequestSent;
-
-    try {
-      final uid      = FirebaseAuth.instance.currentUser?.uid ?? '';
-      final category = _selectedCategory!;
-      final db       = FirebaseFirestore.instance;
-
-      // 1. Save the volunteer request
-      await db.collection('volunteer_requests').add({
-        'requesterId':     uid,
-        'forOther':        widget.forOther,
-        'beneficiaryName': widget.forOther ? _beneficiaryCtrl.text.trim() : null,
-        'contactIsRequester': widget.forOther ? _iAmContact : true,
-        'category':        category,
-        'description':     _descCtrl.text.trim(),
-        'location':        _locationCtrl.text.trim(),
-        'contactPhone':    _phoneCtrl.text.trim(),
-        'status':          'open',
-        'createdAt':       FieldValue.serverTimestamp(),
-      });
-
-      // 2. Notify matching volunteers (fire-and-forget batch)
-      _notifyVolunteers(category, _descCtrl.text.trim());
-
-      nav.pop();
-      messenger.showSnackBar(
-        SnackBar(
-          backgroundColor: const Color(0xFF10B981),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          content: Row(children: [
-            const Icon(Icons.check_circle_rounded, color: Colors.white),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                sentMsg,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-          ]),
-        ),
-      );
-    } catch (e) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(l10n.catRequestError(e.toString())),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
-  }
-
-  /// Queries all volunteer providers in [category] and writes an in-app
-  /// notification for each (capped at 30 to stay within free Firestore quota).
-  Future<void> _notifyVolunteers(String category, String description) async {
-    try {
-      final db   = FirebaseFirestore.instance;
-      final snap = await db
-          .collection('users')
-          .where('isProvider',  isEqualTo: true)
-          .where('isVolunteer', isEqualTo: true)
-          .where('serviceType', isEqualTo: category)
-          .limit(30)
-          .get();
-
-      final batch = db.batch();
-      for (final doc in snap.docs) {
-        final ref = db.collection('notifications').doc();
-        batch.set(ref, {
-          'userId':    doc.id,
-          'title':    '❤️ בקשת התנדבות חדשה',
-          'body':     'יש בקשת עזרה בתחום $category: "${description.length > 60 ? '${description.substring(0, 60)}…' : description}"',
-          'type':     'volunteer_request',
-          'isRead':   false,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-      }
-      await batch.commit();
-    } catch (_) {
-      // Best-effort — a notification failure must never affect the request post
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(
-          bottom: MediaQuery.viewInsetsOf(context).bottom),
-      child: Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Drag handle
-              Center(
-                child: Container(
-                  width: 36, height: 4,
-                  decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
-                      borderRadius: BorderRadius.circular(2)),
-                ),
-              ),
-              const SizedBox(height: 14),
-
-              // Title + free badge
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF10B981),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Text('100% חינם ❤️',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold)),
-                  ),
-                  Text(
-                    widget.forOther ? AppLocalizations.of(context).catHelpForOther : AppLocalizations.of(context).catNeedHelp,
-                    style: const TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-
-              // ── Category picker ──────────────────────────────────────────
-              Align(
-                alignment: Alignment.centerRight,
-                child: Text(AppLocalizations.of(context).catCategory,
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, color: Colors.grey[700])),
-              ),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<String>(
-                isExpanded: true,
-                value: _selectedCategory,
-                hint: Text(AppLocalizations.of(context).catChooseCategory, textAlign: TextAlign.right),
-                items: _mainCategories
-                    .map((c) => DropdownMenuItem(
-                          value: c['name'] as String,
-                          child: Text(c['name'] as String? ?? '',
-                              textAlign: TextAlign.right),
-                        ))
-                    .toList(),
-                onChanged: (v) => setState(() => _selectedCategory = v),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: const Color(0xFFF5F6FA),
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none),
-                  focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide:
-                          const BorderSide(color: Color(0xFF10B981))),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // ── Description ──────────────────────────────────────────────
-              Align(
-                alignment: Alignment.centerRight,
-                child: Text(AppLocalizations.of(context).catRequestDescription,
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, color: Colors.grey[700])),
-              ),
-              const SizedBox(height: 6),
-              TextField(
-                controller: _descCtrl,
-                maxLines: 3,
-                textAlign: TextAlign.right,
-                decoration: InputDecoration(
-                  hintText: AppLocalizations.of(context).catDescHint,
-                  filled: true,
-                  fillColor: const Color(0xFFF5F6FA),
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none),
-                  focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide:
-                          const BorderSide(color: Color(0xFF10B981))),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // ── Location ─────────────────────────────────────────────────
-              Align(
-                alignment: Alignment.centerRight,
-                child: Text(AppLocalizations.of(context).catLocation,
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, color: Colors.grey[700])),
-              ),
-              const SizedBox(height: 6),
-              TextField(
-                controller: _locationCtrl,
-                textAlign: TextAlign.right,
-                decoration: InputDecoration(
-                  hintText: AppLocalizations.of(context).catLocationHint,
-                  prefixIcon: const Icon(Icons.location_on_outlined,
-                      color: Color(0xFF10B981)),
-                  filled: true,
-                  fillColor: const Color(0xFFF5F6FA),
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none),
-                  focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide:
-                          const BorderSide(color: Color(0xFF10B981))),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // ── Contact phone ─────────────────────────────────────────────
-              Align(
-                alignment: Alignment.centerRight,
-                child: Text(AppLocalizations.of(context).catContactPhone,
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, color: Colors.grey[700])),
-              ),
-              const SizedBox(height: 6),
-              TextField(
-                controller: _phoneCtrl,
-                keyboardType: TextInputType.phone,
-                textAlign: TextAlign.right,
-                decoration: InputDecoration(
-                  hintText: '05X-XXXXXXX',
-                  prefixIcon: const Icon(Icons.phone_outlined,
-                      color: Color(0xFF10B981)),
-                  filled: true,
-                  fillColor: const Color(0xFFF5F6FA),
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none),
-                  focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide:
-                          const BorderSide(color: Color(0xFF10B981))),
-                ),
-              ),
-
-              // ── For-other extras ──────────────────────────────────────────
-              if (widget.forOther) ...[
-                const SizedBox(height: 16),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Text(AppLocalizations.of(context).catBeneficiaryName,
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey[700])),
-                ),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: _beneficiaryCtrl,
-                  textAlign: TextAlign.right,
-                  decoration: InputDecoration(
-                    hintText: AppLocalizations.of(context).catBeneficiaryHint,
-                    filled: true,
-                    fillColor: const Color(0xFFF5F6FA),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none),
-                    focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide:
-                            const BorderSide(color: Color(0xFF10B981))),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SwitchListTile.adaptive(
-                  value: _iAmContact,
-                  onChanged: (v) => setState(() => _iAmContact = v),
-                  activeColor: const Color(0xFF10B981),
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(AppLocalizations.of(context).catIAmContact,
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text(
-                      AppLocalizations.of(context).catIAmCoordinator,
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(fontSize: 12)),
-                ),
-              ],
-
-              const SizedBox(height: 24),
-
-              // ── Submit button ─────────────────────────────────────────────
-              ElevatedButton(
-                onPressed: _submitting ? null : _submit,
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 54),
-                  backgroundColor: const Color(0xFF10B981),
-                  disabledBackgroundColor:
-                      const Color(0xFF10B981).withValues(alpha: 0.5),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                  elevation: 0,
-                ),
-                child: _submitting
-                    ? const SizedBox(
-                        width: 20, height: 20,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2.5, color: Colors.white))
-                    : Text(
-                        AppLocalizations.of(context).catSendRequest,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold),
-                      ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Compact stat chip used by the search card — mirrors the profile's
-// specialist-card stat rows (expert_profile_screen._buildSpecialistCard).
-// Icon + bold number, no label (the icon implies the meaning). The chip
-// hides itself in the parent if its value is 0 so non-volunteers / new
-// providers don't carry "0 0 0" visual noise.
-// ═══════════════════════════════════════════════════════════════════════════
-class _MiniStatChip extends StatelessWidget {
-  const _MiniStatChip({
-    required this.icon,
-    required this.value,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 13, color: color),
-        const SizedBox(width: 3),
-        Text(
-          value,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 12,
-            color: Color(0xFF1F2937),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Motorcycle CSM (§55): "מצא גרר דחוף" urgent-search pill.
-// ═══════════════════════════════════════════════════════════════════════════
-// Mirrors the home tab's [_GlassUrgentSearchButton] (home_screen.dart:1974)
-// in *intent* — pulsing halos + pill + "urgent" feel — but adapts the visual
-// for the white scaffold of [CategoryResultsScreen]: red gradient pill with
-// red halos instead of the home button's glassmorphic white.
-//
-// Sits to the trailing side of the existing "מפה" pill (see
-// [_buildBottomFab]). Only mounted when the customer is browsing
-// motorcycle towing — gated by isMotorcycleTowingCategory().
-//
-// onTap is currently a placeholder snackbar — the destination screen ships
-// in a follow-up.
-class _UrgentTowSearchPillFab extends StatefulWidget {
-  const _UrgentTowSearchPillFab({
-    required this.label,
-    required this.onTap,
-    this.icon = Icons.bolt_rounded,
-  });
-
-  final String label;
-  final VoidCallback onTap;
-
-  /// Leading icon. Defaults to a bolt for the motorcycle towing case;
-  /// the babysitter emergency variant overrides with a child-care icon.
-  final IconData icon;
-
-  @override
-  State<_UrgentTowSearchPillFab> createState() =>
-      _UrgentTowSearchPillFabState();
-}
-
-class _UrgentTowSearchPillFabState extends State<_UrgentTowSearchPillFab>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _haloCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _haloCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2500),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _haloCtrl.dispose();
-    super.dispose();
-  }
-
-  /// One pulsing halo. Two of these are stacked behind the pill, staggered by
-  /// half a cycle (phaseOffset 0 + 0.5) so the breathing rhythm never pauses.
-  Widget _halo(double phaseOffset) {
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: AnimatedBuilder(
-          animation: _haloCtrl,
-          builder: (_, __) {
-            final t = (_haloCtrl.value + phaseOffset) % 1.0;
-            final eased = Curves.easeInOut.transform(t);
-            final scale = 1.0 + 0.45 * eased;     // 1.0 → 1.45
-            final opacity = 0.55 * (1.0 - eased); // 0.55 → 0
-            return Transform.scale(
-              scale: scale,
-              child: Opacity(
-                opacity: opacity,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEF4444).withValues(alpha: 0.45),
-                    borderRadius: BorderRadius.circular(28),
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      alignment: Alignment.center,
-      children: [
-        _halo(0.0),
-        _halo(0.5),
-        Material(
-          color: Colors.transparent,
-          elevation: 0,
-          shadowColor: Colors.transparent,
-          borderRadius: BorderRadius.circular(28),
-          child: Ink(
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFFEF4444), Color(0xFFDC2626)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(28),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFFDC2626).withValues(alpha: 0.35),
-                  blurRadius: 14,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(28),
-              onTap: widget.onTap,
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(widget.icon,
-                        color: Colors.white, size: 18),
-                    const SizedBox(width: 6),
-                    Text(
-                      widget.label,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// v15.x: Airbnb-style "Map" pill — floating at bottom-center of the list view.
-// ═══════════════════════════════════════════════════════════════════════════
-// Replaces the small AppBar IconButton. Black capsule with white icon + label,
-// soft shadow for the floating feel. RTL-safe: in Hebrew/Arabic the row flips
-// so the icon ends up on the trailing (right) side automatically.
-class _OpenMapPillFab extends StatelessWidget {
-  const _OpenMapPillFab({required this.label, required this.onTap});
-
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black,
-      elevation: 0,
-      shadowColor: Colors.transparent,
-      borderRadius: BorderRadius.circular(28),
-      child: Ink(
-        decoration: BoxDecoration(
-          color: Colors.black,
-          borderRadius: BorderRadius.circular(28),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
-              blurRadius: 14,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(28),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.map_rounded, color: Colors.white, size: 18),
-                const SizedBox(width: 8),
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.2,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// v12.9.0: Map overlay widgets (top bar + fading gradient)
-// ═══════════════════════════════════════════════════════════════════════════
-// Purely presentational — state lives on _CategoryResultsScreenState and is
-// passed in via callbacks. Kept as private widgets in this file so they can
-// share the _showMap context without a cross-file import.
-
-class _MapTopGradient extends StatelessWidget {
-  const _MapTopGradient();
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 140,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end:   Alignment.bottomCenter,
-            colors: [
-              Colors.white.withValues(alpha: 0.95),
-              Colors.white.withValues(alpha: 0.55),
-              Colors.white.withValues(alpha: 0.0),
-            ],
-            stops: const [0.0, 0.55, 1.0],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MapTopBar extends StatefulWidget {
-  final String initialQuery;
-  final VoidCallback onBack;
-  final ValueChanged<String> onQueryChanged;
-  final VoidCallback onListPressed;
-
-  const _MapTopBar({
-    required this.initialQuery,
-    required this.onBack,
-    required this.onQueryChanged,
-    required this.onListPressed,
-  });
-
-  @override
-  State<_MapTopBar> createState() => _MapTopBarState();
-}
-
-class _MapTopBarState extends State<_MapTopBar> {
-  late final TextEditingController _ctrl =
-      TextEditingController(text: widget.initialQuery);
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsetsDirectional.fromSTEB(12, 12, 12, 0),
-      child: Row(
-        textDirection: TextDirection.rtl,
-        children: [
-          _RoundIconButton(
-            icon: Icons.arrow_forward_rounded,
-            onTap: widget.onBack,
-            tooltip: AppLocalizations.of(context).catBack,
-          ),
-          const SizedBox(width: 10),
-          Expanded(child: _buildSearchPill()),
-          const SizedBox(width: 10),
-          _RoundIconButton(
-            icon: Icons.view_list_rounded,
-            onTap: widget.onListPressed,
-            tooltip: AppLocalizations.of(context).catListView,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSearchPill() {
-    return Container(
-      height: 44,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: MapShadows.chip,
-      ),
-      padding: const EdgeInsetsDirectional.only(start: 14, end: 10),
-      child: Row(
-        children: [
-          const Icon(Icons.search_rounded,
-              size: 20, color: MapPalette.textSecondary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: _ctrl,
-              textDirection: TextDirection.rtl,
-              onChanged: widget.onQueryChanged,
-              style: const TextStyle(fontSize: 13.5, color: MapPalette.textPrimary),
-              decoration: InputDecoration(
-                hintText: AppLocalizations.of(context).catSearchInCategory,
-                hintStyle: const TextStyle(
-                    fontSize: 13.5, color: MapPalette.textTertiary),
-                isDense: true,
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(vertical: 10),
-              ),
-            ),
-          ),
-          if (_ctrl.text.isNotEmpty)
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () {
-                _ctrl.clear();
-                widget.onQueryChanged('');
-                setState(() {});
-              },
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 4),
-                child: Icon(Icons.close_rounded,
-                    size: 18, color: MapPalette.textTertiary),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RoundIconButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-  final String? tooltip;
-
-  const _RoundIconButton({
-    required this.icon,
-    required this.onTap,
-    this.tooltip,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final btn = Material(
-      color: Colors.white,
-      shape: const CircleBorder(),
-      elevation: 0,
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: SizedBox(
-          width: 42, height: 42,
-          child: Icon(icon, size: 20, color: MapPalette.textPrimary),
-        ),
-      ),
-    );
-    final boxed = DecoratedBox(
-      decoration: const BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: MapShadows.floatingControl,
-      ),
-      child: btn,
-    );
-    return tooltip != null ? Tooltip(message: tooltip!, child: boxed) : boxed;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// v12.9.0: Filter chips + provider count badge
-// ═══════════════════════════════════════════════════════════════════════════
-
-class _MapFilterChips extends StatelessWidget {
-  final double? maxDistanceKm;
-  final double  minRating;
-  final bool    under100;
-  final bool    onlineOnly;
-  final VoidCallback onPickDistance;
-  final VoidCallback onPickRating;
-  final VoidCallback onToggleUnder100;
-  final VoidCallback onToggleOnline;
-  final VoidCallback onInstantBook;
-
-  const _MapFilterChips({
-    required this.maxDistanceKm,
-    required this.minRating,
-    required this.under100,
-    required this.onlineOnly,
-    required this.onPickDistance,
-    required this.onPickRating,
-    required this.onToggleUnder100,
-    required this.onToggleOnline,
-    required this.onInstantBook,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final distanceLabel = maxDistanceKm == null
-        ? AppLocalizations.of(context).catFilterDistance
-        : AppLocalizations.of(context).catUpToKm(maxDistanceKm!.toInt());
-    final ratingLabel = minRating == 0
-        ? AppLocalizations.of(context).catFilterRating
-        : '${minRating.toStringAsFixed(minRating == 5 ? 0 : 1)}+ ⭐';
-
-    return SizedBox(
-      height: 38,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        reverse: true,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: Row(
-          children: [
-            _FilterChip(
-              icon: Icons.place_rounded,
-              label: distanceLabel,
-              active: maxDistanceKm != null,
-              onTap: onPickDistance,
-            ),
-            const SizedBox(width: 8),
-            _FilterChip(
-              icon: Icons.star_rounded,
-              label: ratingLabel,
-              active: minRating > 0,
-              onTap: onPickRating,
-            ),
-            const SizedBox(width: 8),
-            _FilterChip(
-              icon: Icons.attach_money_rounded,
-              label: AppLocalizations.of(context).catUnder100,
-              active: under100,
-              onTap: onToggleUnder100,
-            ),
-            const SizedBox(width: 8),
-            _FilterChip(
-              icon: Icons.circle,
-              iconColor: onlineOnly ? Colors.white : MapPalette.online,
-              iconSize: 10,
-              label: AppLocalizations.of(context).catAvailableNow,
-              active: onlineOnly,
-              onTap: onToggleOnline,
-            ),
-            const SizedBox(width: 8),
-            _FilterChip(
-              icon: Icons.bolt_rounded,
-              label: AppLocalizations.of(context).catInstantBook,
-              active: false,
-              disabledLookSoft: true,
-              onTap: onInstantBook,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FilterChip extends StatelessWidget {
-  final IconData icon;
-  final Color?   iconColor;
-  final double?  iconSize;
-  final String   label;
-  final bool     active;
-  final bool     disabledLookSoft;
-  final VoidCallback onTap;
-
-  const _FilterChip({
-    required this.icon,
-    this.iconColor,
-    this.iconSize,
-    required this.label,
-    required this.active,
-    this.disabledLookSoft = false,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = active
-        ? const Color(0xFF1A1D26)
-        : disabledLookSoft
-            ? const Color(0xFFF3F4F6)
-            : Colors.white;
-    final fg = active
-        ? Colors.white
-        : disabledLookSoft
-            ? MapPalette.textTertiary
-            : MapPalette.textPrimary;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          height: 34,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(24),
-            border: active || disabledLookSoft
-                ? null
-                : Border.all(color: MapPalette.border, width: 1),
-            boxShadow: active ? null : MapShadows.chip,
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon,
-                  size: iconSize ?? 16,
-                  color: iconColor ?? fg),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  color: fg,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// v12.9.0 (PR-5): Provider card shown inside the map carousel.
-// ═══════════════════════════════════════════════════════════════════════════
-
-class _MapProviderCard extends StatefulWidget {
-  final Map<String, dynamic> expert;
-  final bool                 active;
-  final Position?            myPosition;
-  final VoidCallback         onTapCard;
-  final VoidCallback         onMessage;
-  final VoidCallback         onBookNow;
-
-  const _MapProviderCard({
-    required this.expert,
-    required this.active,
-    required this.myPosition,
-    required this.onTapCard,
-    required this.onMessage,
-    required this.onBookNow,
-  });
-
-  @override
-  State<_MapProviderCard> createState() => _MapProviderCardState();
-}
-
-class _MapProviderCardState extends State<_MapProviderCard>
-    with SingleTickerProviderStateMixin {
-  bool _isFavorite = false;
-  late final AnimationController _heartCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _heartCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 260),
-    );
-  }
-
-  @override
-  void dispose() {
-    _heartCtrl.dispose();
-    super.dispose();
-  }
-
-  void _toggleFavorite() {
-    setState(() => _isFavorite = !_isFavorite);
-    _heartCtrl.forward(from: 0);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final expert       = widget.expert;
-    final active       = widget.active;
-    final myPosition   = widget.myPosition;
-    final name         = (expert['name'] as String?) ?? '';
-    final aboutMe      = (expert['aboutMe'] as String?) ?? '';
-    final rating       = (expert['rating'] as num?)?.toDouble() ?? 0.0;
-    final reviewsCount = (expert['reviewsCount'] as num?)?.toInt() ?? 0;
-    final city         = (expert['city'] as String?) ??
-        (expert['address'] as String?) ?? '';
-    final profileImage = expert['profileImage'] as String?;
-    final gallery      = (expert['gallery'] as List?)
-        ?.whereType<String>()
-        .where((s) => s.isNotEmpty)
-        .toList() ?? const <String>[];
-    final isOnline     = expert['isOnline'] == true;
-    final isVerified   = expert['isVerified'] == true;
-    final isPromoted   = expert['isPromoted'] == true;
-    final pricePerHour = (expert['pricePerHour'] as num?)?.toDouble();
-    final quickTags    = (expert['quickTags'] as List?)
-        ?.whereType<String>()
-        .toList() ?? const <String>[];
-
-    // Distance + ETA in km / minutes (if we have user location + expert coords)
-    String? distanceLabel;
-    int? etaMinutes;
-    final lat = (expert['latitude'] as num?)?.toDouble();
-    final lng = (expert['longitude'] as num?)?.toDouble();
-    if (myPosition != null && lat != null && lng != null) {
-      final km = Geolocator.distanceBetween(
-              myPosition.latitude, myPosition.longitude, lat, lng) /
-          1000.0;
-      distanceLabel = km < 1
-          ? AppLocalizations.of(context).catInNeighborhood
-          : '${km.toStringAsFixed(km < 10 ? 1 : 0)} ${AppLocalizations.of(context).catFilterKm}';
-      // Assume 40 km/h average urban speed.
-      etaMinutes = (km / 40.0 * 60.0).round().clamp(1, 999);
-    }
-
-    final borderColor = active ? MapPalette.goldActive : MapPalette.gold;
-    final borderWidth = active ? 2.5 : 2.0;
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: widget.onTapCard,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: borderColor, width: borderWidth),
-            boxShadow: active ? MapShadows.card : MapShadows.chip,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // ── Gallery strip + overlays ─────────────────────────────
-              _buildGallery(profileImage, gallery, isOnline, pricePerHour),
-              // ── Body ────────────────────────────────────────────────
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _buildHeaderRow(name, isVerified, isPromoted,
-                        profileImage, aboutMe),
-                    const SizedBox(height: 8),
-                    _buildMetaRow(rating, reviewsCount),
-                    if (etaMinutes != null || city.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      _buildEtaRow(etaMinutes, distanceLabel, city),
-                    ],
-                    if (quickTags.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      _buildTags(quickTags),
-                    ],
-                    const SizedBox(height: 10),
-                    const Divider(height: 1, color: MapPalette.border),
-                    const SizedBox(height: 8),
-                    _buildActionRow(),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ── Helpers ───────────────────────────────────────────────────────────────
-
-  Widget _buildGallery(
-    String? profileImage,
-    List<String> gallery,
-    bool isOnline,
-    double? pricePerHour,
-  ) {
-    // If there's a real gallery, show up to 3 images side-by-side. Otherwise
-    // fall back to the profile image as a single wide hero.
-    final imgs = gallery.isNotEmpty ? gallery.take(3).toList()
-                                    : (profileImage != null && profileImage.isNotEmpty
-                                       ? [profileImage] : const <String>[]);
-
-    return Stack(
-      clipBehavior: Clip.antiAlias,
-      children: [
-        // Images row
-        ClipRRect(
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-          child: SizedBox(
-            height: 120,
-            child: imgs.isEmpty
-                ? Container(
-                    color: MapPalette.primaryLight,
-                    alignment: Alignment.center,
-                    child: const Icon(Icons.person_rounded,
-                        size: 40, color: MapPalette.primary),
-                  )
-                : Row(
-                    children: [
-                      for (int i = 0; i < imgs.length; i++) ...[
-                        Expanded(child: _buildImage(imgs[i])),
-                        if (i < imgs.length - 1) const SizedBox(width: 2),
-                      ],
-                    ],
-                  ),
-          ),
-        ),
-        // Online status pill (top-end in RTL = top-left visually)
-        PositionedDirectional(
-          top: 10, end: 10,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: isOnline
-                  ? const Color(0xFFDCFCE7)
-                  : Colors.black.withValues(alpha: 0.55),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 6, height: 6,
-                  decoration: BoxDecoration(
-                    color: isOnline
-                        ? MapPalette.online
-                        : Colors.white.withValues(alpha: 0.7),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  isOnline ? AppLocalizations.of(context).catAvailableNowUser : AppLocalizations.of(context).catDayOffline,
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w700,
-                    color: isOnline
-                        ? const Color(0xFF166534)
-                        : Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        // Price pill (bottom-start in RTL = bottom-right visually)
-        if (pricePerHour != null && pricePerHour > 0)
-          PositionedDirectional(
-            bottom: 10, start: 10,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1A1D26),
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: MapShadows.chip,
-              ),
-              child: Text(
-                '₪${pricePerHour.toStringAsFixed(0)}/שעה',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ),
-        // v12.11.0: Heart (favorite) button — top-start = visually top-right in RTL
-        PositionedDirectional(
-          top: 10, start: 10,
-          child: _buildHeartButton(),
-        ),
-        // v12.11.0: Photo count badge — bottom-end = visually bottom-left in RTL
-        if (gallery.isNotEmpty)
-          PositionedDirectional(
-            bottom: 10, end: 10,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.55),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                '📸 ${gallery.length}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildHeartButton() {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: _toggleFavorite,
-        child: AnimatedBuilder(
-          animation: _heartCtrl,
-          builder: (_, __) {
-            // Bounce 1 → 1.3 → 1 over the controller cycle.
-            final t = _heartCtrl.value;
-            final scale = 1.0 + (t < 0.5 ? t * 0.6 : (1 - t) * 0.6);
-            return Transform.scale(
-              scale: scale,
-              child: Container(
-                width: 28, height: 28,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.85),
-                  shape: BoxShape.circle,
-                  boxShadow: MapShadows.chip,
-                ),
-                alignment: Alignment.center,
-                child: Icon(
-                  _isFavorite
-                      ? Icons.favorite_rounded
-                      : Icons.favorite_outline_rounded,
-                  size: 15,
-                  color: _isFavorite
-                      ? MapPalette.red
-                      : MapPalette.textSecondary,
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildImage(String url) {
-    final img = safeImageProvider(url);
-    if (img == null) {
-      return Container(color: MapPalette.primaryLight);
-    }
-    return Image(image: img, fit: BoxFit.cover);
-  }
-
-  Widget _buildHeaderRow(
-    String name,
-    bool isVerified,
-    bool isPromoted,
-    String? profileImage,
-    String aboutMe,
-  ) {
-    return Row(
-      textDirection: TextDirection.rtl,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Avatar
-        Container(
-          width: 44, height: 44,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: MapPalette.primaryLight, width: 2),
-          ),
-          child: ClipOval(
-            child: safeImageProvider(profileImage) != null
-                ? Image(image: safeImageProvider(profileImage)!,
-                        fit: BoxFit.cover)
-                : Container(
-                    color: MapPalette.primaryLight,
-                    child: Center(
-                      child: Text(
-                        name.isNotEmpty ? name[0] : '?',
-                        style: const TextStyle(
-                          color: MapPalette.primary,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 18,
-                        ),
-                      ),
-                    ),
-                  ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        // Name + description
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Flexible(
-                    child: Text(
-                      name,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w700,
-                        color: MapPalette.textPrimary,
-                      ),
-                    ),
-                  ),
-                  if (isVerified) ...[
-                    const SizedBox(width: 4),
-                    const Icon(Icons.verified_rounded,
-                        size: 15, color: MapPalette.primary),
-                  ],
-                  if (isPromoted) ...[
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFEF3C7),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        AppLocalizations.of(context).catRecommended,
-                        style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFFB45309),
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              if (aboutMe.isNotEmpty) ...[
-                const SizedBox(height: 3),
-                Text(
-                  aboutMe,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: MapPalette.textSecondary,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildMetaRow(double rating, int reviewsCount) {
-    return Row(
-      textDirection: TextDirection.rtl,
-      children: [
-        const Icon(Icons.star_rounded, size: 16, color: Color(0xFFFBBF24)),
-        const SizedBox(width: 2),
-        Text(
-          rating > 0 ? rating.toStringAsFixed(1) : '—',
-          style: const TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w700,
-            color: MapPalette.textPrimary,
-          ),
-        ),
-        const SizedBox(width: 4),
-        Text(
-          '($reviewsCount)',
-          style: const TextStyle(
-            fontSize: 12,
-            color: MapPalette.textTertiary,
-          ),
-        ),
-      ],
-    );
-  }
-
-  // v12.11.0: travel row — "🕐 12 דק׳ • קרית מלאכי"
-  Widget _buildEtaRow(int? etaMinutes, String? distanceLabel, String city) {
-    final parts = <String>[];
-    if (etaMinutes != null) parts.add('$etaMinutes דק׳');
-    if (distanceLabel != null) parts.add(distanceLabel);
-    if (city.isNotEmpty) parts.add(city);
-    final line = parts.join(' • ');
-    return Row(
-      textDirection: TextDirection.rtl,
-      children: [
-        const Icon(Icons.schedule_rounded, size: 13, color: MapPalette.primary),
-        const SizedBox(width: 4),
-        Flexible(
-          child: Text(
-            line,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 12,
-              color: MapPalette.textSecondary,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTags(List<String> tags) {
-    return Wrap(
-      spacing: 6,
-      runSpacing: 6,
-      children: [
-        for (final t in tags.take(3)) _buildTagChip(t),
-      ],
-    );
-  }
-
-  // v12.11.0: Firestore stores tag KEYS (english snake_case). Map them to
-  // Hebrew labels + semantic colors. Unknown keys fall back to a grey chip
-  // but still render (so we don't silently drop data).
-  static const Map<String, ({String label, Color bg, Color fg})> _kTagMap = {
-    'certified':      (label: '🎓 מוסמך/ת',        bg: MapPalette.tagGreenBg, fg: MapPalette.tagGreenFg),
-    'home_service':   (label: '🏠 מגיע/ה עד הבית', bg: MapPalette.tagBlueBg,  fg: MapPalette.tagBlueFg),
-    'first_discount': (label: '🎁 שיעור ראשון ב-50%', bg: MapPalette.tagRoseBg, fg: MapPalette.tagRoseFg),
-    'insured':        (label: '🛡️ מבוטח/ת',         bg: MapPalette.tagGreenBg, fg: MapPalette.tagGreenFg),
-    'instant_book':   (label: '⚡ הזמנה מיידית',     bg: Color(0xFFFEF3C7),     fg: Color(0xFFB45309)),
-    'fast_response':  (label: '⚡ תגובה מהירה',      bg: Color(0xFFFEF3C7),     fg: Color(0xFFB45309)),
-    'reliable':       (label: '✅ אמין/ה',           bg: MapPalette.tagGreenBg, fg: MapPalette.tagGreenFg),
-    'experienced':    (label: '⭐ מנוסה',            bg: MapPalette.tagBlueBg,  fg: MapPalette.tagBlueFg),
-  };
-
-  Widget _buildTagChip(String tag) {
-    final entry = _kTagMap[tag];
-    final Color bg;
-    final Color fg;
-    final String label;
-
-    if (entry != null) {
-      bg = entry.bg;
-      fg = entry.fg;
-      label = entry.label;
-    } else {
-      // Legacy Hebrew-text fallback.
-      final lowered = tag.toLowerCase();
-      if (lowered.contains('home') || tag.contains('הביתה') ||
-          tag.contains('הבית')) {
-        bg = MapPalette.tagBlueBg; fg = MapPalette.tagBlueFg;
-      } else if (lowered.contains('cert') || tag.contains('מוסמך')) {
-        bg = MapPalette.tagGreenBg; fg = MapPalette.tagGreenFg;
-      } else if (lowered.contains('50') || tag.contains('הנחה')) {
-        bg = MapPalette.tagRoseBg; fg = MapPalette.tagRoseFg;
-      } else {
-        bg = MapPalette.tagGrayBg; fg = MapPalette.tagGrayFg;
-      }
-      label = tag;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11.5,
-          fontWeight: FontWeight.w600,
-          color: fg,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionRow() {
-    return Row(
-      textDirection: TextDirection.rtl,
-      children: [
-        // When free? (left in RTL = end of row visually)
-        TextButton.icon(
-          onPressed: widget.onTapCard,
-          style: TextButton.styleFrom(
-            foregroundColor: MapPalette.textSecondary,
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            minimumSize: const Size(0, 36),
-          ),
-          icon: const Icon(Icons.event_available_rounded, size: 16),
-          label: Text(
-            AppLocalizations.of(context).catWhenAvailable,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-          ),
-        ),
-        const Spacer(),
-        // Message button
-        Material(
-          color: Colors.white,
-          shape: const CircleBorder(side: BorderSide(color: MapPalette.border)),
-          child: InkWell(
-            customBorder: const CircleBorder(),
-            onTap: widget.onMessage,
-            child: const SizedBox(
-              width: 36, height: 36,
-              child: Icon(Icons.chat_bubble_outline_rounded,
-                  size: 18, color: MapPalette.textPrimary),
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        // Book now CTA
-        Material(
-          color: MapPalette.primary,
-          shape: const StadiumBorder(),
-          child: InkWell(
-            customBorder: const StadiumBorder(),
-            onTap: widget.onBookNow,
-            child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-              child: Text(
-                AppLocalizations.of(context).catBookNow,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ProviderCountBadge extends StatelessWidget {
-  final int count;
-  final String categoryName;
-  final bool anyFilterActive;
-
-  const _ProviderCountBadge({
-    required this.count,
-    required this.categoryName,
-    required this.anyFilterActive,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // v12.11.0: show whenever there are results — hides only when empty.
-    final visible = count > 0;
-    return AnimatedSlide(
-      offset: visible ? Offset.zero : const Offset(0, -0.6),
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutBack,
-      child: AnimatedOpacity(
-        opacity: visible ? 1.0 : 0.0,
-        duration: const Duration(milliseconds: 200),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: IntrinsicWidth(
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1A1D26),
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: MapShadows.chip,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 8, height: 8,
-                    decoration: const BoxDecoration(
-                      color: MapPalette.online,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      '$count $categoryName באזור שלך',
-                      textDirection: TextDirection.rtl,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}

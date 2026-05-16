@@ -178,10 +178,13 @@ jobs:
           if-no-files-found: warn
 
   # ─── Step 1c: Cloud Functions Tests ──────────────────────────────────────
-  # 258 tests covering ALL 43 CFs in functions/index.js across 3 handler
+  # 343 tests covering critical CFs in functions/index.js across 3 handler
   # types: callable, onDocumentX trigger, onSchedule. Heavy mocking of
-  # firebase-admin so tests run in ~2s without an emulator. Per-test
+  # firebase-admin so tests run in ~1s without an emulator. Per-test
   # coverage reports uploaded as CI artifacts.
+  # 2026-05-14: §79 added +85 tests for requestWithdrawal, createEscrowPayment,
+  # createTaskEscrow, releaseTaskPayment, raiseTaskDispute, addTipToJob,
+  # bookFromDeliveryExpressOffer — closes "money paths untested" gap.
   # See functions/__tests__/auth.test.js + TESTING.md for details.
   cf-tests:
     name: Cloud Functions

@@ -242,12 +242,26 @@ class LocationService {
           perm != LocationPermission.always) {
         return;
       }
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 5),
-        ),
-      );
+      Position? pos;
+      try {
+        pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+            timeLimit: Duration(seconds: 5),
+          ),
+        );
+      } catch (_) {
+        pos = null;
+      }
+      // On web, geolocator silently returns null / throws even when the
+      // browser has granted permission. Without this fallback the
+      // provider's users/{uid} doc never gets latitude/longitude — and the
+      // Flash Auction dispatch CF then skips them entirely. (Live bug —
+      // רועי צברי, 2026-05-15.)
+      if (pos == null && kIsWeb) {
+        pos = await web_geo.webGetCurrentPositionDirect();
+      }
+      if (pos == null) return;
       _cached = pos;
       final geohash = _encodeGeohash(pos.latitude, pos.longitude, precision: 7);
       await FirebaseFirestore.instance.collection('users').doc(uid).update({

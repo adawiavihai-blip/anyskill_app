@@ -38,9 +38,34 @@ class ProviderHistoryTab extends StatefulWidget {
   State<ProviderHistoryTab> createState() => _ProviderHistoryTabState();
 }
 
-class _ProviderHistoryTabState extends State<ProviderHistoryTab> {
-  bool _historyTimedOut = false;
-  Timer? _historyTimeoutTimer;
+class _ProviderHistoryTabState extends State<ProviderHistoryTab>
+    with AutomaticKeepAliveClientMixin {
+  // Two independent timeouts so neither stream can leave the user
+  // staring at a spinner forever (רועי צברי report 2026-05-14: tap
+  // History → stuck on spinning circle).
+  bool _jobsTimedOut = false;
+  bool _txTimedOut = false;
+  Timer? _jobsTimer;
+  Timer? _txTimer;
+
+  // Cache of last-good snapshots so transient re-emit windows don't
+  // bounce the user back to "loading" between stream events.
+  QuerySnapshot? _lastJobsSnap;
+  QuerySnapshot? _lastTxSnap;
+
+  // §15 Law 15 — one-shot `.get()` fallback for the JOBS query. The
+  // parent passes a `.snapshots()` stream; if that listener goes zombie
+  // on a cold/stalled WebChannel it can never deliver, leaving the
+  // provider's completed jobs invisible (live bug — רועי צברי
+  // 2026-05-16: "I did jobs, History tab is empty"). A one-shot `.get()`
+  // of the SAME query succeeds even when the stream listener is stuck —
+  // it's a separate request. Populated by `_kickJobsGetFallback`.
+  List<QueryDocumentSnapshot>? _jobsFallbackDocs;
+
+  // Pre-warmed transactions stream — created in initState so the
+  // fallback path can render INSTANTLY when reached, without paying
+  // a fresh subscription delay.
+  late final Stream<QuerySnapshot> _txStream;
 
   static const _activeStatuses = {
     'paid_escrow',
@@ -53,55 +78,109 @@ class _ProviderHistoryTabState extends State<ProviderHistoryTab> {
   };
 
   @override
+  bool get wantKeepAlive => true; // preserve scroll + cached snapshots
+
+  @override
   void initState() {
     super.initState();
-    // Start a 6s timeout — if the stream hasn't delivered, show empty state.
-    _historyTimeoutTimer = Timer(const Duration(seconds: 6), () {
-      if (mounted && !_historyTimedOut) {
-        setState(() => _historyTimedOut = true);
-      }
+    // 3s timeout per stream — bumped DOWN from 6s after user report.
+    // After 3s we render whatever we have (which may be the empty state).
+    _jobsTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && !_jobsTimedOut) setState(() => _jobsTimedOut = true);
     });
+    _txTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && !_txTimedOut) setState(() => _txTimedOut = true);
+    });
+    // Pre-warm the transactions stream so it has time to deliver its
+    // first event by the time the user actually scrolls into the
+    // fallback path. Saved subscription delay = saved spinner time.
+    _txStream = FirebaseFirestore.instance
+        .collection('transactions')
+        .where('receiverId', isEqualTo: widget.currentUserId)
+        .limit(50)
+        .snapshots();
+
+    // §15 Law 15 — one-shot `.get()` fallback for the jobs query.
+    // Tier 1 (1.5s): first attempt. Tier 1.5 (6s): silent retry. If the
+    // parent's `.snapshots()` stream already delivered, these no-op.
+    if (widget.currentUserId.isNotEmpty) {
+      Future.delayed(const Duration(milliseconds: 1500),
+          () => _kickJobsGetFallback(const Duration(seconds: 6)));
+      Future.delayed(const Duration(seconds: 6), () {
+        if (_lastJobsSnap == null && _jobsFallbackDocs == null) {
+          _kickJobsGetFallback(const Duration(seconds: 8));
+        }
+      });
+    }
+  }
+
+  /// Fires a one-shot `.get()` of the SAME query the parent's
+  /// `_expertStream` uses (`jobs where expertId == uid`). Used only when
+  /// the live `.snapshots()` listener hasn't delivered — covers the
+  /// zombie-WebChannel case where the stream never emits.
+  Future<void> _kickJobsGetFallback(Duration timeout) async {
+    if (!mounted || _lastJobsSnap != null) return;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('jobs')
+          .where('expertId', isEqualTo: widget.currentUserId)
+          .limit(200)
+          .get()
+          .timeout(timeout);
+      if (!mounted || _lastJobsSnap != null) return;
+      setState(() => _jobsFallbackDocs = snap.docs);
+      debugPrint(
+          '[ProviderHistory] .get() fallback delivered ${snap.docs.length} job doc(s)');
+    } catch (e) {
+      debugPrint('[ProviderHistory] .get() fallback failed: $e');
+    }
   }
 
   @override
   void dispose() {
-    _historyTimeoutTimer?.cancel();
+    _jobsTimer?.cancel();
+    _txTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // AutomaticKeepAlive
     return StreamBuilder<QuerySnapshot>(
       stream: widget.expertStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           debugPrint('[History] Error: ${snapshot.error}');
-          return Center(
-            child: Text('שגיאה בטעינת היסטוריה',
-                style: TextStyle(color: Colors.grey[500])),
-          );
+          // Even on error, fall through to the transaction fallback
+          // so a flaky `jobs` stream doesn't break the whole tab.
         }
-        if (!snapshot.hasData && !_historyTimedOut) {
+        if (snapshot.hasData) _lastJobsSnap = snapshot.data;
+        final activeSnap = snapshot.data ?? _lastJobsSnap;
+        // Strict waiting state — only show spinner during the FIRST 3s,
+        // AND only while neither the live stream NOR the `.get()`
+        // fallback has produced anything. After timeout / fallback,
+        // render whatever we have.
+        if (activeSnap == null &&
+            _jobsFallbackDocs == null &&
+            !_jobsTimedOut &&
+            !snapshot.hasError) {
           return const Center(child: CircularProgressIndicator());
         }
-        final docs = snapshot.data?.docs ?? [];
-        debugPrint('[History] Provider stream: ${docs.length} total docs');
 
-        // Log status distribution for debugging
-        if (docs.isNotEmpty) {
-          final statusCounts = <String, int>{};
-          for (final d in docs) {
-            final s = ((d.data() as Map<String, dynamic>)['status'] ?? 'null')
-                .toString();
-            statusCounts[s] = (statusCounts[s] ?? 0) + 1;
-          }
-          debugPrint('[History] Provider status distribution: $statusCounts');
-        }
-
+        // Prefer the live stream; fall back to the one-shot `.get()`
+        // docs when the `.snapshots()` listener went zombie.
+        final docs = activeSnap?.docs ?? _jobsFallbackDocs ?? const [];
+        // 2026-05-14: changed filter to be MORE INCLUSIVE after user
+        // report that old completed jobs weren't appearing. Original
+        // filter required `status.isNotEmpty` — which dropped any
+        // legacy jobs missing a status field. Now: include any job
+        // whose status is NOT in the active set (so completed,
+        // cancelled, refunded, AND legacy/missing-status jobs all
+        // appear in history).
         final historyDocs = docs.where((d) {
           final status =
               (d.data() as Map<String, dynamic>)['status'] as String? ?? '';
-          return !_activeStatuses.contains(status) && status.isNotEmpty;
+          return !_activeStatuses.contains(status);
         }).toList()
           ..sort((a, b) {
             final ta = (a.data() as Map)['createdAt'];
@@ -109,11 +188,11 @@ class _ProviderHistoryTabState extends State<ProviderHistoryTab> {
             if (ta is Timestamp && tb is Timestamp) return tb.compareTo(ta);
             return 0;
           });
-        debugPrint(
-            '[History] After filter: ${historyDocs.length} history docs');
 
         if (historyDocs.isEmpty) {
-          // Fallback: show transactions when no jobs have terminal status
+          // Fallback: show transactions instead. The fallback has its
+          // own 3s timeout so the user never gets stuck on a 2nd
+          // spinner if transactions are also slow.
           return _buildProviderTransactionFallbackHistory();
         }
         return _buildGroupedList(historyDocs);
@@ -123,25 +202,25 @@ class _ProviderHistoryTabState extends State<ProviderHistoryTab> {
 
   /// Fallback for provider history: when `jobs` collection has no terminal-
   /// status docs for this expert, pull from `transactions` (receiverId).
+  /// Uses pre-warmed `_txStream` + 3s timeout flag — never shows infinite
+  /// spinner (the previous bug that left רועי צברי stuck on history tab).
   Widget _buildProviderTransactionFallbackHistory() {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('transactions')
-          .where('receiverId', isEqualTo: widget.currentUserId)
-          .limit(50)
-          .snapshots(),
+      stream: _txStream,
       builder: (context, txSnap) {
         if (txSnap.hasError) {
           debugPrint(
               '[ProviderHistory] Transaction fallback error: ${txSnap.error}');
-        }
-        if (!txSnap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final docs = txSnap.data!.docs;
-        if (docs.isEmpty) {
+          // Show empty state on error — never block the page.
           return _buildEmptyState();
         }
+        if (txSnap.hasData) _lastTxSnap = txSnap.data;
+        final activeTxSnap = txSnap.data ?? _lastTxSnap;
+        if (activeTxSnap == null && !_txTimedOut) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final docs = activeTxSnap?.docs ?? const [];
+        if (docs.isEmpty) return _buildEmptyState();
         return _buildTransactionList(docs);
       },
     );

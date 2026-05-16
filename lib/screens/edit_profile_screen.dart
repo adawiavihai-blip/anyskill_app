@@ -1,15 +1,17 @@
+// B.3 (§80, 2026-05-14): _AddSecondIdentitySheet + _EditSecondIdentitySheet
+// moved to edit_profile/widgets/edit_profile_widgets.dart. They stay private
+// thanks to the `part` directive below.
+library;
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:image_picker/image_picker.dart';
 import '../l10n/app_localizations.dart';
 import '../utils/input_sanitizer.dart';
 import '../utils/error_mapper.dart';
 import 'price_settings_screen.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'dart:typed_data';
 import '../services/category_service.dart';
 import '../services/cancellation_policy_service.dart';
 import '../widgets/category_specs_widget.dart';
@@ -18,8 +20,10 @@ import '../constants/quick_tags.dart';
 import '../widgets/category_tags_selector.dart';
 import '../widgets/price_list_widget.dart';
 import '../services/provider_listing_service.dart';
-import '../services/view_mode_service.dart';
+// view_mode_service.dart used by view_mode_toggle_card.dart (§81 C.6).
 import '../services/private_data_service.dart';
+import '../services/profile_media_service.dart';
+import '../services/profile_save_service.dart';
 import '../main.dart' show PhoneCollectionScreen;
 import '../utils/safe_image_provider.dart';
 import '../features/pet_stay/models/dog_profile.dart';
@@ -43,6 +47,9 @@ import 'handyman/handyman_settings_block.dart';
 import 'fitness_trainer/fitness_trainer_settings_block.dart';
 import 'babysitter/babysitter_settings_block.dart';
 import 'motorcycle_tow/motorcycle_tow_settings_block.dart';
+import 'edit_profile/widgets/view_mode_toggle_card.dart';
+
+part 'edit_profile/widgets/edit_profile_widgets.dart';
 
 class EditProfileScreen extends StatefulWidget {
   final Map<String, dynamic> userData;
@@ -109,11 +116,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final l = AppLocalizations.of(ctx);
     return [l.editDaySunday, l.editDayMonday, l.editDayTuesday, l.editDayWednesday, l.editDayThursday, l.editDayFriday, l.editDaySaturday];
   }
-  static const _kHourOptions = [
-    '07:00', '08:00', '09:00', '10:00', '11:00', '12:00',
-    '13:00', '14:00', '15:00', '16:00', '17:00', '18:00',
-    '19:00', '20:00', '21:00', '22:00',
-  ];
+  // §83 E.3 (2026-05-14): _kHourOptions moved to top-level const in
+  // edit_profile_widgets.dart (part-of). Same library, same name.
 
   String? _profileImageUrl;
   String _phoneDisplay = ''; // read-only — shown from Auth / Firestore
@@ -145,6 +149,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   int _activeIdentityIndex = 0;
   String _activeListingServiceType = '';
   List<Map<String, dynamic>> _allListings = [];
+
+  // 2026-05-15 — server-authoritative serviceType / subCategory.
+  // `widget.userData` can be a STALE snapshot (profile_screen's
+  // parent StreamBuilder occasionally pushes EditProfile with old
+  // data). `_refreshRoleFlagsFromServer` does a fresh Source.server
+  // read and stores the authoritative values here. Category
+  // resolution prefers these over `widget.userData`.
+  String _serverServiceType = '';
+  String _serverSubCategory = '';
+
+  // True once the user MANUALLY changes the category dropdown. After
+  // that, no automatic resolution (snapshot re-emit, listing load,
+  // server refresh) is allowed to clobber the selection.
+  bool _userPickedCategory = false;
 
   @override
   void initState() {
@@ -306,98 +324,276 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         setState(() => _categoriesStreamFired = true);
       }
     });
+
+    // DEFENSIVE — re-read users/{uid} fresh from server to make sure
+    // role flags (_isProvider / _isCustomer / _isVolunteer /
+    // _isPendingExpert) are correct regardless of what widget.userData
+    // had at mount time. Live bug 2026-05-15 — רועי צברי "תחום עיסוק
+    // נעלם לפעמים": profile_screen's parent StreamBuilder occasionally
+    // pushed EditProfile with a stale snapshot where `isProvider:
+    // false`, which made the entire `if (_isProvider) ...[]` block in
+    // build() vanish. Fresh fetch corrects local state within ~500ms
+    // post-mount so the dropdowns appear without requiring browser
+    // refresh.
+    // ignore: discarded_futures
+    _refreshRoleFlagsFromServer();
   }
 
-  /// One-shot fetch of categories — backup for the snapshot stream.
-  Future<void> _oneshotLoadCategories() async {
+  /// Fire-and-forget: pull the user doc directly from server and flip
+  /// role flags + serviceType if they disagree with widget.userData.
+  /// Never throws — stale widget data is the worst case we tolerate.
+  ///
+  /// 2026-05-15: extended to ALSO capture `serviceType` + `subCategory`
+  /// as the authoritative resolution input. `widget.userData` can be a
+  /// stale parent-StreamBuilder snapshot — the server doc is the truth.
+  /// After capturing, re-runs `_applyCategoriesSnapshot` so the
+  /// dropdown re-resolves against the fresh serviceType.
+  Future<void> _refreshRoleFlagsFromServer() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return;
     try {
       final snap = await FirebaseFirestore.instance
-          .collection('categories')
-          .limit(100)
-          .get()
-          .timeout(const Duration(seconds: 5));
+          .collection('users')
+          .doc(uid)
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 8));
       if (!mounted) return;
-      final cats =
-          snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
-      if (cats.isEmpty) return;
-      _applyCategoriesSnapshot(cats);
-      debugPrint(
-          '[EditProfile] One-shot categories loaded: ${cats.length} docs');
+      final d = snap.data() ?? const <String, dynamic>{};
+      if (d.isEmpty) return;
+      final freshIsProvider = d['isProvider'] == true;
+      final freshIsCustomer = (d['isCustomer'] as bool?) ?? true;
+      final freshIsVolunteer = (d['isVolunteer'] as bool?) ?? false;
+      final freshIsPending = (d['isPendingExpert'] as bool?) ?? false;
+      final freshServiceType = (d['serviceType'] as String? ?? '').trim();
+      final freshSubCategory = (d['subCategory'] as String? ?? '').trim();
+
+      final flagsChanged = freshIsProvider != _isProvider ||
+          freshIsCustomer != _isCustomer ||
+          freshIsVolunteer != _isVolunteer ||
+          freshIsPending != _isPendingExpert;
+      final serviceTypeChanged = freshServiceType != _serverServiceType ||
+          freshSubCategory != _serverSubCategory;
+
+      if (flagsChanged || serviceTypeChanged) {
+        debugPrint(
+            '[EditProfile] Server refresh — isProvider: $_isProvider→$freshIsProvider, '
+            'serviceType: "$_serverServiceType"→"$freshServiceType"');
+        setState(() {
+          _isProvider = freshIsProvider;
+          _isCustomer = freshIsCustomer;
+          _isVolunteer = freshIsVolunteer;
+          _isPendingExpert = freshIsPending;
+          _serverServiceType = freshServiceType;
+          _serverSubCategory = freshSubCategory;
+        });
+      }
+      // Re-resolve the category dropdown against the fresh serviceType.
+      // If categories are already loaded this fixes a dropdown that
+      // resolved (or failed to) against stale widget.userData. If not
+      // loaded yet, the next snapshot will pick up _serverServiceType.
+      if (_categories.isNotEmpty) {
+        _applyCategoriesSnapshot(_categories);
+      }
     } catch (e) {
-      debugPrint('[EditProfile] One-shot categories fetch failed: $e');
-      // Don't flip _categoriesStreamFired here — let the snapshot stream
-      // OR the 6s timeout do it. We want to keep the stream's authoritative
-      // result winning if it eventually arrives.
+      // Network slow / permission denied / etc. — fine, widget.userData
+      // is the worst case which is fine.
+      debugPrint('[EditProfile] Server refresh failed: $e');
     }
   }
 
-  /// Shared logic for processing a categories snapshot (used by both the
-  /// snapshot stream and the one-shot get). Idempotent — safe to call
-  /// multiple times.
+  /// Single source of truth for the serviceType the category dropdown
+  /// should resolve. Priority: active listing → fresh server doc →
+  /// widget.userData (potentially stale). All three are kept in sync;
+  /// this picks the most authoritative non-empty value.
+  String _bestServiceType() {
+    if (_activeListingServiceType.isNotEmpty) return _activeListingServiceType;
+    if (_serverServiceType.isNotEmpty) return _serverServiceType;
+    return (widget.userData['serviceType'] as String? ?? '').trim();
+  }
+
+  /// Best subCategory hint — used by the self-heal path when a provider
+  /// registered with `serviceType == parent name` and `subCategory`
+  /// stored separately.
+  String _bestSubCategory() {
+    if (_serverSubCategory.isNotEmpty) return _serverSubCategory;
+    return (widget.userData['subCategory'] as String? ?? '').trim();
+  }
+
+  /// One-shot fetch of categories — backup for the snapshot stream.
+  /// Auto-retries up to 3 times with backoff so a flaky cold-start
+  /// connect doesn't leave the dropdown spinning forever (live user
+  /// report from רועי צברי 2026-05-14: profile-edit dropdown stuck on
+  /// spinner even though he had a saved category).
+  Future<void> _oneshotLoadCategories() async {
+    const attempts = 3;
+    const perAttemptTimeout = Duration(seconds: 6);
+    const backoff = Duration(seconds: 2);
+    for (int i = 0; i < attempts; i++) {
+      if (i > 0) {
+        await Future.delayed(backoff);
+        if (!mounted) return;
+        if (_mainCategories.isNotEmpty) return; // stream filled in meanwhile
+      }
+      try {
+        // ROOT-CAUSE FIX (2026-05-15, רועי צברי "תחום עיסוק נעלם
+        // לפעמים"): `.limit(100)` SILENTLY TRUNCATED the categories
+        // collection. With Categories v3 (77+ categories) + all the
+        // CSM additions, the collection is at/past 100 docs. Firestore
+        // returns 100 docs by document-ID order — if "גרר אופנועים" or
+        // "תחבורה" sorted beyond position 100, the resolution
+        // `cats.firstWhere(name == serviceType)` found nothing →
+        // category dropdown empty. The intermittency came from the
+        // collection size hovering around the 100 boundary as admins
+        // add/remove categories. Raised to 500 (same as the admin
+        // tools — admin_demo_experts_tab, power_tools_footer,
+        // schema_migration_service all use 500). 500 docs is a tiny,
+        // cheap read for a categories collection.
+        final snap = await FirebaseFirestore.instance
+            .collection('categories')
+            .limit(500)
+            .get()
+            .timeout(perAttemptTimeout);
+        if (!mounted) return;
+        final cats =
+            snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+        if (cats.isEmpty) {
+          debugPrint('[EditProfile] One-shot got empty list (attempt ${i + 1})');
+          continue;
+        }
+        _applyCategoriesSnapshot(cats);
+        debugPrint(
+            '[EditProfile] One-shot categories loaded: ${cats.length} docs '
+            '(attempt ${i + 1})');
+        return; // success
+      } catch (e) {
+        debugPrint(
+            '[EditProfile] One-shot fetch failed (attempt ${i + 1}): $e');
+        // Loop will retry after backoff. Snapshot stream may also still
+        // win — _applyCategoriesSnapshot is idempotent so dual wins is fine.
+      }
+    }
+    debugPrint(
+        '[EditProfile] One-shot all $attempts attempts failed — relying on stream');
+  }
+
+  /// Single deterministic, idempotent category resolver. Called from
+  /// the one-shot fetch, EVERY snapshot stream emit, the listing load,
+  /// and the server-refresh. Same `cats` + same serviceType → same
+  /// result, every time. Safe to call any number of times in any order.
+  ///
+  /// 2026-05-15 RE-ARCHITECTURE (רועי צברי "תחום עיסוק נעלם / לפעמים
+  /// עובד לפעמים לא"): the old design had THREE racing writers
+  /// (one-shot, stream, listing-load) each with subtly different
+  /// resolution logic. This is now the ONLY resolver. It:
+  ///   1. Uses `_bestServiceType()` — the most authoritative non-empty
+  ///      serviceType (active listing → fresh server → widget.userData).
+  ///   2. Resolves it to (mainId, subId) — handles serviceType being a
+  ///      sub-cat name, a main-cat name, or main-name + separate
+  ///      `subCategory` field (the legacy registration self-heal).
+  ///   3. RESPECTS `_userPickedCategory` — once the user manually
+  ///      changes the dropdown, automatic resolution NEVER touches the
+  ///      selection again (only refreshes the items lists).
+  ///   4. NEVER wipes valid state with empty data.
   void _applyCategoriesSnapshot(List<Map<String, dynamic>> cats) {
     if (!mounted) return;
+    if (cats.isEmpty) {
+      // EMPTY snapshot — don't WIPE existing state. Just record we've
+      // seen at least one tick so the perpetual-spinner fallback clears.
+      if (!_categoriesStreamFired) {
+        setState(() => _categoriesStreamFired = true);
+      }
+      return;
+    }
     if (!_categoriesStreamFired) _categoriesStreamFired = true;
     final mains =
         cats.where((c) => (c['parentId'] as String? ?? '').isEmpty).toList();
-    // v13.3.0: prefer the active listing's serviceType over the user
-    // doc's — ensures dual-identity providers see the right category
-    // resolved when they switch identities.
-    final serviceType = _activeListingServiceType.isNotEmpty
-        ? _activeListingServiceType
-        : widget.userData['serviceType'] as String?;
 
-    // Resolve existing serviceType into main-category ID + optional sub-category ID
-    final subMatch = cats.firstWhere(
-      (c) =>
-          c['name'] == serviceType &&
-          (c['parentId'] as String? ?? '').isNotEmpty,
-      orElse: () => <String, dynamic>{},
-    );
+    // ── Resolve serviceType → (mainId, subId) ───────────────────────────
+    final serviceType = _bestServiceType();
     String? mainId, subId;
-    if (subMatch.isNotEmpty) {
-      subId = subMatch['id'] as String?;
-      mainId = subMatch['parentId'] as String?;
-    } else {
-      final mainMatch = mains.firstWhere(
-        (c) => c['name'] == serviceType,
+    if (serviceType.isNotEmpty) {
+      // (a) serviceType matches a SUB-category name (the common case —
+      //     providers save `serviceType = sub-cat name`).
+      final subMatch = cats.firstWhere(
+        (c) =>
+            c['name'] == serviceType &&
+            (c['parentId'] as String? ?? '').isNotEmpty,
         orElse: () => <String, dynamic>{},
       );
-      mainId = mainMatch.isNotEmpty ? mainMatch['id'] as String? : null;
-      // Self-heal: providers who registered through the buggy
-      // provider_registration_screen path landed with `serviceType`
-      // == parent name and `subCategory` filled separately.
-      if (mainId != null) {
-        final savedSub =
-            (widget.userData['subCategory'] as String? ?? '').trim();
-        if (savedSub.isNotEmpty) {
-          final fallbackSub = cats.firstWhere(
-            (c) =>
-                c['name'] == savedSub &&
-                (c['parentId'] as String? ?? '') == mainId,
-            orElse: () => <String, dynamic>{},
-          );
-          if (fallbackSub.isNotEmpty) {
-            subId = fallbackSub['id'] as String?;
+      if (subMatch.isNotEmpty) {
+        subId = subMatch['id'] as String?;
+        mainId = subMatch['parentId'] as String?;
+      } else {
+        // (b) serviceType matches a MAIN-category name.
+        final mainMatch = mains.firstWhere(
+          (c) => c['name'] == serviceType,
+          orElse: () => <String, dynamic>{},
+        );
+        mainId = mainMatch.isNotEmpty ? mainMatch['id'] as String? : null;
+        // (c) Self-heal: serviceType == parent name AND `subCategory`
+        //     stored separately (legacy provider_registration path).
+        if (mainId != null) {
+          final savedSub = _bestSubCategory();
+          if (savedSub.isNotEmpty) {
+            final fallbackSub = cats.firstWhere(
+              (c) =>
+                  c['name'] == savedSub &&
+                  (c['parentId'] as String? ?? '') == mainId,
+              orElse: () => <String, dynamic>{},
+            );
+            if (fallbackSub.isNotEmpty) {
+              subId = fallbackSub['id'] as String?;
+            }
           }
         }
       }
     }
+    debugPrint(
+        '[EditProfile] Resolve serviceType="$serviceType" → mainId=$mainId subId=$subId '
+        '(${cats.length} cats, userPicked=$_userPickedCategory)');
 
-    final subs = mainId != null
-        ? cats.where((c) => c['parentId'] == mainId).toList()
-        : <Map<String, dynamic>>[];
+    // ── Decide the effective selection ──────────────────────────────────
+    // If the user manually picked a category, their choice is sacred —
+    // automatic resolution NEVER overrides it. Otherwise use the
+    // resolved mainId (falling back to any prior selection so a
+    // momentary failed resolution doesn't clear it).
+    final String? effectiveMainId = _userPickedCategory
+        ? _selectedMainCatId
+        : (mainId ?? _selectedMainCatId);
+    final String? effectiveSubId = _userPickedCategory
+        ? _selectedSubCatId
+        : (subId ?? _selectedSubCatId);
+
+    // Derive subs from the EFFECTIVE main cat. If we can't derive any
+    // (effectiveMainId null OR no subs in this snapshot), keep the
+    // existing list — never wipe a populated sub-cat dropdown.
+    final derivedSubs = effectiveMainId != null
+        ? cats.where((c) => c['parentId'] == effectiveMainId).toList()
+        : const <Map<String, dynamic>>[];
+    final nextSubs =
+        derivedSubs.isNotEmpty ? derivedSubs : _subCategories;
 
     setState(() {
       _categories = cats;
-      _mainCategories = mains;
-      _selectedMainCatId = _selectedMainCatId ?? mainId;
-      _subCategories = subs;
-      _selectedSubCatId = _selectedSubCatId ?? subId;
+      if (mains.isNotEmpty) _mainCategories = mains;
+      _selectedMainCatId = effectiveMainId;
+      _subCategories = nextSubs;
+      _selectedSubCatId = effectiveSubId;
     });
-    // Load v2 schema for the resolved category.
-    final resolvedCatName = widget.userData['serviceType'] as String? ?? '';
-    if (resolvedCatName.isNotEmpty && _serviceSchema.isEmpty) {
-      _loadV2SchemaFor(resolvedCatName);
+
+    // Load v2 schema for the resolved category (sub-cat name preferred,
+    // else the main serviceType). Only when we don't already have one.
+    if (_serviceSchema.isEmpty) {
+      final subName = effectiveSubId != null
+          ? cats
+              .where((c) => c['id'] == effectiveSubId)
+              .map((c) => c['name'] as String? ?? '')
+              .firstOrNull
+          : null;
+      final schemaCat = (subName != null && subName.isNotEmpty)
+          ? subName
+          : serviceType;
+      if (schemaCat.isNotEmpty) _loadV2SchemaFor(schemaCat);
     }
   }
 
@@ -593,137 +789,90 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return isMotorcycleTowingCategory(subName);
   }
 
+  /// Re-resolve the category dropdown after the active listing's
+  /// serviceType becomes known. The unified resolver
+  /// [_applyCategoriesSnapshot] already prefers `_activeListingServiceType`
+  /// via `_bestServiceType()` — so all this needs to do is RE-TRIGGER
+  /// the resolver with the categories we already have. No duplicate
+  /// resolution logic (the old `_applyListingCategoryFromServiceType`
+  /// had its own subtly-different copy — that was a bug source).
   void _applyListingCategoryFromServiceType(String serviceType) {
-    final subMatch = _categories.firstWhere(
-      (c) =>
-          c['name'] == serviceType &&
-          (c['parentId'] as String? ?? '').isNotEmpty,
-      orElse: () => <String, dynamic>{},
-    );
-    String? mainId;
-    String? subId;
-    if (subMatch.isNotEmpty) {
-      subId = subMatch['id'] as String?;
-      mainId = subMatch['parentId'] as String?;
-    } else {
-      final mainMatch = _categories.firstWhere(
-        (c) =>
-            c['name'] == serviceType &&
-            (c['parentId'] as String? ?? '').isEmpty,
-        orElse: () => <String, dynamic>{},
-      );
-      mainId = mainMatch.isNotEmpty ? mainMatch['id'] as String? : null;
+    if (_categories.isNotEmpty) {
+      _applyCategoriesSnapshot(_categories);
     }
-    final subs = mainId != null
-        ? _categories.where((c) => c['parentId'] == mainId).toList()
-        : <Map<String, dynamic>>[];
-    setState(() {
-      _selectedMainCatId = mainId;
-      _subCategories = subs;
-      _selectedSubCatId = subId;
-      _serviceSchema = ServiceSchema.empty();
-      _categorySchema = [];
-    });
-    _loadV2SchemaFor(serviceType);
   }
 
+  // §85 (2026-05-14): All 4 media-picker methods delegate to
+  // ProfileMediaService (lib/services/profile_media_service.dart). Screen
+  // keeps setState + UI feedback; service does picker + Storage I/O.
+
   Future<void> _pickProfileImage() async {
-    // Wrapped in try/catch (Law 10 §9b) — image_picker can throw on web
-    // (HEIC images on iOS Safari, file-permission denials, focus-loss),
-    // and a silent throw left users tapping the avatar with no feedback.
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final ImagePicker picker = ImagePicker();
-      final XFile? image = await picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 300,
-        maxHeight: 300,
-        imageQuality: 50,
-      );
-      if (image == null) return; // user cancelled
-
-      final Uint8List imageBytes = await image.readAsBytes();
-      // image_picker returns JPEG by default; claim the correct MIME so
-      // downstream decoders that strict-check the data URI don't reject.
-      final encoded = base64Encode(imageBytes);
-      // Hard guard against the Firestore 1 MB document size limit. With
-      // 300×300 + quality 50 the encoded blob is normally ~10-20 KB, but
-      // raw web uploads on some Safari builds skip the resize step.
-      if (encoded.length > 800 * 1024) {
-        if (!mounted) return;
+      final result = await ProfileMediaService.pickAndEncodeProfileImage();
+      if (result == null || !mounted) return;
+      if (result == ProfileMediaService.profileImageTooLargeSentinel) {
         messenger.showSnackBar(const SnackBar(
           content: Text('התמונה גדולה מדי — בחר/י תמונה קטנה יותר'),
           backgroundColor: Color(0xFFEF4444),
         ));
         return;
       }
-      if (!mounted) return;
-      setState(() {
-        _profileImageUrl = 'data:image/jpeg;base64,$encoded';
-      });
+      setState(() => _profileImageUrl = result);
     } catch (e) {
       if (!mounted) return;
       ErrorMapper.show(context, e);
     }
   }
 
+  /// Maximum gallery images per provider — bumped from 6 to 10
+  /// (רועי צברי request 2026-05-14). With Storage-backed uploads
+  /// the doc-size pressure is gone, so 10 (or more in future) is safe.
+  static const int _kMaxGalleryImages = 10;
+
   Future<void> _pickAndCompressGalleryImage() async {
-    // Gallery images are stored as base64 strings inside the Firestore user
-    // document (1 MB hard limit).  Without compression, a single 600×600 JPEG
-    // at default quality can reach 200-500 KB after base64 encoding.
-    // imageQuality: 60 keeps each image under ~50 KB, giving comfortable
-    // headroom for up to ~15 photos before the limit is approached.
-    final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 600,
-      maxHeight: 600,
-      imageQuality: 60, // ← JPEG compression; prevents Firestore 1 MB overflow
-    );
-
-    if (image != null) {
-      setState(() => _isLoading = true);
-      try {
-        final Uint8List imageBytes = await image.readAsBytes();
-        final String encoded = base64Encode(imageBytes);
-
-        // Sanity-check: warn if a single image is still unusually large
-        // (e.g. a PNG screenshot that imageQuality cannot compress further).
-        if (encoded.length > 150000) {
-          debugPrint(
-            'EditProfile: gallery image is ${encoded.length ~/ 1024} KB '
-            'after compression — consider a lower-res source.',
-          );
-        }
-
-        if (mounted) setState(() => _galleryImages.add(encoded));
-      } catch (e) {
-        if (mounted) ErrorMapper.show(context, e);
-      } finally {
-        if (mounted) setState(() => _isLoading = false);
+    if (_galleryImages.length >= _kMaxGalleryImages) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF6366F1),
+          content: Text(
+              'הגעת למקסימום של 10 תמונות. הסר תמונה לפני העלאת חדשה.'),
+        ),
+      );
+      return;
+    }
+    setState(() => _isLoading = true);
+    try {
+      // Pass uid so the service uploads to Firebase Storage instead of
+      // base64. Avoids the 1 MB doc-size cap that caused the
+      // "INTERNAL ASSERTION FAILED" race on save for providers with
+      // many gallery images.
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      final encoded = await ProfileMediaService.pickAndCompressGalleryImage(
+        uid: uid,
+      );
+      if (encoded != null && mounted) {
+        setState(() => _galleryImages.add(encoded));
       }
+    } catch (e) {
+      if (mounted) ErrorMapper.show(context, e);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _pickCertificationImage() async {
-    final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 800,
-      maxHeight: 800,
-      imageQuality: 65,
-    );
-    if (image != null) {
-      setState(() => _isLoading = true);
-      try {
-        final Uint8List imageBytes = await image.readAsBytes();
-        final String encoded = base64Encode(imageBytes);
-        if (mounted) setState(() => _certificationImage = encoded);
-      } catch (e) {
-        if (mounted) ErrorMapper.show(context, e);
-      } finally {
-        if (mounted) setState(() => _isLoading = false);
+    setState(() => _isLoading = true);
+    try {
+      final encoded = await ProfileMediaService.pickAndEncodeCertificationImage();
+      if (encoded != null && mounted) {
+        setState(() => _certificationImage = encoded);
       }
+    } catch (e) {
+      if (mounted) ErrorMapper.show(context, e);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -731,56 +880,27 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
 
-    final ImagePicker picker = ImagePicker();
-    final XFile? video = await picker.pickVideo(
-      source: ImageSource.gallery,
-      maxDuration: const Duration(seconds: 60),
-    );
-    if (video == null) return;
-
     setState(() {
       _videoUploadInProgress = true;
       _videoUploadProgress = 0.0;
     });
 
     try {
-      final ref = FirebaseStorage.instance.ref(
-        'users/$uid/verification_video.mp4',
+      final downloadUrl = await ProfileMediaService.uploadVerificationVideo(
+        uid: uid,
+        onProgress: (progress) {
+          if (mounted) setState(() => _videoUploadProgress = progress);
+        },
       );
-      final bytes = await video.readAsBytes();
-      final task = ref.putData(
-        bytes,
-        SettableMetadata(contentType: 'video/mp4'),
+      if (downloadUrl == null || !mounted) return;
+
+      setState(() => _verificationVideoUrl = downloadUrl);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ הסרטון הועלה בהצלחה! ממתין לאישור מנהל.'),
+          backgroundColor: Colors.green,
+        ),
       );
-
-      task.snapshotEvents.listen((snap) {
-        if (!mounted) return;
-        final progress =
-            snap.bytesTransferred /
-            (snap.totalBytes == 0 ? 1 : snap.totalBytes);
-        setState(() => _videoUploadProgress = progress);
-      });
-
-      await task;
-      final downloadUrl = await ref.getDownloadURL();
-
-      // Save URL to Firestore immediately; reset verification flag so admin re-approves
-      await FirebaseFirestore.instance.collection('users').doc(uid).update({
-        'verificationVideoUrl': downloadUrl,
-        'videoVerifiedByAdmin': false,
-      });
-      // §61 invalidation contract
-      CachedReaders.invalidateProvider(uid);
-
-      if (mounted) {
-        setState(() => _verificationVideoUrl = downloadUrl);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ הסרטון הועלה בהצלחה! ממתין לאישור מנהל.'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -803,27 +923,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return false;
   }
 
-  Widget _buildHourDropdown(String value, ValueChanged<String> onChanged) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF5F5F5),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade300),
-      ),
-      child: DropdownButton<String>(
-        value: _kHourOptions.contains(value) ? value : '09:00',
-        underline: const SizedBox.shrink(),
-        isDense: true,
-        style: const TextStyle(fontSize: 13, color: Colors.black87),
-        items: _kHourOptions.map((h) => DropdownMenuItem(
-          value: h,
-          child: Text(h, style: const TextStyle(fontSize: 13)),
-        )).toList(),
-        onChanged: (v) { if (v != null) onChanged(v); },
-      ),
-    );
-  }
+  // §83 E.3 (2026-05-14): _buildHourDropdown moved to part-of file.
 
   Future<void> _saveProfile() async {
     final l10n = AppLocalizations.of(context);
@@ -1052,7 +1152,48 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
     final savedSuccess = l10n.saveSuccess;
-    String saveErrMsg(Object e) => l10n.saveError('$e');
+    // Friendly error mapping — raw Firestore stack traces are scary
+    // and unactionable (רועי צברי report 2026-05-14: saw the full
+    // "FIRESTORE (12.9.0) INTERNAL ASSERTION FAILED" stack as
+    // snackbar text). Map known patterns to short Hebrew messages.
+    String saveErrMsg(Object e) {
+      final s = e.toString();
+      if (s.contains('INTERNAL ASSERTION FAILED') ||
+          s.contains('ID: b815') ||
+          s.contains('ID: ca9') ||
+          s.contains('[cloud_firestore/internal]')) {
+        // 2026-05-15: the §10.8.0 retry now does 5 attempts × 15s +
+        // a final network bounce. If we still ended up here, the
+        // SDK genuinely couldn't recover — refresh is the right
+        // action. Message says exactly that instead of the misleading
+        // "connection problem" (it's not a network issue at all —
+        // it's an SDK watch-stream race).
+        return 'תקלה זמנית בשמירה. רענן/י את הדף ונסה/י שוב';
+      }
+      if (s.contains('document-too-large') ||
+          s.contains('bytes for the document exceeded')) {
+        return 'הנתונים גדולים מדי — הסר/י תמונות ישנות מהגלריה ונסה/י שוב';
+      }
+      if (s.contains('permission-denied')) {
+        return 'אין הרשאה לשמור — התחבר/י מחדש ונסה/י שוב';
+      }
+      if (s.contains('unavailable') || s.contains('deadline-exceeded')) {
+        return 'בעיית חיבור — בדוק/י את הרשת ונסה/י שוב';
+      }
+      // Gallery upload failure surfaces here via the new throw-on-fail
+      // path in ProfileMediaService (2026-05-15). The exception
+      // message is already in Hebrew, so pass it through directly
+      // instead of wrapping in the localized template.
+      if (s.contains('העלאת התמונה לשרת נכשלה')) {
+        return 'העלאת התמונה לשרת נכשלה — בדוק/י את החיבור ונסה/י שוב';
+      }
+      if (e == 'not-signed-in') return 'יש להתחבר כדי לשמור';
+      // Fallback to localized generic — uses the localized template
+      // but limits visible error string length so the snackbar stays
+      // readable.
+      final shortErr = s.length > 80 ? '${s.substring(0, 80)}…' : s;
+      return l10n.saveError(shortErr);
+    }
 
     // Defensive guard — should never happen since the screen is only reached
     // when a Firebase Auth user exists, but a stale FutureBuilder could race.
@@ -1192,44 +1333,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         }
       }
 
-      // Use set(merge:true) instead of update() so this also works for the
-      // edge case where the user doc doesn't yet exist (a brand-new phone-OTP
-      // signup whose role-selection sheet write was lost mid-flow). With
-      // update() Firestore returns permission-denied because the rule's
-      // `request.resource.data.diff(resource.data)` errors when resource.data
-      // is null. set(merge:true) routes through the create rule when the
-      // doc is missing, and through the update rule when it already exists.
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .set(payload, SetOptions(merge: true));
-
-      // CLAUDE.md §61 invalidation contract: every mutation of a cached
-      // entity MUST invalidate so other screens (favorites §63, chat §66,
-      // BookingProfileAvatar §67) re-read the new profileImage / name /
-      // category instead of serving the 5-min cached copy.
-      CachedReaders.invalidateProvider(uid);
-
-      // CLAUDE.md §11 — dual-write contact email to private/identity.
-      // Phone is no longer mirrored here because PhoneCollectionScreen owns
-      // the phone field end-to-end (writes both main doc and private/identity
-      // when OTP succeeds, and edits are blocked thereafter).
-      if (safeEmail != null) {
-        try {
-          await PrivateDataService.writeContactData(uid, email: safeEmail);
-        } catch (e) {
-          debugPrint('[EditProfile] writeContactData error: $e');
-        }
-      }
-
-      // v10.1.0: Dual-write — sync identity-specific fields to provider_listings
-      if (_isProvider) {
-        try {
-          await _syncToProviderListing(uid, payload, serviceTypeName, parentCategoryName);
-        } catch (e) {
-          debugPrint('[EditProfile] Listing sync error: $e');
-        }
-      }
+      // §84 (2026-05-14): All Firestore writes moved to ProfileSaveService.
+      //   • users/{uid} main doc (set merge:true)
+      //   • CachedReaders invalidation
+      //   • private/identity email dual-write (best-effort)
+      //   • provider_listings mirror sync (best-effort, provider only)
+      //   • Auto-migrate listing when none exists
+      // The screen now only builds the validated `payload` Map and calls
+      // the service. Failures throw — caught by the catch block below.
+      await ProfileSaveService.save(
+        uid: uid,
+        payload: payload,
+        safeEmail: safeEmail,
+        syncListings: _isProvider,
+        activeListingId: _activeListingId,
+        serviceTypeName: serviceTypeName,
+        parentCategoryName: parentCategoryName,
+      );
 
       if (mounted) {
         navigator.pop();
@@ -1247,227 +1367,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   // ── v10.1.2: Safe gallery image builder ─────────────────────────────────────
   /// Renders a gallery image that could be an HTTPS URL or a base64 string.
   /// Prevents FormatException crashes from base64Decode on URL strings.
-  Widget _buildGalleryImage(String raw) {
-    if (raw.isEmpty) {
-      return Container(color: Colors.grey[200]);
-    }
-    // HTTPS URL — use network image
-    if (raw.startsWith('http')) {
-      return Image.network(
-        raw,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        errorBuilder: (_, __, ___) => Container(
-          color: Colors.grey[200],
-          child: const Icon(Icons.broken_image_rounded, color: Colors.grey),
-        ),
-      );
-    }
-    // Base64 data URI or raw base64 string
-    try {
-      final b64 = raw.contains(',') ? raw.split(',').last : raw;
-      return Image.memory(
-        base64Decode(b64),
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-      );
-    } catch (_) {
-      return Container(
-        color: Colors.grey[200],
-        child: const Icon(Icons.broken_image_rounded, color: Colors.grey),
-      );
-    }
-  }
 
   // ── v10.1.0: Second Identity Card ──────────────────────────────────────────
 
-  Widget _buildSecondIdentityCard() {
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    // Use cached listings if available, otherwise fetch
-    final listingsToShow = _allListings.isNotEmpty
-        ? _allListings
-        : null;
-
-    if (listingsToShow != null) {
-      return _buildIdentityCards(listingsToShow);
-    }
-
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      future: ProviderListingService.getListings(uid),
-      builder: (context, snap) {
-        final listings = snap.data ?? [];
-        return _buildIdentityCards(listings);
-      },
-    );
-  }
-
-  Widget _buildIdentityCards(List<Map<String, dynamic>> listings) {
-    final hasSecond = listings.length >= 2;
-
-    return Column(
-      children: [
-        // ── Show ALL identity cards (not just the "other" one) ─────────
-        if (listings.isNotEmpty) ...[
-          for (final listing in listings) _buildIdentityTile(listing),
-          const SizedBox(height: 12),
-        ],
-
-        // ── Add second identity CTA (only if fewer than 2) ────────────
-        if (!hasSecond)
-          GestureDetector(
-            onTap: _openAddSecondIdentity,
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFF8FAFC), Color(0xFFF0F0FF)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: const Color(0xFF6366F1).withValues(alpha: 0.2),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 48, height: 48,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-                      ),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Icon(Icons.add_business_rounded, color: Colors.white, size: 24),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(AppLocalizations.of(context).editAddSecondIdentity,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1A1A2E),
-                            )),
-                        const SizedBox(height: 4),
-                        Text(
-                          AppLocalizations.of(context).editSecondIdentitySubtitle,
-                          style: TextStyle(fontSize: 12.5, color: Colors.grey[600], height: 1.3),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Icon(Icons.chevron_left_rounded, color: Color(0xFF6366F1)),
-                ],
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  /// v10.3.2: Builds a single identity tile with "current" badge or "switch" action.
-  Widget _buildIdentityTile(Map<String, dynamic> listing) {
-    final listingId = listing['listingId'] as String? ?? '';
-    final serviceType = listing['serviceType'] as String? ?? '';
-    final index = (listing['identityIndex'] as num?)?.toInt() ?? 0;
-    final isCurrent = listingId == _activeListingId;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: GestureDetector(
-        onTap: isCurrent
-            ? null
-            : () {
-                // Navigate to same screen with the other listing
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => EditProfileScreen(
-                      userData: widget.userData,
-                      listingId: listingId,
-                    ),
-                  ),
-                );
-              },
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            color: isCurrent ? const Color(0xFFEEF2FF) : Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: isCurrent
-                  ? const Color(0xFF6366F1)
-                  : Colors.grey.shade200,
-              width: isCurrent ? 1.5 : 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              // Icon
-              Container(
-                width: 40, height: 40,
-                decoration: BoxDecoration(
-                  color: isCurrent
-                      ? const Color(0xFF6366F1).withValues(alpha: 0.12)
-                      : Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  index == 0 ? Icons.work_rounded : Icons.add_business_rounded,
-                  size: 20,
-                  color: isCurrent ? const Color(0xFF6366F1) : Colors.grey[600],
-                ),
-              ),
-              const SizedBox(width: 12),
-              // Info
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      serviceType,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: isCurrent ? const Color(0xFF6366F1) : const Color(0xFF1A1A2E),
-                      ),
-                    ),
-                    Text(
-                      index == 0 ? AppLocalizations.of(context).editPrimaryIdentity : AppLocalizations.of(context).editSecondaryIdentity,
-                      style: TextStyle(fontSize: 12, color: Colors.grey[500]),
-                    ),
-                  ],
-                ),
-              ),
-              // Badge or switch icon
-              if (isCurrent)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF6366F1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(AppLocalizations.of(context).editEditingNow,
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700)),
-                )
-              else
-                const Icon(Icons.swap_horiz_rounded,
-                    color: Color(0xFF6366F1), size: 22),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
   void _openAddSecondIdentity() async {
     // v10.2.0: Full-screen premium onboarding flow instead of basic bottom sheet
@@ -1482,73 +1384,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   // _buildIdentityTile + Navigator.pushReplacement to the same screen
   // with the target listingId.
 
-  /// v10.3.2: Dual-write — sync identity fields to the ACTIVE provider_listing.
-  /// Uses _activeListingId when available, falls back to primary (index 0).
-  Future<void> _syncToProviderListing(
-    String uid,
-    Map<String, dynamic> payload,
-    String? serviceTypeName,
-    String? parentCategoryName,
-  ) async {
-    final db = FirebaseFirestore.instance;
-
-    // Use the active listing if we know it, else find index 0
-    QuerySnapshot<Map<String, dynamic>>? snap;
-    if (_activeListingId != null) {
-      // Direct doc reference — no query needed
-    } else {
-      snap = await db
-          .collection('provider_listings')
-          .where('uid', isEqualTo: uid)
-          .where('identityIndex', isEqualTo: 0)
-          .limit(1)
-          .get();
-    }
-
-    final listingUpdate = <String, dynamic>{
-      'updatedAt': FieldValue.serverTimestamp(),
-    };
-
-    // Mirror identity-specific fields
-    if (payload.containsKey('name')) listingUpdate['name'] = payload['name'];
-    if (payload.containsKey('profileImage')) listingUpdate['profileImage'] = payload['profileImage'];
-    if (payload.containsKey('serviceType')) listingUpdate['serviceType'] = payload['serviceType'];
-    if (payload.containsKey('parentCategory')) listingUpdate['parentCategory'] = payload['parentCategory'];
-    if (payload.containsKey('aboutMe')) listingUpdate['aboutMe'] = payload['aboutMe'];
-    if (payload.containsKey('pricePerHour')) listingUpdate['pricePerHour'] = payload['pricePerHour'];
-    if (payload.containsKey('gallery')) listingUpdate['gallery'] = payload['gallery'];
-    if (payload.containsKey('quickTags')) listingUpdate['quickTags'] = payload['quickTags'];
-    if (payload.containsKey('categoryTags')) listingUpdate['categoryTags'] = payload['categoryTags'];
-    if (payload.containsKey('cancellationPolicy')) listingUpdate['cancellationPolicy'] = payload['cancellationPolicy'];
-    if (payload.containsKey('workingHours')) listingUpdate['workingHours'] = payload['workingHours'];
-    if (payload.containsKey('categoryDetails')) listingUpdate['categoryDetails'] = payload['categoryDetails'];
-    if (payload.containsKey('priceList')) listingUpdate['priceList'] = payload['priceList'];
-    if (payload.containsKey('isVolunteer')) listingUpdate['isVolunteer'] = payload['isVolunteer'];
-    if (payload.containsKey('massageProfile')) listingUpdate['massageProfile'] = payload['massageProfile'];
-    if (payload.containsKey('pestControlProfile')) listingUpdate['pestControlProfile'] = payload['pestControlProfile'];
-    if (payload.containsKey('deliveryProfile')) listingUpdate['deliveryProfile'] = payload['deliveryProfile'];
-    if (payload.containsKey('cleaningProfile')) listingUpdate['cleaningProfile'] = payload['cleaningProfile'];
-    if (payload.containsKey('handymanProfile')) listingUpdate['handymanProfile'] = payload['handymanProfile'];
-    if (payload.containsKey('fitnessTrainerProfile')) listingUpdate['fitnessTrainerProfile'] = payload['fitnessTrainerProfile'];
-    if (payload.containsKey('babysitterProfile')) listingUpdate['babysitterProfile'] = payload['babysitterProfile'];
-    if (payload.containsKey('motorcycleTowProfile')) listingUpdate['motorcycleTowProfile'] = payload['motorcycleTowProfile'];
-
-    // Remove FieldValue.delete() entries — can't write them to a doc that may not have the field
-    listingUpdate.removeWhere((_, v) => v is FieldValue);
-
-    if (_activeListingId != null) {
-      // Direct update to the known active listing
-      await db.collection('provider_listings').doc(_activeListingId).update(listingUpdate);
-      debugPrint('[EditProfile] Active listing synced: $_activeListingId');
-    } else if (snap != null && snap.docs.isNotEmpty) {
-      await db.collection('provider_listings').doc(snap.docs.first.id).update(listingUpdate);
-      debugPrint('[EditProfile] Primary listing synced: ${snap.docs.first.id}');
-    } else {
-      // No listing yet — auto-migrate on save
-      final listingId = await ProviderListingService.migrateIfNeeded(uid);
-      debugPrint('[EditProfile] Listing migrated on save: $listingId');
-    }
-  }
 
   /// Pushes the OTP-link flow when the user has no verified phone yet.
   /// Re-loads the user doc on success so `_phoneDisplay` flips from empty
@@ -1584,258 +1419,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
-  Widget _buildLockedPhoneField() {
-    // No phone yet → show an actionable "Add Phone" CTA. After OTP-link the
-    // value comes back via `_addPhoneFlow` and this collapses to the locked
-    // display below.
-    if (_phoneDisplay.isEmpty) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.start,
-            children: [
-              const Icon(Icons.phone_rounded, size: 14, color: Color(0xFF6366F1)),
-              const SizedBox(width: 4),
-              Text(
-                AppLocalizations.of(context).editPhoneLabel,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          InkWell(
-            onTap: _addPhoneFlow,
-            borderRadius: BorderRadius.circular(10),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsetsDirectional.fromSTEB(16, 13, 16, 13),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEEF2FF),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFF6366F1), width: 1.2),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.add_circle_rounded,
-                      size: 18, color: Color(0xFF6366F1)),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'הוסף מספר טלפון ואמת אותו',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF6366F1),
-                      ),
-                    ),
-                  ),
-                  const Icon(Icons.arrow_back_ios_rounded,
-                      size: 13, color: Color(0xFF6366F1)),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 4),
-          const Padding(
-            padding: EdgeInsetsDirectional.only(start: 4),
-            child: Text(
-              'הוספת מספר חובה. תקבל קוד SMS לאימות. לאחר השמירה לא ניתן לשנות — צוות AnySkill בלבד.',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
-            ),
-          ),
-        ],
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.start,
-          children: [
-            const Icon(Icons.lock_rounded, size: 13, color: Color(0xFF6366F1)),
-            const SizedBox(width: 4),
-            Text(
-              AppLocalizations.of(context).editPhoneLabel,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8F7FF),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _phoneDisplay,
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    color: Colors.black87,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Icon(
-                Icons.phone_rounded,
-                size: 17,
-                color: Color(0xFF6366F1),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 4),
-        Align(
-          alignment: AlignmentDirectional.centerEnd,
-          child: Text(
-            AppLocalizations.of(context).editPhoneVerified,
-            style: const TextStyle(fontSize: 11, color: Colors.grey),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// Editable email field — or a locked Google/Apple display when the user
-  /// signed in via a social provider (in that case the email is authoritative
-  /// and cannot be changed inside the app).
-  Widget _buildEmailField(AppLocalizations l10n) {
-    if (_emailLockedFromAuth) {
-      // Locked state — mirrors `_buildLockedPhoneField` design language but
-      // shows a Google-icon hint instead of the lock icon.
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.start,
-            children: [
-              const Icon(Icons.lock_rounded,
-                  size: 13, color: Color(0xFF6366F1)),
-              const SizedBox(width: 4),
-              Text(
-                l10n.loginEmail,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8F7FF),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    _emailController.text.isEmpty ? '—' : _emailController.text,
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: _emailController.text.isEmpty
-                          ? Colors.grey[400]
-                          : Colors.black87,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const Icon(
-                  Icons.alternate_email_rounded,
-                  size: 17,
-                  color: Color(0xFF6366F1),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 4),
-          const Align(
-            alignment: AlignmentDirectional.centerEnd,
-            child: Text(
-              'מסונכרן אוטומטית מחשבון Google / Apple',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
-            ),
-          ),
-        ],
-      );
-    }
-
-    // Editable state — phone-OTP user can type their own email.
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          l10n.loginEmail,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 6),
-        TextField(
-          controller: _emailController,
-          textAlign: TextAlign.start,
-          keyboardType: TextInputType.emailAddress,
-          autocorrect: false,
-          decoration: const InputDecoration(
-            hintText: 'name@example.com',
-            prefixIcon: Icon(Icons.alternate_email_rounded,
-                size: 18, color: Color(0xFF6366F1)),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPendingExpertBanner() {
-    return Container(
-      margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF8E1),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFFC107)),
-      ),
-      child: Row(
-        children: [
-          const SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: Colors.amber,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  AppLocalizations.of(context).editAppPending,
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  AppLocalizations.of(context).editAppPendingDesc,
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(fontSize: 12, color: Colors.brown),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1871,7 +1454,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         //  Support agent → toggle hidden (dedicated workspace)
                         if ((_isProvider || _hasAdminPrivilege()) &&
                             !_isSupportAgent()) ...[
-                          _buildViewModeToggleCard(context),
+                          ViewModeToggleCard(
+                              isAdmin: _hasAdminPrivilege()),
                           const SizedBox(height: 16),
                         ],
                         // --- תמונת פרופיל ---
@@ -1955,12 +1539,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         const SizedBox(height: 20),
 
                         // ── Phone — verified, read-only ──────────────────────────
-                        _buildLockedPhoneField(),
+                        _LockedPhoneField(
+                          phoneDisplay: _phoneDisplay,
+                          onAddPhone: _addPhoneFlow,
+                        ),
 
                         const SizedBox(height: 20),
 
                         // ── Email ────────────────────────────────────────────────
-                        _buildEmailField(l10n),
+                        _EmailField(
+                          controller: _emailController,
+                          lockedFromAuth: _emailLockedFromAuth,
+                        ),
 
                         const SizedBox(height: 25),
 
@@ -2014,66 +1604,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             ],
                           )
                         else if (_isPendingExpert)
-                          _buildPendingExpertBanner(),
+                          const _PendingExpertBanner(),
 
                         // ── Volunteer toggle (providers only) ────────────────────
+                        // I.2 (§87): extracted to part file.
                         if (_isProvider) ...[
                           const SizedBox(height: 16),
-                          Container(
-                            decoration: BoxDecoration(
-                              color:
-                                  _isVolunteer
-                                      ? const Color(0xFFECFDF5)
-                                      : Colors.grey[50],
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                color:
-                                    _isVolunteer
-                                        ? const Color(0xFF10B981)
-                                        : Colors.grey.shade200,
-                                width: _isVolunteer ? 1.5 : 1,
-                              ),
-                            ),
-                            child: SwitchListTile.adaptive(
-                              value: _isVolunteer,
-                              onChanged:
-                                  (val) => setState(() => _isVolunteer = val),
-                              activeColor: const Color(0xFF10B981),
-                              title: Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    AppLocalizations.of(context).editVolunteerToggleTitle,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 15,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  if (_isVolunteer)
-                                    const Icon(
-                                      Icons.favorite,
-                                      color: Colors.red,
-                                      size: 18,
-                                    ),
-                                ],
-                              ),
-                              subtitle: Align(
-                                alignment: AlignmentDirectional.centerEnd,
-                                child: Text(
-                                  AppLocalizations.of(context).editVolunteerToggleDesc,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey[600],
-                                  ),
-                                  textAlign: TextAlign.right,
-                                ),
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 4,
-                              ),
-                            ),
+                          _VolunteerToggleCard(
+                            isVolunteer: _isVolunteer,
+                            onChanged: (val) =>
+                                setState(() => _isVolunteer = val),
                           ),
                         ],
 
@@ -2091,7 +1631,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             ),
                           ),
                           const SizedBox(height: 8),
-                          _buildSecondIdentityCard(),
+                          _IdentityCardsSection(
+                            cachedListings: _allListings,
+                            activeListingId: _activeListingId,
+                            userData: widget.userData,
+                            onAddSecond: _openAddSecondIdentity,
+                          ),
                           const SizedBox(height: 25),
 
                           // ── Main Category dropdown ──────────────────────────────
@@ -2100,15 +1645,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 6),
-                          // ALWAYS render the dropdown structure — never swap it
-                          // out for a fallback card. When items are loading
-                          // (one-shot get + stream both pending), show an
-                          // inline spinner + "טוען..." text INSIDE the hint
-                          // area so the user knows to wait. The `onChanged`
-                          // is null while empty → Flutter renders the dropdown
-                          // as disabled (clearly non-interactive), avoiding
-                          // the previous bug where the user tapped an empty
-                          // dropdown and nothing happened.
+                          // ── ALWAYS render the cascading dropdown ──────────
+                          // 2026-05-15: ROLLBACK of the §10.8.3 read-only
+                          // fallback. The user expects the original
+                          // cascade flow: pick category → sub-cats appear
+                          // → pick sub-cat → CSM block opens. A read-only
+                          // field blocks that interaction entirely.
+                          //
+                          // Now: the dropdown is ALWAYS rendered. While
+                          // categories load (1-3s), the field is grey
+                          // (onChanged: null) with the user's saved value
+                          // shown as the hint TEXT — no spinning circle,
+                          // no read-only block. As soon as categories
+                          // arrive, _applyCategoriesSnapshot sets
+                          // _selectedMainCatId + _selectedSubCatId from
+                          // the saved serviceType, AND the dropdown
+                          // becomes interactive — letting the user pick
+                          // a different category if they want.
                           DropdownButtonFormField<String>(
                               isExpanded:
                                   true, // ← required on Web; without it the tap
@@ -2119,13 +1672,40 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                       )
                                       ? _selectedMainCatId
                                       : null,
-                              hint: _mainCategories.isEmpty
-                                  ? _buildLoadingHint(
-                                      l10n.profileFieldCategoryMainHint)
-                                  : Text(
-                                      l10n.profileFieldCategoryMainHint,
-                                      textAlign: TextAlign.right,
-                                    ),
+                              // While categories load, show the user's
+                              // SAVED value as the hint text — they know
+                              // the form has their data, the dropdown
+                              // just isn't tappable yet. As soon as
+                              // categories arrive, the value pre-selects
+                              // and the dropdown becomes interactive.
+                              hint: Builder(builder: (_) {
+                                if (_mainCategories.isNotEmpty) {
+                                  return Text(
+                                    l10n.profileFieldCategoryMainHint,
+                                    textAlign: TextAlign.right,
+                                  );
+                                }
+                                final savedSvc =
+                                    _activeListingServiceType.isNotEmpty
+                                        ? _activeListingServiceType
+                                        : ((widget.userData['serviceType']
+                                                as String?) ??
+                                            '');
+                                return Text(
+                                  savedSvc.isNotEmpty
+                                      ? savedSvc
+                                      : l10n.profileFieldCategoryMainHint,
+                                  textAlign: TextAlign.right,
+                                  style: TextStyle(
+                                    color: savedSvc.isNotEmpty
+                                        ? const Color(0xFF1A1A2E)
+                                        : const Color(0xFF9CA3AF),
+                                    fontWeight: savedSvc.isNotEmpty
+                                        ? FontWeight.w600
+                                        : FontWeight.normal,
+                                  ),
+                                );
+                              }),
                               items:
                                   _mainCategories
                                       .map(
@@ -2143,6 +1723,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                               // loading state (not a "broken" widget).
                               onChanged: _mainCategories.isEmpty ? null : (val) {
                                 setState(() {
+                                  // Mark manual pick — automatic
+                                  // resolution must NEVER override this.
+                                  _userPickedCategory = true;
                                   _selectedMainCatId = val;
                                   _selectedSubCatId = null;
                                   _subCategories = _categories
@@ -2205,6 +1788,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                       .toList(),
                               onChanged: (val) {
                                 setState(() {
+                                  _userPickedCategory = true;
                                   _selectedSubCatId = val;
                                   _serviceSchema = ServiceSchema.empty();
                                   _categoryDetails = {};
@@ -2312,84 +1896,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           const SizedBox(height: 20),
 
                           // ── Tax ID ──────────────────────────────────────────────
-                          Text(
-                            l10n.profileFieldTaxId,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            l10n.profileFieldTaxIdHelp,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: _taxIdController,
-                            keyboardType: TextInputType.number,
-                            textAlign: TextAlign.start,
-                            decoration: InputDecoration(
-                              hintText: l10n.profileFieldTaxIdHint,
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              prefixIcon: const Icon(
-                                Icons.receipt_long_outlined,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ),
+                          // I.3 (§87): extracted to part file.
+                          _TaxIdField(controller: _taxIdController),
                           const SizedBox(height: 20),
 
                           // ── הגדרות תשלום (Payment Settings) ─────────────────────────────────
-                          // Phase 2: Stripe Connect was removed pending Israeli payment provider
-                          // integration. Provider payouts are temporarily handled via the manual
-                          // withdrawal flow (admin reviews requests in the Withdrawals tab).
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFFFBEB),
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                color: const Color(0xFFF59E0B).withValues(alpha: 0.3),
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.construction_rounded,
-                                      color: Color(0xFFF59E0B),
-                                      size: 20,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        AppLocalizations.of(context).editPaymentSettings,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 15,
-                                          color: Color(0xFF1A1A2E),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  AppLocalizations.of(context).editPaymentSettingsDesc,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Color(0xFF7C2D12),
-                                    height: 1.4,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
+                          // I.3 (§87): extracted to part file.
+                          const _PaymentSettingsNotice(),
                           const SizedBox(height: 20),
 
                           // ── Price Settings + per-hour field ───────────────────
@@ -2550,106 +2063,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           const SizedBox(height: 25),
 
                           // ── Quick Tags picker ───────────────────────────────────
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                l10n.editProfileTagsSelected(
-                                  _selectedQuickTags.length,
-                                ),
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color:
-                                      _selectedQuickTags.length >= 3
-                                          ? const Color(0xFF6366F1)
-                                          : Colors.grey,
-                                ),
-                              ),
-                              Text(
-                                l10n.editProfileQuickTags,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Align(
-                            alignment: AlignmentDirectional.centerEnd,
-                            child: Text(
-                              l10n.editProfileTagsHint,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            alignment: WrapAlignment.end,
-                            children:
-                                kQuickTagCatalog.map((tag) {
-                                  final key = tag['key']!;
-                                  final selected = _selectedQuickTags.contains(
-                                    key,
-                                  );
-                                  final maxed = _selectedQuickTags.length >= 3;
-                                  return GestureDetector(
-                                    onTap: () {
-                                      if (!selected && maxed) return;
-                                      setState(() {
-                                        if (selected) {
-                                          _selectedQuickTags.remove(key);
-                                        } else {
-                                          _selectedQuickTags.add(key);
-                                        }
-                                      });
-                                    },
-                                    child: AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 150,
-                                      ),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 7,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            selected
-                                                ? const Color(0xFF6366F1)
-                                                : (!selected && maxed)
-                                                ? Colors.grey[100]
-                                                : const Color(0xFFF0F0FF),
-                                        borderRadius: BorderRadius.circular(20),
-                                        border: Border.all(
-                                          color:
-                                              selected
-                                                  ? const Color(0xFF6366F1)
-                                                  : (!selected && maxed)
-                                                  ? Colors.grey.shade300
-                                                  : const Color(
-                                                    0xFF6366F1,
-                                                  ).withValues(alpha: 0.3),
-                                        ),
-                                      ),
-                                      child: Text(
-                                        '${tag['emoji']} ${tag['label']}',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color:
-                                              selected
-                                                  ? Colors.white
-                                                  : (!selected && maxed)
-                                                  ? Colors.grey
-                                                  : const Color(0xFF6366F1),
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                }).toList(),
+                          // I.2 (§87): extracted to part file.
+                          _QuickTagsPicker(
+                            selectedKeys: _selectedQuickTags,
+                            onToggle: (key) => setState(() {
+                              if (_selectedQuickTags.contains(key)) {
+                                _selectedQuickTags.remove(key);
+                              } else {
+                                _selectedQuickTags.add(key);
+                              }
+                            }),
                           ),
 
                           // ── Category-specific tags (complements quickTags) ────────
@@ -2667,474 +2090,74 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           const SizedBox(height: 25),
 
                           // ── Cancellation Policy picker ──────────────────────────
-                          Text(
-                            l10n.editProfileCancellationPolicy,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 4),
-                          Align(
-                            alignment: AlignmentDirectional.centerEnd,
-                            child: Text(
-                              l10n.editProfileCancellationHint,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Column(
-                            children:
-                                CancellationPolicyService.kPolicies.map((p) {
-                                  final selected = _cancellationPolicy == p;
-                                  return GestureDetector(
-                                    onTap:
-                                        () => setState(
-                                          () => _cancellationPolicy = p,
-                                        ),
-                                    child: AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 150,
-                                      ),
-                                      margin: const EdgeInsets.only(bottom: 8),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                        vertical: 12,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            selected
-                                                ? const Color(0xFFF0F0FF)
-                                                : Colors.grey[50],
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(
-                                          color:
-                                              selected
-                                                  ? const Color(0xFF6366F1)
-                                                  : Colors.grey.shade200,
-                                          width: selected ? 2 : 1,
-                                        ),
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          Icon(
-                                            selected
-                                                ? Icons.radio_button_checked
-                                                : Icons.radio_button_unchecked,
-                                            color:
-                                                selected
-                                                    ? const Color(0xFF6366F1)
-                                                    : Colors.grey,
-                                            size: 20,
-                                          ),
-                                          const SizedBox(width: 10),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  CancellationPolicyService.label(
-                                                    p,
-                                                  ),
-                                                  style: TextStyle(
-                                                    fontWeight: FontWeight.bold,
-                                                    fontSize: 14,
-                                                    color:
-                                                        selected
-                                                            ? const Color(
-                                                              0xFF6366F1,
-                                                            )
-                                                            : Colors.black87,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 2),
-                                                Text(
-                                                  CancellationPolicyService.description(
-                                                    p,
-                                                  ),
-                                                  style: const TextStyle(
-                                                    fontSize: 12,
-                                                    color: Colors.grey,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                }).toList(),
+                          // G.3 (§85, 2026-05-14): extracted to part file.
+                          _CancellationPolicyPicker(
+                            selectedPolicy: _cancellationPolicy,
+                            onChanged: (p) =>
+                                setState(() => _cancellationPolicy = p),
                           ),
 
                           const SizedBox(height: 25),
 
                           // ── Working Hours (שעות עבודה) ─────────────────────────
-                          Text(
-                            AppLocalizations.of(context).editWorkingHours,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          // G.3 (§85, 2026-05-14): extracted to part file.
+                          _WorkingHoursEditor(
+                            workingHours: _workingHours,
+                            dayNames: _dayNames(context),
+                            onToggle: (dayIndex, enabled) {
+                              setState(() {
+                                if (enabled) {
+                                  _workingHours[dayIndex] = {
+                                    'from': '09:00',
+                                    'to': '17:00',
+                                  };
+                                } else {
+                                  _workingHours.remove(dayIndex);
+                                }
+                              });
+                            },
+                            onHoursChanged: (dayIndex, field, value) {
+                              setState(() {
+                                _workingHours[dayIndex]![field] = value;
+                              });
+                            },
                           ),
-                          const SizedBox(height: 4),
-                          Align(
-                            alignment: AlignmentDirectional.centerEnd,
-                            child: Text(
-                              AppLocalizations.of(context).editWorkingHoursHint,
-                              style: const TextStyle(fontSize: 12, color: Colors.grey),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          ...List.generate(7, (dayIndex) {
-                            final enabled = _workingHours.containsKey(dayIndex);
-                            final from = _workingHours[dayIndex]?['from'] ?? '09:00';
-                            final to   = _workingHours[dayIndex]?['to']   ?? '17:00';
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 6),
-                              child: Row(
-                                children: [
-                                  // Day toggle
-                                  SizedBox(
-                                    width: 24,
-                                    height: 24,
-                                    child: Checkbox(
-                                      value: enabled,
-                                      activeColor: const Color(0xFF6366F1),
-                                      onChanged: (val) {
-                                        setState(() {
-                                          if (val == true) {
-                                            _workingHours[dayIndex] = {'from': '09:00', 'to': '17:00'};
-                                          } else {
-                                            _workingHours.remove(dayIndex);
-                                          }
-                                        });
-                                      },
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  SizedBox(
-                                    width: 52,
-                                    child: Text(
-                                      _dayNames(context)[dayIndex],
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: enabled ? Colors.black87 : Colors.grey,
-                                      ),
-                                    ),
-                                  ),
-                                  if (enabled) ...[
-                                    // From dropdown
-                                    _buildHourDropdown(from, (val) {
-                                      setState(() => _workingHours[dayIndex]!['from'] = val);
-                                    }),
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                                      child: Text('–', style: TextStyle(color: Colors.grey[600])),
-                                    ),
-                                    // To dropdown
-                                    _buildHourDropdown(to, (val) {
-                                      setState(() => _workingHours[dayIndex]!['to'] = val);
-                                    }),
-                                  ] else
-                                    Text(
-                                      AppLocalizations.of(context).editDayOff,
-                                      style: TextStyle(fontSize: 12, color: Colors.grey[400]),
-                                    ),
-                                ],
-                              ),
-                            );
-                          }),
 
                           const SizedBox(height: 25),
 
                           // ── Business Description / Bio ──────────────────────────
-                          Text(
-                            l10n.editProfileAbout,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          TextField(
-                            controller: _aboutController,
-                            maxLines: 4,
-                            textAlign: TextAlign.start,
-                            decoration: InputDecoration(
-                              border: const OutlineInputBorder(),
-                              hintText: l10n.editProfileAboutHint,
-                            ),
-                          ),
-
+                          // I.3 (§87): extracted to part file.
+                          _BusinessBioField(controller: _aboutController),
                           const SizedBox(height: 30),
 
                           // ── Work Gallery / Portfolio ────────────────────────────
-                          Text(
-                            l10n.editProfileGallery,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 10),
-                          GridView.builder(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 3,
-                                  crossAxisSpacing: 10,
-                                  mainAxisSpacing: 10,
-                                ),
-                            itemCount: _galleryImages.length + 1,
-                            itemBuilder: (context, index) {
-                              if (index == _galleryImages.length) {
-                                return GestureDetector(
-                                  onTap: _pickAndCompressGalleryImage,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: Colors.blue[50],
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color: Colors.blue.shade100,
-                                        style: BorderStyle.solid,
-                                      ),
-                                    ),
-                                    child: const Icon(
-                                      Icons.add_photo_alternate_outlined,
-                                      color: Colors.blue,
-                                      size: 35,
-                                    ),
-                                  ),
-                                );
-                              }
-                              return Stack(
-                                children: [
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(10),
-                                    // v10.1.2: Gallery items can be HTTPS URLs
-                                    // (Firebase Storage) or base64 strings.
-                                    // safeImageProvider handles both formats.
-                                    child: _buildGalleryImage(
-                                      _galleryImages[index] as String? ?? '',
-                                    ),
-                                  ),
-                                  Positioned(
-                                    top: 0,
-                                    right: 0,
-                                    child: GestureDetector(
-                                      onTap:
-                                          () => setState(
-                                            () =>
-                                                _galleryImages.removeAt(index),
-                                          ),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(2),
-                                        decoration: const BoxDecoration(
-                                          color: Colors.white,
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(
-                                          Icons.cancel,
-                                          color: Colors.red,
-                                          size: 20,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            },
+                          // I.1 (§87): extracted to part file.
+                          _GallerySection(
+                            galleryImages: _galleryImages,
+                            onPickImage: _pickAndCompressGalleryImage,
+                            onRemoveImage: (i) => setState(
+                                () => _galleryImages.removeAt(i)),
                           ),
                           const SizedBox(height: 25),
 
                           // ── Certification Image ────────────────────────────────
-                          Align(
-                            alignment: AlignmentDirectional.centerEnd,
-                            child: Text(
-                              AppLocalizations.of(context).editCertificate,
-                              style: const TextStyle(fontWeight: FontWeight.bold),
-                            ),
+                          // I.1 (§87): extracted to part file.
+                          _CertificationImageSection(
+                            imageData: _certificationImage,
+                            onPick: _pickCertificationImage,
+                            onClear: () =>
+                                setState(() => _certificationImage = null),
                           ),
-                          const SizedBox(height: 4),
-                          Align(
-                            alignment: AlignmentDirectional.centerEnd,
-                            child: Text(
-                              AppLocalizations.of(context).editCertificateDesc,
-                              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          if (_certificationImage != null) ...[
-                            Stack(
-                              children: [
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(12),
-                                  child: _buildGalleryImage(_certificationImage!),
-                                ),
-                                Positioned(
-                                  top: 4,
-                                  right: 4,
-                                  child: GestureDetector(
-                                    onTap: () => setState(() => _certificationImage = null),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(2),
-                                      decoration: const BoxDecoration(
-                                        color: Colors.white,
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Icon(Icons.cancel, color: Colors.red, size: 22),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            TextButton.icon(
-                              onPressed: _pickCertificationImage,
-                              icon: const Icon(Icons.swap_horiz_rounded, size: 18),
-                              label: Text(AppLocalizations.of(context).editReplaceCertificate),
-                            ),
-                          ] else
-                            GestureDetector(
-                              onTap: _pickCertificationImage,
-                              child: Container(
-                                height: 120,
-                                decoration: BoxDecoration(
-                                  color: Colors.amber.shade50,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: Colors.amber.shade200),
-                                ),
-                                child: Center(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(Icons.workspace_premium_rounded, size: 36, color: Colors.amber[700]),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        AppLocalizations.of(context).editUploadCertificate,
-                                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.amber[800]),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
                           const SizedBox(height: 25),
 
                           // ── Video Verification Upload ───────────────────────────
-                          Align(
-                            alignment: AlignmentDirectional.centerEnd,
-                            child: Text(
-                              AppLocalizations.of(context).editIntroVideo,
-                              style: const TextStyle(fontWeight: FontWeight.bold),
-                            ),
+                          // I.1 (§87): extracted to part file.
+                          _VideoVerificationSection(
+                            videoUrl: _verificationVideoUrl,
+                            uploadInProgress: _videoUploadInProgress,
+                            uploadProgress: _videoUploadProgress,
+                            onPick: _pickAndUploadVerificationVideo,
                           ),
-                          const SizedBox(height: 4),
-                          Align(
-                            alignment: AlignmentDirectional.centerEnd,
-                            child: Text(
-                              AppLocalizations.of(context).editIntroVideoDesc,
-                              textAlign: TextAlign.right,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          GestureDetector(
-                            onTap:
-                                _videoUploadInProgress
-                                    ? null
-                                    : _pickAndUploadVerificationVideo,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              width: double.infinity,
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 18,
-                                horizontal: 20,
-                              ),
-                              decoration: BoxDecoration(
-                                color:
-                                    _verificationVideoUrl != null
-                                        ? const Color(0xFFECFDF5)
-                                        : const Color(0xFFF0F0FF),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color:
-                                      _verificationVideoUrl != null
-                                          ? const Color(0xFF10B981)
-                                          : const Color(0xFF6366F1),
-                                  width: 1.5,
-                                ),
-                              ),
-                              child:
-                                  _videoUploadInProgress
-                                      ? Column(
-                                        children: [
-                                          LinearProgressIndicator(
-                                            value: _videoUploadProgress,
-                                            backgroundColor: const Color(
-                                              0xFFE0E0FF,
-                                            ),
-                                            valueColor:
-                                                const AlwaysStoppedAnimation<
-                                                  Color
-                                                >(Color(0xFF6366F1)),
-                                            borderRadius: BorderRadius.circular(
-                                              4,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 10),
-                                          Text(
-                                            AppLocalizations.of(context).editUploading((_videoUploadProgress * 100).toInt()),
-                                            textAlign: TextAlign.center,
-                                            style: const TextStyle(
-                                              fontSize: 13,
-                                              color: Color(0xFF6366F1),
-                                            ),
-                                          ),
-                                        ],
-                                      )
-                                      : Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          Icon(
-                                            _verificationVideoUrl != null
-                                                ? Icons.videocam_rounded
-                                                : Icons.video_call_rounded,
-                                            color:
-                                                _verificationVideoUrl != null
-                                                    ? const Color(0xFF10B981)
-                                                    : const Color(0xFF6366F1),
-                                            size: 24,
-                                          ),
-                                          const SizedBox(width: 10),
-                                          Text(
-                                            _verificationVideoUrl != null
-                                                ? AppLocalizations.of(context).editVideoUploaded
-                                                : AppLocalizations.of(context).editUploadVideo,
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 14,
-                                              color:
-                                                  _verificationVideoUrl != null
-                                                      ? const Color(0xFF10B981)
-                                                      : const Color(0xFF6366F1),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                            ),
-                          ),
-                          if (_verificationVideoUrl != null) ...[
-                            const SizedBox(height: 6),
-                            Align(
-                              alignment: AlignmentDirectional.centerEnd,
-                              child: Text(
-                                AppLocalizations.of(context).editPendingAdmin,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ),
-                          ],
                         ], // end provider-only fields
 
                         const SizedBox(height: 40),
@@ -3176,27 +2199,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   /// loading. Renders a small spinner + "טוען..." + the regular hint so
   /// the user immediately knows the dropdown is a loading-state rather
   /// than a broken empty box.
-  Widget _buildLoadingHint(String hintText) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        Flexible(
-          child: Text(
-            hintText,
-            textAlign: TextAlign.right,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Color(0xFF6B7280)),
-          ),
-        ),
-        const SizedBox(width: 8),
-        const SizedBox(
-          width: 14,
-          height: 14,
-          child: CircularProgressIndicator(strokeWidth: 1.5),
-        ),
-      ],
-    );
-  }
 
   // Defense-in-depth per CLAUDE.md §50: only treat the user as admin when
   // the `isAdmin: true` flag is corroborated by an admin role field. A
@@ -3230,734 +2232,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   //
   // Defense-in-depth per CLAUDE.md §50: admin chip is gated by `_hasAdminPrivilege`,
   // which requires `isAdmin == true` AND a corroborating role field. A stale
-  // `isAdmin: true` without a matching `role`/`roles[]` entry is rejected, so
-  // a regular provider can never see admin-only options.
-  Widget _buildViewModeToggleCard(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final isAdmin = _hasAdminPrivilege();
-    var current = ViewModeService.instance.mode;
-
-    // Auto-correct a stuck `providerOnly` mode for non-admins. This can
-    // happen if an admin previously switched into provider-preview mode
-    // and was later demoted — their stored mode would otherwise leave
-    // no chip selected (admin chip hidden, provider chip checks
-    // ViewMode.normal). Reset to `normal` so the provider chip lights up.
-    if (!isAdmin && current == ViewMode.providerOnly) {
-      // ignore: discarded_futures
-      ViewModeService.instance
-          .setMode(uid: uid, mode: ViewMode.normal);
-      current = ViewMode.normal;
-    }
-
-    Future<void> apply(ViewMode target, String successMsg) async {
-      await ViewModeService.instance.setMode(uid: uid, mode: target);
-      if (!context.mounted) return;
-      Navigator.of(context).popUntil((r) => r.isFirst);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(successMsg),
-          backgroundColor: const Color(0xFF10B981),
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    }
-
-    final l = AppLocalizations.of(context);
-    final chips = <Widget>[
-      if (isAdmin)
-        _buildModeChip(
-          label: l.editManagement,
-          icon: Icons.admin_panel_settings_rounded,
-          selected: current == ViewMode.normal,
-          gradient: const [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-          onTap: () => apply(ViewMode.normal, l.editAdminModeActive),
-        ),
-      _buildModeChip(
-        label: l.editServiceProvider,
-        icon: Icons.work_outline_rounded,
-        // For admin: providerOnly. For non-admin provider: normal = provider.
-        selected: isAdmin
-            ? current == ViewMode.providerOnly
-            : current == ViewMode.normal,
-        gradient: const [Color(0xFF0EA5E9), Color(0xFF3B82F6)],
-        onTap: () => apply(
-          isAdmin ? ViewMode.providerOnly : ViewMode.normal,
-          l.editProviderModeActive,
-        ),
-      ),
-      _buildModeChip(
-        label: l.editCustomer,
-        icon: Icons.visibility_rounded,
-        selected: current == ViewMode.customer,
-        gradient: const [Color(0xFF10B981), Color(0xFF22C55E)],
-        onTap: () => apply(ViewMode.customer, l.editCustomerModeActive),
-      ),
-    ];
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF9FAFB),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(right: 2, bottom: 8),
-            child: Text(
-              AppLocalizations.of(context).editViewMode,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF6B7280),
-              ),
-            ),
-          ),
-          Row(
-            textDirection: TextDirection.rtl,
-            children: [
-              for (int i = 0; i < chips.length; i++) ...[
-                if (i > 0) const SizedBox(width: 8),
-                Expanded(child: chips[i]),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildModeChip({
-    required String label,
-    required IconData icon,
-    required bool selected,
-    required List<Color> gradient,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-          decoration: BoxDecoration(
-            gradient: selected
-                ? LinearGradient(
-                    begin: Alignment.topRight,
-                    end: Alignment.bottomLeft,
-                    colors: gradient,
-                  )
-                : null,
-            color: selected ? null : Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: selected ? Colors.transparent : const Color(0xFFE5E7EB),
-            ),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      color: gradient.first.withValues(alpha: 0.30),
-                      blurRadius: 10,
-                      offset: const Offset(0, 3),
-                    ),
-                  ]
-                : null,
-          ),
-          child: Column(
-            children: [
-              Icon(
-                icon,
-                size: 20,
-                color: selected ? Colors.white : const Color(0xFF6B7280),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  color: selected ? Colors.white : const Color(0xFF1A1A2E),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
   // ─────────────────────────────────────────────────────────────────────
   // My Dogs — customer-only, private. Owner sees + edits their own dog
   // profiles from inside the Edit Profile screen.
   // ─────────────────────────────────────────────────────────────────────
-  Widget _buildMyDogsSection(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return const SizedBox.shrink();
-
-    return StreamBuilder<List<DogProfile>>(
-      stream: DogProfileService.instance.streamForOwner(uid),
-      builder: (ctx, snap) {
-        if (snap.hasError) return const SizedBox.shrink();
-        final dogs = snap.data ?? const <DogProfile>[];
-        return Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE5E7EB)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEEF2FF),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(Icons.pets_rounded,
-                      color: Color(0xFF6366F1), size: 18),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(AppLocalizations.of(context).editMyDogs,
-                      style: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w800)),
-                ),
-                if (dogs.isNotEmpty)
-                  TextButton(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => const DogProfileListScreen()),
-                    ),
-                    style: TextButton.styleFrom(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 8),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                    child: Text(AppLocalizations.of(context).editShowAll,
-                        style: const TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF1A1A2E),
-                            fontWeight: FontWeight.w700)),
-                  ),
-              ]),
-              const SizedBox(height: 10),
-              if (dogs.isEmpty)
-                InkWell(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const DogProfileBuilderScreen()),
-                  ),
-                  borderRadius: BorderRadius.circular(14),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 18),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF9FAFB),
-                      borderRadius: BorderRadius.circular(14),
-                      border:
-                          Border.all(color: const Color(0xFFE5E7EB)),
-                    ),
-                    child: Column(
-                      children: [
-                        const Icon(Icons.add_circle_outline_rounded,
-                            size: 28, color: Color(0xFF6366F1)),
-                        const SizedBox(height: 6),
-                        Text(AppLocalizations.of(context).editAddDogProfile,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF6366F1))),
-                      ],
-                    ),
-                  ),
-                )
-              else
-                SizedBox(
-                  height: 116,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: dogs.length + 1,
-                    separatorBuilder: (_, __) => const SizedBox(width: 10),
-                    itemBuilder: (_, i) {
-                      if (i == dogs.length) {
-                        return InkWell(
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) =>
-                                    const DogProfileBuilderScreen()),
-                          ),
-                          borderRadius: BorderRadius.circular(14),
-                          child: Container(
-                            width: 92,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFEEF2FF),
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                  color: const Color(0xFF6366F1),
-                                  width: 1.2),
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.add_rounded,
-                                    color: Color(0xFF6366F1)),
-                                const SizedBox(height: 4),
-                                Text(AppLocalizations.of(context).editNewDog,
-                                    style: const TextStyle(
-                                        fontSize: 11,
-                                        color: Color(0xFF6366F1),
-                                        fontWeight: FontWeight.w700)),
-                              ],
-                            ),
-                          ),
-                        );
-                      }
-                      final d = dogs[i];
-                      final photo = safeImageProvider(d.photoUrl);
-                      return InkWell(
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) =>
-                                  DogProfileBuilderScreen(existing: d)),
-                        ),
-                        borderRadius: BorderRadius.circular(14),
-                        child: Container(
-                          width: 92,
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(14),
-                            border:
-                                Border.all(color: Colors.grey.shade200),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black
-                                    .withValues(alpha: 0.04),
-                                blurRadius: 6,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              CircleAvatar(
-                                radius: 28,
-                                backgroundColor:
-                                    const Color(0xFFEEF2FF),
-                                backgroundImage: photo,
-                                child: photo == null
-                                    ? const Icon(Icons.pets_rounded,
-                                        color: Color(0xFF6366F1))
-                                    : null,
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                d.name.isEmpty ? AppLocalizations.of(context).editUnnamedDog : d.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: Color(0xFF1A1A2E)),
-                              ),
-                              if (d.breed.isNotEmpty)
-                                Text(
-                                  d.breed,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      fontSize: 10,
-                                      color: Color(0xFF6B7280)),
-                                ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// v10.1.0: ADD SECOND IDENTITY BOTTOM SHEET
-// ═══════════════════════════════════════════════════════════════════════════════
-
-class _AddSecondIdentitySheet extends StatefulWidget {
-  final List<Map<String, dynamic>> mainCategories;
-  final VoidCallback onCreated;
-
-  const _AddSecondIdentitySheet({
-    required this.mainCategories,
-    required this.onCreated,
-  });
-
-  @override
-  State<_AddSecondIdentitySheet> createState() => _AddSecondIdentitySheetState();
-}
-
-class _AddSecondIdentitySheetState extends State<_AddSecondIdentitySheet> {
-  String? _selectedCatId;
-  final _aboutCtrl = TextEditingController();
-  final _priceCtrl = TextEditingController();
-  bool _saving = false;
-
-  @override
-  void dispose() {
-    _aboutCtrl.dispose();
-    _priceCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _create() async {
-    if (_selectedCatId == null) return;
-    final price = double.tryParse(_priceCtrl.text.trim());
-    if (price == null || price <= 0) return;
-
-    setState(() => _saving = true);
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final cat = widget.mainCategories.firstWhere(
-      (c) => c['id'] == _selectedCatId,
-      orElse: () => <String, dynamic>{},
-    );
-    final catName = cat['name'] as String? ?? '';
-
-    try {
-      // Ensure primary listing exists first
-      await ProviderListingService.migrateIfNeeded(uid);
-
-      await ProviderListingService.createListing(
-        uid: uid,
-        identityIndex: 1,
-        serviceType: catName,
-        aboutMe: _aboutCtrl.text.trim(),
-        pricePerHour: price,
-      );
-
-      if (mounted) {
-        Navigator.pop(context);
-        widget.onCreated();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: const Color(0xFF22C55E),
-            content: Text(AppLocalizations.of(context).editSecondIdentityCreated),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(AppLocalizations.of(context).editGenericError(e.toString()))),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: EdgeInsets.fromLTRB(
-          24, 12, 24, MediaQuery.of(context).viewInsets.bottom + 24),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(child: Container(
-              width: 40, height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
-            )),
-            const SizedBox(height: 20),
-            Text(AppLocalizations.of(context).editAddSecondIdentityTitle,
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center),
-            const SizedBox(height: 6),
-            Text(AppLocalizations.of(context).editAddSecondIdentityDesc,
-                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-                textAlign: TextAlign.center),
-            const SizedBox(height: 24),
-
-            // Category dropdown
-            DropdownButtonFormField<String>(
-              value: _selectedCatId,
-              decoration: InputDecoration(
-                labelText: AppLocalizations.of(context).editCategoryLabel,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              items: widget.mainCategories.map((c) => DropdownMenuItem(
-                value: c['id'] as String?,
-                child: Text(c['name'] as String? ?? ''),
-              )).toList(),
-              onChanged: (v) => setState(() => _selectedCatId = v),
-            ),
-            const SizedBox(height: 16),
-
-            // Price
-            TextFormField(
-              controller: _priceCtrl,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: AppLocalizations.of(context).editPriceLabel,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                prefixText: '₪ ',
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // About
-            TextFormField(
-              controller: _aboutCtrl,
-              maxLines: 3,
-              decoration: InputDecoration(
-                labelText: AppLocalizations.of(context).chatServiceDescLabel,
-                hintText: AppLocalizations.of(context).editSecondServiceDesc,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // Create button
-            SizedBox(
-              height: 52,
-              child: ElevatedButton(
-                onPressed: _saving ? null : _create,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6366F1),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                  elevation: 0,
-                ),
-                child: _saving
-                    ? const SizedBox(width: 22, height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : Text(AppLocalizations.of(context).editCreateIdentity,
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// v10.1.0: EDIT SECOND IDENTITY BOTTOM SHEET
-// ═══════════════════════════════════════════════════════════════════════════════
-
-class _EditSecondIdentitySheet extends StatefulWidget {
-  final Map<String, dynamic> listing;
-  final List<Map<String, dynamic>> mainCategories;
-  final VoidCallback onSaved;
-
-  const _EditSecondIdentitySheet({
-    required this.listing,
-    required this.mainCategories,
-    required this.onSaved,
-  });
-
-  @override
-  State<_EditSecondIdentitySheet> createState() => _EditSecondIdentitySheetState();
-}
-
-class _EditSecondIdentitySheetState extends State<_EditSecondIdentitySheet> {
-  late final TextEditingController _aboutCtrl;
-  late final TextEditingController _priceCtrl;
-  bool _saving = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _aboutCtrl = TextEditingController(text: widget.listing['aboutMe'] as String? ?? '');
-    _priceCtrl = TextEditingController(
-      text: ((widget.listing['pricePerHour'] as num?) ?? 0).toString(),
-    );
-  }
-
-  @override
-  void dispose() {
-    _aboutCtrl.dispose();
-    _priceCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _save() async {
-    final price = double.tryParse(_priceCtrl.text.trim());
-    if (price == null || price <= 0) return;
-
-    setState(() => _saving = true);
-    final listingId = widget.listing['listingId'] as String? ?? '';
-
-    try {
-      await ProviderListingService.updateListing(listingId, {
-        'aboutMe': _aboutCtrl.text.trim(),
-        'pricePerHour': price,
-      });
-      if (mounted) {
-        Navigator.pop(context);
-        widget.onSaved();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: const Color(0xFF22C55E),
-            content: Text(AppLocalizations.of(context).editIdentityUpdated),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(AppLocalizations.of(context).editGenericError(e.toString()))),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  Future<void> _delete() async {
-    final l10n = AppLocalizations.of(context);
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.editDeleteIdentityTitle),
-        content: Text(l10n.editDeleteIdentityConfirm),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l10n.profCancel)),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(l10n.editDelete, style: const TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-
-    setState(() => _saving = true);
-    try {
-      final uid = widget.listing['uid'] as String? ?? '';
-      final listingId = widget.listing['listingId'] as String? ?? '';
-      await ProviderListingService.deleteListing(listingId, uid);
-      if (mounted) {
-        Navigator.pop(context);
-        widget.onSaved();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: const Color(0xFFEF4444),
-            content: Text(AppLocalizations.of(context).editIdentityDeleted),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).editGenericError(e.toString()))));
-      }
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final serviceType = widget.listing['serviceType'] as String? ?? '';
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: EdgeInsets.fromLTRB(
-          24, 12, 24, MediaQuery.of(context).viewInsets.bottom + 24),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(child: Container(
-              width: 40, height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
-            )),
-            const SizedBox(height: 20),
-            Text(AppLocalizations.of(context).editEditingIdentity(serviceType),
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center),
-            const SizedBox(height: 20),
-
-            TextFormField(
-              controller: _priceCtrl,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: AppLocalizations.of(context).editPriceLabel,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                prefixText: '₪ ',
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            TextFormField(
-              controller: _aboutCtrl,
-              maxLines: 3,
-              decoration: InputDecoration(
-                labelText: AppLocalizations.of(context).chatServiceDescLabel,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // Save button
-            SizedBox(
-              height: 52,
-              child: ElevatedButton(
-                onPressed: _saving ? null : _save,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6366F1),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                  elevation: 0,
-                ),
-                child: _saving
-                    ? const SizedBox(width: 22, height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : Text(AppLocalizations.of(context).editSaveChanges,
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            // Delete button
-            TextButton.icon(
-              onPressed: _saving ? null : _delete,
-              icon: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 18),
-              label: Text(AppLocalizations.of(context).editDeleteIdentity,
-                  style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}

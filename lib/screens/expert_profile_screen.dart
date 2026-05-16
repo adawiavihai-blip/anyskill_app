@@ -1,60 +1,63 @@
 // ignore_for_file: use_build_context_synchronously
+// H.3 (§86, 2026-05-14): `library;` + part directive added so the
+// 508-LOC _showBookingSummary moves to a sibling part file while keeping
+// library-private access to all State fields + closure helpers.
+library;
+
 import 'dart:convert';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'package:table_calendar/table_calendar.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'account_settings_screen.dart';
 import 'chat_screen.dart';
-import '../constants/quick_tags.dart';
+import 'expert_profile/widgets/about_section.dart';
+import 'expert_profile/widgets/action_squares.dart';
+import 'expert_profile/widgets/booking_time_slots.dart';
+import 'expert_profile/widgets/service_menu.dart';
+import 'expert_profile/widgets/booking_bottom_bar.dart';
+import 'expert_profile/widgets/booking_calendar.dart';
+import 'expert_profile/widgets/reviews_section.dart';
+import 'expert_profile/widgets/booking_success_view.dart';
+import 'expert_profile/widgets/csm_booking_blocks.dart';
+import 'expert_profile/widgets/specialist_card.dart';
+// quick_tags.dart imported by about_section.dart (§81 C.3).
 import '../services/cancellation_policy_service.dart';
+import '../services/expert_booking_service.dart';
 import '../services/cache_service.dart';
 import '../services/cached_readers.dart';
 import '../services/location_service.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/anyskill_logo.dart';
 import '../widgets/favorite_button.dart';
-import '../services/service_architect.dart';
+// service_architect.dart used by service_menu.dart now (§81 C.3).
 import '../models/pricing_model.dart';
-import '../widgets/xp_progress_bar.dart';
-import '../widgets/pro_badge.dart';
 import '../widgets/primary_cta.dart';
-import '../utils/safe_image_provider.dart';
 import '../utils/profile_guard.dart';
-import '../widgets/community/heart_display_helper.dart';
 import '../constants.dart' show appVersion;
 import '../widgets/price_list_widget.dart';
 import '../widgets/provider_category_tags_display.dart';
 import '../widgets/category_specs_widget.dart';
 import '../features/pet_stay/models/dog_profile.dart';
-import '../features/pet_stay/models/pet_stay.dart';
-import '../features/pet_stay/models/schedule_item.dart';
-import '../features/pet_stay/services/pet_stay_service.dart';
-import '../features/pet_stay/services/schedule_generator.dart';
+// Pet Stay imports moved to expert_booking_service.dart (§81).
 import '../features/pet_stay/widgets/dog_picker_section.dart';
-import '../models/massage_profile.dart';
-import '../models/pest_control_profile.dart';
-import '../models/delivery_profile.dart';
-import '../models/cleaning_profile.dart';
-import '../models/handyman_profile.dart';
-import '../models/fitness_trainer_profile.dart';
-import '../models/babysitter_profile.dart';
-import '../models/motorcycle_tow_profile.dart';
-import 'massage/build_your_treatment_block.dart';
-import 'pest_control/pest_booking_block.dart';
-import 'delivery/delivery_booking_block.dart';
-import 'cleaning/cleaning_booking_block.dart';
-import 'handyman/handyman_booking_block.dart';
-import 'fitness_trainer/fitness_trainer_booking_block.dart';
-import 'babysitter/babysitter_booking_block.dart';
-import 'motorcycle_tow/motorcycle_tow_booking_block.dart';
+// §80 (2026-05-14): CSM imports trimmed after the booking-block builders
+// moved to expert_profile/widgets/csm_booking_blocks.dart. Only the
+// `*BookingPreferences` types still referenced by state fields remain.
+import '../models/handyman_profile.dart'; // HandymanBookingPreferences
+import '../models/fitness_trainer_profile.dart'; // PricingPackage
+import '../models/motorcycle_tow_profile.dart'; // MotorcycleTowBookingPreferences
+import 'massage/build_your_treatment_block.dart'; // MassageBookingPreferences
+import 'pest_control/pest_booking_block.dart'; // PestControlBookingPreferences
+import 'delivery/delivery_booking_block.dart'; // DeliveryBookingPreferences
+import 'cleaning/cleaning_booking_block.dart'; // CleaningBookingPreferences
+import 'babysitter/babysitter_booking_block.dart'; // BabysitterBookingPreferences
+
+part 'expert_profile/widgets/booking_summary_sheet.dart';
 
 // Brand tokens
 const _kPurple     = Color(0xFF6366F1);
@@ -92,7 +95,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   final PageController _pageController = PageController();
 
   // ── Bio expand state ───────────────────────────────────────────────────────
-  bool _bioExpanded = false;
+  // §81 (C.3, 2026-05-14): _bioExpanded moved into BioSection's own State
+  // (about_section.dart). The flag was purely UI-local.
 
   // ── Dynamic pricing state ──────────────────────────────────────────────────
   /// Indices of add-ons the client has checked in the order sheet.
@@ -140,6 +144,32 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     // Flash Auction no longer routes through this screen — it direct-books
     // via `FlashAuctionService.bookFromOffer` from FlashAuctionOffersScreen.
     // See CLAUDE.md §57.
+    // 2026-05-15 — CACHE the profile-load future. Previously the
+    // FutureBuilder called `_loadProfileData()` directly in `build()`,
+    // so EVERY rebuild (setState, parent rebuild, keyboard open, etc.)
+    // created a NEW future → FutureBuilder reset to its loading
+    // spinner → re-fetched the whole profile. That caused both the
+    // wasteful re-reads AND the intermittent "profile data didn't
+    // sync" symptom (a rebuild mid-display flashed back to loading
+    // and could fail the re-fetch). Now the future is created ONCE
+    // here and only re-created when `_refreshTrigger` bumps.
+    _profileDataFuture = _loadProfileData();
+  }
+
+  /// Cached profile-load future — see initState. Recreated ONLY in
+  /// [_reloadProfile] when `_refreshTrigger` changes (pull-to-refresh
+  /// or a provider-reply that needs fresh reviews).
+  late Future<Map<String, dynamic>> _profileDataFuture;
+
+  /// Bump the refresh trigger AND recreate the cached future so the
+  /// FutureBuilder actually re-fetches. Calling setState alone would
+  /// NOT re-fetch (the cached future is reused by design).
+  void _reloadProfile() {
+    if (!mounted) return;
+    setState(() {
+      _refreshTrigger++;
+      _profileDataFuture = _loadProfileData();
+    });
   }
 
   /// Seed from cache (instant) or request actively with retry. Logs to
@@ -190,37 +220,187 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   /// is provided. This ensures rating/reviewsCount/aboutMe/gallery reflect
   /// the specific professional identity, not the global user aggregate.
   Future<Map<String, dynamic>> _loadProfileData() async {
-    final userData = await CacheService.getDoc(
-      'users', widget.expertId,
-      ttl: CacheService.kExpertProfile,
-      forceRefresh: true,
-    );
+    // §15 Law 15 — bounded fetches with cache-first fallback. Without
+    // timeouts, a zombie WebChannel left the FutureBuilder stuck on
+    // CircularProgressIndicator forever (רועי צברי report 2026-05-14:
+    // "click on profile card → spinner spins forever, never opens").
+    //
+    // Strategy:
+    //   1. Try to load `users/{expertId}` (12s + 8s fallback).
+    //   2. Always try to load `provider_listings/{listingId}` in
+    //      parallel — for demo profiles where `expertId` is empty
+    //      OR the user doc doesn't exist (e.g. demo created with
+    //      a fake uid), the listing IS the source of truth.
+    //   3. Merge: listing fields override user fields when present.
+    //   4. Only treat the load as failed when BOTH are empty.
+    Map<String, dynamic> userData = const <String, dynamic>{};
+    if (widget.expertId.isNotEmpty) {
+      try {
+        // First pass: cache + server (up to 12s). 5-min cache TTL means
+        // hot reads return instantly; cold reads race the server.
+        userData = await CacheService.getDoc(
+          'users',
+          widget.expertId,
+          ttl: CacheService.kExpertProfile,
+          forceRefresh: false,
+        ).timeout(const Duration(seconds: 12));
+      } catch (e) {
+        debugPrint('[ExpertProfile] _loadProfileData primary timeout: $e');
+        try {
+          userData = await CacheService.getDoc(
+            'users',
+            widget.expertId,
+            ttl: CacheService.kExpertProfile,
+            forceRefresh: false,
+          ).timeout(const Duration(seconds: 8));
+        } catch (_) {
+          debugPrint('[ExpertProfile] _loadProfileData both attempts failed');
+        }
+      }
+      // 2026-05-15 (live bug, רועי צברי "demo profile image lo
+      // mistanchren"): CacheService.getDoc caches EMPTY maps for the
+      // full TTL when a prior call hit a missing doc / partial fetch /
+      // cold-cache race. Subsequent calls within 5 minutes get the
+      // cached empty map → profile image renders the initials
+      // fallback. If `userData` came back without a `profileImage`,
+      // force a fresh server read (bypassing cache) so we definitely
+      // have the latest data before falling through to listing merge.
+      final hasUsableImage =
+          ((userData['profileImage'] as String?) ?? '').trim().isNotEmpty;
+      if (!hasUsableImage) {
+        try {
+          final fresh = await CacheService.getDoc(
+            'users',
+            widget.expertId,
+            ttl: CacheService.kExpertProfile,
+            forceRefresh: true,
+          ).timeout(const Duration(seconds: 8));
+          if (fresh.isNotEmpty) {
+            userData = fresh;
+            debugPrint(
+                '[ExpertProfile] Forced fresh server read recovered profileImage');
+          }
+        } catch (_) {
+          // Network blip — fall through to listing merge below.
+        }
+      }
+    }
 
-    // If no listingId, return user data as-is (backward compat)
-    if (widget.listingId == null) return userData;
+    // ── Resolve the listing doc ─────────────────────────────────────────
+    // 2026-05-15 ROOT FIX (רועי צברי "clicks VIP banner → opens
+    // provider with NO details"): the VIP carousel + chat + deep-links
+    // push ExpertProfileScreen with `expertId` but WITHOUT `listingId`.
+    // The old code then returned userData as-is — skipping the listing
+    // merge entirely AND the reviews-by-listingId query. For a
+    // dual-identity provider whose identity data lives on the listing,
+    // the profile rendered empty.
+    //
+    // Fix: when `listingId` is null but the user is a provider, AUTO-
+    // RESOLVE their primary listing (`provider_listings where uid ==
+    // expertId, identityIndex == 0`). Now the profile is correct no
+    // matter HOW it was navigated to — search card, VIP banner, chat,
+    // deep-link all work identically.
+    String? resolvedListingId = widget.listingId;
+    if (resolvedListingId == null && widget.expertId.isNotEmpty) {
+      final isProviderUser = userData['isProvider'] == true ||
+          (userData['listingIds'] as List?)?.isNotEmpty == true;
+      // Even when userData is empty (cold-cache), still try — a demo
+      // profile may have an empty users doc but a real listing.
+      if (isProviderUser || userData.isEmpty) {
+        try {
+          final lq = await FirebaseFirestore.instance
+              .collection('provider_listings')
+              .where('uid', isEqualTo: widget.expertId)
+              .orderBy('identityIndex')
+              .limit(1)
+              .get()
+              .timeout(const Duration(seconds: 8));
+          if (lq.docs.isNotEmpty) {
+            resolvedListingId = lq.docs.first.id;
+            debugPrint(
+                '[ExpertProfile] Auto-resolved listingId=$resolvedListingId for expertId=${widget.expertId}');
+          }
+        } catch (e) {
+          debugPrint('[ExpertProfile] Listing auto-resolve failed: $e');
+        }
+      }
+    }
 
-    // Merge listing-specific fields over the user doc
+    // If still no listingId, return user data as-is (backward compat).
+    if (resolvedListingId == null) return userData;
+
+    // Merge listing-specific fields over the user doc — also timeout-
+    // bounded so a slow listing read can't hang the whole profile.
+    // CRITICAL: for demo profiles where `users/{uid}` may not exist
+    // (admin-created uid that isn't a real Firebase Auth account),
+    // the listing IS the source of truth and supplies ALL the
+    // user-facing fields (name, profileImage, aboutMe, rating, etc.).
+    final merged = Map<String, dynamic>.from(userData);
     try {
       final listingSnap = await FirebaseFirestore.instance
           .collection('provider_listings')
-          .doc(widget.listingId)
-          .get();
+          .doc(resolvedListingId)
+          .get()
+          .timeout(const Duration(seconds: 8));
       if (listingSnap.exists) {
         final listing = listingSnap.data() ?? {};
-        // Override identity-specific fields from listing
-        if (listing['rating'] != null) userData['rating'] = listing['rating'];
-        if (listing['reviewsCount'] != null) userData['reviewsCount'] = listing['reviewsCount'];
-        if (listing['aboutMe'] != null && (listing['aboutMe'] as String).isNotEmpty) {
-          userData['aboutMe'] = listing['aboutMe'];
+        // Identity-specific fields ALWAYS sourced from listing — these
+        // are per-listing (one provider can have 2 identities w/
+        // different categories, prices, reviews).
+        for (final key in const [
+          'rating', 'reviewsCount', 'gallery', 'pricePerHour',
+          'serviceType', 'quickTags', 'categoryTags', 'categoryDetails',
+          'priceList', 'cancellationPolicy',
+        ]) {
+          if (listing[key] != null) merged[key] = listing[key];
         }
-        if (listing['gallery'] != null) userData['gallery'] = listing['gallery'];
-        if (listing['pricePerHour'] != null) userData['pricePerHour'] = listing['pricePerHour'];
-        if (listing['serviceType'] != null) userData['serviceType'] = listing['serviceType'];
-        if (listing['quickTags'] != null) userData['quickTags'] = listing['quickTags'];
-        if (listing['categoryTags'] != null) userData['categoryTags'] = listing['categoryTags'];
-        if (listing['categoryDetails'] != null) userData['categoryDetails'] = listing['categoryDetails'];
-        if (listing['priceList'] != null) userData['priceList'] = listing['priceList'];
-        if (listing['cancellationPolicy'] != null) userData['cancellationPolicy'] = listing['cancellationPolicy'];
+        if (listing['aboutMe'] != null &&
+            (listing['aboutMe'] as String).isNotEmpty) {
+          merged['aboutMe'] = listing['aboutMe'];
+        }
+        // FALLBACK fields — only filled IN when the user doc is missing
+        // those values. Critical for demo profiles where users/{uid}
+        // doesn't exist at all and the listing carries the display data.
+        // Without this, demos rendered with empty name/image/etc. and
+        // my empty-data guard surfaced a misleading "בעיית חיבור"
+        // (רועי צברי report 2026-05-14).
+        //
+        // 2026-05-15: extended the "is missing" check to ALSO trigger on
+        // empty strings. Previously `merged[key] == null` was the only
+        // condition — so a user doc with `profileImage: ''` (empty,
+        // not null) blocked the listing's REAL profileImage from
+        // filling in. Live bug (רועי צברי, again): expert profiles
+        // showed initials instead of photos on first cold-WebChannel
+        // open because the user-doc fetch returned with empty fields
+        // before the listing's denormalized fields could take over.
+        bool isMissing(dynamic v) {
+          if (v == null) return true;
+          if (v is String) return v.trim().isEmpty;
+          if (v is List) return v.isEmpty;
+          if (v is Map) return v.isEmpty;
+          return false;
+        }
+        for (final key in const [
+          'name', 'profileImage', 'phone', 'email',
+          'isVerified', 'isOnline', 'isDemo', 'isHidden',
+          'isAnySkillPro', 'isPromoted', 'isVolunteer',
+          'parentCategory', 'subCategory', 'workingHours',
+        ]) {
+          if (isMissing(merged[key]) && listing[key] != null) {
+            merged[key] = listing[key];
+          }
+        }
+        // Always denormalize the uid back onto merged so downstream
+        // code (chat, booking) doesn't break on demo profiles with
+        // missing expertId.
+        if ((merged['uid'] as String? ?? '').isEmpty &&
+            (listing['uid'] as String? ?? '').isNotEmpty) {
+          merged['uid'] = listing['uid'];
+        }
+        // Carry the resolved listingId so downstream consumers can use
+        // it (e.g. booking flow). Used even when widget.listingId was
+        // null and we auto-resolved the primary listing.
+        merged['listingId'] = resolvedListingId;
       }
     } catch (e) {
       debugPrint('[ExpertProfile] Listing merge error: $e');
@@ -229,7 +409,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
     // Load v2 schema for the expert's most-specific category. Stored on
     // state so the booking sheet can render booking requirements + show
     // deposit / surcharge banners. Cached by category name to avoid refetching.
-    final categoryName = (userData['serviceType'] as String? ?? '').trim();
+    final categoryName = (merged['serviceType'] as String? ?? '').trim();
     if (categoryName.isNotEmpty && categoryName != _lastSchemaCategory) {
       try {
         // §61: cached read — 30 min TTL. Schema changes via Categories v3
@@ -246,7 +426,7 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       }
     }
 
-    return userData;
+    return merged;
   }
 
   @override
@@ -259,27 +439,15 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // Derived service tiers (no separate Firestore collection needed)
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Builds category-aware service tiers from [ServiceArchitect] templates.
-  List<Map<String, dynamic>> _deriveServices(
-      double pricePerHour, String category) {
-    final templates = ServiceArchitect.templatesFor(category);
-    return templates.map((t) => {
-      'title':     t.title,
-      'subtitle':  t.subtitle,
-      'unitLabel': t.unitLabel,
-      'unitIcon':  t.unitIcon,
-      'price':     (pricePerHour * t.multiplier).roundToDouble(),
-    }).toList();
-  }
+  // §81 (C.3, 2026-05-14): _deriveServices moved to
+  // ServiceMenu.deriveServices (service_menu.dart).
 
   // ─────────────────────────────────────────────────────────────────────────
   // Helpers
   // ─────────────────────────────────────────────────────────────────────────
 
-  String _getChatRoomId(String uid1, String uid2) {
-    final ids = [uid1, uid2]..sort();
-    return ids.join("_");
-  }
+  // §81 (2026-05-14): _getChatRoomId moved into ExpertBookingService
+  // (deterministic ids.sort().join('_')).
 
   /// Render a gallery image that may be an HTTP URL or a raw base64 string.
   Widget _buildGalleryImage(String src, {BoxFit fit = BoxFit.cover}) {
@@ -316,25 +484,30 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   //
   // navigator.pop() is still intentionally NOT called here — the success view's
   // "Done" button is the sole trigger, decoupled from every async chain.
+  /// §81 (2026-05-14): thin orchestration layer. The atomic escrow
+  /// transaction + demo booking writes are now in
+  /// [ExpertBookingService] (lib/services/expert_booking_service.dart).
+  /// This method:
+  ///   1. Demo / profile / self-booking gates
+  ///   2. setState(_isProcessing=true)
+  ///   3. Build BookingRequest from state
+  ///   4. await ExpertBookingService.processEscrow(request)
+  ///   5. Translate outcome → snackbar / dialog / success
+  ///   6. finally: setState(_isProcessing=false)
   Future<bool> _processEscrowPayment(
       BuildContext context, double totalPrice, String cancellationPolicy,
       {bool isDemo = false}) async {
-    // ── Demo expert: show success illusion, log demand signal, no real writes ──
+    // ── Demo expert: show success illusion, no real writes ──────────────
     if (isDemo) {
       return await _handleDemoBooking(context);
     }
 
     if (_isProcessing) return false;
 
-    // ── Profile completeness gate ────────────────────────────────────────
-    // Customer must have name + verified phone + email + profile photo
-    // before any service can be booked. ProfileGuard handles the blocking
-    // dialog and the navigation to Edit Profile when fields are missing.
-    if (!await ProfileGuard.ensureComplete(context)) {
-      return false;
-    }
+    // ── Profile completeness gate (ProfileGuard handles UI itself) ─────
+    if (!await ProfileGuard.ensureComplete(context)) return false;
 
-    // ── Anti-fraud: block self-booking ───────────────────────────────────
+    // ── Anti-fraud: block self-booking ────────────────────────────────
     final selfUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     if (selfUid == widget.expertId) {
       if (context.mounted) {
@@ -346,543 +519,177 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       return false;
     }
 
+    // Selected day/time guard (UI normally enforces this, but safe-fail).
+    if (_selectedDay == null || _selectedTimeSlot == null) return false;
+
     setState(() => _isProcessing = true);
 
-    // Capture l10n strings before any await (context may be gone after await)
-    final l10n                   = AppLocalizations.of(context);
+    // Capture l10n + messenger BEFORE await (context may unmount).
+    final l10n = AppLocalizations.of(context);
     final msgInsufficientBalance = l10n.expertInsufficientBalance;
-    final msgTransactionTitle    = l10n.expertTransactionTitle(widget.expertName);
-    final dateStr = _selectedDay != null
-        ? '${_selectedDay!.day}/${_selectedDay!.month}'
-        : '';
-
-    final firestore = FirebaseFirestore.instance;
-    final String currentUserId =
-        FirebaseAuth.instance.currentUser?.uid ?? "";
-    final String chatRoomId =
-        _getChatRoomId(currentUserId, widget.expertId);
-    final adminSettingsRef = firestore
-        .collection('admin')
-        .doc('admin')
-        .collection('settings')
-        .doc('settings');
-
-    // Sentinel thrown to signal a slot collision (distinct from generic errors).
-    const kSlotConflict = '__SLOT_CONFLICT__';
-
-    // messenger captured only for error feedback.
+    final transactionTitle =
+        l10n.expertTransactionTitle(widget.expertName);
+    final dateStr = '${_selectedDay!.day}/${_selectedDay!.month}';
     final messenger = ScaffoldMessenger.of(context);
 
+    // Compute commission for the system-message preview (mirrors the
+    // server-side math — service writes the real number atomically).
+    final adminFeePctApprox = 0.10; // service reads the real value inside tx
+    final expertNetApprox = double.parse(
+        (totalPrice * (1 - adminFeePctApprox)).toStringAsFixed(2));
+    final systemMsg = l10n.expertSystemMessage(
+      dateStr,
+      _selectedTimeSlot!,
+      expertNetApprox.toStringAsFixed(0),
+    );
+
     try {
-      // ── Phase 1: reads ────────────────────────────────────────────────────
-      // ── Atomic transaction ──────────────────────────────────────────
-      // Fee, balance, slot check, and all writes happen inside a single
-      // transaction — prevents double-spend and fee-change race conditions.
-      final customerRef = firestore.collection('users').doc(currentUserId);
-
-      // Slot pre-compute (key only — actual guard is inside transaction)
-      DocumentReference? slotRef;
-      final d = _selectedDay;
-      final t = _selectedTimeSlot;
-      if (d != null && t != null) {
-        final slotKey =
-            '${widget.expertId}_'
-            '${d.year}${d.month.toString().padLeft(2, '0')}${d.day.toString().padLeft(2, '0')}_'
-            '${t.replaceAll(':', '').replaceAll(' ', '')}';
-        slotRef = firestore.collection('bookingSlots').doc(slotKey);
-      }
-
-      final cancelDeadline = CancellationPolicyService.deadline(
-        policy:          cancellationPolicy,
-        appointmentDate: _selectedDay,
-        timeSlot:        _selectedTimeSlot,
+      final request = BookingRequest(
+        customerId: selfUid,
+        customerName: '', // service reads from Firestore inside tx
+        expertId: widget.expertId,
+        expertName: widget.expertName,
+        totalPrice: totalPrice,
+        cancellationPolicy: cancellationPolicy,
+        selectedDay: _selectedDay!,
+        selectedTimeSlot: _selectedTimeSlot!,
+        serviceSchema: _serviceSchema,
+        lastSchemaCategory: _lastSchemaCategory,
+        bookingReqValues: _bookingReqValues,
+        transactionTitle: transactionTitle,
+        systemMessage: systemMsg,
+        massagePreferences: _massagePreferences,
+        massageTotalPrice: _massageTotalPrice,
+        pestControlPreferences: _pestControlPreferences,
+        pestControlTotalPrice: _pestControlTotalPrice,
+        deliveryPreferences: _deliveryPreferences,
+        deliveryTotalPrice: _deliveryTotalPrice,
+        cleaningPreferences: _cleaningPreferences,
+        cleaningTotalPrice: _cleaningTotalPrice,
+        handymanPreferences: _handymanPreferences,
+        handymanTotalPrice: _handymanTotalPrice,
+        fitnessPackage: _fitnessPackage,
+        fitnessTotalPrice: _fitnessTotalPrice,
+        babysitterPreferences: _babysitterPreferences,
+        babysitterTotalPrice: _babysitterTotalPrice,
+        motorcycleTowPreferences: _motorcycleTowPreferences,
+        motorcycleTowTotalPrice: _motorcycleTowTotalPrice,
+        selectedDog: _selectedDog,
+        petStayEndDate: _petStayEndDate,
       );
 
-      final jobRef = firestore.collection('jobs').doc();
+      final outcome = await ExpertBookingService.processEscrow(request);
 
-      // Commission values — computed inside transaction, stored here for
-      // the post-transaction system message.
-      double commission = 0;
-      double expertNetEarnings = 0;
+      switch (outcome.kind) {
+        case BookingOutcomeKind.success:
+          // Best-effort: system chat message AFTER successful tx commit.
+          try {
+            await ExpertBookingService.sendSystemMessage(
+              chatRoomId: outcome.chatRoomId!,
+              customerId: selfUid,
+              expertId: widget.expertId,
+              message: systemMsg,
+            );
+          } catch (e) {
+            debugPrint('[ExpertProfile] system msg failed (non-fatal): $e');
+          }
+          return true;
 
-      // Pet Stay Tracker — captured inside the tx, written via WriteBatch
-      // AFTER the tx commits to avoid hitting Firestore's 500-op cap on
-      // long pension stays (180 days × 5 items/day = 900 items > limit).
-      String? petStayJobId;
-      List<ScheduleItem> petStayScheduleItems = const [];
+        case BookingOutcomeKind.insufficientBalance:
+          if (mounted) {
+            messenger.showSnackBar(SnackBar(
+              backgroundColor: Colors.red,
+              content: Text(msgInsufficientBalance),
+            ));
+          }
+          return false;
 
-      await firestore.runTransaction((tx) async {
-        // READ: admin fee settings (inside transaction = atomic)
-        final adminSnap = await tx.get(adminSettingsRef);
-        final feePercentage =
-            ((adminSnap.data() ?? {})['feePercentage'] as num? ?? 0.10)
-                .toDouble();
-        commission = double.parse((totalPrice * feePercentage).toStringAsFixed(2));
-        expertNetEarnings = double.parse((totalPrice - commission).toStringAsFixed(2));
-
-        // READ: customer balance (inside transaction = atomic)
-        final customerSnap = await tx.get(customerRef);
-        final Map<String, dynamic> customerData = customerSnap.data() ?? {};
-        final double currentBalance = (customerData['balance'] ?? 0.0).toDouble();
-
-        // ── DEPOSIT-ONLY ESCROW MODE (v12.1.0) ──────────────────────────
-        // When the schema defines a depositPercent > 0, the customer pays
-        // ONLY that fraction at booking. The remainder is collected at
-        // completion (BookingActions.markCompleted reads `remainingAmount`
-        // and debits the customer at that point).
-        //
-        // Schemas without a deposit (most cases) keep the legacy behaviour:
-        // paidAtBooking == totalPrice, remainingAmount == 0.
-        final double depositAmount = _serviceSchema.depositPercent > 0
-            ? double.parse(
-                (totalPrice * _serviceSchema.depositPercent / 100)
-                    .toStringAsFixed(2))
-            : 0.0;
-        final double paidAtBooking =
-            depositAmount > 0 ? depositAmount : totalPrice;
-        final double remainingAmount = double.parse(
-            (totalPrice - paidAtBooking).toStringAsFixed(2));
-
-        // The customer only needs enough balance to cover the deposit.
-        if (currentBalance < paidAtBooking) throw msgInsufficientBalance;
-
-        // READ: slot collision check (inside transaction = atomic)
-        if (slotRef != null) {
-          final slotSnap = await tx.get(slotRef);
-          if (slotSnap.exists) throw kSlotConflict;
-          tx.set(slotRef, {
-            'expertId':  widget.expertId,
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-        }
-
-        // WRITE: job document
-        tx.set(jobRef, {
-          'jobId':               jobRef.id,
-          'chatRoomId':          chatRoomId,
-          'customerId':          currentUserId,
-          'customerName':        customerData['name'] ?? '',
-          'expertId':            widget.expertId,
-          'expertName':          widget.expertName,
-          'totalPaidByCustomer': paidAtBooking,
-          'totalAmount':         totalPrice,
-          'commissionAmount':    commission,
-          'netAmountForExpert':  expertNetEarnings,
-          'appointmentDate':     _selectedDay,
-          'appointmentTime':     _selectedTimeSlot,
-          'status':              'paid_escrow',
-          'createdAt':           FieldValue.serverTimestamp(),
-          'cancellationPolicy':  cancellationPolicy,
-          if (cancelDeadline != null)
-            'cancellationDeadline': Timestamp.fromDate(cancelDeadline),
-          // ── v2 schema additions ────────────────────────────────────────
-          if (_bookingReqValues.isNotEmpty)
-            'bookingRequirementValues': Map<String, dynamic>.from(_bookingReqValues),
-          if (depositAmount > 0) ...{
-            'depositAmount':    depositAmount,
-            'depositPercent':   _serviceSchema.depositPercent,
-            'paidAtBooking':    paidAtBooking,
-            'remainingAmount':  remainingAmount,
-            'depositPaidAt':    FieldValue.serverTimestamp(),
-          },
-          // Cached schema flags so the order card can branch without
-          // re-fetching the category doc on every render.
-          'expertServiceType': _lastSchemaCategory,
-          if (_serviceSchema.walkTracking) 'flagWalkTracking': true,
-          if (_serviceSchema.dailyProof) 'flagDailyProof': true,
-          if (_serviceSchema.priceLocked) 'flagPriceLocked': true,
-          if (_serviceSchema.requireVisualDiagnosis)
-            'flagRequireVisualDiagnosis': true,
-          if (_massagePreferences != null)
-            'massagePreferences': _massagePreferences!.toMap(),
-          if (_massagePreferences != null)
-            'priceBreakdown': {
-              'basePrice': _massageTotalPrice,
-              'total': totalPrice,
-            },
-          if (_pestControlPreferences != null)
-            'pestControlPreferences': _pestControlPreferences!.toMap(),
-          if (_pestControlPreferences != null)
-            'priceBreakdown': {
-              'basePrice': _pestControlTotalPrice,
-              'total': totalPrice,
-            },
-          if (_deliveryPreferences != null)
-            'deliveryPreferences': _deliveryPreferences!.toMap(),
-          if (_deliveryPreferences != null)
-            'priceBreakdown': {
-              'basePrice': _deliveryTotalPrice,
-              'total': totalPrice,
-            },
-          if (_cleaningPreferences != null)
-            'cleaningPreferences': _cleaningPreferences!.toMap(),
-          if (_cleaningPreferences != null)
-            'priceBreakdown': {
-              'basePrice': _cleaningTotalPrice,
-              'total': totalPrice,
-            },
-          if (_handymanPreferences != null)
-            'handymanPreferences': _handymanPreferences!.toMap(),
-          if (_handymanPreferences != null)
-            'priceBreakdown': {
-              'basePrice': _handymanTotalPrice,
-              'total': totalPrice,
-            },
-          if (_fitnessPackage != null)
-            'fitnessTrainerPreferences': {
-              'packageId': _fitnessPackage!.id,
-              'packageName': _fitnessPackage!.name,
-              'packageType': _fitnessPackage!.type.name,
-              'sessions': _fitnessPackage!.sessions,
-              'durationMinutes': _fitnessPackage!.durationMinutes,
-              'price': _fitnessPackage!.price,
-              if (_fitnessPackage!.discount != null)
-                'discount': _fitnessPackage!.discount,
-              'isPopular': _fitnessPackage!.isPopular,
-            },
-          if (_fitnessPackage != null)
-            'priceBreakdown': {
-              'basePrice': _fitnessTotalPrice,
-              'total': totalPrice,
-            },
-          if (_babysitterPreferences != null)
-            'babysitterPreferences': _babysitterPreferences!.toMap(),
-          if (_babysitterPreferences != null)
-            'priceBreakdown': {
-              'basePrice': _babysitterTotalPrice,
-              'total': totalPrice,
-            },
-          if (_motorcycleTowPreferences != null)
-            'motorcycleTowPreferences': _motorcycleTowPreferences!.toMap(),
-          if (_motorcycleTowPreferences != null)
-            'priceBreakdown': {
-              'basePrice': _motorcycleTowTotalPrice,
-              'total': totalPrice,
-            },
-        });
-
-        // WRITE: PetStay snapshot + schedule (Pet Stay Tracker v13.0.0).
-        // Frozen copy of the dog profile + auto-generated daily checklist.
-        // Same transaction = job + petStay + schedule items are atomic.
-        if ((_serviceSchema.walkTracking || _serviceSchema.dailyProof) &&
-            _selectedDog != null &&
-            _selectedDay != null) {
-          final isPension = _serviceSchema.dailyProof;
-          final isDogWalker =
-              _serviceSchema.walkTracking && !_serviceSchema.dailyProof;
-          final endDate = isPension
-              ? (_petStayEndDate ??
-                  _selectedDay!.add(const Duration(days: 1)))
-              : _selectedDay!;
-          final petStay = PetStay.initial(
-            dog: _selectedDog!,
-            customerId: currentUserId,
-            expertId: widget.expertId,
-            startDate: _selectedDay!,
-            endDate: endDate,
-            isPension: isPension,
-            isDogWalker: isDogWalker,
-          );
-          PetStayService.instance.writeInitialSnapshotInTransaction(
-            tx: tx,
-            jobId: jobRef.id,
-            snapshot: petStay,
-          );
-
-          // Schedule items — only generated for pension (multi-day).
-          // Dog-walker skips this since the walk session IS the activity.
-          // CAPTURE to outer scope — written via WriteBatch AFTER the tx
-          // to avoid Firestore's 500-op transaction limit on long stays.
-          petStayJobId = jobRef.id;
-          petStayScheduleItems = ScheduleGenerator.generate(
-            dog: _selectedDog!,
-            startDate: _selectedDay!,
-            endDate: endDate,
-            customerId: currentUserId,
-            expertId: widget.expertId,
-            isPension: isPension,
-          );
-        }
-
-        // WRITE: deduct customer balance — ONLY the deposit (or full price
-        // when no deposit is configured).
-        tx.update(customerRef,
-            {'balance': FieldValue.increment(-paidAtBooking)});
-
-        // WRITE: platform commission
-        tx.set(firestore.collection('platform_earnings').doc(), {
-          'jobId':          jobRef.id,
-          'amount':         commission,
-          'sourceExpertId': widget.expertId,
-          'timestamp':      FieldValue.serverTimestamp(),
-          'status':         'pending_escrow',
-        });
-
-        // WRITE: wallet transaction log
-        tx.set(firestore.collection('transactions').doc(), {
-          'userId':    currentUserId,
-          'amount':    -paidAtBooking,
-          'title':     depositAmount > 0
-              ? '$msgTransactionTitle (פיקדון)'
-              : msgTransactionTitle,
-          'timestamp': FieldValue.serverTimestamp(),
-          'status':    'escrow',
-        });
-      });
-
-      // Pet Stay schedule items — written via WriteBatch AFTER the main
-      // booking transaction commits. Graceful degradation: any failure
-      // here is logged but does NOT roll back the paid booking. Provider
-      // will see an empty checklist (dog card still renders) and admin
-      // can regenerate if needed.
-      if (petStayJobId != null && petStayScheduleItems.isNotEmpty) {
-        try {
-          await PetStayService.instance.writeScheduleItemsBatched(
-            jobId: petStayJobId!,
-            items: petStayScheduleItems,
-          );
-        } catch (e) {
-          debugPrint('[PetStay] schedule batch write failed: $e');
-        }
-      }
-
-      // System chat message (non-critical; after transaction)
-      await _sendSystemNotification(
-          chatRoomId, totalPrice, expertNetEarnings, currentUserId,
-          systemMsg: l10n.expertSystemMessage(
-              dateStr, _selectedTimeSlot ?? '',
-              expertNetEarnings.toStringAsFixed(0)));
-
-      // Batch committed — signal success. The sheet's StatefulBuilder will swap
-      // to the success view; the user's "Done" tap triggers pop() as a plain
-      // synchronous gesture, with zero async-chain coupling.
-      return true;
-    } catch (e) {
-      debugPrint('[AnySkill] Booking error: ${e.toString()}');
-      if (mounted) {
-        if (e == kSlotConflict) {
-          showDialog<void>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20)),
-              title: Row(children: [
-                const Icon(Icons.event_busy_rounded,
-                    color: Color(0xFFEF4444), size: 22),
-                const SizedBox(width: 8),
-                Text(AppLocalizations.of(context).expSlotTakenTitle,
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-              ]),
-              content: Text(
-                AppLocalizations.of(context).expSlotTakenBody,
-                textAlign: TextAlign.right,
-              ),
-              actions: [
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF6366F1),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12))),
-                  onPressed: () => Navigator.pop(ctx),
-                  child: Text(AppLocalizations.of(context).expUnderstood,
-                      style: const TextStyle(color: Colors.white)),
+        case BookingOutcomeKind.slotConflict:
+          if (mounted) {
+            showDialog<void>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20)),
+                title: Row(children: [
+                  const Icon(Icons.event_busy_rounded,
+                      color: Color(0xFFEF4444), size: 22),
+                  const SizedBox(width: 8),
+                  Text(AppLocalizations.of(context).expSlotTakenTitle,
+                      style:
+                          const TextStyle(fontWeight: FontWeight.bold)),
+                ]),
+                content: Text(
+                  AppLocalizations.of(context).expSlotTakenBody,
+                  textAlign: TextAlign.right,
                 ),
-              ],
-            ),
-          );
-        } else {
-          messenger.showSnackBar(SnackBar(
-            backgroundColor: Colors.red,
-            content: Text(
-              e.toString() == msgInsufficientBalance
-                  ? msgInsufficientBalance
-                  : e.toString().toLowerCase().contains('permission') ||
-                          e.toString().toLowerCase().contains('insufficient')
-                      ? AppLocalizations.of(context).expBookingError
-                      : e.toString(),
-            ),
-          ));
-        }
+                actions: [
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6366F1),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12))),
+                    onPressed: () => Navigator.pop(ctx),
+                    child: Text(
+                        AppLocalizations.of(context).expUnderstood,
+                        style: const TextStyle(color: Colors.white)),
+                  ),
+                ],
+              ),
+            );
+          }
+          return false;
+
+        case BookingOutcomeKind.error:
+          if (mounted) {
+            final raw = outcome.errorMessage ?? '';
+            final lower = raw.toLowerCase();
+            final friendly =
+                (lower.contains('permission') || lower.contains('insufficient'))
+                    ? AppLocalizations.of(context).expBookingError
+                    : raw;
+            messenger.showSnackBar(SnackBar(
+              backgroundColor: Colors.red,
+              content: Text(friendly),
+            ));
+          }
+          return false;
       }
-      return false;
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
+    // Unreachable — switch above is exhaustive. Defensive fallback for
+    // dart analyzer, which can't always prove enum exhaustiveness through
+    // a try/finally block.
+    // ignore: dead_code
+    return false;
   }
 
-  // ── Demo booking: fake success + admin notification + audit trail ────────
+  // ── Demo booking: thin l10n wrapper around ExpertBookingService ─────────
   //
-  // No real Firestore booking writes (no job doc, no wallet deduction, no
-  // bookingSlot reservation). Instead:
-  //   1. Read the customer's profile (name + image + phone) for the admin
-  //      notification card.
-  //   2. Create a `demo_bookings` doc — visible in the AdminDemoExpertsTab
-  //      "Bookings" sub-tab.
-  //   3. Log a demand signal to `activity_log` (admin Live Feed — existing).
-  //   4. Notify EVERY admin user via in-app notification + (best-effort) FCM.
-  //   5. Notify the CUSTOMER so they see the friendly "we'll update you"
-  //      message in their notifications screen too.
-  //
-  // Returns true on success — the caller's StatefulBuilder then renders the
-  // demo-aware success view (with the softer "we'll update you" wording).
-  // All steps are wrapped in try/catch so a failed notification or audit
-  // write never blocks the customer's UX.
+  // §81 (2026-05-14): the Firestore writes (demo_bookings + activity_log +
+  // admin notifications + customer notification) moved to
+  // ExpertBookingService.handleDemoBooking. This wrapper just captures
+  // l10n strings BEFORE the await (context-safe pattern) and forwards.
   Future<bool> _handleDemoBooking(BuildContext context) async {
-    final db = FirebaseFirestore.instance;
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-
-    // ── 1. Read customer profile (best-effort) ───────────────────────────
-    final defaultCustomerName = context.mounted
-        ? AppLocalizations.of(context).expDefaultCustomer
-        : 'Customer';
-    String customerName = defaultCustomerName;
-    String customerImage = '';
-    String customerPhone = '';
-    try {
-      final customerDoc = await db.collection('users').doc(uid).get();
-      final cd = customerDoc.data() ?? {};
-      customerName = cd['name'] as String? ?? defaultCustomerName;
-      customerImage = cd['profileImage'] as String? ?? '';
-      customerPhone = cd['phone'] as String? ?? '';
-    } catch (_) {}
-
-    // ── 2. Format the requested slot for the admin (if any) ──────────────
-    final dateStr = _selectedDay != null
-        ? '${_selectedDay!.day.toString().padLeft(2, '0')}/'
-            '${_selectedDay!.month.toString().padLeft(2, '0')}/'
-            '${_selectedDay!.year}'
-        : '';
-    final timeStr = _selectedTimeSlot ?? '';
-
-    // ── 3. Compute the price the customer would have paid ───────────────
-    double totalAmount = 0;
-    try {
-      final demoData = await db.collection('users').doc(widget.expertId).get();
-      final dd = demoData.data() ?? {};
-      totalAmount = (dd['pricePerHour'] as num? ?? 150).toDouble();
-    } catch (_) {}
-
-    // ── 4. Get demo expert category for the admin context ───────────────
-    String demoCategory = '';
-    try {
-      final demoDoc = await db.collection('users').doc(widget.expertId).get();
-      final dd = demoDoc.data() ?? {};
-      final parent = dd['parentCategory'] as String? ?? '';
-      final sub = dd['subCategoryName'] as String? ?? '';
-      demoCategory = parent.isNotEmpty && sub.isNotEmpty
-          ? '$parent › $sub'
-          : (parent.isNotEmpty
-              ? parent
-              : (dd['serviceType'] as String? ?? ''));
-    } catch (_) {}
-
-    // ── 5. Write the demo_bookings doc — admin-visible record ────────────
-    try {
-      await db.collection('demo_bookings').add({
-        'customerId': uid,
-        'customerName': customerName,
-        'customerImage': customerImage,
-        'customerPhone': customerPhone,
-        'demoExpertId': widget.expertId,
-        'demoExpertName': widget.expertName,
-        'demoExpertCategory': demoCategory,
-        'selectedDate': dateStr,
-        'selectedTime': timeStr,
-        'totalAmount': totalAmount,
-        'status': 'pending', // 'pending' | 'contacted'
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-    } catch (e) {
-      debugPrint('[demo_booking] Failed to write demo_bookings: $e');
-    }
-
-    // ── 6. Log to activity_log (existing admin Live Feed) ────────────────
-    try {
-      await db.collection('activity_log').add({
-        'type': 'demo_booking_attempt',
-        'expertId': widget.expertId,
-        'expertName': widget.expertName,
-        'userId': uid,
-        'createdAt': FieldValue.serverTimestamp(),
-        'priority': 'high',
-        'title': '🔥 לקוח ניסה להזמין נותן שירות דמו',
-        'detail':
-            '$customerName רוצה להזמין את ${widget.expertName} ($demoCategory)',
-        'expireAt': Timestamp.fromDate(
-            DateTime.now().add(const Duration(days: 30))),
-      });
-    } catch (_) {}
-
-    // ── 7. Notify EVERY admin in the system ─────────────────────────────
-    // Reads all users with isAdmin == true and writes one notification doc
-    // per admin. This is the cheapest path that doesn't require a Cloud
-    // Function (1-3 admin users in practice).
-    try {
-      final adminsSnap = await db
-          .collection('users')
-          .where('isAdmin', isEqualTo: true)
-          .limit(10)
-          .get();
-      final batch = db.batch();
-      for (final adminDoc in adminsSnap.docs) {
-        final adminId = adminDoc.id;
-        final notifRef = db.collection('notifications').doc();
-        batch.set(notifRef, {
-          'userId': adminId,
-          'type': 'demo_booking_attempt',
-          'title': '🔥 ניסיון הזמנה לפרופיל דמו',
-          'body':
-              '$customerName רוצה להזמין את ${widget.expertName}${dateStr.isNotEmpty ? " ל-$dateStr $timeStr" : ""}',
-          'isRead': false,
-          'priority': 'high',
-          'data': {
-            'demoExpertId': widget.expertId,
-            'customerId': uid,
-            'customerPhone': customerPhone,
-          },
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-      }
-      if (adminsSnap.docs.isNotEmpty) await batch.commit();
-    } catch (e) {
-      debugPrint('[demo_booking] Failed to notify admins: $e');
-    }
-
-    // ── 8. Notify the CUSTOMER (matches the friendly success message) ────
-    try {
-      await db.collection('notifications').add({
-        'userId': uid,
-        'type': 'demo_booking_received',
-        'title': '⏳ הזמנתך התקבלה',
-        'body':
-            AppLocalizations.of(context).expDemoBookingMsg(widget.expertName),
-        'isRead': false,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-    } catch (_) {}
-
-    // The caller's StatefulBuilder switches to the shared success view.
-    // No navigator.pop() here — decoupled from this Future chain.
-    return true;
+    final defaultCustomerName =
+        AppLocalizations.of(context).expDefaultCustomer;
+    final customerNotificationBody =
+        AppLocalizations.of(context).expDemoBookingMsg(widget.expertName);
+    return ExpertBookingService.handleDemoBooking(
+      customerId: FirebaseAuth.instance.currentUser?.uid ?? '',
+      expertId: widget.expertId,
+      expertName: widget.expertName,
+      selectedDay: _selectedDay,
+      selectedTimeSlot: _selectedTimeSlot,
+      defaultCustomerName: defaultCustomerName,
+      customerNotificationBody: customerNotificationBody,
+    );
   }
 
-  Future<void> _sendSystemNotification(
-      String chatRoomId, double total, double net, String currentUserId,
-      {required String systemMsg}) async {
-    final chatRef =
-        FirebaseFirestore.instance.collection('chats').doc(chatRoomId);
-    // Ensure the chat doc exists with both participants BEFORE writing the
-    // message — the messages rule checks chats/{id}.data.users.
-    await chatRef.set(
-        {'users': [currentUserId, widget.expertId]},
-        SetOptions(merge: true));
-    await chatRef.collection('messages').add({
-      'senderId': 'system',
-      'message':  systemMsg,
-      'type':      'text',
-      'timestamp': FieldValue.serverTimestamp(),
-    });
-  }
+  // §81 (2026-05-14): _sendSystemNotification moved to
+  // ExpertBookingService.sendSystemMessage. Caller is the success
+  // branch of _processEscrowPayment's switch.
 
 
 
@@ -890,274 +697,16 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // UI: Quick Tags
   // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildQuickTagsSection(Map<String, dynamic> data) {
-    final tagKeys = ((data['quickTags'] as List?) ?? []).cast<String>();
-    final resolved = tagKeys
-        .map(quickTagByKey)
-        .whereType<Map<String, String>>()
-        .toList();
-    if (resolved.isEmpty) return const SizedBox.shrink();
-
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      alignment: WrapAlignment.end,
-      children: resolved.map((t) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-        decoration: BoxDecoration(
-          color: _kPurpleSoft,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: _kPurple.withValues(alpha: 0.2)),
-        ),
-        child: Text(
-          '${t['emoji']} ${t['label']}',
-          style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: _kPurple),
-        ),
-      )).toList(),
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // UI: Bio section
-  // ─────────────────────────────────────────────────────────────────────────
-
-  Widget _buildBioSection(Map<String, dynamic> data, AppLocalizations l10n) {
-    final bio = data['aboutMe'] as String? ?? l10n.expertBioPlaceholder;
-    const maxLines = 3;
-    final isLong   = bio.split('\n').length > maxLines || bio.length > 160;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Text(
-          bio,
-          textAlign: TextAlign.right,
-          maxLines: _bioExpanded ? null : maxLines,
-          overflow: _bioExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
-          style: TextStyle(
-              fontSize: 15, height: 1.6, color: Colors.grey[800]),
-        ),
-        if (isLong)
-          GestureDetector(
-            onTap: () => setState(() => _bioExpanded = !_bioExpanded),
-            child: Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                _bioExpanded ? l10n.expertBioShowLess : l10n.expertBioReadMore,
-                style: const TextStyle(
-                    color: _kPurple,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
+  // §81 (C.3, 2026-05-14): _buildQuickTagsSection → QuickTagsSection,
+  // _buildBioSection → BioSection. Both in about_section.dart.
 
   // ─────────────────────────────────────────────────────────────────────────
   // UI: Service menu
   // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildServiceMenu(Map<String, dynamic> data, AppLocalizations l10n) {
-    final pricing  = PricingModel.fromFirestore(data);
-    final category = data['serviceType'] as String? ?? '';
-    final services = _deriveServices(pricing.basePrice, category);
-
-    return Column(
-      children: [
-        ...List.generate(services.length, (i) {
-        final svc      = services[i];
-        final selected = i == _selectedServiceIndex;
-        final svcPrice = svc['price'] as double;
-
-        return GestureDetector(
-          onTap: () => setState(() => _selectedServiceIndex = i),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            margin: const EdgeInsets.only(bottom: 6),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color:        selected ? _kPurpleSoft : Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color:  selected ? _kPurple : Colors.grey.shade200,
-                width:  selected ? 1.5 : 1,
-              ),
-            ),
-            child: Row(
-              children: [
-                // ── Selection indicator ────────────────────────────────
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  width: 18, height: 18,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color:  selected ? _kPurple : Colors.transparent,
-                    border: Border.all(
-                        color:  selected ? _kPurple : Colors.grey.shade300,
-                        width:  2),
-                  ),
-                  child: selected
-                      ? const Icon(Icons.check_rounded,
-                          color: Colors.white, size: 12)
-                      : null,
-                ),
-                const SizedBox(width: 10),
-                // ── Title + pill ───────────────────────────────────────
-                Expanded(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      // Duration pill
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: selected
-                              ? _kPurple.withValues(alpha: 0.1)
-                              : Colors.grey[100],
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(svc['unitLabel'] as String,
-                            style: TextStyle(
-                                fontSize: 10,
-                                color: selected ? _kPurple : Colors.grey[600],
-                                fontWeight: FontWeight.w600)),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(svc['title'] as String,
-                          style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13,
-                              color: selected ? _kPurple : Colors.black87)),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                // ── Price ──────────────────────────────────────────────
-                Text('₪${svcPrice.toStringAsFixed(0)}',
-                    style: const TextStyle(
-                        color: _kPurple,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 15)),
-              ],
-            ),
-          ),
-        );
-        }),
-
-        // ── Add-ons panel ─────────────────────────────────────────────────
-        if (pricing.addOns.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          _buildAddOnsPanel(pricing),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildAddOnsPanel(PricingModel pricing) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: _kPurpleSoft,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _kPurple.withValues(alpha: 0.18)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              Text(AppLocalizations.of(context).expOptionalAddons,
-                  style:
-                      const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-              const SizedBox(width: 6),
-              const Icon(Icons.add_circle_outline_rounded,
-                  size: 16, color: _kPurple),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ...pricing.addOns.asMap().entries.map((entry) {
-            final i  = entry.key;
-            final ao = entry.value;
-            final checked = _selectedAddOnIndices.contains(i);
-            return GestureDetector(
-              onTap: () => setState(() {
-                if (checked) {
-                  _selectedAddOnIndices.remove(i);
-                } else {
-                  _selectedAddOnIndices.add(i);
-                }
-              }),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  color: checked ? _kPurple : Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: checked
-                        ? _kPurple
-                        : Colors.grey.shade200,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      width: 20,
-                      height: 20,
-                      decoration: BoxDecoration(
-                        color: checked
-                            ? Colors.white
-                            : Colors.transparent,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: checked
-                              ? Colors.white
-                              : Colors.grey.shade400,
-                          width: 2,
-                        ),
-                      ),
-                      child: checked
-                          ? const Icon(Icons.check_rounded,
-                              color: _kPurple, size: 13)
-                          : null,
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      '+₪${ao.price.toStringAsFixed(0)}',
-                      style: TextStyle(
-                        color: checked ? Colors.white : _kPurple,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      ao.title,
-                      style: TextStyle(
-                        color: checked ? Colors.white : Colors.black87,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }),
-        ],
-      ),
-    );
-  }
+  // §81 (C.3, 2026-05-14): _buildServiceMenu + _buildAddOnsPanel moved
+  // to ServiceMenu (service_menu.dart).
+  // ignore: unused_element
 
   // ─────────────────────────────────────────────────────────────────────────
   // UI: Interactive Portfolio grid
@@ -1309,70 +858,8 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
         .toSet();
   }
 
-  Widget _buildCalendar(Set<DateTime> unavailableDates) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.grey.shade100),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withValues(alpha: 0.03),
-              blurRadius: 8,
-              offset: const Offset(0, 2)),
-        ],
-      ),
-      child: TableCalendar(
-        locale: 'he_IL',
-        firstDay: DateTime.now(),
-        lastDay: DateTime.now().add(const Duration(days: 60)),
-        focusedDay: _focusedDay,
-        headerStyle:
-            const HeaderStyle(formatButtonVisible: false, titleCentered: true),
-        selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-        enabledDayPredicate: (day) {
-          final n = DateTime.utc(day.year, day.month, day.day);
-          return !unavailableDates.contains(n);
-        },
-        onDaySelected: (selectedDay, focusedDay) {
-          setState(() {
-            _selectedDay      = selectedDay;
-            _focusedDay       = focusedDay;
-            _selectedTimeSlot = null;
-            _bookedSlots      = {};
-          });
-          _loadBookedSlots(selectedDay);
-        },
-        calendarBuilders: CalendarBuilders(
-          disabledBuilder: (context, day, _) {
-            final n = DateTime.utc(day.year, day.month, day.day);
-            if (!unavailableDates.contains(n)) return null;
-            return Center(
-              child: Container(
-                width: 36, height: 36,
-                decoration: BoxDecoration(
-                    color: Colors.red.shade50, shape: BoxShape.circle),
-                child: Center(
-                  child: Text('${day.day}',
-                      style: TextStyle(
-                          color: Colors.red.shade300,
-                          fontWeight: FontWeight.bold)),
-                ),
-              ),
-            );
-          },
-        ),
-        calendarStyle: const CalendarStyle(
-          selectedDecoration:
-              BoxDecoration(color: _kPurple, shape: BoxShape.circle),
-          todayDecoration: BoxDecoration(
-              color: Color(0xFFE0E7FF), shape: BoxShape.circle),
-          todayTextStyle: TextStyle(
-              color: _kPurple, fontWeight: FontWeight.bold),
-        ),
-      ),
-    );
-  }
+  // §80 (2026-05-14): _buildCalendar extracted to BookingCalendar
+  // in expert_profile/widgets/booking_calendar.dart. Call site ~line 3926.
 
   // ─────────────────────────────────────────────────────────────────────────
   // UI: Time slots
@@ -1411,1524 +898,42 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
 
   /// Generates time slots from the provider's `workingHours` for [_selectedDay].
   /// Falls back to hardcoded [_timeSlots] if the provider hasn't set hours.
-  List<String> _resolveTimeSlots(Map<String, dynamic> expertData) {
-    final rawHours = expertData['workingHours'] as Map<String, dynamic>?;
-    if (rawHours == null || rawHours.isEmpty || _selectedDay == null) {
-      return _timeSlots; // legacy fallback
-    }
-    // DateTime.weekday: 1=Monday..7=Sunday. Our schema: 0=Sunday..6=Saturday.
-    final dayIndex = _selectedDay!.weekday == 7 ? 0 : _selectedDay!.weekday;
-    final dayEntry = rawHours['$dayIndex'] as Map<String, dynamic>?;
-    if (dayEntry == null) return []; // provider doesn't work this day
-    final from = dayEntry['from']?.toString() ?? '09:00';
-    final to   = dayEntry['to']?.toString()   ?? '17:00';
-    final fromHour = int.tryParse(from.split(':').first) ?? 9;
-    final toHour   = int.tryParse(to.split(':').first)   ?? 17;
-    return [
-      for (int h = fromHour; h < toHour; h++)
-        '${h.toString().padLeft(2, '0')}:00',
-    ];
-  }
-
-  Widget _buildTimeSlots(AppLocalizations l10n, Map<String, dynamic> expertData) {
-    final slots = _resolveTimeSlots(expertData);
-    if (slots.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Text(
-          AppLocalizations.of(context).expProviderDayOff,
-          style: TextStyle(color: Colors.grey[500], fontSize: 14),
-          textAlign: TextAlign.center,
-        ),
-      );
-    }
-    // Reset selection if it's no longer in the available slots
-    if (_selectedTimeSlot != null && !slots.contains(_selectedTimeSlot)) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _selectedTimeSlot = null);
-      });
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            if (_loadingSlots)
-              const SizedBox(
-                width: 14, height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2, color: _kPurple),
-              ),
-            Text(l10n.expertSelectTime,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-          ],
-        ),
-        const SizedBox(height: 10),
-        SizedBox(
-          height: 48,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            reverse: true,
-            itemCount: slots.length,
-            itemBuilder: (context, index) {
-              final slot       = slots[index];
-              final isBooked   = _bookedSlots.contains(slot);
-              final isSelected = _selectedTimeSlot == slot;
-              // Semantics: time slot chip. Critical because:
-              //   - The visual: a colored pill. Without Semantics, screen
-              //     readers announce ONLY the time string (e.g. "10:00")
-              //     with no hint that it's selectable, booked, or selected.
-              //   - selected state needs to be announced so blind users
-              //     know which one they picked.
-              //   - booked state must be announced so users don't try to
-              //     tap an unavailable slot in vain.
-              return Semantics(
-                button: !isBooked,
-                selected: isSelected,
-                enabled: !isBooked,
-                label: isBooked
-                    ? '$slot — already booked'
-                    : (isSelected ? '$slot, selected' : slot),
-                child: GestureDetector(
-                onTap: isBooked
-                    ? null  // tapping a booked slot does nothing
-                    : () => setState(() => _selectedTimeSlot = slot),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  margin: const EdgeInsets.only(left: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  decoration: BoxDecoration(
-                    color: isBooked
-                        ? Colors.grey.shade200
-                        : isSelected ? _kPurple : Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: isBooked
-                            ? Colors.grey.shade300
-                            : isSelected ? _kPurple : Colors.grey.shade300),
-                    boxShadow: isSelected && !isBooked
-                        ? [
-                            BoxShadow(
-                                color: _kPurple.withValues(alpha: 0.25),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2))
-                          ]
-                        : [],
-                  ),
-                  child: Center(
-                    child: isBooked
-                        ? Text(slot,
-                            style: TextStyle(
-                                color: Colors.grey.shade500,
-                                fontWeight: FontWeight.w500,
-                                decoration: TextDecoration.lineThrough))
-                        : Text(slot,
-                            style: TextStyle(
-                                color: isSelected ? Colors.white : Colors.black87,
-                                fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // UI: Reviews — Advanced Social Proof System
   // ─────────────────────────────────────────────────────────────────────────
 
   // ── Reviews: Airbnb-style state ─────────────────────────────────────────
-  String _reviewSearchQuery = '';
-  bool _reviewsExpanded = false;
-  static const int _reviewsPageSize = 6;
-  static const _kGold = Color(0xFFD4AF37);
-
-  Widget _buildReviewsSection(AppLocalizations l10n) {
-    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final isProvider = currentUid == widget.expertId;
-
-    Query<Map<String, dynamic>> reviewsQuery;
-    if (widget.listingId != null) {
-      reviewsQuery = FirebaseFirestore.instance
-          .collection('reviews')
-          .where('listingId', isEqualTo: widget.listingId)
-          .limit(100);
-    } else {
-      reviewsQuery = FirebaseFirestore.instance
-          .collection('reviews')
-          .where('expertId', isEqualTo: widget.expertId)
-          .limit(100);
-    }
-
-    // Volunteer reviews stream: completed community_requests for this expert
-    final volunteerStream = FirebaseFirestore.instance
-        .collection('community_requests')
-        .where('volunteerId', isEqualTo: widget.expertId)
-        .where('status', isEqualTo: 'completed')
-        .limit(50)
-        .snapshots();
-
-    return StreamBuilder<QuerySnapshot>(
-      key: ValueKey('reviews_$_refreshTrigger'),
-      stream: reviewsQuery.snapshots(),
-      builder: (context, reviewSnap) {
-        return StreamBuilder<QuerySnapshot>(
-          stream: volunteerStream,
-          builder: (context, volSnap) {
-        if (reviewSnap.hasError && volSnap.hasError) return const SizedBox.shrink();
-        if (!reviewSnap.hasData && !volSnap.hasData) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 32),
-            child: Center(child: CircularProgressIndicator()),
-          );
-        }
-
-        // ── Build unified review items list ──────────────────────────────
-        // Each item is a Map with a `_isVolunteer` flag for styling.
-        final items = <Map<String, dynamic>>[];
-
-        // Paid reviews
-        if (reviewSnap.hasData) {
-          for (final doc in reviewSnap.data!.docs) {
-            final d = doc.data() as Map<String, dynamic>? ?? {};
-            final published = d['isPublished'];
-            if (published != null && published != true) continue;
-            items.add({
-              ...d,
-              '_docId': doc.id,
-              '_isVolunteer': false,
-            });
-          }
-        }
-
-        // Volunteer reviews (from community_requests)
-        if (volSnap.hasData) {
-          for (final doc in volSnap.data!.docs) {
-            final d = doc.data() as Map<String, dynamic>? ?? {};
-            final review = d['volunteerReview'] as String? ?? '';
-            if (review.isEmpty) continue; // no review text = skip
-            final photoUrl = d['completionPhotoUrl'] as String? ?? '';
-            items.add({
-              'reviewerName': d['requesterName'] as String? ?? AppLocalizations.of(context).expAnonymous,
-              'reviewerId': d['requesterId'] as String?,
-              'reviewerImage': d['requesterImage'] as String?,
-              'comment': review,
-              'rating': 5.0, // volunteer = 5-star by definition
-              'timestamp': d['completedAt'],
-              'createdAt': d['completedAt'],
-              'providerResponse': null,
-              'reviewPhotos': photoUrl.isNotEmpty ? [photoUrl] : null,
-              'thankYouNote': d['thankYouNote'] as String?,
-              '_docId': doc.id,
-              '_isVolunteer': true,
-            });
-          }
-        }
-
-        // Sort all items by timestamp descending
-        items.sort((a, b) {
-          final aTs = (a['timestamp'] ?? a['createdAt']) as Timestamp?;
-          final bTs = (b['timestamp'] ?? b['createdAt']) as Timestamp?;
-          if (aTs == null || bTs == null) return 0;
-          return bTs.compareTo(aTs);
-        });
-
-        // ── Compute aggregate ratings from ratingParams ──────────────────
-        double avgOverall = 0, avgProfessional = 0, avgTiming = 0, avgComm = 0;
-        int paramCount = 0;
-        for (final item in items) {
-          final params = item['ratingParams'] as Map<String, dynamic>?;
-          if (params != null && params.isNotEmpty) {
-            avgProfessional += (params['professional'] as num? ?? 0).toDouble();
-            avgTiming       += (params['timing'] as num? ?? 0).toDouble();
-            avgComm         += (params['communication'] as num? ?? 0).toDouble();
-            paramCount++;
-          }
-          avgOverall += (item['rating'] as num? ?? item['overallRating'] as num? ?? 0).toDouble();
-        }
-        final total = items.length;
-        if (total > 0) avgOverall /= total;
-        if (paramCount > 0) {
-          avgProfessional /= paramCount;
-          avgTiming       /= paramCount;
-          avgComm         /= paramCount;
-        }
-
-        // ── Search filter ─────────────────────────────────────────────────
-        final filtered = _reviewSearchQuery.isEmpty
-            ? items
-            : items.where((item) {
-                final comment = (item['comment'] ?? item['publicComment'] ?? '').toString().toLowerCase();
-                final name = (item['reviewerName'] ?? '').toString().toLowerCase();
-                final response = (item['providerResponse'] ?? '').toString().toLowerCase();
-                final thankYou = (item['thankYouNote'] ?? '').toString().toLowerCase();
-                final q = _reviewSearchQuery.toLowerCase();
-                return comment.contains(q) || name.contains(q) ||
-                       response.contains(q) || thankYou.contains(q);
-              }).toList();
-
-        // ── Pagination ────────────────────────────────────────────────────
-        final visible = _reviewsExpanded
-            ? filtered
-            : filtered.take(_reviewsPageSize).toList();
-        final hasMore = filtered.length > _reviewsPageSize && !_reviewsExpanded;
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            // ══════════════════════════════════════════════════════════════
-            // TRUST HEADER
-            // ══════════════════════════════════════════════════════════════
-            if (total > 0) ...[
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Text(
-                    '$total ביקורות',
-                    style: const TextStyle(
-                      fontSize: 14, color: Color(0xFF6B7280)),
-                  ),
-                  Row(
-                    children: [
-                      Text(
-                        avgOverall.toStringAsFixed(2),
-                        style: const TextStyle(
-                          fontSize: 36,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF1A1A2E),
-                          height: 1,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      const Icon(Icons.star_rounded, color: _kGold, size: 28),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              if (paramCount > 0) ...[
-                _ratingBar(AppLocalizations.of(context).expRatingProfessional, avgProfessional),
-                const SizedBox(height: 8),
-                _ratingBar(AppLocalizations.of(context).expRatingTiming, avgTiming),
-                const SizedBox(height: 8),
-                _ratingBar(AppLocalizations.of(context).expRatingCommunication, avgComm),
-                const SizedBox(height: 16),
-              ],
-
-              Container(
-                height: 40,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF4F7F9),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: TextField(
-                  textAlign: TextAlign.start,
-                  style: const TextStyle(fontSize: 13),
-                  decoration: InputDecoration(
-                    hintText: AppLocalizations.of(context).expSearchReviewsHint,
-                    hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
-                    prefixIcon: Icon(Icons.search_rounded,
-                        size: 18, color: Colors.grey[400]),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                  ),
-                  onChanged: (v) => setState(() {
-                    _reviewSearchQuery = v;
-                    _reviewsExpanded = false;
-                  }),
-                ),
-              ),
-              const SizedBox(height: 16),
-            ] else ...[
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const SizedBox(),
-                  Text(AppLocalizations.of(context).expReviewsTitle,
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                ],
-              ),
-              const SizedBox(height: 4),
-            ],
-
-            // ══════════════════════════════════════════════════════════════
-            // EMPTY / CARDS / SHOW ALL
-            // ══════════════════════════════════════════════════════════════
-            if (filtered.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 24),
-                child: Center(
-                  child: Text(
-                    _reviewSearchQuery.isNotEmpty
-                        ? AppLocalizations.of(context).expNoReviewsMatch(_reviewSearchQuery)
-                        : l10n.expertNoReviews,
-                    style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
-                  ),
-                ),
-              )
-            else ...[
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final useGrid = constraints.maxWidth >= 560;
-
-                  if (useGrid) {
-                    final rows = <Widget>[];
-                    for (int i = 0; i < visible.length; i += 2) {
-                      rows.add(IntrinsicHeight(
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(child: _buildReviewCardFromMap(
-                              visible[i], l10n, isProvider)),
-                            const SizedBox(width: 12),
-                            if (i + 1 < visible.length)
-                              Expanded(child: _buildReviewCardFromMap(
-                                visible[i + 1], l10n, isProvider))
-                            else
-                              const Expanded(child: SizedBox()),
-                          ],
-                        ),
-                      ));
-                      if (i + 2 < visible.length) {
-                        rows.add(const SizedBox(height: 12));
-                      }
-                    }
-                    return Column(children: rows);
-                  }
-
-                  return Column(
-                    children: visible.map((item) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _buildReviewCardFromMap(item, l10n, isProvider),
-                    )).toList(),
-                  );
-                },
-              ),
-
-              if (hasMore)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: OutlinedButton(
-                      onPressed: () => setState(() => _reviewsExpanded = true),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF1A1A2E),
-                        side: const BorderSide(color: Color(0xFF1A1A2E)),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                      ),
-                      child: Text(
-                        AppLocalizations.of(context).expShowAllReviews(filtered.length),
-                        style: const TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ],
-        );
-          },
-        );
-      },
-    );
-  }
-
-  // ── Rating progress bar (Airbnb-style) ──────────────────────────────────
-  Widget _ratingBar(String label, double value) {
-    final fraction = (value / 5.0).clamp(0.0, 1.0);
-    return Row(
-      children: [
-        Text(value.toStringAsFixed(1),
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                color: Color(0xFF1A1A2E))),
-        const SizedBox(width: 8),
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: fraction,
-              minHeight: 6,
-              backgroundColor: const Color(0xFFE5E7EB),
-              valueColor: const AlwaysStoppedAnimation<Color>(_kGold),
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: 80,
-          child: Text(label,
-              textAlign: TextAlign.end,
-              style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
-        ),
-      ],
-    );
-  }
-
-  // ── Single review card (Airbnb-style, volunteer-aware) ────────────────
-  Widget _buildReviewCardFromMap(
-    Map<String, dynamic> r,
-    AppLocalizations l10n,
-    bool isProvider,
-  ) {
-    final isVolunteer = r['_isVolunteer'] as bool? ?? false;
-    final docId      = r['_docId'] as String? ?? '';
-    final rating     = (r['rating'] as num? ?? r['overallRating'] as num? ?? 5).toDouble();
-    final name       = r['reviewerName'] as String? ?? l10n.expertDefaultReviewer;
-    final comment    = (r['comment'] ?? r['publicComment'] ?? '').toString().trim();
-    final ts         = (r['timestamp'] ?? r['createdAt']) as Timestamp?;
-    final date       = ts != null ? DateFormat('MMM yyyy', 'he').format(ts.toDate()) : '';
-    final response   = r['providerResponse'] as String?;
-    final reviewerImage = r['reviewerImage'] as String?;
-    final reviewerId = r['reviewerId'] as String?;
-    final thankYou   = r['thankYouNote'] as String?;
-    final photos = (r['reviewPhotos'] as List<dynamic>?)
-        ?.map((e) => e.toString())
-        .where((url) => url.isNotEmpty)
-        .toList();
-
-    final imgProvider = safeImageProvider(reviewerImage);
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        // Volunteer cards get a light gold tint background
-        color: isVolunteer
-            ? const Color(0xFFFFFBEB) // warm gold tint
-            : Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isVolunteer
-              ? _kGold.withValues(alpha: 0.3)
-              : const Color(0xFFF3F4F6),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // ── Volunteer badge (if applicable) ──────────────────────────
-          if (isVolunteer) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFD4AF37), Color(0xFFB8860B)],
-                ),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.favorite_rounded, color: Colors.white, size: 11),
-                  const SizedBox(width: 3),
-                  Text(
-                    AppLocalizations.of(context).expCommunityVolunteerBadge,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-
-          // ── Reviewer header ──────────────────────────────────────────
-          Row(
-            children: [
-              // Left: stars + date
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: List.generate(5, (i) => Icon(
-                      i < rating.round()
-                          ? Icons.star_rounded
-                          : Icons.star_border_rounded,
-                      color: _kGold,
-                      size: 14,
-                    )),
-                  ),
-                  if (date.isNotEmpty) ...[
-                    const SizedBox(height: 3),
-                    Text(date,
-                        style: const TextStyle(
-                            color: Color(0xFF9CA3AF), fontSize: 11)),
-                  ],
-                ],
-              ),
-              const Spacer(),
-              // Right: name (+ gold heart for volunteers) + avatar
-              if (isVolunteer)
-                const Padding(
-                  padding: EdgeInsetsDirectional.only(end: 4),
-                  child: Icon(Icons.favorite_rounded, color: _kGold, size: 14),
-                ),
-              Text(name,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13,
-                      color: Color(0xFF1A1A2E))),
-              const SizedBox(width: 8),
-              imgProvider != null
-                  ? CircleAvatar(
-                      radius: 18,
-                      backgroundColor: const Color(0xFFE5E7EB),
-                      backgroundImage: imgProvider,
-                    )
-                  : (reviewerId != null && reviewerId.isNotEmpty)
-                      ? FutureBuilder<DocumentSnapshot>(
-                          future: FirebaseFirestore.instance
-                              .collection('users')
-                              .doc(reviewerId)
-                              .get(),
-                          builder: (_, snap) {
-                            if (snap.hasData && snap.data!.exists) {
-                              final userData = snap.data!.data()
-                                  as Map<String, dynamic>? ?? {};
-                              final fetchedImg = safeImageProvider(
-                                  userData['profileImage'] as String?);
-                              if (fetchedImg != null) {
-                                return CircleAvatar(
-                                  radius: 18,
-                                  backgroundColor: const Color(0xFFE5E7EB),
-                                  backgroundImage: fetchedImg,
-                                );
-                              }
-                            }
-                            return _initialsAvatar(name);
-                          },
-                        )
-                      : _initialsAvatar(name),
-            ],
-          ),
-          const SizedBox(height: 10),
-
-          // ── Comment body ─────────────────────────────────────────────
-          if (comment.isNotEmpty)
-            Text(comment,
-                textAlign: TextAlign.start,
-                style: TextStyle(
-                    fontSize: 13.5, height: 1.55, color: Colors.grey[700])),
-
-          // ── Thank-you note (volunteer reviews) ───────────────────────
-          if (isVolunteer && thankYou != null && thankYou.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: _kGold.withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.format_quote_rounded, size: 14, color: _kGold),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(thankYou,
-                        textAlign: TextAlign.start,
-                        style: TextStyle(
-                            fontSize: 12.5, height: 1.4,
-                            fontStyle: FontStyle.italic,
-                            color: Colors.grey[700])),
-                  ),
-                ],
-              ),
-            ),
-          ],
-
-          // ── Review photos gallery ────────────────────────────────────
-          if (photos != null && photos.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 72,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: photos.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (ctx, i) => GestureDetector(
-                  onTap: () => _showPhotoViewer(ctx, photos, i),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      photos[i],
-                      width: 72,
-                      height: 72,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        width: 72, height: 72,
-                        color: const Color(0xFFE5E7EB),
-                        child: const Icon(Icons.broken_image_rounded,
-                            color: Color(0xFF9CA3AF), size: 20),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-
-          // ── Provider response (paid reviews only) ────────────────────
-          if (!isVolunteer && response != null && response.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF9FAFB),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFE5E7EB)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      Text(l10n.expertProviderResponse,
-                          style: const TextStyle(
-                              color: Color(0xFF374151),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700)),
-                      const SizedBox(width: 4),
-                      const Icon(Icons.subdirectory_arrow_left_rounded,
-                          size: 14, color: Color(0xFF9CA3AF)),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text(response,
-                      textAlign: TextAlign.start,
-                      style: TextStyle(
-                          fontSize: 12.5, height: 1.5, color: Colors.grey[600])),
-                ],
-              ),
-            ),
-          ] else if (!isVolunteer && isProvider && docId.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: TextButton.icon(
-                style: TextButton.styleFrom(
-                    foregroundColor: _kPurple,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 2)),
-                icon: const Icon(Icons.reply_rounded, size: 15),
-                label: Text(l10n.expertAddReply,
-                    style: const TextStyle(fontSize: 12)),
-                onPressed: () =>
-                    _showProviderReplyDialog(context, docId),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  /// Initials-only fallback avatar for reviewers without a profile image.
-  Widget _initialsAvatar(String name) {
-    return CircleAvatar(
-      radius: 18,
-      backgroundColor: const Color(0xFFE5E7EB),
-      child: Text(
-        name.isNotEmpty ? name[0].toUpperCase() : '?',
-        style: const TextStyle(
-            fontSize: 13,
-            color: Color(0xFF374151),
-            fontWeight: FontWeight.bold),
-      ),
-    );
-  }
-
-  /// Full-screen photo viewer overlay for review photos.
-  void _showPhotoViewer(BuildContext context, List<String> photos, int initial) {
-    Navigator.of(context).push(PageRouteBuilder(
-      opaque: false,
-      barrierColor: Colors.black87,
-      pageBuilder: (_, __, ___) => _ReviewPhotoViewer(
-        photos: photos,
-        initialIndex: initial,
-      ),
-    ));
-  }
-
-  // ── Provider reply bottom sheet ───────────────────────────────────────────
-  void _showProviderReplyDialog(BuildContext context, String reviewDocId) {
-    final ctrl = TextEditingController();
-    // Dispose the controller when the sheet is dismissed (success or cancel).
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        final l10n = AppLocalizations.of(ctx);
-        return Padding(
-        padding:
-            EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-        child: Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              // Drag handle
-              Center(
-                child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                        color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(10))),
-              ),
-              const SizedBox(height: 16),
-              Text(l10n.expertAddReplyTitle,
-                  style: const
-                      TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              TextField(
-                controller: ctrl,
-                autofocus: true,
-                maxLines: 4,
-                textAlign: TextAlign.right,
-                decoration: InputDecoration(
-                  hintText: l10n.expertReplyHint,
-                  filled: true,
-                  fillColor: Colors.grey[50],
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide:
-                          BorderSide(color: Colors.grey.shade200)),
-                  enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide:
-                          BorderSide(color: Colors.grey.shade200)),
-                  focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide:
-                          const BorderSide(color: _kPurple, width: 1.5)),
-                ),
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: _kPurple,
-                    minimumSize: const Size(double.infinity, 50),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    elevation: 0),
-                onPressed: () async {
-                  final text = ctrl.text.trim();
-                  if (text.isEmpty) return;
-                  // Capture l10n error formatter before await
-                  final replyErrorText = l10n.expertReplyError;
-                  try {
-                    await FirebaseFirestore.instance
-                        .collection('reviews')
-                        .doc(reviewDocId)
-                        .update({'providerResponse': text});
-                    if (ctx.mounted) Navigator.pop(ctx);
-                    // Check parent state — ctx may be mounted while parent disposed
-                    if (mounted) setState(() => _refreshTrigger++);
-                  } catch (e) {
-                    if (ctx.mounted) {
-                      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                        backgroundColor: Colors.red,
-                        content: Text(replyErrorText),
-                      ));
-                    }
-                  }
-                },
-                child: Text(l10n.expertPublishReply,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
-        ),
-        );
-      },
-    ).whenComplete(() => ctrl.dispose());
-  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // UI: Sticky bottom bar
   // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildBottomBar(BuildContext context, Map<String, dynamic> data) {
-    final l10n       = AppLocalizations.of(context);
-    final pricing    = PricingModel.fromFirestore(data);
-    final category   = data['serviceType'] as String? ?? '';
-    final services   = _deriveServices(pricing.basePrice, category);
-    final svcPrice   = services[_selectedServiceIndex]['price'] as double;
-    // Add selected add-ons on top of the tier price
-    final addOnTotal = _selectedAddOnIndices.fold<double>(
-        0.0, (acc, idx) => acc + (idx < pricing.addOns.length ? pricing.addOns[idx].price : 0.0));
-    final totalPrice = svcPrice + addOnTotal;
-    final isReady = _selectedDay != null && _selectedTimeSlot != null;
-    final isSelf  = (FirebaseAuth.instance.currentUser?.uid ?? '') == widget.expertId;
-    final canBook = isReady && !isSelf;
-
-    return Positioned(
-      bottom: 0,
-      left: 0,
-      right: 0,
-      child: ClipRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.92),
-              border: Border(
-                  top: BorderSide(color: Colors.grey.shade200)),
-              boxShadow: [
-                BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.06),
-                    blurRadius: 20,
-                    offset: const Offset(0, -5)),
-              ],
-            ),
-            child: Row(
-              children: [
-                // ── Chat button ──────────────────────────────────────
-                Container(
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                        color: _kPurple.withValues(alpha: 0.35)),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: IconButton(
-                    icon: const Icon(Icons.chat_bubble_outline_rounded,
-                        color: _kPurple),
-                    onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => ChatScreen(
-                                receiverId: widget.expertId,
-                                receiverName: widget.expertName))),
-                  ),
-                ),
-                const SizedBox(width: 12),
-
-                // ── Book Now ──────────────────────────────────────────
-                Expanded(
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _kPurple,
-                      // When onPressed is null Flutter uses disabledBackgroundColor —
-                      // explicit values keep the "idle state" look consistent.
-                      disabledBackgroundColor: Colors.grey[300],
-                      disabledForegroundColor: Colors.white,
-                      minimumSize: const Size(0, 54),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      elevation: 0,
-                    ),
-                    onPressed:
-                        canBook ? () => _showBookingSummary(context, data, totalPrice, addOns: pricing.addOns, selectedAddOns: _selectedAddOnIndices) : null,
-                    child: _isProcessing
-                        ? const CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2.5)
-                        : isSelf
-                            ? Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(Icons.block_rounded,
-                                      color: Colors.white, size: 16),
-                                  const SizedBox(width: 6),
-                                  Text(AppLocalizations.of(context).expCantBookSelf,
-                                      style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 13)),
-                                ],
-                              )
-                        : isReady
-                            ? Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Icon(
-                                      Icons.arrow_back_ios_new_rounded,
-                                      color: Colors.white,
-                                      size: 14),
-                                  Text(
-                                    l10n.expertBookForTime(_selectedTimeSlot ?? ''),
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16),
-                                  ),
-                                  Text(
-                                    '₪${totalPrice.toStringAsFixed(0)}',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w900,
-                                        fontSize: 16),
-                                  ),
-                                ],
-                              )
-                            : Column(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    l10n.expertStartingFrom(pricing.basePrice.toStringAsFixed(0)),
-                                    style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 11),
-                                  ),
-                                  Text(
-                                    l10n.expertSelectDateTime,
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 15),
-                                  ),
-                                ],
-                              ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  // §80 (2026-05-14): _buildBottomBar extracted to BookingBottomBar
+  // (expert_profile/widgets/booking_bottom_bar.dart).
 
   // ─────────────────────────────────────────────────────────────────────────
   // Booking summary sheet
   // ─────────────────────────────────────────────────────────────────────────
-
+  // §86 H.3 (2026-05-14): body moved to
+  // expert_profile/widgets/booking_summary_sheet.dart (part-of). This
+  // wrapper preserves the original call signature so the existing call
+  // site stays unchanged.
   void _showBookingSummary(
-      BuildContext context, Map<String, dynamic> data, double price, {
-      List<AddOn> addOns = const [],
-      Set<int> selectedAddOns = const {},
-  }) {
-    final l10n    = AppLocalizations.of(context);
-    final isDemo  = data['isDemo'] == true;
-    final dateStr = _selectedDay != null
-        ? "${_selectedDay!.day}/${_selectedDay!.month}/${_selectedDay!.year}"
-        : "";
-    // Use l10n title list — avoids calling _deriveServices with the already-
-    // computed tier price (which would re-derive tiers from the wrong base).
-    final svcTitles = [l10n.serviceSingleLesson, l10n.serviceExtendedLesson, l10n.serviceFullSession];
-    final svcTitle  = svcTitles[_selectedServiceIndex.clamp(0, 2)];
-
-    final policy = data['cancellationPolicy'] as String? ?? 'flexible';
-
-    // Human-readable deadline string for the notice
-    final dlDt = CancellationPolicyService.deadline(
-      policy:          policy,
-      appointmentDate: _selectedDay,
-      timeSlot:        _selectedTimeSlot,
-    );
-    final dlStr = dlDt != null
-        ? "${dlDt.day}/${dlDt.month} ${dlDt.hour.toString().padLeft(2,'0')}:${dlDt.minute.toString().padLeft(2,'0')}"
-        : null;
-    final penaltyPct = (CancellationPolicyService.penaltyFraction(policy) * 100).toInt();
-
-    // Both closure vars live outside the builder so they survive rebuilds.
-    // sheetBusy  — blocks all input while the transaction is in-flight.
-    // isSuccess  — when true, the builder renders the success view instead of
-    //              the summary form. The success view's "Done" button is the
-    //              ONLY place navigator.pop() is called, fully decoupled from
-    //              the Firestore Promise chain (root fix for Web "converted
-    //              Future" exception).
-    bool sheetBusy  = false;
-    bool isSuccess  = false;
-
-    // Local copy of customer answers for booking requirements. Mutated by
-    // BookingRequirementsForm; mirrored to _bookingReqValues on payment.
-    final reqValues = Map<String, dynamic>.from(_bookingReqValues);
-
-    // Pet Stay Tracker (v13.0.0): require a dog profile when the active
-    // service has walk tracking or daily proof. Picker is rendered inline
-    // in the sheet; payment button stays disabled until a dog is chosen.
-    final bool isPetStayBooking =
-        _serviceSchema.walkTracking || _serviceSchema.dailyProof;
-    final bool isPensionBooking = _serviceSchema.dailyProof;
-    DogProfile? selectedDog = _selectedDog;
-
-    // End-date for pension — default to start+1. Re-read from state each
-    // build so "edit" flows don't forget.
-    DateTime? petStayEnd = _petStayEndDate ??
-        (isPensionBooking && _selectedDay != null
-            ? _selectedDay!.add(const Duration(days: 1))
-            : null);
-
-    // Number of nights (pension only). Mirrors petStayEnd - selectedDay.
-    int nights = (isPensionBooking &&
-            _selectedDay != null &&
-            petStayEnd != null)
-        ? petStayEnd.difference(_selectedDay!).inDays.clamp(1, 30)
-        : 1;
-
-    // Effective total price. For pension: per-night × nights. Else: as-is.
-    double effectivePrice() =>
-        (isPensionBooking ? price * nights : price).toDouble();
-
-    // Returns true when every `required` booking requirement has a non-empty value.
-    // Boarding (pension) skips validation — the form is hidden entirely.
-    bool requirementsSatisfied() {
-      if (isPensionBooking) return true;
-      for (final r in _serviceSchema.bookingRequirements) {
-        if (!r.required) continue;
-        final v = reqValues[r.id];
-        if (v == null) return false;
-        if (v is String && v.trim().isEmpty) return false;
-        if (v is num && v == 0) return false;
-      }
-      return true;
-    }
-
-    bool endDateOk() {
-      if (!isPensionBooking) return true;
-      if (_selectedDay == null || petStayEnd == null) return false;
-      return !petStayEnd!.isBefore(_selectedDay!);
-    }
-
-    // Combined gate: requirements satisfied + (if pet stay) dog selected
-    // + (if pension) valid end-date.
-    bool canConfirm() =>
-        requirementsSatisfied() &&
-        (!isPetStayBooking || selectedDog != null) &&
-        endDateOk();
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      // isDismissible=false while busy so the user can't Escape mid-transaction
-      isDismissible: true,
-      builder: (sheetCtx) => StatefulBuilder(
-        builder: (sheetCtx, setSheetState) {
-          // ── Success view ──────────────────────────────────────────────────
-          if (isSuccess) {
-            return _buildBookingSuccessView(sheetCtx, l10n, isDemo: isDemo);
-          }
-
-          // ── Booking summary form ──────────────────────────────────────────
-          final bottomInset = MediaQuery.of(sheetCtx).viewInsets.bottom;
-          final screenH = MediaQuery.of(sheetCtx).size.height;
-          return AbsorbPointer(
-          absorbing: sheetBusy,
-          child: Container(
-        constraints: BoxConstraints(
-          maxHeight: screenH * 0.92,
-        ),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: EdgeInsets.fromLTRB(24, 16, 24, 24 + bottomInset),
-        child: SingleChildScrollView(
-          physics: const ClampingScrollPhysics(),
-          child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-                width: 40, height: 4,
-                decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(10))),
-            const SizedBox(height: 20),
-            // Header
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(l10n.expertBookingSummaryTitle,
-                          style: const TextStyle(
-                              fontSize: 18, fontWeight: FontWeight.bold)),
-                      Text("$svcTitle • $dateStr $_selectedTimeSlot",
-                          style: const TextStyle(
-                              color: Colors.grey, fontSize: 13)),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: _kPurpleSoft,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(Icons.lock_rounded,
-                      color: _kPurple, size: 22),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.grey[50],
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Column(
-                children: [
-                  _summaryRow(l10n.expertSummaryRowService, svcTitle),
-                  _summaryRow(l10n.expertSummaryRowDate, dateStr),
-                  _summaryRow(l10n.expertSummaryRowTime, _selectedTimeSlot ?? '—'),
-                  // Base service price (before add-ons)
-                  _summaryRow(
-                    l10n.expertSummaryRowPrice,
-                    "₪${(price - selectedAddOns.fold<double>(0.0, (s, i) => s + (i < addOns.length ? addOns[i].price : 0.0))).toStringAsFixed(0)}",
-                  ),
-                  // Selected add-ons breakdown
-                  for (final i in selectedAddOns)
-                    if (i < addOns.length)
-                      _summaryRow(
-                        '+ ${addOns[i].title}',
-                        '+₪${addOns[i].price.toStringAsFixed(0)}',
-                        isAddOn: true,
-                      ),
-                  _summaryRow(l10n.expertSummaryRowProtection, l10n.expertSummaryRowIncluded,
-                      isGreen: true),
-                  // ── Price Locked badge (home-services schemas) ────────────
-                  if (_serviceSchema.priceLocked)
-                    _summaryRow(
-                      '🔒 מחיר נעול',
-                      AppLocalizations.of(context).expPriceAfterPhotos,
-                      isGreen: true,
-                    ),
-                  // ── Deposit notice (high-ticket services) ─────────────────
-                  if (_serviceSchema.depositPercent > 0)
-                    _summaryRow(
-                      AppLocalizations.of(context).expDeposit,
-                      '₪${(price * _serviceSchema.depositPercent / 100).toStringAsFixed(0)} '
-                          '(${_serviceSchema.depositPercent.toStringAsFixed(0)}%)',
-                    ),
-                  if (isPensionBooking) ...[
-                    _summaryRow(AppLocalizations.of(context).expNights, '$nights × ₪${price.toStringAsFixed(0)}'),
-                  ],
-                  const Divider(height: 16),
-                  _summaryRow(l10n.expertSummaryRowTotal,
-                      "₪${effectivePrice().toStringAsFixed(0)}",
-                      isBold: true),
-                ],
-              ),
-            ),
-            // ── Pet Stay Tracker — nights stepper + end-date (pension only) ─
-            if (isPensionBooking) ...[
-              const SizedBox(height: 16),
-              // Nights counter — primary control. Adjusts petStayEnd
-              // automatically. Range 1-30 nights.
-              Container(
-                padding: const EdgeInsetsDirectional.fromSTEB(14, 10, 14, 10),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: const Color(0xFFE5E7EB)),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFEEF2FF),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Icon(Icons.nights_stay_rounded,
-                          color: Color(0xFF6366F1), size: 20),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        AppLocalizations.of(context).expNightsCount,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                          color: Color(0xFF1A1A2E),
-                        ),
-                      ),
-                    ),
-                    _NightStepperButton(
-                      icon: Icons.remove_rounded,
-                      onTap: nights > 1 && _selectedDay != null
-                          ? () {
-                              setSheetState(() {
-                                nights -= 1;
-                                petStayEnd = _selectedDay!
-                                    .add(Duration(days: nights));
-                                _petStayEndDate = petStayEnd;
-                              });
-                            }
-                          : null,
-                    ),
-                    Container(
-                      width: 44,
-                      alignment: Alignment.center,
-                      child: Text(
-                        '$nights',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF1A1A2E),
-                        ),
-                      ),
-                    ),
-                    _NightStepperButton(
-                      icon: Icons.add_rounded,
-                      onTap: nights < 30 && _selectedDay != null
-                          ? () {
-                              setSheetState(() {
-                                nights += 1;
-                                petStayEnd = _selectedDay!
-                                    .add(Duration(days: nights));
-                                _petStayEndDate = petStayEnd;
-                              });
-                            }
-                          : null,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-              InkWell(
-                borderRadius: BorderRadius.circular(14),
-                onTap: () async {
-                  final firstAllowed =
-                      _selectedDay ?? DateTime.now();
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate:
-                        petStayEnd ?? firstAllowed.add(const Duration(days: 1)),
-                    firstDate: firstAllowed,
-                    lastDate:
-                        firstAllowed.add(const Duration(days: 180)),
-                  );
-                  if (picked != null) {
-                    setSheetState(() {
-                      petStayEnd = picked;
-                      _petStayEndDate = picked;
-                      nights = picked
-                          .difference(_selectedDay ?? picked)
-                          .inDays
-                          .clamp(1, 30);
-                    });
-                  }
-                },
-                child: Container(
-                  padding: const EdgeInsetsDirectional.fromSTEB(
-                      14, 12, 14, 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: endDateOk()
-                          ? const Color(0xFFE5E7EB)
-                          : const Color(0xFFEF4444),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFEEF2FF),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Icon(Icons.date_range_rounded,
-                            color: Color(0xFF6366F1), size: 20),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              AppLocalizations.of(context).expEndDate,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 14,
-                                color: Color(0xFF1A1A2E),
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              petStayEnd == null
-                                  ? AppLocalizations.of(context).expSelectDate
-                                  : '${petStayEnd!.day}/${petStayEnd!.month}/${petStayEnd!.year}'
-                                      ' · ${_selectedDay != null ? petStayEnd!.difference(_selectedDay!).inDays : 0} ${AppLocalizations.of(context).expNights}',
-                              style: const TextStyle(
-                                color: Color(0xFF6B7280),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const Icon(Icons.chevron_left_rounded,
-                          color: Color(0xFF9CA3AF)),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-            // ── Pet Stay Tracker — dog picker (gated by schema flags) ─────
-            if (isPetStayBooking) ...[
-              const SizedBox(height: 16),
-              DogPickerSection(
-                selected: selectedDog,
-                onChanged: (d) => setSheetState(() => selectedDog = d),
-              ),
-            ],
-            // ── Booking requirements (contextual customer inputs) ─────────
-            // Hidden for Home Boarding (pension) — the dog profile + nights
-            // count + end date are the full picture; no extra description
-            // is needed (per Home Boarding spec §2).
-            if (!isPensionBooking &&
-                _serviceSchema.bookingRequirements.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              BookingRequirementsForm(
-                requirements: _serviceSchema.bookingRequirements,
-                initialValues: reqValues,
-                onChanged: (vals) => setSheetState(() {
-                  reqValues
-                    ..clear()
-                    ..addAll(vals);
-                }),
-              ),
-            ],
-            const SizedBox(height: 16),
-            // ── Cancellation policy notice ─────────────────────────────────
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF8E1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFFFCC02),
-                    width: 1),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.info_outline_rounded,
-                      size: 16, color: Color(0xFF856404)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      dlStr != null
-                          ? l10n.expertCancellationNotice(
-                              CancellationPolicyService.label(policy),
-                              dlStr,
-                              penaltyPct.toString())
-                          : l10n.expertCancellationNoDeadline(
-                              CancellationPolicyService.label(policy),
-                              CancellationPolicyService.description(policy)),
-                      style: const TextStyle(
-                          fontSize: 12, color: Color(0xFF856404)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Validation hint when required booking info is missing.
-            if (!requirementsSatisfied()) ...[
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 8),
-                margin: const EdgeInsets.only(bottom: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFFCD34D)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.error_outline_rounded,
-                        size: 16, color: Color(0xFF92400E)),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        AppLocalizations.of(context).expMustFillAll,
-                        style: const TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF92400E),
-                            fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            // The most critical button in the app — Pay & Secure escrows
-            // real money. Migrated to PrimaryCTA in §59 — it has built-in
-            // Semantics (role=button + enabled state + hint), loading spinner,
-            // and disabled-grey treatment, all matching the WCAG/EAA spec.
-            PrimaryCTA(
-              label: l10n.expertConfirmPaymentButton,
-              icon: Icons.lock_rounded,
-              variant: PrimaryCTAVariant.primary,
-              loading: sheetBusy,
-              height: 54,
-              semanticHint: 'Escrows the booking total until job is approved',
-              onPressed: !canConfirm()
-                  ? null
-                  : () async {
-                      setSheetState(() => sheetBusy = true);
-                      // Mirror customer answers + selected dog to state so
-                      // the escrow transaction can persist them.
-                      _bookingReqValues
-                        ..clear()
-                        ..addAll(reqValues);
-                      _selectedDog = selectedDog;
-                      final ok = await _processEscrowPayment(
-                          context, effectivePrice(), policy, isDemo: isDemo);
-                      if (ok) {
-                        // Switch to success view — pop is triggered by user
-                        // tapping "Done", not by this async chain.
-                        setSheetState(() => isSuccess = true);
-                      } else {
-                        // Error already shown via snackbar/dialog; re-enable.
-                        setSheetState(() => sheetBusy = false);
-                      }
-                    },
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'AnySkill v$appVersion',
-              style: TextStyle(fontSize: 10, color: Colors.grey[400]),
-            ),
-          ],
-        ),
-        ),   // closes SingleChildScrollView
-      ),
-          );   // closes AbsorbPointer
-        },     // closes StatefulBuilder builder
-      ),       // closes StatefulBuilder
-    );
-  }
+    BuildContext context,
+    Map<String, dynamic> data,
+    double price, {
+    List<AddOn> addOns = const [],
+    Set<int> selectedAddOns = const {},
+  }) =>
+      _libShowBookingSummary(
+        this,
+        context,
+        data,
+        price,
+        addOns: addOns,
+        selectedAddOns: selectedAddOns,
+      );
 
   // ── Booking success view ──────────────────────────────────────────────────
   // Replaces the booking summary inside the bottom sheet upon transaction
@@ -2939,123 +944,9 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // entirely. We still render this success view so the customer believes the
   // booking went through. The wording is intentionally softer ("we'll update
   // you when the provider is available") to set expectations without revealing
-  // that the profile is fake.
-  Widget _buildBookingSuccessView(
-    BuildContext ctx,
-    AppLocalizations l10n, {
-    bool isDemo = false,
-  }) {
-    final accentColor = isDemo
-        ? const Color(0xFF6366F1) // indigo for demo
-        : const Color(0xFF22C55E); // green for real bookings
-
-    final title = isDemo
-        ? AppLocalizations.of(context).expBookingReceivedDemo
-        : AppLocalizations.of(context).expBookingSuccess;
-
-    final subtitle = isDemo
-        ? AppLocalizations.of(context).expBookingDemoBody
-        : l10n.expertEscrowSuccess;
-
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: const EdgeInsets.fromLTRB(24, 40, 24, 48),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // ── Animated icon circle ─────────────────────────────────────────
-          TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0.0, end: 1.0),
-            duration: const Duration(milliseconds: 600),
-            curve: Curves.elasticOut,
-            builder: (_, v, child) => Transform.scale(scale: v, child: child),
-            child: Container(
-              width: 96,
-              height: 96,
-              decoration: BoxDecoration(
-                color: accentColor.withValues(alpha: 0.12),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                isDemo ? Icons.hourglass_top_rounded : Icons.check_circle_rounded,
-                color: accentColor,
-                size: 64,
-              ),
-            ),
-          ),
-          const SizedBox(height: 28),
-          // ── Title ────────────────────────────────────────────────────────
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF1E1B4B),
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 10),
-          Text(
-            subtitle,
-            style: const TextStyle(fontSize: 14, color: Colors.grey, height: 1.5),
-            textAlign: TextAlign.center,
-          ),
-          if (isDemo) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF6366F1).withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                    color: const Color(0xFF6366F1).withValues(alpha: 0.2)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.notifications_active_outlined,
-                      color: Color(0xFF6366F1), size: 16),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      AppLocalizations.of(context).expWillNotify,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF6366F1),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-          const SizedBox(height: 36),
-          // ── Done button — only place pop() is called ─────────────────────
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: accentColor,
-              minimumSize: const Size(double.infinity, 54),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-              elevation: 0,
-            ),
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(
-              AppLocalizations.of(context).expGotIt,
-              style: const TextStyle(
-                  fontSize: 17,
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  // §80 (2026-05-14): _buildBookingSuccessView extracted to
+  // expert_profile/widgets/booking_success_view.dart. Call site at
+  // line ~2530 uses BookingSuccessView(isDemo: ...).
 
   Widget _summaryRow(String label, String value,
       {bool isBold = false, bool isGreen = false, bool isAddOn = false}) {
@@ -3111,246 +1002,11 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   MotorcycleTowBookingPreferences? _motorcycleTowPreferences;
   double _motorcycleTowTotalPrice = 0;
 
-  bool _hasMassageProfile(Map<String, dynamic> data) {
-    final serviceType = (data['serviceType'] as String? ?? '').trim();
-    if (!isMassageCategory(serviceType)) return false;
-    final mp = data['massageProfile'] as Map?;
-    return mp != null && (mp['specialties'] as List?)?.isNotEmpty == true;
-  }
-
-  Widget _buildMassageTreatmentBlock(Map<String, dynamic> data) {
-    final mp = MassageProfile.fromMap(
-        Map<String, dynamic>.from(data['massageProfile'] as Map));
-    final providerName = data['name'] as String? ?? '';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: BuildYourTreatmentBlock(
-        massageProfile: mp,
-        providerName: providerName,
-        providerId: widget.expertId,
-        onPreferencesChanged: (prefs) {
-          _massagePreferences = prefs;
-        },
-        onTotalChanged: (total) {
-          setState(() => _massageTotalPrice = total);
-        },
-      ),
-    );
-  }
-
-  bool _hasPestControlProfile(Map<String, dynamic> data) {
-    final serviceType = (data['serviceType'] as String? ?? '').trim();
-    if (!isPestControlCategory(serviceType)) return false;
-    final pp = data['pestControlProfile'] as Map?;
-    return pp != null && (pp['pestTypes'] as List?)?.isNotEmpty == true;
-  }
-
-  Widget _buildPestBookingBlock(Map<String, dynamic> data) {
-    final pp = PestControlProfile.fromMap(
-        Map<String, dynamic>.from(data['pestControlProfile'] as Map));
-    final providerName = data['name'] as String? ?? '';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: PestBookingBlock(
-        pestProfile: pp,
-        providerName: providerName,
-        providerId: widget.expertId,
-        onPreferencesChanged: (prefs) {
-          _pestControlPreferences = prefs;
-        },
-        onTotalChanged: (total) {
-          setState(() => _pestControlTotalPrice = total);
-        },
-      ),
-    );
-  }
-
-  bool _hasDeliveryProfile(Map<String, dynamic> data) {
-    final serviceType = (data['serviceType'] as String? ?? '').trim();
-    if (!isDeliveryCategory(serviceType)) return false;
-    final dp = data['deliveryProfile'] as Map?;
-    return dp != null && (dp['vehicles'] as List?)?.isNotEmpty == true;
-  }
-
-  Widget _buildDeliveryBookingBlock(Map<String, dynamic> data) {
-    final dp = DeliveryProfile.fromMap(
-        Map<String, dynamic>.from(data['deliveryProfile'] as Map));
-    final providerName = data['name'] as String? ?? '';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: DeliveryBookingBlock(
-        expertId: widget.expertId,
-        expertName: providerName,
-        deliveryProfile: dp,
-        onChanged: (prefs, total) {
-          _deliveryPreferences = prefs;
-          if (total != _deliveryTotalPrice) {
-            setState(() => _deliveryTotalPrice = total);
-          }
-        },
-      ),
-    );
-  }
-
-  bool _hasCleaningProfile(Map<String, dynamic> data) {
-    final serviceType = (data['serviceType'] as String? ?? '').trim();
-    if (!isCleaningCategory(serviceType)) return false;
-    final cp = data['cleaningProfile'] as Map?;
-    return cp != null &&
-        ((cp['cleaningTypes'] as List?)?.isNotEmpty == true);
-  }
-
-  bool _hasHandymanProfile(Map<String, dynamic> data) {
-    final serviceType = (data['serviceType'] as String? ?? '').trim();
-    if (!isHandymanCategory(serviceType)) return false;
-    final hp = data['handymanProfile'] as Map?;
-    if (hp == null) return false;
-    final specs = hp['specialties'] as List?;
-    if (specs == null || specs.isEmpty) return false;
-    return specs.whereType<Map>().any((m) => m['active'] == true);
-  }
-
-  Widget _buildHandymanBookingBlock(Map<String, dynamic> data) {
-    final hp = HandymanProfile.fromMap(
-        Map<String, dynamic>.from(data['handymanProfile'] as Map));
-    final providerName = data['name'] as String? ?? '';
-    final providerAvatar = data['profileImage'] as String?;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: HandymanBookingBlock(
-        expertId: widget.expertId,
-        expertName: providerName,
-        expertAvatarUrl: providerAvatar,
-        handymanProfile: hp,
-        onChanged: (prefs, total) {
-          _handymanPreferences = prefs;
-          if (total != _handymanTotalPrice) {
-            setState(() => _handymanTotalPrice = total);
-          }
-        },
-      ),
-    );
-  }
-
-  bool _hasFitnessTrainerProfile(Map<String, dynamic> data) {
-    final serviceType = (data['serviceType'] as String? ?? '').trim();
-    if (!isFitnessTrainerCategory(serviceType)) return false;
-    final fp = data['fitnessTrainerProfile'] as Map?;
-    if (fp == null) return false;
-    final specs = fp['selectedSpecialties'] as List?;
-    return specs != null && specs.isNotEmpty;
-  }
-
-  bool _hasBabysitterProfile(Map<String, dynamic> data) {
-    final serviceType = (data['serviceType'] as String? ?? '').trim();
-    if (!isBabysitterCategory(serviceType)) return false;
-    final bp = data['babysitterProfile'] as Map?;
-    return bp != null;
-  }
-
-  Widget _buildBabysitterBookingBlock(Map<String, dynamic> data) {
-    final bp = BabysitterProfile.fromMap(
-        Map<String, dynamic>.from(data['babysitterProfile'] as Map));
-    final providerName = data['name'] as String? ?? '';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: BabysitterBookingBlock(
-        profile: bp,
-        providerName: providerName,
-        providerId: widget.expertId,
-        onPreferencesChanged: (prefs) {
-          _babysitterPreferences = prefs;
-        },
-        onTotalChanged: (total) {
-          if (total != _babysitterTotalPrice) {
-            setState(() => _babysitterTotalPrice = total);
-          }
-        },
-      ),
-    );
-  }
-
-  bool _hasMotorcycleTowProfile(Map<String, dynamic> data) {
-    final serviceType = (data['serviceType'] as String? ?? '').trim();
-    if (!isMotorcycleTowingCategory(serviceType)) return false;
-    final mp = data['motorcycleTowProfile'] as Map?;
-    if (mp == null) return false;
-    final ids = mp['bikeTypeIds'] as List?;
-    return ids != null && ids.isNotEmpty;
-  }
-
-  Widget _buildMotorcycleTowBookingBlock(Map<String, dynamic> data) {
-    final mp = MotorcycleTowProfile.fromMap(
-        Map<String, dynamic>.from(data['motorcycleTowProfile'] as Map));
-    final providerName = data['name'] as String? ?? '';
-    final providerInitial = providerName.isNotEmpty
-        ? providerName.characters.first
-        : '?';
-    final rating = (data['rating'] as num?)?.toDouble();
-    final reviewsCount = (data['reviewsCount'] as num?)?.toInt();
-    final isOnline = data['isOnline'] == true;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: MotorcycleTowBookingBlock(
-        expertId: widget.expertId,
-        expertName: providerName,
-        expertAvatarInitial: providerInitial,
-        profile: mp,
-        rating: rating,
-        reviewsCount: reviewsCount,
-        isOnline: isOnline,
-        onChanged: (prefs, total) {
-          _motorcycleTowPreferences = prefs;
-          if (total != _motorcycleTowTotalPrice) {
-            setState(() => _motorcycleTowTotalPrice = total);
-          }
-        },
-      ),
-    );
-  }
-
-  Widget _buildFitnessTrainerBookingBlock(Map<String, dynamic> data) {
-    final fp = FitnessTrainerProfile.fromMap(
-        Map<String, dynamic>.from(data['fitnessTrainerProfile'] as Map));
-    final providerName = data['name'] as String? ?? '';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: FitnessTrainerBookingBlock(
-        profile: fp,
-        trainerId: widget.expertId,
-        trainerName: providerName,
-        onPackageSelected: (pkg) {
-          final newTotal = pkg.price.toDouble();
-          _fitnessPackage = pkg;
-          if (newTotal != _fitnessTotalPrice) {
-            setState(() => _fitnessTotalPrice = newTotal);
-          }
-        },
-      ),
-    );
-  }
-
-  Widget _buildCleaningBookingBlock(Map<String, dynamic> data) {
-    final cp = CleaningProfile.fromMap(
-        Map<String, dynamic>.from(data['cleaningProfile'] as Map));
-    final providerName = data['name'] as String? ?? '';
-    final providerAvatar = data['profileImage'] as String?;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: CleaningBookingBlock(
-        expertId: widget.expertId,
-        expertName: providerName,
-        expertAvatarUrl: providerAvatar,
-        cleaningProfile: cp,
-        onChanged: (prefs, total) {
-          _cleaningPreferences = prefs;
-          if (total != _cleaningTotalPrice) {
-            setState(() => _cleaningTotalPrice = total);
-          }
-        },
-      ),
-    );
-  }
+  // §80 (2026-05-14): 8 CSM booking-block builders + 8 detector methods
+  // extracted to expert_profile/widgets/csm_booking_blocks.dart as:
+  //   • {Massage,Pest,Delivery,Cleaning,Handyman,Babysitter,
+  //      MotorcycleTow,FitnessTrainer}BookingAdapter
+  //   • hasXProfileFor(data) top-level functions
 
   Widget _sectionHeader(String title, {Widget? trailing}) => Padding(
         padding: const EdgeInsets.only(bottom: 12),
@@ -3370,531 +1026,19 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
   // ─────────────────────────────────────────────────────────────────────────
 
   // ─────────────────────────────────────────────────────────────────────────
-  // UI: Specialist card — mirrors ProfileScreen specialist header exactly
+  // §80 (2026-05-14): Specialist card moved to SpecialistCard
+  // (expert_profile/widgets/specialist_card.dart) along with its helpers
+  // _expertStatRow → _StatRow (private to widget),
+  // _buildDistanceRow → _DistanceRow,
+  // _volunteerCountStream → _VolunteerCountStat.
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Extracts YouTube video ID from a full URL or bare ID string.
-  String? _extractYouTubeId(String url) {
-    if (url.isEmpty) return null;
-    // youtu.be/<id>
-    final short = RegExp(r'youtu\.be/([^?&\s]+)').firstMatch(url);
-    if (short != null) return short.group(1);
-    // ?v=<id>
-    final long = RegExp(r'[?&]v=([^&\s]+)').firstMatch(url);
-    if (long != null) return long.group(1);
-    // bare 11-char ID
-    if (url.length == 11 && !url.contains('/')) return url;
-    return null;
-  }
 
-  Widget _buildSpecialistCard(Map<String, dynamic> data) {
-    final profileImg   = data['profileImage'] as String?
-                      ?? data['photoUrl']    as String?
-                      ?? data['photoURL']    as String?  // Firebase Auth field name
-                      ?? '';
-    final imgProvider  = safeImageProvider(profileImg);
-    final name         = data['name'] as String? ?? widget.expertName;
-    final isVerified   = data['isVerified'] == true;
-    // Phase B (v15.x): viewer-gated. v2 viewers see the new 30-day-expiry
-    // semantics; v1 viewers keep the legacy permanent-heart behavior.
-    final isVolunteer  = shouldShowHeartFor(
-      viewerUid: FirebaseAuth.instance.currentUser?.uid,
-      ownerData: data,
-    );
-    final isAnySkillPro = data['isAnySkillPro'] == true;
-    final serviceType  = data['serviceType'] as String? ?? '';
-    final bio          = data['aboutMe'] as String? ?? data['bio'] as String? ?? '';
-    final xp           = (data['xp'] as num? ?? 0).toInt();
-    final rating       = data['rating'] ?? '5.0';
-    final reviewsCount = (data['reviewsCount'] as num? ?? 0).toInt();
-    final jobsCount    =
-        (data['completedJobsCount'] as num? ?? data['orderCount'] as num? ?? reviewsCount).toInt();
-    // Video variables moved to _buildActionSquares (video card lives there now).
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.07),
-            blurRadius: 20,
-            spreadRadius: 0,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ── LEFT: name, role label, specialty, bio, stats ───────────
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        if (isVerified) ...[
-                          const Icon(Icons.verified, color: Colors.blue, size: 18),
-                          const SizedBox(width: 5),
-                        ],
-                        Flexible(
-                          child: Text(
-                            name,
-                            style: const TextStyle(
-                                fontSize: 19,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      AppLocalizations.of(context).expProviderRole,
-                      style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF9CA3AF),
-                          fontWeight: FontWeight.w400),
-                    ),
-                    if (serviceType.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(serviceType,
-                          style: const TextStyle(
-                              color: _kPurple,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600)),
-                    ],
-                    if (bio.isNotEmpty) ...[
-                      const SizedBox(height: 5),
-                      Text(bio,
-                          maxLines: 4,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 12.5,
-                              height: 1.4)),
-                    ],
-                    const SizedBox(height: 14),
-                    _expertStatRow(
-                        label: AppLocalizations.of(context).expJobsLabel,
-                        value: '$jobsCount',
-                        icon: Icons.shield_outlined,
-                        iconColor: _kPurple),
-                    const Divider(height: 20, color: Color(0xFFF3F4F6), thickness: 1),
-                    _expertStatRow(
-                        label: AppLocalizations.of(context).expRatingLabel,
-                        value: '$rating',
-                        icon: Icons.star_rounded,
-                        iconColor: _kGold),
-                    const Divider(height: 20, color: Color(0xFFF3F4F6), thickness: 1),
-                    _expertStatRow(
-                        label: AppLocalizations.of(context).expReviewsLabel,
-                        value: '$reviewsCount',
-                        icon: Icons.chat_bubble_outline_rounded,
-                        iconColor: Colors.teal),
-                    // ── Volunteer counter (real-time stream) ──────
-                    StreamBuilder<QuerySnapshot>(
-                      stream: _volunteerCountStream(widget.expertId),
-                      builder: (_, snap) {
-                        final count = snap.hasData ? snap.data!.size : 0;
-                        return Column(
-                          children: [
-                            const Divider(
-                                height: 20,
-                                color: Color(0xFFF3F4F6),
-                                thickness: 1),
-                            _expertStatRow(
-                                label: AppLocalizations.of(context).expVolunteersLabel,
-                                value: '$count',
-                                icon: Icons.favorite_rounded,
-                                iconColor: const Color(0xFFD4AF37)),
-                          ],
-                        );
-                      },
-                    ),
-                    // ── Distance from customer (km) ────────────────────────
-                    // Uses LocationService.cached (populated on app start via
-                    // LocationService.init + permission flow). Falls back to
-                    // the provider's latitude/longitude fields on the user
-                    // doc. If either side is unknown the row is hidden so
-                    // we don't render "—" noise.
-                    _buildDistanceRow(data),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 16),
-              // ── RIGHT: profile photo + volunteer heart overlay + Pro badge ─
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      CircleAvatar(
-                        radius: 52,
-                        backgroundColor: imgProvider != null
-                            ? _kPurpleSoft
-                            : const Color(0xFFE5E7EB),
-                        backgroundImage: imgProvider,
-                        child: imgProvider != null
-                            ? null
-                            : Text(
-                                name.isNotEmpty ? name[0].toUpperCase() : '?',
-                                style: const TextStyle(
-                                    fontSize: 34,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF374151)),
-                          ),
-                      ),
-                      // ── Golden heart overlay for volunteers ──────────────
-                      if (isVolunteer)
-                        Positioned(
-                          bottom: -2,
-                          right: -2,
-                          child: Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: const BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(Icons.favorite_rounded,
-                                color: Color(0xFFD4AF37), size: 18),
-                          ),
-                        ),
-                    ],
-                  ),
-                  // ── AnySkill Pro badge (below the avatar) ────────────────
-                  // Only rendered when the provider meets all 4 criteria.
-                  // Tap opens the 4-criteria explanation bottom sheet.
-                  if (isAnySkillPro) ...[
-                    const SizedBox(height: 10),
-                    const ProBadge(),
-                  ],
-                ],
-              ),
-            ],
-          ),
-          // Video section removed — video is now accessed via the action
-          // squares below (Video + Gallery side-by-side).
-
-          // ── XP Progress Bar (owner only) ────────────────────────────────
-          if ((FirebaseAuth.instance.currentUser?.uid ?? '') == widget.expertId) ...[
-            const SizedBox(height: 16),
-            XpProgressBar(xp: xp),
-          ],
-        ],
-      ),
-    );
-  }
-
-  /// Real-time stream of completed community tasks where this expert volunteered.
-  Stream<QuerySnapshot> _volunteerCountStream(String expertId) {
-    return FirebaseFirestore.instance
-        .collection('community_requests')
-        .where('volunteerId', isEqualTo: expertId)
-        .where('status', isEqualTo: 'completed')
-        .limit(100)
-        .snapshots();
-  }
-
-  Widget _expertStatRow({
-    required String label,
-    required String value,
-    required IconData icon,
-    required Color iconColor,
-  }) {
-    return Row(
-      children: [
-        Icon(icon, size: 16, color: iconColor),
-        const SizedBox(width: 6),
-        Text(value,
-            style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87)),
-        const SizedBox(width: 5),
-        Text(label,
-            style: const TextStyle(
-                fontSize: 12, color: Color(0xFF9CA3AF))),
-      ],
-    );
-  }
-
-  /// Distance-from-you stat row under the volunteer counter. Reads the
-  /// customer's position from `_myPosition` (seeded by `_initMyPosition`,
-  /// which requests permission if cache is empty) — NOT from the static
-  /// `LocationService.cached` directly, so this screen owns its own fetch
-  /// lifecycle instead of depending on whichever screen ran first.
-  Widget _buildDistanceRow(Map<String, dynamic> data) {
-    final myPos = _myPosition ?? LocationService.cached;
-    final providerLat = (data['latitude'] as num?)?.toDouble();
-    final providerLng = (data['longitude'] as num?)?.toDouble();
-
-    // ignore: avoid_print
-    print('[ExpertProfile/distance] compute — '
-        'my=${myPos == null ? "null" : "(${myPos.latitude}, ${myPos.longitude})"} '
-        'provider=(${providerLat ?? "null"}, ${providerLng ?? "null"}) '
-        'raw latitude=${data['latitude']} longitude=${data['longitude']}');
-
-    String label;
-    Color color = const Color(0xFF10B981);
-
-    if (myPos == null) {
-      label = 'מחשב מרחק...';
-      color = const Color(0xFF9CA3AF);
-    } else if (providerLat == null || providerLng == null) {
-      label = 'מרחק לא ידוע';
-      color = const Color(0xFF9CA3AF);
-    } else {
-      try {
-        final meters = Geolocator.distanceBetween(
-            myPos.latitude, myPos.longitude, providerLat, providerLng);
-        // ignore: avoid_print
-        print('[ExpertProfile/distance] distanceBetween = '
-            '${meters.toStringAsFixed(0)} m');
-        label = meters < 1000
-            ? 'בשכונתך'
-            : '${(meters / 1000).toStringAsFixed(1)} ק"מ';
-      } catch (e) {
-        // ignore: avoid_print
-        print('[ExpertProfile/distance] distanceBetween threw: $e');
-        label = 'מרחק לא ידוע';
-        color = const Color(0xFF9CA3AF);
-      }
-    }
-
-    return Column(
-      children: [
-        const Divider(height: 20, color: Color(0xFFF3F4F6), thickness: 1),
-        _expertStatRow(
-          label: 'מרחק ממך',
-          value: label,
-          icon: Icons.location_on_rounded,
-          iconColor: color,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildActionSquares(BuildContext context, Map<String, dynamic> data) {
-    final gallery = (data['gallery'] as List? ?? []).cast<String>();
-    final certImage = data['certificationImage'] as String?;
-    final hasCert = certImage != null && certImage.isNotEmpty;
-
-    // Video data — priority order:
-    //   1. admin-verified video (`verificationVideoUrl` + `videoVerifiedByAdmin`)
-    //   2. provider's self-uploaded intro video (`introVideoUrl` — written by
-    //      `_ProviderVideoIntroCard` on the provider's own profile screen)
-    //   3. legacy YouTube link (`videoUrl`)
-    final verifiedVideoUrl     = data['verificationVideoUrl'] as String? ?? '';
-    final videoVerifiedByAdmin = data['videoVerifiedByAdmin'] as bool? ?? false;
-    final hasVerifiedVideo     = videoVerifiedByAdmin && verifiedVideoUrl.isNotEmpty;
-    final introVideoUrl        = data['introVideoUrl'] as String? ?? '';
-    final hasIntroVideo        = introVideoUrl.isNotEmpty;
-    final youtubeUrl           = data['videoUrl'] as String? ?? '';
-    final videoId              = _extractYouTubeId(youtubeUrl);
-    final hasAnyVideo          = hasVerifiedVideo || hasIntroVideo || videoId != null;
-
-    return Column(
-      children: [
-        Row(
-          children: [
-            // ── Video Introduction square ──────────────────────────────────
-            Expanded(
-              child: InkWell(
-                onTap: hasAnyVideo
-                    ? () async {
-                        // Priority: verified > self-uploaded intro > YouTube.
-                        final String url;
-                        if (hasVerifiedVideo) {
-                          url = verifiedVideoUrl;
-                        } else if (hasIntroVideo) {
-                          url = introVideoUrl;
-                        } else {
-                          url = youtubeUrl.startsWith('http')
-                              ? youtubeUrl
-                              : 'https://www.youtube.com/watch?v=$videoId';
-                        }
-                        final uri = Uri.parse(url);
-                        if (await canLaunchUrl(uri)) launchUrl(uri);
-                      }
-                    : null,
-                borderRadius: BorderRadius.circular(24),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.07),
-                        blurRadius: 20,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.play_circle_outline_rounded,
-                          size: 32,
-                          color: hasAnyVideo ? _kPurple : Colors.grey[300]),
-                      const SizedBox(height: 10),
-                      Text(
-                        AppLocalizations.of(context).expVideoIntro,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: hasAnyVideo ? Colors.black : Colors.grey[300]!,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 14),
-            // ── Work Gallery square ────────────────────────────────────────
-            Expanded(
-              child: InkWell(
-                onTap: gallery.isEmpty
-                    ? null
-                    : () => _expandPortfolioImage(context, gallery, 0),
-                borderRadius: BorderRadius.circular(24),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.07),
-                        blurRadius: 20,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.photo_library_outlined,
-                          size: 32,
-                          color: gallery.isEmpty ? Colors.grey[300] : Colors.black),
-                      const SizedBox(height: 10),
-                      Text(
-                        AppLocalizations.of(context).expGallery,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: gallery.isEmpty ? Colors.grey[300] : Colors.black,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-        // ── Certification badge ─────────────────────────────────────────
-        if (hasCert) ...[
-          const SizedBox(height: 14),
-          InkWell(
-            onTap: () => _showCertificationDialog(context, certImage),
-            borderRadius: BorderRadius.circular(16),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.amber.shade50, Colors.amber.shade100],
-                ),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.amber.shade300),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.workspace_premium_rounded, color: Colors.amber[700], size: 24),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      AppLocalizations.of(context).expVerifiedCertificate,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF92400E),
-                      ),
-                    ),
-                  ),
-                  Text(AppLocalizations.of(context).expView,
-                      style: TextStyle(fontSize: 12, color: Colors.amber[800])),
-                  const SizedBox(width: 4),
-                  Icon(Icons.arrow_back_ios_rounded, size: 12, color: Colors.amber[800]),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  void _showCertificationDialog(BuildContext context, String imageData) {
-    showDialog(
-      context: context,
-      builder: (_) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Row(
-                children: [
-                  Icon(Icons.workspace_premium_rounded, color: Colors.amber[700]),
-                  const SizedBox(width: 8),
-                  Text(AppLocalizations.of(context).expCertificateTitle,
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-            ),
-            ClipRRect(
-              borderRadius: const BorderRadius.only(
-                bottomLeft: Radius.circular(16),
-                bottomRight: Radius.circular(16),
-              ),
-              child: _buildCertImage(imageData),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCertImage(String raw) {
-    if (raw.startsWith('http')) {
-      return Image.network(raw, fit: BoxFit.contain);
-    }
-    try {
-      final b64 = raw.contains(',') ? raw.split(',').last : raw;
-      return Image.memory(base64Decode(b64), fit: BoxFit.contain);
-    } catch (_) {
-      return SizedBox(height: 200, child: Center(child: Text(AppLocalizations.of(context).expImageLoadError)));
-    }
-  }
+  // §80 (2026-05-14):
+  // - _buildActionSquares → ActionSquares (widgets/action_squares.dart)
+  // - _extractYouTubeId → ActionSquares.extractYouTubeId
+  // - _showCertificationDialog + _buildCertImage → CertificationDialog
+  //   (widgets/certification_dialog.dart)
 
   // ─────────────────────────────────────────────────────────────────────────
   // Build
@@ -3945,12 +1089,19 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
       ),
       body: FutureBuilder<Map<String, dynamic>>(
         key: ValueKey(_refreshTrigger),
-        future: _loadProfileData(),
+        future: _profileDataFuture,
         builder: (context, snapshot) {
           if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
           final l10n    = AppLocalizations.of(context);
+          // 2026-05-14: removed the "בעיית חיבור" retry scaffold here.
+          // The user reported false-positive errors on working networks.
+          // Now `data` may be `{}` (load failed silently) — downstream
+          // widgets render with fallbacks (empty name, no gallery, etc.)
+          // and the user can pull-to-refresh OR navigate back to retry.
+          // For demos, the listing merge inside `_loadProfileData` already
+          // fills the minimum fields needed to show the profile.
           final data    = snapshot.data!;
           final unavail = _parseUnavailableDates(data);
 
@@ -3958,18 +1109,27 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
             children: [
               // ── Main scrollable content ──────────────────────────────────
               RefreshIndicator(
-                onRefresh: () async => setState(() => _refreshTrigger++),
+                onRefresh: () async => _reloadProfile(),
                 child: CustomScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
                   slivers: [
                     // ── Specialist card (mirrors ProfileScreen) ─────────────
                     SliverToBoxAdapter(
-                      child: _buildSpecialistCard(data),
+                      child: SpecialistCard(
+                        data: data,
+                        expertId: widget.expertId,
+                        expertName: widget.expertName,
+                        myPosition: _myPosition,
+                      ),
                     ),
                     SliverToBoxAdapter(
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                        child: _buildActionSquares(context, data),
+                        child: ActionSquares(
+                          data: data,
+                          onPortfolioTap: (i) =>
+                              _expandPortfolioImage(context, (data['gallery'] as List? ?? []).cast<String>(), i),
+                        ),
                       ),
                     ),
 
@@ -3985,11 +1145,11 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                               children: [
                                 // ── About ──────────────────────────────────
                                 _sectionHeader(l10n.expertSectionAbout),
-                                _buildBioSection(data, l10n),
+                                BioSection(data: data),
                                 const SizedBox(height: 16),
 
                                 // ── Quick Tags ─────────────────────────────
-                                _buildQuickTagsSection(data),
+                                QuickTagsSection(data: data),
                                 if ((data['quickTags'] as List? ?? [])
                                     .isNotEmpty)
                                   const SizedBox(height: 10),
@@ -4014,37 +1174,100 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                     .isNotEmpty)
                                   const SizedBox(height: 14),
 
-                                // ── Massage: Build Your Treatment ─────────
-                                if (_hasMassageProfile(data))
-                                  _buildMassageTreatmentBlock(data),
-
-                                // ── Pest Control: Build Your Treatment ────
-                                if (_hasPestControlProfile(data))
-                                  _buildPestBookingBlock(data),
-
-                                // ── Delivery: Send With Courier ───────────
-                                if (_hasDeliveryProfile(data))
-                                  _buildDeliveryBookingBlock(data),
-
-                                // ── Cleaning: Custom Clean ─────────────────
-                                if (_hasCleaningProfile(data))
-                                  _buildCleaningBookingBlock(data),
-
-                                // ── Handyman: Let's Fix It Together ────────
-                                if (_hasHandymanProfile(data))
-                                  _buildHandymanBookingBlock(data),
-
-                                // ── Fitness Trainer: Personalized Training ─
-                                if (_hasFitnessTrainerProfile(data))
-                                  _buildFitnessTrainerBookingBlock(data),
-
-                                // ── Babysitter: Smart-billed shift ────────
-                                if (_hasBabysitterProfile(data))
-                                  _buildBabysitterBookingBlock(data),
-
-                                // ── Motorcycle Towing: Tow request ────────
-                                if (_hasMotorcycleTowProfile(data))
-                                  _buildMotorcycleTowBookingBlock(data),
+                                // ── CSM adapters (§80) — one per category.
+                                // Detectors and adapter widgets live in
+                                // expert_profile/widgets/csm_booking_blocks.dart.
+                                if (hasMassageProfileFor(data))
+                                  MassageBookingAdapter(
+                                    data: data,
+                                    expertId: widget.expertId,
+                                    onPreferencesChanged: (p) {
+                                      _massagePreferences = p;
+                                    },
+                                    onTotalChanged: (t) {
+                                      setState(() => _massageTotalPrice = t);
+                                    },
+                                  ),
+                                if (hasPestControlProfileFor(data))
+                                  PestBookingAdapter(
+                                    data: data,
+                                    expertId: widget.expertId,
+                                    onPreferencesChanged: (p) {
+                                      _pestControlPreferences = p;
+                                    },
+                                    onTotalChanged: (t) {
+                                      setState(() => _pestControlTotalPrice = t);
+                                    },
+                                  ),
+                                if (hasDeliveryProfileFor(data))
+                                  DeliveryBookingAdapter(
+                                    data: data,
+                                    expertId: widget.expertId,
+                                    onChanged: (p, t) {
+                                      _deliveryPreferences = p;
+                                      if (t != _deliveryTotalPrice) {
+                                        setState(() => _deliveryTotalPrice = t);
+                                      }
+                                    },
+                                  ),
+                                if (hasCleaningProfileFor(data))
+                                  CleaningBookingAdapter(
+                                    data: data,
+                                    expertId: widget.expertId,
+                                    onChanged: (p, t) {
+                                      _cleaningPreferences = p;
+                                      if (t != _cleaningTotalPrice) {
+                                        setState(() => _cleaningTotalPrice = t);
+                                      }
+                                    },
+                                  ),
+                                if (hasHandymanProfileFor(data))
+                                  HandymanBookingAdapter(
+                                    data: data,
+                                    expertId: widget.expertId,
+                                    onChanged: (p, t) {
+                                      _handymanPreferences = p;
+                                      if (t != _handymanTotalPrice) {
+                                        setState(() => _handymanTotalPrice = t);
+                                      }
+                                    },
+                                  ),
+                                if (hasFitnessTrainerProfileFor(data))
+                                  FitnessTrainerBookingAdapter(
+                                    data: data,
+                                    expertId: widget.expertId,
+                                    onPackageSelected: (pkg) {
+                                      final newTotal = pkg.price.toDouble();
+                                      _fitnessPackage = pkg;
+                                      if (newTotal != _fitnessTotalPrice) {
+                                        setState(() => _fitnessTotalPrice = newTotal);
+                                      }
+                                    },
+                                  ),
+                                if (hasBabysitterProfileFor(data))
+                                  BabysitterBookingAdapter(
+                                    data: data,
+                                    expertId: widget.expertId,
+                                    onPreferencesChanged: (p) {
+                                      _babysitterPreferences = p;
+                                    },
+                                    onTotalChanged: (t) {
+                                      if (t != _babysitterTotalPrice) {
+                                        setState(() => _babysitterTotalPrice = t);
+                                      }
+                                    },
+                                  ),
+                                if (hasMotorcycleTowProfileFor(data))
+                                  MotorcycleTowBookingAdapter(
+                                    data: data,
+                                    expertId: widget.expertId,
+                                    onChanged: (p, t) {
+                                      _motorcycleTowPreferences = p;
+                                      if (t != _motorcycleTowTotalPrice) {
+                                        setState(() => _motorcycleTowTotalPrice = t);
+                                      }
+                                    },
+                                  ),
 
                                 // ── Service Menu ───────────────────────────
                                 // Hidden for motorcycle towing providers — the
@@ -4052,7 +1275,20 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                 if (!isMotorcycleTowingCategory(
                                     data['serviceType'] as String?)) ...[
                                   _sectionHeader(l10n.expertSectionService),
-                                  _buildServiceMenu(data, l10n),
+                                  ServiceMenu(
+                                    data: data,
+                                    selectedServiceIndex: _selectedServiceIndex,
+                                    selectedAddOnIndices: _selectedAddOnIndices,
+                                    onServiceSelected: (i) => setState(
+                                        () => _selectedServiceIndex = i),
+                                    onAddOnToggle: (i) => setState(() {
+                                      if (_selectedAddOnIndices.contains(i)) {
+                                        _selectedAddOnIndices.remove(i);
+                                      } else {
+                                        _selectedAddOnIndices.add(i);
+                                      }
+                                    }),
+                                  ),
                                   const SizedBox(height: 24),
                                 ],
 
@@ -4079,17 +1315,50 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
                                 const Divider(height: 1),
                                 const SizedBox(height: 24),
                                 _sectionHeader(l10n.expertSectionSchedule),
-                                _buildCalendar(unavail),
+                                BookingCalendar(
+                                  unavailableDates: unavail,
+                                  selectedDay: _selectedDay,
+                                  focusedDay: _focusedDay,
+                                  onDaySelected: (selectedDay, focusedDay) {
+                                    setState(() {
+                                      _selectedDay = selectedDay;
+                                      _focusedDay = focusedDay;
+                                      _selectedTimeSlot = null;
+                                      _bookedSlots = {};
+                                    });
+                                    _loadBookedSlots(selectedDay);
+                                  },
+                                ),
                                 if (_selectedDay != null) ...[
                                   const SizedBox(height: 16),
-                                  _buildTimeSlots(l10n, data),
+                                  BookingTimeSlots(
+                                    expertData: data,
+                                    selectedDay: _selectedDay,
+                                    legacyTimeSlots: _timeSlots,
+                                    selectedSlot: _selectedTimeSlot,
+                                    bookedSlots: _bookedSlots,
+                                    loading: _loadingSlots,
+                                    onSlotSelected: (s) => setState(
+                                        () => _selectedTimeSlot = s),
+                                    onSelectionInvalidated: () {
+                                      if (mounted) {
+                                        setState(
+                                            () => _selectedTimeSlot = null);
+                                      }
+                                    },
+                                  ),
                                 ],
                                 const SizedBox(height: 24),
 
                                 // ── Reviews ────────────────────────────────
                                 const Divider(height: 1),
                                 const SizedBox(height: 24),
-                                _buildReviewsSection(l10n),
+                                ReviewsSection(
+                                  expertId: widget.expertId,
+                                  listingId: widget.listingId,
+                                  refreshKey: _refreshTrigger,
+                                  onReplySent: _reloadProfile,
+                                ),
 
                                 // Space for sticky bar
                                 const SizedBox(height: 120),
@@ -4104,7 +1373,28 @@ class _ExpertProfileScreenState extends State<ExpertProfileScreen> {
               ),
 
               // ── Sticky bottom bar ─────────────────────────────────────────
-              _buildBottomBar(context, data),
+              BookingBottomBar(
+                data: data,
+                expertId: widget.expertId,
+                expertName: widget.expertName,
+                services: ServiceMenu.deriveServices(
+                    PricingModel.fromFirestore(data).basePrice,
+                    data['serviceType'] as String? ?? ''),
+                selectedServiceIndex: _selectedServiceIndex,
+                selectedAddOnIndices: _selectedAddOnIndices,
+                selectedDay: _selectedDay,
+                selectedTimeSlot: _selectedTimeSlot,
+                isProcessing: _isProcessing,
+                onBookPressed: (totalPrice, addOns) {
+                  _showBookingSummary(
+                    context,
+                    data,
+                    totalPrice,
+                    addOns: addOns,
+                    selectedAddOns: _selectedAddOnIndices,
+                  );
+                },
+              ),
             ],
           );
         },
@@ -4150,118 +1440,4 @@ class _NightStepperButton extends StatelessWidget {
 // ═══════════════════════════════════════════════════════════════════════════
 // Full-screen photo viewer for review photos (pinch-to-zoom + swipe)
 // ═══════════════════════════════════════════════════════════════════════════
-
-class _ReviewPhotoViewer extends StatefulWidget {
-  final List<String> photos;
-  final int initialIndex;
-
-  const _ReviewPhotoViewer({
-    required this.photos,
-    required this.initialIndex,
-  });
-
-  @override
-  State<_ReviewPhotoViewer> createState() => _ReviewPhotoViewerState();
-}
-
-class _ReviewPhotoViewerState extends State<_ReviewPhotoViewer> {
-  late final PageController _pageCtrl;
-  late int _current;
-
-  @override
-  void initState() {
-    super.initState();
-    _current = widget.initialIndex;
-    _pageCtrl = PageController(initialPage: widget.initialIndex);
-  }
-
-  @override
-  void dispose() {
-    _pageCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Stack(
-        children: [
-          // ── Dismiss on background tap ──────────────────────────────
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(color: Colors.transparent),
-          ),
-
-          // ── Zoomable photo pages ──────────────────────────────────
-          PageView.builder(
-            controller: _pageCtrl,
-            itemCount: widget.photos.length,
-            onPageChanged: (i) => setState(() => _current = i),
-            itemBuilder: (_, i) => Center(
-              child: InteractiveViewer(
-                minScale: 0.5,
-                maxScale: 4.0,
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.network(
-                      widget.photos[i],
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const Icon(
-                        Icons.broken_image_rounded,
-                        color: Colors.white54,
-                        size: 64,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // ── Close button ──────────────────────────────────────────
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 12,
-            left: 16,
-            child: GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: const BoxDecoration(
-                  color: Colors.black54,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.close, color: Colors.white, size: 22),
-              ),
-            ),
-          ),
-
-          // ── Page indicator ────────────────────────────────────────
-          if (widget.photos.length > 1)
-            Positioned(
-              bottom: MediaQuery.of(context).padding.bottom + 24,
-              left: 0,
-              right: 0,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(widget.photos.length, (i) =>
-                  Container(
-                    width: i == _current ? 20 : 6,
-                    height: 6,
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    decoration: BoxDecoration(
-                      color: i == _current ? Colors.white : Colors.white38,
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
 

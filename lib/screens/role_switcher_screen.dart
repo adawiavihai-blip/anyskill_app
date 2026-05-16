@@ -46,16 +46,20 @@ class _RoleSwitcherScreenState extends State<RoleSwitcherScreen> {
         'activeRole': role,
       });
       CachedReaders.invalidateProvider(uid); // §61
-      if (!mounted) return;
-      _exitTo(role);
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('שגיאה בהחלפת שירות: $e')));
+      // 2026-05-15 (live bug, רועי צברי "chose customer → error, not let
+      // in"): a failed `activeRole` write must NEVER block the user from
+      // entering the app. The write is a persistence convenience — the
+      // routing in `_exitTo` navigates directly and does not depend on
+      // it. Worst case: `activeRole` isn't persisted and the switcher
+      // shows again next launch. Being LOCKED OUT is far worse. So we
+      // swallow the error and fall through to `_exitTo` regardless.
+      debugPrint('[RoleSwitcher] activeRole write failed (entering anyway): $e');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+    if (!mounted) return;
+    _exitTo(role);
   }
 
   /// After the role is persisted, leave the switcher.

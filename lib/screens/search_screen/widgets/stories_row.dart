@@ -629,10 +629,14 @@ class _StoryCircle extends StatelessWidget {
 
   String? _timeLabel(Timestamp? ts) {
     if (ts == null) return null;
+    // Stories live for 24h from the moment of posting (see expiresAt write).
+    // The label shows time REMAINING until that 24h expiry — never a 60-min
+    // countdown. A freshly posted story therefore reads "24שע׳", not "60ד׳".
     final diff = DateTime.now().difference(ts.toDate());
-    if (diff.inHours >= 24) return null;
-    if (diff.inHours >= 1)  return '${24 - diff.inHours}שע׳';
-    return '${60 - diff.inMinutes}ד׳';
+    final minutesLeft = (24 * 60) - diff.inMinutes;
+    if (minutesLeft <= 0) return null;
+    if (minutesLeft >= 60) return '${minutesLeft ~/ 60}שע׳';
+    return '$minutesLeftד׳';
   }
 }
 

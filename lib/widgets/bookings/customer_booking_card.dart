@@ -10,6 +10,7 @@ import '../../screens/expert_profile_screen.dart';
 import '../../screens/chat_screen.dart';
 import '../../screens/bookings/active_booking_detail_screen.dart';
 import '../../features/pet_stay/screens/owner_pet_mode_screen.dart';
+import '../../services/cached_readers.dart';
 import '../live_travel_map.dart';
 
 /// Customer-facing booking card with live signals, step tracker, tip, and actions.
@@ -76,6 +77,20 @@ class _CustomerBookingCardState extends State<CustomerBookingCard>
     final expertName = widget.job['expertName'] as String? ?? 'נותן שירות';
     if (expertId.isEmpty || widget.currentUserId.isEmpty) return;
 
+    // §QA-Pass 2026-05-14 (CRITICAL anti-fraud gap):
+    // Self-tipping is blocked by the CF (§79.A.10) but the client must also
+    // guard so a misconfigured job doc (expertId == customerId) doesn't even
+    // show the confirmation dialog. Why: chat/job-creation flows are the
+    // only canonical paths that prevent equal ids; legacy/migrated/demo data
+    // can still slip through.
+    if (expertId == widget.currentUserId) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        backgroundColor: Colors.red,
+        content: Text('לא ניתן לשלוח טיפ לעצמך'),
+      ));
+      return;
+    }
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
@@ -104,6 +119,10 @@ class _CustomerBookingCardState extends State<CustomerBookingCard>
     if (confirm != true || !context.mounted) return;
 
     try {
+      // §79.A.10 (2026-05-14): deterministic clientReqId for idempotency.
+      // Key is `tip_${jobId}_${tipAmount}` so a double-tap of the same tip
+      // amount on the same job returns the cached success without
+      // double-charging. Different tip amount on same job → different key.
       await FirebaseFunctions.instance
           .httpsCallable('addTipToJob')
           .call({
@@ -111,7 +130,14 @@ class _CustomerBookingCardState extends State<CustomerBookingCard>
         'expertId': expertId,
         'expertName': expertName,
         'tipAmount': tipAmount,
+        'clientReqId': 'tip_${widget.jobId}_${tipAmount.toStringAsFixed(2)}',
       }).timeout(const Duration(seconds: 30));
+
+      // Bust the customer's cached profile so the wallet balance refreshes
+      // in any downstream FutureBuilder reading via CachedReaders. Without
+      // this the user sees the old balance for up to 5 min (§61 TTL).
+      CachedReaders.invalidateProvider(widget.currentUserId);
+
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           backgroundColor: const Color(0xFF6366F1),
@@ -119,13 +145,48 @@ class _CustomerBookingCardState extends State<CustomerBookingCard>
         ));
       }
     } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          backgroundColor: Colors.red,
-          content: Text('שגיאה בשליחת טיפ: $e'),
-        ));
+      if (!context.mounted) return;
+      // §QA-Pass 2026-05-14: friendly Hebrew error messages instead of
+      // raw '[failed-precondition] ...' (matches the VipPaymentService
+      // pattern in vip_payment_service.dart:216-247).
+      final msg = _mapTipError(e);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        backgroundColor: Colors.red,
+        content: Text(msg),
+      ));
+    }
+  }
+
+  /// Maps `addTipToJob` CF error codes to Hebrew user-facing messages.
+  /// Each branch corresponds to a `throw new HttpsError(...)` in §79.A.10's
+  /// hardened `addTipToJob`.
+  String _mapTipError(Object e) {
+    if (e is TimeoutException) return 'התקשורת איטית, נסה שוב';
+    if (e is FirebaseFunctionsException) {
+      switch (e.code) {
+        case 'failed-precondition':
+          // CF throws this for: insufficient balance, job-not-tippable status,
+          // job-not-found, expertId mismatch.
+          final m = (e.message ?? '').toLowerCase();
+          if (m.contains('balance') || m.contains('insufficient')) {
+            return 'אין מספיק יתרה בארנק. טען את הארנק ונסה שוב';
+          }
+          if (m.contains('status')) return 'לא ניתן להוסיף טיפ לעבודה זו כעת';
+          if (m.contains('not-found')) return 'הזמנה לא נמצאה';
+          return 'לא ניתן להוסיף טיפ לעבודה זו כעת';
+        case 'invalid-argument':
+          return 'סכום טיפ לא תקין';
+        case 'permission-denied':
+          return 'אין הרשאה לשלוח טיפ על הזמנה זו';
+        case 'unauthenticated':
+          return 'יש להתחבר מחדש';
+        case 'unavailable':
+          return 'בעיית חיבור. נסה שוב בעוד מספר רגעים';
+        default:
+          return 'שגיאה בשליחת הטיפ. אנא נסה שוב';
       }
     }
+    return 'שגיאה בשליחת הטיפ. אנא נסה שוב';
   }
 
   @override
@@ -323,37 +384,72 @@ class _CustomerBookingCardState extends State<CustomerBookingCard>
           ],
 
           // ── "In progress" timer ───────────────────────────────────────
+          // For a trip-based job (motorcycle tow / flash auction — detected
+          // by a dropoff coordinate on the job doc) the work has a SECOND
+          // leg after "הגעתי": the provider loads the bike and drives it to
+          // the destination. The customer must keep seeing the live map for
+          // that leg too — so we render the map here, not just a text timer.
           if (workStartedTs != null && status == 'paid_escrow') ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF0FDF4),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                      color: const Color(0xFF16A34A).withValues(alpha: 0.3)),
-                ),
-                child: Row(children: [
-                  AnimatedBuilder(
-                    animation: _pulse,
-                    builder: (_, __) => Icon(Icons.construction_rounded,
-                        size: 16,
+            Builder(builder: (_) {
+              final isTripJob = _readDropoffLat(job) != null &&
+                  _readDropoffLng(job) != null;
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0FDF4),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
                         color: const Color(0xFF16A34A)
-                            .withValues(alpha: 0.5 + _pulse.value * 0.5)),
+                            .withValues(alpha: 0.3)),
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'העבודה החלה לפני $workMinutes דקות',
-                    style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF15803D)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        AnimatedBuilder(
+                          animation: _pulse,
+                          builder: (_, __) => Icon(
+                              isTripJob
+                                  ? Icons.local_shipping_rounded
+                                  : Icons.construction_rounded,
+                              size: 16,
+                              color: const Color(0xFF16A34A).withValues(
+                                  alpha: 0.5 + _pulse.value * 0.5)),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            isTripJob
+                                ? 'נותן השירות בדרך ליעד עם האופנוע'
+                                : 'העבודה החלה לפני $workMinutes דקות',
+                            style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF15803D)),
+                          ),
+                        ),
+                      ]),
+                      // Live map stays on the towing-to-destination leg so
+                      // the customer keeps tracking the provider after the
+                      // "הגעתי" tap. Non-trip jobs keep the plain timer.
+                      if (isTripJob) ...[
+                        const SizedBox(height: 10),
+                        LiveTravelMap(
+                          providerUid: expertId,
+                          pickupLat: _readPickupLat(job),
+                          pickupLng: _readPickupLng(job),
+                          dropoffLat: _readDropoffLat(job),
+                          dropoffLng: _readDropoffLng(job),
+                        ),
+                      ],
+                    ],
                   ),
-                ]),
-              ),
-            ),
+                ),
+              );
+            }),
           ],
 
           // ── Amount strip ─────────────────────────────────────────────

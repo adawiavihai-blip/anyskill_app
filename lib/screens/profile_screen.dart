@@ -968,23 +968,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                // ── Logout ────────────────────────────────────────────────
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 25),
-                  child: OutlinedButton.icon(
-                    onPressed: _logout,
-                    icon: const Icon(Icons.logout_rounded, size: 18, color: Color(0xFF6366F1)),
-                    label: Text(AppLocalizations.of(context).profLogout,
-                        style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF6366F1))),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 48),
-                      side: const BorderSide(color: Color(0xFF6366F1), width: 1.5),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
                 // ── Feedback & Ideas ──────────────────────────────────────
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 25),
@@ -1046,6 +1029,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     fontSize: 11.5,
                     fontWeight: FontWeight.w500,
                     letterSpacing: 0.3,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // ── Logout (red, very bottom) ─────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 25),
+                  child: OutlinedButton.icon(
+                    onPressed: _logout,
+                    icon: const Icon(Icons.logout_rounded,
+                        size: 18, color: Color(0xFFEF4444)),
+                    label: Text(
+                      AppLocalizations.of(context).profLogout,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFFEF4444)),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                      side: const BorderSide(
+                          color: Color(0xFFEF4444), width: 1.5),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 100),
@@ -1468,24 +1474,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           const SizedBox(height: 12),
 
-          // ── Logout ───────────────────────────────────────────────────────
-          OutlinedButton.icon(
-            onPressed: _logout,
-            icon: const Icon(Icons.logout_rounded, size: 18, color: Color(0xFF6366F1)),
-            label: Text(
-              AppLocalizations.of(context).profLogout,
-              style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF6366F1)),
-            ),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(double.infinity, 48),
-              side: const BorderSide(color: Color(0xFF6366F1), width: 1.5),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
           // ── Feedback & Ideas ───────────────────────────────────────────
           OutlinedButton.icon(
             onPressed: () => Navigator.of(context).push(
@@ -1542,6 +1530,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
               fontSize: 11.5,
               fontWeight: FontWeight.w500,
               letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // ── Logout (red, very bottom) ──────────────────────────────────
+          OutlinedButton.icon(
+            onPressed: _logout,
+            icon: const Icon(Icons.logout_rounded,
+                size: 18, color: Color(0xFFEF4444)),
+            label: Text(
+              AppLocalizations.of(context).profLogout,
+              style: const TextStyle(
+                  fontWeight: FontWeight.bold, color: Color(0xFFEF4444)),
+            ),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+              side: const BorderSide(color: Color(0xFFEF4444), width: 1.5),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
             ),
           ),
           const SizedBox(height: 40),

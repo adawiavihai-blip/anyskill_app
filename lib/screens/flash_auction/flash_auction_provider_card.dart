@@ -54,6 +54,7 @@ class FlashAuctionProviderCard extends StatefulWidget {
 class _FlashAuctionProviderCardState extends State<FlashAuctionProviderCard> {
   final _etaCtrl = TextEditingController(text: '15');
   bool _submitting = false;
+  bool _declining = false;
 
   String get _providerId =>
       FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -83,34 +84,75 @@ class _FlashAuctionProviderCardState extends State<FlashAuctionProviderCard> {
     }
     setState(() => _submitting = true);
     final messenger = ScaffoldMessenger.of(context);
-    try {
-      final result = await FlashAuctionService.submitOffer(
-        auctionId: widget.auction.id,
-        etaMinutes: eta,
-        providerProfile: widget.providerProfile,
-      );
-      if (!mounted) return;
-      setState(() => _submitting = false);
-      if (result == 'duplicate') {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('כבר שלחת הצעה לקריאה הזו')),
-        );
-        return;
-      }
-      if (result == null) {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('שגיאה בשליחה — נסה שוב')),
-        );
-        return;
-      }
+    final result = await FlashAuctionService.submitOffer(
+      auctionId: widget.auction.id,
+      etaMinutes: eta,
+      providerProfile: widget.providerProfile,
+    );
+    if (!mounted) return;
+    setState(() => _submitting = false);
+    if (result.duplicate) {
       messenger.showSnackBar(
-        const SnackBar(content: Text('ההצעה נשלחה ✓')),
+        const SnackBar(content: Text('כבר שלחת הצעה לקריאה הזו')),
       );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _submitting = false);
-      messenger.showSnackBar(SnackBar(content: Text('שגיאה: $e')));
+      return;
     }
+    if (result.error != null) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(result.error!),
+          backgroundColor: FlashPalette.red500,
+        ),
+      );
+      return;
+    }
+    messenger.showSnackBar(
+      const SnackBar(content: Text('ההצעה נשלחה ✓')),
+    );
+  }
+
+  Future<void> _decline() async {
+    if (_declining || _submitting) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('לא מעוניין בקריאה?'),
+        content: const Text(
+          'הקריאה תוסר מההזדמנויות שלך. נותני שירות אחרים יוכלו '
+          'להמשיך להציע הצעות. לא ניתן לבטל את הפעולה.',
+          style: TextStyle(height: 1.45),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: const Text('חזור'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            style: TextButton.styleFrom(foregroundColor: FlashPalette.red500),
+            child: const Text('דחה את הקריאה'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    if (!mounted) return;
+    setState(() => _declining = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final err = await FlashAuctionService.declineAuction(
+      auctionId: widget.auction.id,
+    );
+    if (!mounted) return;
+    setState(() => _declining = false);
+    if (err != null) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(err), backgroundColor: FlashPalette.red500),
+      );
+      return;
+    }
+    // The watchActiveAuctionsForProvider stream filters this auction out
+    // by `declinedProviderIds`, so the card unmounts on the next snapshot.
+    // No setState needed beyond the spinner toggle above.
   }
 
   @override
@@ -182,10 +224,63 @@ class _FlashAuctionProviderCardState extends State<FlashAuctionProviderCard> {
                   _OfferStatusBlock(offer: myOffer)
                 else
                   _buildEtaInput(),
+                // "הסר מהרשימה" / "לא מעוניין" — always visible UNLESS
+                // the provider won the auction (status: selected). For a
+                // stale pending offer or a rejected one, the provider
+                // needs a way to dismiss the card from their opportunities.
+                // Without this, רועי צברי reported (2026-05-14) a "stuck"
+                // tow request he couldn't remove.
+                if (myOffer == null ||
+                    myOffer.status != FlashAuctionOfferStatus.selected) ...[
+                  const SizedBox(height: 8),
+                  _buildDeclineButton(myOffer),
+                ],
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Decline / remove-from-list button shared between the pre-submit
+  /// (`_buildEtaInput`) and post-submit (`_OfferStatusBlock`) states.
+  /// Hoisted from inside `_buildEtaInput` so it remains visible AFTER
+  /// the provider submits an offer — the previous behavior hid the
+  /// button once `myOffer != null`, leaving the card permanently stuck
+  /// on the provider's opportunities feed.
+  Widget _buildDeclineButton(FlashAuctionOffer? myOffer) {
+    final hasOffer = myOffer != null;
+    return Center(
+      child: TextButton.icon(
+        onPressed: (_submitting || _declining) ? null : _decline,
+        icon: _declining
+            ? const SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.6,
+                  color: FlashPalette.textSecondary,
+                ),
+              )
+            : const Icon(
+                Icons.close_rounded,
+                size: 14,
+                color: FlashPalette.textSecondary,
+              ),
+        label: Text(
+          hasOffer ? 'הסר מהרשימה' : 'לא מעוניין',
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: FlashPalette.textSecondary,
+          ),
+        ),
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          minimumSize: const Size(0, 28),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
       ),
     );
   }
@@ -561,9 +656,12 @@ class _FlashAuctionProviderCardState extends State<FlashAuctionProviderCard> {
           variant: PrimaryCTAVariant.success,
           loading: _submitting,
           dense: true,
-          onPressed: _submitting ? null : _submit,
+          onPressed: (_submitting || _declining) ? null : _submit,
           semanticHint: 'שולח הצעה ללקוח עם זמן הגעה ומחיר אוטומטי',
         ),
+        // Note: the "לא מעוניין" / "הסר מהרשימה" button used to live
+        // here, but was hoisted to `_buildDeclineButton` and rendered
+        // by `_buildCard` so it stays visible AFTER offer submission.
       ],
     );
   }

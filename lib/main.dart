@@ -282,6 +282,33 @@ Future<void> _handleWebRedirectResult() async {
   }
 }
 
+/// Pre-warms the Firestore WebChannel so the first user-facing read
+/// doesn't pay the cold-start handshake cost (5–15s on iOS Safari + slow
+/// networks). Safe to call BEFORE authentication — `categories` is
+/// readable with or without auth (App Check token covers anonymous reads).
+///
+/// Fire-and-forget. Failures are silent — real screens will retry on
+/// their own. The whole point is to be opportunistic, not required for
+/// correctness.
+///
+/// See CLAUDE.md §15 Law 15 and `feedback_homescreen_stream_supervisor.md`
+/// for the cold-WebChannel pattern this addresses globally.
+Future<void> _prewarmFirestore() async {
+  try {
+    await FirebaseFirestore.instance
+        .collection('categories')
+        .limit(1)
+        .get(const GetOptions(source: Source.server))
+        .timeout(const Duration(seconds: 10));
+    debugPrint('✅ Firestore WebChannel pre-warmed');
+  } catch (e) {
+    // Network slow/offline — fine. Real screens have their own
+    // supervisors (§15 Law 15) and will recover when the network
+    // becomes usable.
+    debugPrint('ℹ️ Firestore pre-warm skipped (network slow/offline): $e');
+  }
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -297,7 +324,16 @@ void main() async {
   await Future.wait([
     // Step 1: PackageInfo
     PackageInfo.fromPlatform().then((info) {
-      if (info.version.isNotEmpty) currentAppVersion = info.version;
+      if (info.version.isNotEmpty) {
+        // Include the build number (+N) so the on-screen version footer
+        // shows the EXACT deployed build. This lets a non-technical user
+        // confirm in 2 seconds whether their device actually received
+        // the latest deploy — the #1 ambiguity when a fix "doesn't reach
+        // me" (stale Service Worker / cached build).
+        currentAppVersion = info.buildNumber.isNotEmpty
+            ? '${info.version}+${info.buildNumber}'
+            : info.version;
+      }
       debugPrint('✅ PackageInfo: $currentAppVersion');
     }).catchError((e) { debugPrint('⚠️ PackageInfo failed: $e'); }),
     // Step 2: Locale
@@ -344,15 +380,30 @@ void main() async {
     try {
       FirebaseFirestore.instance.settings = const Settings(
         persistenceEnabled: false,
-        // EXPLICIT: enable auto long-polling detection (2026-04-15 hang fix).
-        // Some users' networks/browsers silently block Firestore WebChannel —
-        // streams look connected but reads never return. Auto-detect tries
-        // WebChannel first, falls back to HTTP long-polling if it stalls.
-        // Unlike `experimentalForceLongPolling`, this is SAFE (no AsyncQueue
-        // deadlocks) because it only uses long-polling when WebChannel fails.
-        webExperimentalAutoDetectLongPolling: true,
+        // FORCE long-polling on web (2026-05-16 — root-cause fix after ~6
+        // rounds of "provider sees empty notifications / empty sub-category /
+        // banners revert on refresh", רועי צברי).
+        //
+        // Why FORCE, not auto-detect: `webExperimentalAutoDetectLongPolling`
+        // tries the streaming WebChannel FIRST and only falls back to
+        // long-polling AFTER it detects the channel has stalled. That
+        // detection takes 10-30s on networks/browsers/extensions that block
+        // or throttle the WebChannel streaming endpoint. Every one of our
+        // stream supervisors (1-14s) and the pre-warm cap (4s) fires BEFORE
+        // the fallback completes → the user sees empty lists + fallback
+        // banners. A browser refresh restarts the slow detection from zero,
+        // which is exactly why "refresh makes it worse".
+        //
+        // Forcing long-polling skips the detection entirely — reads go
+        // straight to HTTP long-polling, which works on virtually every
+        // network/browser/extension/proxy. The throughput cost vs. streaming
+        // is irrelevant at this launch scale and is dwarfed by the
+        // reliability win. The old "experimentalForceLongPolling causes
+        // AsyncQueue deadlocks" warning was a 2021-era JS-SDK bug, long
+        // fixed, and never applied with persistence OFF (Law 23).
+        webExperimentalForceLongPolling: true,
       );
-      debugPrint('✅ Firestore Web: persistence OFF, WebChannel + auto long-polling fallback');
+      debugPrint('✅ Firestore Web: persistence OFF, FORCED long-polling transport');
     } catch (e) {
       debugPrint('⚠️ Firestore settings failed: $e — using SDK defaults');
     }
@@ -400,14 +451,20 @@ void main() async {
   // Enabled in monitoring mode first. After 2 days of traffic validation,
   // switch to enforcement via Firebase Console toggle.
   //
-  // IMPORTANT: When the reCAPTCHA site key is the literal placeholder
-  // (`__RECAPTCHA_SITE_KEY__`), we SKIP `activate()` on web entirely.
-  // Reason: calling activate() with a bogus key makes the Firebase Auth
-  // SDK attempt to fetch an App Check token during signInWithCredential,
-  // which then POSTs to the reCAPTCHA Enterprise endpoint with `k=<placeholder>`
-  // → HTTP 400 → Auth fails → the user can't log in.
-  // Mobile paths (Play Integrity / App Attest) are unaffected.
-  const webSiteKey = '__RECAPTCHA_SITE_KEY__';
+  // The site key below is the PUBLIC reCAPTCHA Enterprise key for the
+  // anyskill-6fdf3 web app (registered domains: anyskill-6fdf3.web.app,
+  // anyskill-6fdf3.firebaseapp.com, localhost). Public keys are designed
+  // to be exposed to the client — safe to commit. The PRIVATE secret stays
+  // in Google Cloud, never touches client code.
+  //
+  // If you ever need to rotate the key (compromise / new project):
+  //   1. Create new key at console.cloud.google.com/security/recaptcha
+  //   2. Register it in Firebase Console → App Check → Apps → Web
+  //   3. Replace the const below + redeploy.
+  //
+  // Mobile paths (Play Integrity / App Attest) read their config from the
+  // Firebase Console — no code change needed for those.
+  const webSiteKey = '6LchjOosAAAAAMfMTyPplRBLAn1Dxz6B0NKEYFVb';
   // ignore: unnecessary_string_escapes, prefer_const_declarations
   final bool hasRealSiteKey = !webSiteKey.contains('__RECAPTCHA');
   try {
@@ -417,16 +474,64 @@ void main() async {
           'will proceed without App Check headers. To enable, paste the real '
           'reCAPTCHA Enterprise site key at lib/main.dart step 4.');
     } else {
-      await FirebaseAppCheck.instance.activate(
-        providerWeb: ReCaptchaEnterpriseProvider(webSiteKey),
-        providerAndroid: const AndroidPlayIntegrityProvider(),
-        providerApple: const AppleAppAttestProvider(),
-      );
-      debugPrint(
-          '✅ App Check: activated (monitoring mode — enforce via Console)');
+      // FIRE-AND-FORGET (2026-05-16) — do NOT await. activate() on web has
+      // to inject + load the reCAPTCHA Enterprise script from Google before
+      // it resolves; on a slow network that blocked app launch (and the
+      // Firestore pre-warm right after it) for seconds. App Check is in
+      // MONITORING mode — the server accepts token-less requests — so it is
+      // safe for the first few reads to go out before App Check is active.
+      // The token attaches to every read once activation finishes in the
+      // background. Failures are fully isolated and never touch Firestore.
+      FirebaseAppCheck.instance
+          .activate(
+            providerWeb: ReCaptchaEnterpriseProvider(webSiteKey),
+            providerAndroid: const AndroidPlayIntegrityProvider(),
+            providerApple: const AppleAppAttestProvider(),
+          )
+          .then((_) => debugPrint(
+              '✅ App Check: activated (monitoring mode — enforce via Console)'))
+          .catchError((Object e) =>
+              debugPrint('⚠️ App Check activate failed (ignored): $e'));
     }
   } catch (e) {
     debugPrint('⚠️ App Check init failed (continuing without): $e');
+  }
+
+  // ── Step 4b: Pre-warm Firestore WebChannel ─────────────────────────────
+  // Fire-and-forget tiny query that triggers the Firestore WebChannel
+  // handshake (or auto-detect long-polling fallback) BEFORE the first
+  // user-facing screen tries to use Firestore. Without this, the first
+  // screen's first read pays the cold-start handshake cost (5-15s on iOS
+  // Safari + slow networks), causing visible "stuck spinner" / "empty
+  // list" symptoms.
+  //
+  // Live bug report (רועי צברי 2026-05-15): freshly logged-in provider
+  // saw an empty sub-category page AND a broken edit-profile category
+  // dropdown. Pressing browser refresh fixed BOTH — proving it was a
+  // cold-WebChannel-handshake issue, not stale state.
+  //
+  // `categories.limit(1)` is the right pre-warm query because:
+  //   1. Public read (auth OR App Check — works pre- and post-sign-in).
+  //   2. Tiny (1 doc) — minimal bandwidth.
+  //   3. Every screen that follows hits `categories` or related
+  //      collections, so we exercise the real WebChannel path.
+  //
+  // 2026-05-15: for a RETURNING (already-logged-in) user, AWAIT the
+  // pre-warm with a 4s cap. This guarantees the Firestore transport
+  // (WebChannel OR its long-polling auto-detect fallback) has SETTLED
+  // before HomeScreen + HomeTab mount and fire their `.snapshots()`
+  // listeners. Without this head-start the pre-warm raced the screens'
+  // own listeners and lost — the user saw empty banners / categories
+  // until a manual browser refresh. A returning user already waited
+  // through the splash, so +≤4s is invisible. A FRESH (not-logged-in)
+  // user keeps the fire-and-forget path — they'll type credentials
+  // while the pre-warm runs in the background, no launch delay.
+  if (FirebaseAuth.instance.currentUser != null) {
+    try {
+      await _prewarmFirestore().timeout(const Duration(seconds: 4));
+    } catch (_) {/* capped — proceed regardless */}
+  } else {
+    unawaited(_prewarmFirestore());
   }
 
   // ── Step 5: Payment provider init ──────────────────────────────────────

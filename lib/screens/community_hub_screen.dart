@@ -1409,8 +1409,10 @@ class _CommunityHubScreenState extends State<CommunityHubScreen>
 
     String photoUrl;
     try {
+      // Pen-test fix VULN-009: nested-path layout so the Storage rule can
+      // gate read+write by the parent community_requests participants.
       final storagePath =
-          'community_evidence/${doc.id}_${DateTime.now().millisecondsSinceEpoch}.${pickedPhoto!.ext}';
+          'community_evidence/${doc.id}/${DateTime.now().millisecondsSinceEpoch}.${pickedPhoto!.ext}';
       final ref = FirebaseStorage.instance.ref().child(storagePath);
       await ref.putData(pickedPhoto!.bytes);
       photoUrl = await ref.getDownloadURL();

@@ -93,9 +93,21 @@ service firebase.storage {
 
     // ── Business documents (license, tax certificate) ─────────────────────
     // Path: business_docs/{uid}/license_*.{ext}
+    //
+    // SECURITY (pen-test 2026-05-15 — VULN-008): the previous rule had no
+    // content-type guard, so a provider could upload `.exe` / `.html` /
+    // `.svg` (with embedded JS) here. Admins downloading these from the
+    // verification console would execute the payload. The new guard
+    // accepts image/* AND application/pdf (legitimate business docs are
+    // commonly PDF scans).
     match /business_docs/{userId}/{allPaths=**} {
       allow read:  if isOwner(userId) || isAdmin();
-      allow write: if isOwner(userId) && underSize(10);
+      allow write: if isOwner(userId)
+                   && underSize(10)
+                   && (
+                        request.resource.contentType.matches('image/.*')
+                        || request.resource.contentType == 'application/pdf'
+                      );
     }
 
     // ── ID documents (identity verification — v3 provider registration) ───
@@ -148,15 +160,21 @@ service firebase.storage {
     // ── Motorcycle bike-types catalog images (admin uploads) ─────────────
     // Path: motorcycle_bike_types/{typeId}.{ext}
     // Read by any signed-in user (provider + customer both render the
-    // catalog). Write requires admin — gated by the Firestore admin claim
-    // via the bridge: we don't have direct firestore.get cheap access in
-    // a heavy Storage rule, so we accept that any signed-in user can
-    // write a bike-type image (a low-blast-radius vector since the
-    // catalog DOC itself is admin-only at the Firestore-rules layer; a
-    // bad image without a doc has no surface that consumes it).
+    // catalog).
+    //
+    // SECURITY (pen-test 2026-05-15 — VULN-007): the previous rule allowed
+    // ANY signed-in user to write to this path. A long comment justified
+    // this as "low-blast-radius" because the Firestore catalog doc is
+    // admin-only, but that reasoning was wrong: an attacker could
+    // (a) overwrite existing catalog images with a CDN-cached XSS-SVG
+    // payload visible to every provider + customer; (b) host arbitrary
+    // content on the platform CDN (offensive imagery, phishing mockups,
+    // potentially CSAM — legal liability). The write rule is now
+    // properly admin-gated using the same firestore.get pattern that
+    // gates other admin-write Storage paths.
     match /motorcycle_bike_types/{file=**} {
       allow read:  if isSignedIn();
-      allow write: if isSignedIn() && isImageContentType() && underSize(5);
+      allow write: if isAdmin() && isImageContentType() && underSize(5);
     }
 
     // ── Motorcycle towing before/after photos (per active tow) ───────────
@@ -238,10 +256,33 @@ service firebase.storage {
     }
 
     // ── Community evidence (photo proof for volunteer task) ──────────────
-    // Path: community_evidence/{docId}_{ts}.{ext}
-    match /community_evidence/{evidenceFile} {
-      allow read:  if isSignedIn();
-      allow write: if isSignedIn() && isImageContentType() && underSize(10);
+    // SECURITY (pen-test 2026-05-15 — VULN-009): the old flat path
+    // `community_evidence/{docId}_{ts}.{ext}` had no participant gate
+    // (any signed-in user could read+write every evidence file by
+    // brute-forcing the docId). The new nested path
+    // `community_evidence/{docId}/{file}` matches the same docId as the
+    // parent `community_requests/{docId}` doc, so the rule can use a
+    // Firestore lookup to gate by participant + admin.
+    //
+    // Migration: the Dart upload site (community_hub_screen.dart +
+    // complete_volunteering_screen.dart) now writes to the nested path.
+    // Reads of files uploaded under the legacy flat path are NOT supported
+    // by the new rule — they fall under the storage default-deny. If
+    // legacy files must be served, run a one-shot admin migration script
+    // to move them into the new structure before deploying these rules.
+    match /community_evidence/{docId}/{file=**} {
+      allow read:  if isAdmin()
+                   || (isSignedIn()
+                       && firestore.exists(/databases/(default)/documents/community_requests/$(docId))
+                       && (
+                            firestore.get(/databases/(default)/documents/community_requests/$(docId)).data.requesterId == request.auth.uid
+                            || firestore.get(/databases/(default)/documents/community_requests/$(docId)).data.volunteerId == request.auth.uid
+                          ));
+      allow write: if isSignedIn()
+                   && isImageContentType()
+                   && underSize(10)
+                   && firestore.exists(/databases/(default)/documents/community_requests/$(docId))
+                   && firestore.get(/databases/(default)/documents/community_requests/$(docId)).data.volunteerId == request.auth.uid;
     }
 
     // ── AnyTask proofs (provider's "work done" evidence) ─────────────────

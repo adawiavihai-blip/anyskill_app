@@ -33,9 +33,16 @@ class CategoryService {
       // NO orderBy on the Firestore query — Firestore silently excludes docs
       // that don't have the sorted field, causing Console-added categories to
       // disappear.  We fetch all docs and sort client-side.
+      //
+      // ROOT-CAUSE FIX (2026-05-15): `.limit(100)` silently truncated the
+      // categories collection once it grew past 100 docs (Categories v3 +
+      // CSM additions). Any screen relying on this stream to RESOLVE a
+      // specific category (EditProfile's "תחום עיסוק" dropdown) failed
+      // intermittently because the target category wasn't in the
+      // truncated 100. Raised to 500 to match the admin tools.
       FirebaseFirestore.instance
           .collection('categories')
-          .limit(100)
+          .limit(500)
           .snapshots()
           .map((snap) {
             final cats = snap.docs

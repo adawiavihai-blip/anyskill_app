@@ -31,6 +31,7 @@ import '../../constants/motorcycle_urgency_levels.dart';
 import '../../widgets/address_input.dart';
 import '../../widgets/wolt_tile_layer.dart';
 import '../../models/motorcycle_tow_profile.dart';
+import '../../services/geocoding_service.dart';
 import '../../services/motorcycle_bike_types_service.dart';
 import '../../services/motorcycle_tow_booking_service.dart';
 import 'motorcycle_tow_palette.dart';
@@ -86,6 +87,16 @@ class _MotorcycleTowBookingBlockState
   double? _dropoffLat;
   double? _dropoffLng;
   double _distanceKm = 0;
+
+  // Wolt-style map picker state for step 3 ("מאיפה לאן?"). Ported from the
+  // Flash Auction location screen so urgent dispatch + scheduled booking
+  // share the same drag-the-map-pin → address auto-fill UX.
+  final MapController _locMapCtrl = MapController();
+  String _activePin = 'pickup'; // which pin the centred marker commits to
+  LatLng _mapCenter = const LatLng(32.0853, 34.7818); // Tel Aviv default
+  int _pickupAddrVersion = 0; // bumped to re-seed the pickup AddressInput
+  int _dropoffAddrVersion = 0; // bumped to re-seed the dropoff AddressInput
+  bool _geocodingPin = false; // reverse-geocode round-trip in flight
   String _urgencyId = 'within_hour';
   DateTime? _scheduledAt;
   final _contactNameCtrl = TextEditingController();
@@ -126,6 +137,7 @@ class _MotorcycleTowBookingBlockState
     _dropoffAddressCtrl.dispose();
     _contactNameCtrl.dispose();
     _contactPhoneCtrl.dispose();
+    _locMapCtrl.dispose();
     super.dispose();
   }
 
@@ -303,7 +315,7 @@ class _MotorcycleTowBookingBlockState
                     number: 3,
                     title: 'מאיפה לאן?',
                     description:
-                        'מלא את כתובת המוצא והיעד. ניתן להעלות תמונות של האופנוע — מומלץ מאוד.',
+                        'סמן על המפה או הקלד — הכתובת תתמלא אוטומטית. ניתן להעלות תמונות של האופנוע — מומלץ מאוד.',
                     child: _buildLocationsAndPhotos(),
                   ),
                   const SizedBox(height: 14),
@@ -1025,19 +1037,30 @@ class _MotorcycleTowBookingBlockState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // Wolt-style map picker — drag so the centred pin lands on the
+        // location, tap "הצב כאן", and the address fields below auto-fill
+        // via reverse-geocoding. Ported from the Flash Auction location
+        // screen ("מצא גרר דחוף") so both towing flows share the same UX.
+        _buildLocationPinToggle(),
+        const SizedBox(height: 8),
+        _buildLocationMap(),
+        const SizedBox(height: 8),
+        _buildLocationMapTip(),
+        const SizedBox(height: 14),
         const _MiniLabel(text: 'מאיפה (מיקום הגרירה)'),
         const SizedBox(height: 4),
         // Smart two-field autocomplete bridged to legacy `_pickupAddressCtrl`
         // via combined; coords auto-set on dropdown selection and trigger
         // _updateDistanceFromPins so the live distance preview stays in
-        // sync without a second forward-geocode round-trip.
+        // sync. The key carries `_pickupAddrVersion` so the widget re-seeds
+        // whenever a map-pin commit reverse-geocoded a fresh address in.
         Builder(builder: (_) {
           final initial = AddressValue.fromCombined(_pickupAddressCtrl.text);
           return AddressInput(
-            key: const ValueKey('motorcycle-tow-pickup'),
+            key: ValueKey('motorcycle-tow-pickup-$_pickupAddrVersion'),
             initialCity: initial.city,
             initialStreet: initial.street,
-            accentColor: _MTP.purple500,
+            accentColor: _MTP.green500,
             dense: true,
             streetHint: 'למשל: יגאל אלון 94',
             onChanged: (v) {
@@ -1046,12 +1069,7 @@ class _MotorcycleTowBookingBlockState
             },
             onCoordinatesResolved: (coords) {
               if (coords != null) {
-                setState(() {
-                  _pickupLat = coords.latitude;
-                  _pickupLng = coords.longitude;
-                });
-                _updateDistanceFromPins();
-                _emit();
+                _applyLocationCoords(coords, pickup: true);
               }
             },
           );
@@ -1063,10 +1081,10 @@ class _MotorcycleTowBookingBlockState
           final initial =
               AddressValue.fromCombined(_dropoffAddressCtrl.text);
           return AddressInput(
-            key: const ValueKey('motorcycle-tow-dropoff'),
+            key: ValueKey('motorcycle-tow-dropoff-$_dropoffAddrVersion'),
             initialCity: initial.city,
             initialStreet: initial.street,
-            accentColor: _MTP.green500,
+            accentColor: _MTP.purple500,
             dense: true,
             streetHint: 'למשל: מוסך הצפון, האלון 12',
             onChanged: (v) {
@@ -1075,12 +1093,7 @@ class _MotorcycleTowBookingBlockState
             },
             onCoordinatesResolved: (coords) {
               if (coords != null) {
-                setState(() {
-                  _dropoffLat = coords.latitude;
-                  _dropoffLng = coords.longitude;
-                });
-                _updateDistanceFromPins();
-                _emit();
+                _applyLocationCoords(coords, pickup: false);
               }
             },
           );
@@ -1117,6 +1130,326 @@ class _MotorcycleTowBookingBlockState
         _buildPhotoZone(),
       ],
     );
+  }
+
+  // ── Wolt-style map picker (step 3) ──────────────────────────────────────
+
+  /// Segmented "מאיפה / לאן" toggle — picks which pin the centred map
+  /// marker commits to.
+  Widget _buildLocationPinToggle() {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: _MTP.bgSecondary,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          _PinToggleChip(
+            label: 'מאיפה',
+            icon: Icons.my_location_rounded,
+            iconColor: _MTP.green500,
+            active: _activePin == 'pickup',
+            onTap: () => setState(() => _activePin = 'pickup'),
+          ),
+          _PinToggleChip(
+            label: 'לאן',
+            icon: Icons.place_rounded,
+            iconColor: _MTP.purple500,
+            active: _activePin == 'dropoff',
+            onTap: () => setState(() => _activePin = 'dropoff'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLocationMap() {
+    final pickupLL = (_pickupLat != null && _pickupLng != null)
+        ? LatLng(_pickupLat!, _pickupLng!)
+        : null;
+    final dropoffLL = (_dropoffLat != null && _dropoffLng != null)
+        ? LatLng(_dropoffLat!, _dropoffLng!)
+        : null;
+    final pickupActive = _activePin == 'pickup';
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _MTP.bgSecondary,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _MTP.borderTertiary, width: 0.5),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          height: 220,
+          width: double.infinity,
+          child: Stack(
+            children: [
+              FlutterMap(
+                mapController: _locMapCtrl,
+                options: MapOptions(
+                  initialCenter: _mapCenter,
+                  initialZoom: 13,
+                  minZoom: 6,
+                  maxZoom: 18,
+                  interactionOptions: const InteractionOptions(
+                    flags: InteractiveFlag.pinchZoom |
+                        InteractiveFlag.drag |
+                        InteractiveFlag.doubleTapZoom,
+                  ),
+                  onPositionChanged: (pos, _) {
+                    _mapCenter = pos.center;
+                  },
+                ),
+                children: [
+                  WoltTileLayer.forContext(context, maxZoom: 19),
+                  MarkerLayer(
+                    markers: [
+                      if (pickupLL != null)
+                        Marker(
+                          point: pickupLL,
+                          width: 26,
+                          height: 26,
+                          child: _mapMarker(
+                              Icons.my_location_rounded, _MTP.green500),
+                        ),
+                      if (dropoffLL != null)
+                        Marker(
+                          point: dropoffLL,
+                          width: 26,
+                          height: 26,
+                          child: _mapMarker(
+                              Icons.place_rounded, _MTP.purple500),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+              // Centred pin — always visible (Wolt UX). Colour follows the
+              // active slot so the user knows which pin they're placing.
+              IgnorePointer(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 22),
+                    child: Icon(
+                      pickupActive
+                          ? Icons.my_location_rounded
+                          : Icons.place_rounded,
+                      color: pickupActive ? _MTP.green500 : _MTP.purple500,
+                      size: 36,
+                      shadows: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.35),
+                          blurRadius: 5,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              // Bottom-overlay "commit this point" button.
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 12,
+                child: Material(
+                  color: pickupActive ? _MTP.green500 : _MTP.purple500,
+                  borderRadius: BorderRadius.circular(10),
+                  child: InkWell(
+                    onTap: _geocodingPin ? null : _commitLocationPin,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (_geocodingPin)
+                            const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          else
+                            const Icon(Icons.push_pin_rounded,
+                                color: Colors.white, size: 14),
+                          const SizedBox(width: 6),
+                          Text(
+                            _geocodingPin
+                                ? 'מאתר כתובת...'
+                                : (pickupActive
+                                    ? 'הצב כאן את נקודת המוצא'
+                                    : 'הצב כאן את נקודת היעד'),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _mapMarker(IconData icon, Color color) {
+    return Container(
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.2),
+            blurRadius: 4,
+          ),
+        ],
+      ),
+      child: Icon(icon, color: Colors.white, size: 12),
+    );
+  }
+
+  Widget _buildLocationMapTip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: _MTP.purple50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _MTP.purple200, width: 0.5),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline_rounded,
+              size: 16, color: _MTP.purple500),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text.rich(
+              TextSpan(
+                style: TextStyle(
+                  fontSize: 12,
+                  color: _MTP.purple700,
+                  height: 1.5,
+                ),
+                children: [
+                  TextSpan(
+                    text: 'טיפ: ',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  TextSpan(
+                    text:
+                        'גרור את המפה כדי שהסיכה תיפול על המיקום — לחץ "הצב כאן" — והכתובת תתמלא אוטומטית. עבור בין "מאיפה" ל-"לאן" בלשוניות שמעל.',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Called when an AddressInput resolves a typed street to coordinates —
+  /// drops the matching pin + recenters the map so the typed-address and
+  /// map-pin paths stay in sync.
+  void _applyLocationCoords(LatLng coords, {required bool pickup}) {
+    setState(() {
+      if (pickup) {
+        _pickupLat = coords.latitude;
+        _pickupLng = coords.longitude;
+        _activePin = 'pickup';
+      } else {
+        _dropoffLat = coords.latitude;
+        _dropoffLng = coords.longitude;
+        _activePin = 'dropoff';
+      }
+      _mapCenter = coords;
+    });
+    _updateDistanceFromPins();
+    _emit();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        _locMapCtrl.move(coords, 15);
+      } catch (_) {}
+    });
+  }
+
+  /// Commit the centred map pin to the active slot, then reverse-geocode
+  /// the coordinates so the matching address field auto-fills (Wolt-style).
+  /// On any geocoding failure the pin still stands — the customer can type
+  /// the address manually instead. The pin's lat/lng are set immediately
+  /// so the live distance preview updates without waiting for Nominatim.
+  Future<void> _commitLocationPin() async {
+    final pinned = _mapCenter;
+    final forPickup = _activePin == 'pickup';
+    setState(() {
+      _geocodingPin = true;
+      if (forPickup) {
+        _pickupLat = pinned.latitude;
+        _pickupLng = pinned.longitude;
+      } else {
+        _dropoffLat = pinned.latitude;
+        _dropoffLng = pinned.longitude;
+      }
+    });
+    _updateDistanceFromPins();
+
+    StreetSuggestion? result;
+    try {
+      result = await GeocodingService.reverseGeocode(pinned);
+    } catch (_) {
+      result = null;
+    }
+    if (!mounted) return;
+
+    if (result == null) {
+      setState(() => _geocodingPin = false);
+      _emit();
+      return;
+    }
+
+    // Build a friendly "<street> <house>, <city>" string. AddressInput
+    // splits this back into city + street via AddressValue.fromCombined.
+    final road = (result.road ?? '').trim();
+    final house = (result.houseNumber ?? '').trim();
+    final city = (result.city ?? '').trim();
+    final streetPart = [
+      if (road.isNotEmpty) road,
+      if (house.isNotEmpty) house,
+    ].join(' ').trim();
+    String combined;
+    if (streetPart.isEmpty && city.isEmpty) {
+      combined = result.displayName.trim();
+    } else if (streetPart.isEmpty) {
+      combined = city;
+    } else if (city.isEmpty) {
+      combined = streetPart;
+    } else {
+      combined = '$streetPart, $city';
+    }
+
+    setState(() {
+      _geocodingPin = false;
+      if (forPickup) {
+        _pickupAddressCtrl.text = combined;
+        _pickupAddrVersion++; // re-seed the pickup AddressInput
+      } else {
+        _dropoffAddressCtrl.text = combined;
+        _dropoffAddrVersion++;
+      }
+    });
+    _emit();
   }
 
   Future<void> _showDistanceManualEntryDialog(BuildContext context) async {
@@ -1879,6 +2212,64 @@ class _MiniLabel extends StatelessWidget {
         fontSize: 12,
         fontWeight: FontWeight.w500,
         color: _MTP.textPrimary,
+      ),
+    );
+  }
+}
+
+/// Segmented chip for the Wolt-style map pin-mode toggle (מאיפה / לאן).
+class _PinToggleChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color iconColor;
+  final bool active;
+  final VoidCallback onTap;
+  const _PinToggleChip({
+    required this.label,
+    required this.icon,
+    required this.iconColor,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: active ? _MTP.bgPrimary : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+            boxShadow: active
+                ? [
+                    BoxShadow(
+                      color: _MTP.borderTertiary.withValues(alpha: 0.5),
+                      blurRadius: 0,
+                      spreadRadius: 0.5,
+                    ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 14, color: iconColor),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: active ? _MTP.textPrimary : _MTP.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

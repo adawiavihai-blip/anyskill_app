@@ -92,8 +92,15 @@ class _ExpertJobCardState extends State<ExpertJobCard>
       // Kick off live GPS broadcast so the customer's Active Booking
       // screen shows the provider moving on the map. Permission failures
       // are non-fatal — the status flag is still set.
+      //
+      // Pen-test fix VULN-005: customerId stamps the live-location doc so
+      // only the actual customer (not every auth user) can read.
       try {
-        await LiveLocationService.startBroadcasting(activeJobId: widget.jobId);
+        final customerId = widget.job['customerId'] as String? ?? '';
+        await LiveLocationService.startBroadcasting(
+          activeJobId: widget.jobId,
+          customerId: customerId,
+        );
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -112,6 +119,19 @@ class _ExpertJobCardState extends State<ExpertJobCard>
     }
   }
 
+  /// A trip-based job (motorcycle tow / flash auction) has a SECOND leg
+  /// after "הגעתי": the provider loads the bike and drives it to the
+  /// destination. Detected by a dropoff coordinate on the job doc.
+  bool get _isTripJob {
+    final mtp = widget.job['motorcycleTowPreferences'];
+    if (mtp is Map &&
+        (mtp['dropoffLat'] as num?) != null &&
+        (mtp['dropoffLng'] as num?) != null) {
+      return true;
+    }
+    return false;
+  }
+
   Future<void> _markWorkStarted() async {
     setState(() => _startingWork = true);
     try {
@@ -122,9 +142,23 @@ class _ExpertJobCardState extends State<ExpertJobCard>
         'workStartedAt': FieldValue.serverTimestamp(),
         'expertOnWay':   false,
       });
-      // Stop broadcasting — the provider has arrived. Customer's map
-      // falls back to the booking destination marker.
-      await LiveLocationService.stopBroadcasting();
+      // For a normal job the provider has arrived and the live map is no
+      // longer needed → stop broadcasting. For a TRIP job (tow / flash
+      // auction) the work has a second leg — the provider now drives the
+      // bike to the destination — so we KEEP broadcasting so the customer
+      // can track the towing-to-destination leg. The broadcast is stopped
+      // when the provider taps "סיימתי את העבודה".
+      if (!_isTripJob) {
+        await LiveLocationService.stopBroadcasting();
+      } else {
+        // Re-affirm the broadcast binding (no-op-safe when already running).
+        try {
+          await LiveLocationService.startBroadcasting(
+            activeJobId: widget.jobId,
+            customerId: widget.job['customerId'] as String? ?? '',
+          );
+        } catch (_) {/* status flag is set regardless */}
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -532,8 +566,13 @@ class _ExpertJobCardState extends State<ExpertJobCard>
                       label: 'סיימתי את העבודה',
                       icon: Icons.check_circle_rounded,
                       color: const Color(0xFF16A34A),
-                      onPressed: () =>
-                          widget.onMarkDone(widget.jobId, chatRoomId),
+                      onPressed: () {
+                        // Stop the live broadcast on completion. Idempotent
+                        // — harmless for non-trip jobs (already stopped at
+                        // "הגעתי"); for trip jobs this is the real stop.
+                        LiveLocationService.stopBroadcasting();
+                        widget.onMarkDone(widget.jobId, chatRoomId);
+                      },
                     ),
                     const SizedBox(height: 8),
                   ],

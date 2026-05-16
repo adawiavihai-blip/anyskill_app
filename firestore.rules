@@ -257,6 +257,12 @@ service cloud.firestore {
           // are managed exclusively by MonetizationService.setUserCommission
           // (admin-only) → uses Admin SDK rule bypass.
           'customCommission', 'customCommissionActive',
+          // pen-test 2026-05-15 (VULN-004): pendingBalance was NOT in this
+          // blocklist, so the general owner-update branch let the owner set
+          // their own pendingBalance to ANY value (incl. negative or
+          // inflated). pendingBalance is CF-managed; the ONLY client write
+          // allowed is the dedicated owner-decrement branch below.
+          'pendingBalance',
           // Phone is locked after first OTP verification. The dedicated
           // PhoneCollectionScreen has a one-shot allowance below — once
           // `phoneVerifiedAt` is set, only CF/admin can change either.
@@ -282,15 +288,41 @@ service cloud.firestore {
             && request.resource.data.balance <= resource.data.balance)
         // ── Owner activeRole switch (RoleSwitcherScreen) ──────────────────
         // Multi-role users can pick which role is active for the session.
-        // SECURITY: the new value MUST be a member of the user's `roles`
-        // array. Since `roles` is itself CF-only (blocked above), a user
-        // cannot bootstrap themselves into admin/support_agent via this
-        // branch — they can only switch among roles they were already
-        // granted by setUserRole CF.
+        //
+        // The user MUST already hold the role they're switching to. We
+        // accept BOTH role schemas — exactly mirroring how the Dart
+        // `UserRoles.fromUserDoc` resolves a user's roles:
+        //   • NEW schema:  membership in the `roles` array.
+        //   • LEGACY schema: the `isProvider` / `isCustomer` / `isAdmin`
+        //     booleans + the `role` string.
+        //
+        // BUG FIX (2026-05-15, רועי צברי "chose customer → error"): the
+        // previous rule ONLY checked the `roles` array. Legacy users
+        // (Roi: `isProvider:true` + `isCustomer:true`, NO `roles` array)
+        // got `permission-denied` on EVERY role switch — the Dart layer
+        // showed both role cards (it reads the booleans) but the rule
+        // rejected the write.
+        //
+        // SECURITY: still safe. `roles`, `role`, `isAdmin` are all
+        // CF-only (blocked above / onboarding only) — a user cannot
+        // bootstrap into admin/support_agent. `isProvider`/`isCustomer`
+        // are owner-writable but those are NOT privileged roles, so
+        // letting the owner set `activeRole` to one they flagged
+        // themselves grants nothing they didn't already have.
         || (isOwner(uid)
             && onlyFields(['activeRole'])
             && request.resource.data.activeRole is string
-            && (request.resource.data.activeRole in resource.data.get('roles', [])))
+            && (
+                 request.resource.data.activeRole in resource.data.get('roles', [])
+                 || (request.resource.data.activeRole == 'customer'
+                     && resource.data.get('isCustomer', false) == true)
+                 || (request.resource.data.activeRole == 'provider'
+                     && resource.data.get('isProvider', false) == true)
+                 || (request.resource.data.activeRole == 'admin'
+                     && resource.data.get('isAdmin', false) == true)
+                 || (request.resource.data.activeRole == 'support_agent'
+                     && resource.data.get('role', '') == 'support_agent')
+               ))
         // ── Admin full access ──────────────────────────────────────────────
         || isAdmin()
         // ── Review aggregation ────────────────────────────────────────────
@@ -319,16 +351,23 @@ service cloud.firestore {
         // Provider writes streak data on own doc; engagement service writes
         // profileBoostUntil when a boost card is awarded.
         || (isOwner(uid) && onlyFields(['streak', 'lastStreakDate', 'streakBestEver', 'lastDailyDropDate', 'profileBoostUntil']))
-        // ── pendingBalance — INCREMENTS BLOCKED (v15.x audit Q7) ────────
+        // ── pendingBalance — OWNER-ONLY DECREMENT (pen-test fix VULN-004) ──
         // INCREMENTS (credits) go through CFs only: createEscrowPayment,
         // createTaskEscrow, addTipToJob. This blocks the exploit where any
         // user could inflate another user's pendingBalance.
-        // DECREMENTS (on cancel/release) are still allowed client-side
-        // because cancellation penalty logic lives in Dart. Actual payouts
-        // use job doc amounts, not pendingBalance, so a malicious decrement
-        // causes only a cosmetic issue on the admin dashboard.
-        || (isVerifiedAuth()
+        //
+        // SECURITY (pen-test 2026-05-15 — VULN-004): the previous rule
+        // allowed ANY auth user to decrement ANY other user's pendingBalance.
+        // While monetary payout math uses job doc amounts (not this field),
+        // a malicious user could grief any provider by zeroing their visible
+        // "pending earnings" — breaking trust + faking admin reports.
+        // Now only the OWNER may decrement their own pendingBalance.
+        // Long-term: migrate decrements to a CF and remove this branch.
+        || (isOwner(uid)
             && onlyFields(['pendingBalance'])
+            && resource.data.pendingBalance is number
+            && request.resource.data.pendingBalance is number
+            && request.resource.data.pendingBalance >= 0
             && request.resource.data.pendingBalance < resource.data.pendingBalance);
 
       // Deletion is only performed by the Account Deletion Cloud Function
@@ -409,10 +448,49 @@ service cloud.firestore {
       // Normal creation path = Admin SDK in Cloud Functions.
       // Client code also creates notifications for volunteer/help_request flows.
       // Size limit: prevent abuse at scale (max 10 fields, body < 1000 chars).
+      //
+      // SECURITY (pen-test 2026-05-15 — VULN-006): the previous rule let
+      // ANY auth user create a notification with ANY userId target — an
+      // in-app phishing primitive ("Click here to verify your account").
+      // Now we require:
+      //   1. The notification carries a known client-side `type` (allow-list);
+      //   2. EITHER the recipient is the caller themselves (self-notify
+      //      patterns — local reminders), OR the type is one of the
+      //      cross-user flows where the caller's role is clear from the
+      //      data (volunteer/help/csat). For those cross-user types we
+      //      additionally require the caller's uid to be present in a
+      //      `senderId` field so the audit trail is complete.
+      // Truly trusted writes (system-wide broadcasts, admin grants, etc.)
+      // must continue to flow through Cloud Functions (Admin SDK bypasses
+      // these rules).
       allow create: if isAdmin()
                     || (isVerifiedAuth()
                         && request.resource.data.keys().size() <= 10
-                        && request.resource.data.get('body', '').size() <= 1000);
+                        && request.resource.data.get('body', '').size() <= 1000
+                        && request.resource.data.get('type', '') is string
+                        && (
+                             // Self-notifications (local reminders, CSAT prompts).
+                             request.resource.data.get('userId', '') == request.auth.uid
+                             // Cross-user flows: caller must stamp themselves as sender
+                             // AND the type must be on the allow-list.
+                             || (
+                                  request.resource.data.get('senderId', '') == request.auth.uid
+                                  && request.resource.data.type in [
+                                       'help_request',
+                                       'volunteer_request',
+                                       'volunteer_accepted',
+                                       'volunteer_completed',
+                                       'community_request',
+                                       'community_accepted',
+                                       'community_completed',
+                                       'broadcast_claimed',
+                                       'request_declined',
+                                       'csat_survey_response',
+                                       'demo_contact',
+                                       'review_published',
+                                     ]
+                                )
+                           ));
 
       // Owner may dismiss (delete) their own notifications.
       allow delete: if isVerifiedAuth() && resource.data.userId == request.auth.uid;
@@ -1267,6 +1345,14 @@ service cloud.firestore {
     //
     // Anyone can create. Participants (requester or volunteer) can read/update.
     // Self-claim block enforced at service layer (requesterId != volunteerId).
+    //
+    // SECURITY (pen-test 2026-05-15 — VULN-001): the previous update rule
+    // allowed ANY auth user to rewrite EVERY field on every `status == 'open'`
+    // request — change requesterId, hijack volunteerId (impersonate), rewrite
+    // description (inject phishing links), pre-claim categories, etc. Now
+    // non-participants get a single narrow primitive: a self-claim that
+    // sets `volunteerId`/`volunteerName` to themselves AND flips status to
+    // 'accepted' atomically. All other fields are immutable for them.
     // ═══════════════════════════════════════════════════════════════════════
     match /community_requests/{reqId} {
       allow create: if isVerifiedAuth()
@@ -1278,23 +1364,44 @@ service cloud.firestore {
                           || resource.data.volunteerId == request.auth.uid))
                   || (isVerifiedAuth() && resource.data.status == 'open');
 
+      // Three update branches:
+      //   1. Admin always.
+      //   2. Existing participant (requester or assigned volunteer) — full
+      //      update for the lifecycle (start, complete, reject, etc.).
+      //   3. Non-participant self-claim on an OPEN request — append-only,
+      //      only the volunteer-claim fields, status flips to 'accepted'.
       allow update: if isAdmin()
                     || (isVerifiedAuth()
                         && (resource.data.requesterId  == request.auth.uid
-                            || resource.data.volunteerId == request.auth.uid
-                            || resource.data.status == 'open'));
+                            || resource.data.volunteerId == request.auth.uid))
+                    || (isVerifiedAuth()
+                        && resource.data.status == 'open'
+                        && resource.data.requesterId != request.auth.uid
+                        && resource.data.get('volunteerId', '') == ''
+                        && onlyFields(['volunteerId', 'volunteerName',
+                                       'claimedAt', 'status'])
+                        && request.resource.data.volunteerId == request.auth.uid
+                        && request.resource.data.status == 'accepted');
 
       allow delete: if false;
     }
 
 
     // ═══════════════════════════════════════════════════════════════════════
-    // ANYTASKS 3.0 (global task marketplace)
+    // ANYTASKS 3.0 (legacy global task marketplace)
     //
-    // Creator posts tasks. Any verified user can browse open tasks and claim.
-    // Self-assignment block (creatorId != auth.uid on claim) enforced at
-    // service layer AND in the update rule below.
-    // Escrow payment reuses the existing jobs collection pipeline.
+    // SECURITY (pen-test 2026-05-15 — VULN-002): the previous update rule
+    // allowed ANY auth user (non-creator) to rewrite EVERY field on every
+    // `status == 'open'` task — including creatorId, budgetNis, escrow
+    // fields, and status (potentially flipping to 'completed' to trick the
+    // payout pipeline). Provider-side updates were ALSO unrestricted once
+    // they had claimed (no field allow-list). Now both branches use tight
+    // field allow-lists.
+    //
+    // Note: this is the LEGACY collection (no underscore). The v14.x
+    // marketplace lives at `any_tasks` (line ~1759) with proper rules. If
+    // confirmed unused, this entire match block can be locked to admin-only
+    // in a future PR.
     // ═══════════════════════════════════════════════════════════════════════
     match /anytasks/{taskId} {
       allow create: if isVerifiedAuth()
@@ -1307,15 +1414,39 @@ service cloud.firestore {
                       && (resource.data.creatorId  == request.auth.uid
                           || resource.data.providerId == request.auth.uid));
 
-      // Creator can update (cancel, confirm, dispute).
-      // Provider can update (claim open task, start work, submit proof) — but NOT own task.
-      // Admin: full access.
+      // Update branches (each with a strict field allow-list):
+      //   1. Admin — full access.
+      //   2. Creator — task lifecycle fields (cancel, confirm, dispute,
+      //      description edits). Cannot touch creatorId/budgetNis (immutable
+      //      at create-time) or escrow status flips reserved for CFs.
+      //   3. Open-task claim by non-creator — append-only providerId claim
+      //      that flips status to 'in_progress'. Nothing else touched.
+      //   4. Assigned provider — work-status fields + proof submission.
+      //      Cannot mutate budget, creatorId, or jump status to 'completed'.
       allow update: if isAdmin()
-                    || (isVerifiedAuth() && resource.data.creatorId == request.auth.uid)
                     || (isVerifiedAuth()
+                        && resource.data.creatorId == request.auth.uid
+                        && request.resource.data.creatorId == request.auth.uid
+                        && onlyFields(['title', 'description', 'status',
+                                       'cancelledAt', 'cancelReason',
+                                       'disputedAt', 'disputeReason',
+                                       'imageUrl', 'deadline',
+                                       'clientReviewDone']))
+                    || (isVerifiedAuth()
+                        && resource.data.status == 'open'
                         && resource.data.creatorId != request.auth.uid
-                        && (resource.data.providerId == request.auth.uid
-                            || resource.data.status == 'open'));
+                        && resource.data.get('providerId', '') == ''
+                        && onlyFields(['providerId', 'providerName',
+                                       'claimedAt', 'status'])
+                        && request.resource.data.providerId == request.auth.uid
+                        && request.resource.data.status == 'in_progress')
+                    || (isVerifiedAuth()
+                        && resource.data.get('providerId', '') == request.auth.uid
+                        && resource.data.creatorId != request.auth.uid
+                        && onlyFields(['proofUrl', 'proofText',
+                                       'proofSubmittedAt',
+                                       'expertOnWayAt', 'workStartedAt',
+                                       'providerReviewDone', 'status']));
 
       allow delete: if false;
 
@@ -1386,15 +1517,52 @@ service cloud.firestore {
 
     // ═══════════════════════════════════════════════════════════════════════
     // ADMIN COLLECTION (fee settings, broadcast config, etc.)
-    // Any verified + authenticated user may READ (needed for fee calculations).
-    // Only admins may WRITE.
+    //
+    // SECURITY (pen-test 2026-05-15 — VULN-003): the previous rule allowed
+    // any auth user to read the ENTIRE admin tree — leaking sensitive fields
+    // (`totalPlatformBalance` revenue figure, broadcast config, internal
+    // metrics) to every customer. Clients DO need to read the singleton
+    // settings doc for fee preview during booking; that single path is
+    // explicitly carved out. Everything else collapses to admin-only read.
+    //
+    // Allowed client reads:
+    //   • /admin/admin              — only the `feePercentage` /
+    //                                 `urgencyFeePercentage` floats are
+    //                                 needed for fee preview. Reading the
+    //                                 doc returns all fields, but the
+    //                                 explicit-allow-list pattern would
+    //                                 require splitting fields between docs;
+    //                                 documented as accepted exposure of the
+    //                                 settings-doc fields only.
+    //   • /admin/admin/settings/settings — same doc under the legacy
+    //                                 sub-path used by the Dart client.
+    //
+    // All other docs and nested subcollections (broadcast config, KPIs,
+    // ad-hoc admin scratch space) are admin/CMS-admin only.
     // ═══════════════════════════════════════════════════════════════════════
     match /admin/{docId} {
-      allow read:  if isVerifiedAuth();
+      // Top-level: clients only see the single 'admin' config doc (which
+      // carries feePercentage / urgencyFeePercentage for fee preview).
+      // Everything else (broadcast_history, market_alerts under /admin/,
+      // ad-hoc admin scratch space) is admin-only.
+      allow read:  if isAdmin() || isCmsAdmin()
+                   || (isVerifiedAuth() && docId == 'admin');
       allow write: if isAdmin() || isCmsAdmin();
 
+      // Explicit carve-out: the booking flow reads the legacy nested
+      // settings doc at admin/admin/settings/settings for fee preview.
+      // A `path`-typed recursive wildcard has no `.matches()` method, so
+      // this is a dedicated single-segment match instead. Firestore rule
+      // OR-semantics: this granting read is sufficient even though the
+      // recursive admin-only block below also matches this path.
+      match /settings/{settingId} {
+        allow read:  if isAdmin() || isCmsAdmin() || isVerifiedAuth();
+        allow write: if isAdmin() || isCmsAdmin();
+      }
+
+      // Everything else nested under /admin/** is admin-only.
       match /{nestedDoc=**} {
-        allow read:  if isVerifiedAuth();
+        allow read:  if isAdmin() || isCmsAdmin();
         allow write: if isAdmin() || isCmsAdmin();
       }
     }
@@ -1742,13 +1910,26 @@ service cloud.firestore {
       }
     }
     // ── Provider live GPS (Active Booking map) ──────────────────────────
-    // Single doc per provider keyed by uid. Provider owns writes; any
-    // authenticated user may read (the data is coarse live GPS — the
-    // customer needs it to render a moving marker during an active job).
-    // The provider is responsible for deleting the doc when the job ends
-    // (see LiveLocationService.stopBroadcasting).
+    // Single doc per provider keyed by uid. Provider owns writes; only the
+    // customer of the CURRENT active job + the provider themselves + admin
+    // may read.
+    //
+    // SECURITY (pen-test 2026-05-15 — VULN-005): the previous rule allowed
+    // ANY auth user to read any provider's live GPS — a real-time stalking
+    // primitive. The fix requires the live-location doc to carry the active
+    // job's customerId, and only that customer (or the provider themselves,
+    // or admin) can read.
+    //
+    // Schema requirement: LiveLocationService.startBroadcasting MUST set
+    // both `customerId` and `activeJobId` on the doc when the provider
+    // starts broadcasting. Without `customerId`, only the provider + admin
+    // can read (safe fallback — no stalking, but customer-side map breaks
+    // for legacy docs until the provider re-broadcasts).
     match /provider_live_location/{providerUid} {
-      allow read:   if isAdmin() || isVerifiedAuth();
+      allow read:   if isAdmin()
+                    || (isVerifiedAuth()
+                        && (request.auth.uid == providerUid
+                            || request.auth.uid == resource.data.get('customerId', '')));
       allow create, update: if isVerifiedAuth()
                     && request.auth.uid == providerUid
                     && request.resource.data.providerId == request.auth.uid;
@@ -1883,6 +2064,9 @@ service cloud.firestore {
     }
     match /delivery_express_book_idempotency/{docId} {
       allow read, write: if false; // CF-only via bookFromDeliveryExpressOffer (§78)
+    }
+    match /tip_idempotency/{docId} {
+      allow read, write: if false; // CF-only via addTipToJob (§79.A.10)
     }
 
     // ── Holding account for deleted expert funds (§77 audit follow-up) ────────
@@ -2090,9 +2274,13 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════════════════
     // PENDINGBALANCE HARDENING
     // ═══════════════════════════════════════════════════════════════════════
-    // RESOLVED (v15.x audit Q7): pendingBalance client writes BLOCKED.
-    // All mutations go through CFs: createEscrowPayment, createTaskEscrow,
-    // addTipToJob, processPaymentRelease, releaseTaskPayment.
+    // Increments: BLOCKED — CFs only (createEscrowPayment, createTaskEscrow,
+    //   addTipToJob, etc.).
+    // Decrements (pen-test fix VULN-004, 2026-05-15):
+    //   • OWNER-ONLY at the users/{uid} rule (see line ~330 above).
+    //     Cross-user decrement (defacement primitive) is now blocked.
+    //   • Long-term: migrate decrements to a CF too so this branch can be
+    //     deleted entirely.
     // ═══════════════════════════════════════════════════════════════════════
 
   }

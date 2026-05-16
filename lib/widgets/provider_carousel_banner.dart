@@ -44,6 +44,7 @@ class ProviderCarouselBanner extends StatefulWidget {
     super.key,
     required this.config,
     required this.title,
+    this.sectionHeading,
     this.bannerId = '',
     this.height = 190,
     this.onImpression,
@@ -52,6 +53,11 @@ class ProviderCarouselBanner extends StatefulWidget {
 
   final ProviderCarouselConfig config;
   final String title;
+
+  /// Optional bold section heading rendered ABOVE the carousel card.
+  /// Hidden during loading + empty states so the user never sees an
+  /// orphaned "VIP providers" title floating over a grey skeleton box.
+  final String? sectionHeading;
 
   /// Firestore doc id of the owning banner — used as the cache key
   /// for the `smartProviderOrder` CF so the same user + same banner
@@ -141,16 +147,68 @@ class _ProviderCarouselBannerState extends State<ProviderCarouselBanner>
     if (ids.isEmpty) return const [];
     try {
       final out = <String, _RuntimeProvider>{};
+      // §15 Law 15 — each `.get()` chunk gets a 5s timeout. Without it,
+      // a zombie WebChannel on iOS Safari would leave the FutureBuilder
+      // in waiting state indefinitely → `_skeleton()` 190px grey square
+      // visible forever where the VIP banner should be. With timeout,
+      // a hung chunk throws and the catch below returns an empty list,
+      // which collapses the banner to SizedBox.shrink (build line 387).
       for (var i = 0; i < ids.length; i += 10) {
         final chunk = ids.sublist(i, (i + 10).clamp(0, ids.length));
         final qs = await FirebaseFirestore.instance
             .collection('users')
             .where(FieldPath.documentId, whereIn: chunk)
-            .get();
+            .get()
+            .timeout(const Duration(seconds: 5));
         for (final d in qs.docs) {
           out[d.id] = _RuntimeProvider.fromDoc(d);
         }
       }
+
+      // 2026-05-15 — Roi's report: "providers with gallery images
+      // should sync into the banner — 3 slots". For providers whose
+      // user-doc gallery is empty (legacy dual-identity providers
+      // who only saved via the listings path, or pre-§10.8.0
+      // accounts), fall back to `provider_listings`. Batched query —
+      // 1 extra round-trip per chunk-of-10, only when needed.
+      final missingGalleryUids = out.entries
+          .where((e) => e.value.galleryUrls.isEmpty)
+          .map((e) => e.key)
+          .toList();
+      if (missingGalleryUids.isNotEmpty) {
+        try {
+          for (var i = 0; i < missingGalleryUids.length; i += 10) {
+            final chunk = missingGalleryUids.sublist(
+                i, (i + 10).clamp(0, missingGalleryUids.length));
+            final lqs = await FirebaseFirestore.instance
+                .collection('provider_listings')
+                .where('uid', whereIn: chunk)
+                .where('identityIndex', isEqualTo: 0)
+                .limit(10)
+                .get()
+                .timeout(const Duration(seconds: 4));
+            for (final d in lqs.docs) {
+              final data = d.data();
+              final uid = data['uid'] as String? ?? '';
+              if (uid.isEmpty) continue;
+              final existing = out[uid];
+              if (existing == null || existing.galleryUrls.isNotEmpty) continue;
+              final rawGallery = (data['gallery'] as List?) ?? const [];
+              final urls = rawGallery.whereType<String>().toList();
+              if (urls.isEmpty) continue;
+              // Replace the runtime provider with one that includes
+              // the listing's gallery — keep all other fields.
+              out[uid] = existing.copyWithGallery(urls);
+            }
+          }
+          debugPrint(
+              '[ProviderCarouselBanner] Listing-gallery fallback filled ${missingGalleryUids.length} provider(s)');
+        } catch (e) {
+          debugPrint(
+              '[ProviderCarouselBanner] Listing-gallery fallback failed (continuing without): $e');
+        }
+      }
+
       // Preserve the admin-picked order BEFORE any sortMode transform.
       final ordered = [
         for (final id in ids)
@@ -167,7 +225,8 @@ class _ProviderCarouselBannerState extends State<ProviderCarouselBanner>
         unawaited(_requestAiOrder(base.map((p) => p.uid).toList()));
       }
       return base;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[ProviderCarouselBanner] _fetchProviders failed: $e');
       return const [];
     }
   }
@@ -378,18 +437,22 @@ class _ProviderCarouselBannerState extends State<ProviderCarouselBanner>
           });
         }
 
+        // While loading OR no resolved providers, collapse the entire
+        // section (title + card) so the home tab never shows a stranded
+        // section heading above an empty placeholder. The user reported
+        // a "grey square" in this slot — that was the legacy skeleton
+        // sitting under the title with no content. SizedBox.shrink fixes
+        // both loading and empty states cleanly.
         if (snap.connectionState != ConnectionState.done) {
-          return _skeleton();
+          return const SizedBox.shrink();
         }
         if (data.isEmpty) {
-          // No providers resolved — collapse so the outer carousel
-          // doesn't show a broken tile.
           return const SizedBox.shrink();
         }
 
         final current = data[_index % data.length];
 
-        return GestureDetector(
+        final card = GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () => _onCardTap(current),
           onLongPress: _togglePause,
@@ -425,6 +488,30 @@ class _ProviderCarouselBannerState extends State<ProviderCarouselBanner>
               ],
             ),
           ),
+        );
+
+        // Wrap with section heading only when data resolved successfully,
+        // so the title is in lockstep with content visibility.
+        final heading = widget.sectionHeading;
+        if (heading == null || heading.isEmpty) return card;
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(0, 10, 0, 4),
+              child: Text(
+                heading,
+                textDirection: TextDirection.rtl,
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF111827),
+                ),
+              ),
+            ),
+            SizedBox(height: widget.height, child: card),
+          ],
         );
       },
     );
@@ -721,16 +808,11 @@ class _ProviderCarouselBannerState extends State<ProviderCarouselBanner>
     );
   }
 
-  Widget _skeleton() {
-    return Container(
-      height: widget.height,
-      margin: const EdgeInsets.symmetric(horizontal: 2),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF4F4F5),
-        borderRadius: BorderRadius.circular(20),
-      ),
-    );
-  }
+  // Note: legacy `_skeleton()` (light-grey 190px placeholder) removed
+  // 2026-05-14 — it was the "grey square" users reported seeing in
+  // place of the VIP banner when `_fetchProviders` hung on a zombie
+  // WebChannel. Loading + empty states now both return SizedBox.shrink
+  // so the entire section (title + card) collapses cleanly.
 
   // ── Navigation ───────────────────────────────────────────────────
 
@@ -789,6 +871,24 @@ class _RuntimeProvider {
       isVerified: d['isVerified'] as bool? ?? false,
       isOnline: d['isOnline'] as bool? ?? false,
       galleryUrls: rawGallery.whereType<String>().toList(),
+    );
+  }
+
+  /// Returns a copy with replacement gallery — used by the listings
+  /// fallback in `_fetchProviders` to fill in gallery URLs for
+  /// providers whose user-doc gallery is empty (post-§10.1.0
+  /// dual-identity providers who only saved via the listings path).
+  _RuntimeProvider copyWithGallery(List<String> newGallery) {
+    return _RuntimeProvider(
+      uid: uid,
+      name: name,
+      serviceType: serviceType,
+      profileImage: profileImage,
+      rating: rating,
+      reviewsCount: reviewsCount,
+      isVerified: isVerified,
+      isOnline: isOnline,
+      galleryUrls: newGallery,
     );
   }
 

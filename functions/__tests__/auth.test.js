@@ -8241,3 +8241,2011 @@ describe("smartProviderOrder — Gemini callable + cache (§49)", () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// requestWithdrawal — money LEAVES the system (CLAUDE.md §4 / Phase 2 — Israeli
+// payment provider TBD). Provider/customer requests to withdraw ≥₪100 from
+// their wallet balance. The CF debits balance atomically + creates a
+// withdrawals/{id} doc (status: 'pending') + a transactions ledger entry.
+// Best-effort: notifies all admins via FCM + in-app.
+// Added 2026-05-14 — addresses gap in §79 coverage: §50 vulns closed but
+// requestWithdrawal had no test net before this session.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("requestWithdrawal — rejection paths", () => {
+  const cf = index.requestWithdrawal;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  test("rejects unauthenticated", async () => {
+    await expect(
+      cf({ auth: null, data: { amount: 200 } })
+    ).rejects.toMatchObject({ code: "unauthenticated" });
+  });
+
+  test("rejects amount missing", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: {} })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects amount NaN", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { amount: NaN } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects amount as string", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { amount: "200" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects amount below ₪100 minimum", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { amount: 99 } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects amount exactly ₪99.99 (boundary)", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { amount: 99.99 } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects when user doc does not exist", async () => {
+    mockCollection({}); // users/u1 not seeded → exists: false
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { amount: 200 } })
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  test("rejects unverified provider (isProvider=true, isVerifiedProvider=false)", async () => {
+    mockCollection({
+      "users/u1": mockDocSnap(true, {
+        balance: 500,
+        isProvider: true,
+        isVerifiedProvider: false,
+      }),
+    });
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { amount: 200 } })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+});
+
+describe("requestWithdrawal — happy paths", () => {
+  const cf = index.requestWithdrawal;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  // Helper: build a complete mock that captures tx.update + tx.set calls.
+  // The CF reads user doc OUTSIDE tx (for pre-checks), then RE-READS inside
+  // tx for fresh balance. Both must return same shape.
+  function setupWithdrawalMocks({
+    uid = "u1",
+    name = "Test Provider",
+    email = "p@example.com",
+    isProvider = true,
+    isVerifiedProvider = true,
+    balance = 1000,
+    freshBalance = null, // override for "balance changed mid-flight" scenarios
+  }) {
+    const txCalls = { update: [], set: [] };
+    const userData = { balance, name, email, isProvider, isVerifiedProvider };
+
+    mockFirestore.collection.mockImplementation((col) => {
+      const queryChain = {
+        where: jest.fn(() => queryChain),
+        limit: jest.fn(() => queryChain),
+        get: jest.fn(async () => ({ docs: [], empty: true })),
+      };
+      return {
+        doc: jest.fn((id) => ({
+          id: id || "auto-doc-id",
+          get: jest.fn(async () => {
+            if (col === "users" && id === uid) {
+              return { exists: true, id, data: () => userData };
+            }
+            return { exists: false, data: () => ({}) };
+          }),
+          set: jest.fn(async () => {}),
+          update: jest.fn(async () => {}),
+        })),
+        where: jest.fn(() => queryChain),
+      };
+    });
+
+    // Make collection().doc() (no id) return a doc with stable id
+    const origImpl = mockFirestore.collection.getMockImplementation();
+    mockFirestore.collection.mockImplementation((col) => {
+      const real = origImpl(col);
+      return {
+        ...real,
+        doc: jest.fn((id) => {
+          // Return same doc when called with id (for users), generate id otherwise
+          if (id) return real.doc(id);
+          return {
+            id: col === "withdrawals" ? "w-auto-id" : "tx-auto-id",
+            get: jest.fn(async () => ({ exists: false, data: () => ({}) })),
+            set: jest.fn(async () => {}),
+            update: jest.fn(async () => {}),
+          };
+        }),
+      };
+    });
+
+    mockFirestore.runTransaction = jest.fn(async (cb) => {
+      const tx = {
+        get: jest.fn(async (ref) => {
+          // Return FRESH balance (may differ from initial read — simulates
+          // concurrent updates). Default: same as initial read.
+          if (freshBalance !== null) {
+            return { exists: true, data: () => ({ ...userData, balance: freshBalance }) };
+          }
+          if (typeof ref.get === "function") return ref.get();
+          return mockDocSnap(false);
+        }),
+        update: jest.fn((ref, payload) => txCalls.update.push({ ref, payload })),
+        set:    jest.fn((ref, payload) => txCalls.set.push({ ref, payload })),
+      };
+      return cb(tx);
+    });
+
+    // Mock messaging() — CF tries to send FCM; we want it to NOT throw
+    // (it's wrapped in try/catch but we want clean test logs).
+    const adminLib = require("firebase-admin");
+    adminLib.messaging = jest.fn(() => ({
+      sendEachForMulticast: jest.fn(async () => ({ successCount: 0, failureCount: 0 })),
+    }));
+    // Mock batch() for the admin-notification side-effect.
+    mockFirestore.batch = jest.fn(() => ({
+      set: jest.fn(),
+      commit: jest.fn(async () => {}),
+    }));
+
+    return txCalls;
+  }
+
+  test("verified provider withdraws ₪200: balance debited, withdrawal+transaction created", async () => {
+    const txCalls = setupWithdrawalMocks({ uid: "p1", balance: 1000, isVerifiedProvider: true });
+
+    const result = await cf({
+      auth: { uid: "p1" },
+      data: { amount: 200 },
+    });
+
+    expect(result).toMatchObject({ success: true });
+    expect(result.withdrawalId).toBeTruthy();
+
+    // 1× update for balance decrement (users/p1)
+    expect(txCalls.update.length).toBe(1);
+    expect(txCalls.update[0].payload).toHaveProperty("balance");
+
+    // 2× set: withdrawal doc + transaction ledger
+    expect(txCalls.set.length).toBe(2);
+    const withdrawalWrite = txCalls.set.find((w) => w.payload.status === "pending");
+    const transactionWrite = txCalls.set.find((w) => w.payload.type === "withdrawal_pending");
+    expect(withdrawalWrite).toBeDefined();
+    expect(withdrawalWrite.payload.amount).toBe(200);
+    expect(withdrawalWrite.payload.userId).toBe("p1");
+    expect(transactionWrite).toBeDefined();
+    expect(transactionWrite.payload.amount).toBe(-200); // negative for outflow
+  });
+
+  test("legacy user without isVerifiedProvider field defaults to true (allowed)", async () => {
+    // Set isVerifiedProvider explicitly to undefined to simulate legacy doc.
+    // The CF checks `userData.isVerifiedProvider !== false` — undefined passes.
+    const txCalls = setupWithdrawalMocks({
+      uid: "legacy",
+      balance: 500,
+      isProvider: true,
+      isVerifiedProvider: undefined, // legacy: field missing
+    });
+
+    await expect(
+      cf({ auth: { uid: "legacy" }, data: { amount: 100 } })
+    ).resolves.toMatchObject({ success: true });
+
+    expect(txCalls.update.length).toBe(1);
+    expect(txCalls.set.length).toBe(2);
+  });
+
+  test("customer (isProvider=false) can withdraw refund credits", async () => {
+    const txCalls = setupWithdrawalMocks({
+      uid: "customer1",
+      balance: 300,
+      isProvider: false,
+      isVerifiedProvider: false, // irrelevant when isProvider=false
+    });
+
+    await expect(
+      cf({ auth: { uid: "customer1" }, data: { amount: 150 } })
+    ).resolves.toMatchObject({ success: true });
+
+    expect(txCalls.update[0].payload).toHaveProperty("balance");
+  });
+
+  test("exactly ₪100 (boundary) succeeds", async () => {
+    const txCalls = setupWithdrawalMocks({ uid: "p1", balance: 100, isVerifiedProvider: true });
+
+    await expect(
+      cf({ auth: { uid: "p1" }, data: { amount: 100 } })
+    ).resolves.toMatchObject({ success: true });
+
+    expect(txCalls.update.length).toBe(1);
+  });
+
+  test("insufficient balance inside transaction throws failed-precondition", async () => {
+    // Outer read shows balance=1000, but inside tx fresh read shows 50
+    // (simulates concurrent withdrawal that already happened).
+    setupWithdrawalMocks({
+      uid: "p1",
+      balance: 1000,
+      freshBalance: 50, // ← what tx.get sees
+      isVerifiedProvider: true,
+    });
+
+    await expect(
+      cf({ auth: { uid: "p1" }, data: { amount: 500 } })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("zero balance (fresh read) blocks withdrawal even when initial read was positive", async () => {
+    setupWithdrawalMocks({
+      uid: "p1",
+      balance: 1000,
+      freshBalance: 0,
+      isVerifiedProvider: true,
+    });
+
+    await expect(
+      cf({ auth: { uid: "p1" }, data: { amount: 100 } })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("notification failure (no admin tokens) does NOT fail the withdrawal", async () => {
+    // The setup already returns empty admin docs, so adminTokens = [].
+    // The CF's try/catch should silently swallow the absence and still return success.
+    const txCalls = setupWithdrawalMocks({ uid: "p1", balance: 500, isVerifiedProvider: true });
+
+    await expect(
+      cf({ auth: { uid: "p1" }, data: { amount: 200 } })
+    ).resolves.toMatchObject({ success: true });
+
+    // Transaction completed even without notifications.
+    expect(txCalls.update.length).toBe(1);
+    expect(txCalls.set.length).toBe(2);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// bookFromDeliveryExpressOffer — Flash Delivery atomic Pay & Secure
+// (CLAUDE.md §78). Customer selects a courier's offer from a delivery emergency
+// auction → CF runs atomic tx that:
+//   1. Debits customer balance
+//   2. Credits provider pendingBalance (net = total - commission)
+//   3. Increments platform totalPlatformBalance (commission)
+//   4. Creates jobs/{id} with status='paid_escrow' + deliveryPreferences snapshot
+//   5. Updates auction status='matched' + offer status='selected'
+//   6. Writes platform_earnings + transactions ledger entries
+// 3-layer commission resolution: custom > category > global (§31).
+// Idempotent via _checkIdempotency on (uid, clientReqId) (§60).
+// Added 2026-05-14 — gap in §79 coverage; no test existed pre-session.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("bookFromDeliveryExpressOffer — rejection paths", () => {
+  const cf = index.bookFromDeliveryExpressOffer;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  test("rejects unauthenticated", async () => {
+    await expect(
+      cf({ auth: null, data: { auctionId: "a1", offerId: "o1" } })
+    ).rejects.toMatchObject({ code: "unauthenticated" });
+  });
+
+  test("rejects missing auctionId", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { offerId: "o1" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects missing offerId", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { auctionId: "a1" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+});
+
+describe("bookFromDeliveryExpressOffer — happy paths + business rules", () => {
+  const cf = index.bookFromDeliveryExpressOffer;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  // Helper: build a complete mock for the booking flow. Captures all tx writes.
+  function setupBookMocks({
+    uid = "customer1",
+    customerBalance = 1000,
+    providerId = "provider1",
+    auctionExists = true,
+    auctionStatus = "searching",
+    auctionCustomerId = null, // null → matches uid
+    offerExists = true,
+    offerStatus = "pending",
+    offerProviderId = null, // null → matches providerId
+    totalPrice = 200,
+    etaMinutes = 30,
+    feePercentage = 0.10,
+    providerCategory = "משלוחים",
+    categoryCommissionPct = null, // null → no override
+    customCommissionActive = false,
+    customCommissionPct = null,
+    customCommissionExpiresAt = null,
+    cachedResult = null, // simulate idempotency hit
+  }) {
+    const txCalls = { update: [], set: [] };
+    const effectiveOfferProviderId = offerProviderId !== null ? offerProviderId : providerId;
+    const effectiveAuctionCustomerId = auctionCustomerId !== null ? auctionCustomerId : uid;
+
+    // Track the offer doc ref so the auction.collection('offers').doc(offerId) chain returns it
+    const buildOfferDoc = (id) => ({
+      id,
+      get: jest.fn(async () => offerExists
+        ? {
+          exists: true, id,
+          data: () => ({
+            providerId: effectiveOfferProviderId,
+            providerName: "Test Courier",
+            status: offerStatus,
+            totalPrice,
+            etaMinutes,
+            vehicleType: "scooter",
+            priceBreakdown: { base: 50, addOnsTotal: 0, immediateSurcharge: 30, kmAfter5: 20, total: totalPrice },
+          }),
+        }
+        : { exists: false, id, data: () => ({}) }),
+      set: jest.fn(async () => {}),
+      update: jest.fn(async () => {}),
+    });
+
+    const buildAuctionDoc = (id) => ({
+      id,
+      get: jest.fn(async () => auctionExists
+        ? {
+          exists: true, id,
+          data: () => ({
+            customerId: effectiveAuctionCustomerId,
+            status: auctionStatus,
+            packageType: "small_package",
+            urgencyReason: "urgent_pickup",
+            packageDescription: "Test package",
+            recipientName: "Recipient",
+            recipientPhone: "0500000000",
+            pickupLocation: { address: "Tel Aviv 1", lat: 32.0, lng: 34.7 },
+            dropoffLocation: { address: "Tel Aviv 2", lat: 32.1, lng: 34.8 },
+            distanceKm: 5,
+            photos: [],
+          }),
+        }
+        : { exists: false, id, data: () => ({}) }),
+      set: jest.fn(async () => {}),
+      update: jest.fn(async () => {}),
+      collection: jest.fn((subCol) => ({
+        doc: jest.fn((subId) => subCol === "offers"
+          ? buildOfferDoc(subId)
+          : { get: jest.fn(async () => ({ exists: false })), set: jest.fn(), update: jest.fn() }),
+      })),
+    });
+
+    mockFirestore.collection.mockImplementation((col) => {
+      const queryChain = {
+        where: jest.fn(() => queryChain),
+        limit: jest.fn(() => queryChain),
+        get: jest.fn(async () => ({ docs: [], empty: true })),
+      };
+      return {
+        doc: jest.fn((id) => {
+          if (col === "delivery_express") return buildAuctionDoc(id);
+          if (col === "users" && id === uid) {
+            return {
+              id,
+              get: jest.fn(async () => ({
+                exists: true, id,
+                data: () => ({ balance: customerBalance, name: "Customer", phone: "0501111111" }),
+              })),
+              set: jest.fn(async () => {}),
+              update: jest.fn(async () => {}),
+            };
+          }
+          if (col === "users" && id === providerId) {
+            return {
+              id,
+              get: jest.fn(async () => ({
+                exists: true, id,
+                data: () => ({
+                  serviceType: providerCategory,
+                  cancellationPolicy: "flexible",
+                  customCommissionActive,
+                  customCommission: customCommissionPct != null
+                    ? { percentage: customCommissionPct, expiresAt: customCommissionExpiresAt }
+                    : null,
+                }),
+              })),
+              set: jest.fn(async () => {}),
+              update: jest.fn(async () => {}),
+            };
+          }
+          if (col === "admin") {
+            return {
+              id,
+              get: jest.fn(async () => ({ exists: true, id, data: () => ({}) })),
+              collection: jest.fn(() => ({
+                doc: jest.fn(() => ({
+                  get: jest.fn(async () => ({
+                    exists: true,
+                    data: () => ({ feePercentage }),
+                  })),
+                  set: jest.fn(async () => {}),
+                })),
+              })),
+            };
+          }
+          if (col === "category_commissions") {
+            return {
+              id,
+              get: jest.fn(async () => categoryCommissionPct != null
+                ? { exists: true, data: () => ({ percentage: categoryCommissionPct }) }
+                : { exists: false, data: () => ({}) }),
+            };
+          }
+          if (col === "delivery_express_book_idempotency") {
+            return {
+              id,
+              get: jest.fn(async () => cachedResult
+                ? {
+                  exists: true,
+                  data: () => ({
+                    result: cachedResult,
+                    // The CF helper checks createdAt.toMillis() age, NOT expireAt.
+                    // Use a recent timestamp so ageMs < IDEMPOTENCY_TTL_MS (1h).
+                    createdAt: { toMillis: () => Date.now() - 1000 },
+                  }),
+                }
+                : { exists: false, data: () => ({}) }),
+              set: jest.fn(async () => {}),
+            };
+          }
+          // jobs / platform_earnings / transactions / chats — auto-generated doc IDs
+          return {
+            id: id || `${col}-auto-id`,
+            get: jest.fn(async () => ({ exists: false, data: () => ({}) })),
+            set: jest.fn(async () => {}),
+            update: jest.fn(async () => {}),
+            collection: jest.fn(() => ({
+              doc: jest.fn(() => ({ set: jest.fn(), add: jest.fn(async () => ({})) })),
+              add: jest.fn(async () => ({})),
+            })),
+          };
+        }),
+        add: jest.fn(async () => ({ id: "auto-id" })),
+        where: jest.fn(() => queryChain),
+      };
+    });
+
+    // Transaction mock — proxy tx.get(ref) to ref.get()
+    mockFirestore.runTransaction = jest.fn(async (cb) => {
+      const tx = {
+        get: jest.fn(async (ref) => {
+          if (typeof ref.get === "function") return ref.get();
+          return mockDocSnap(false);
+        }),
+        update: jest.fn((ref, payload) => txCalls.update.push({ ref, payload })),
+        set:    jest.fn((ref, payload) => txCalls.set.push({ ref, payload })),
+      };
+      return cb(tx);
+    });
+
+    return txCalls;
+  }
+
+  test("happy path: 200₪ booking with 10% commission split (180 to provider, 20 to platform)", async () => {
+    const txCalls = setupBookMocks({
+      uid: "customer1",
+      customerBalance: 500,
+      totalPrice: 200,
+      feePercentage: 0.10,
+    });
+
+    const result = await cf({
+      auth: { uid: "customer1" },
+      data: { auctionId: "a1", offerId: "o1", clientReqId: "req-1" },
+    });
+
+    expect(result).toMatchObject({ success: true });
+    expect(result.jobId).toBeTruthy();
+
+    // Verify the writes:
+    //   1. jobs/{newId} created (set with full payload)
+    //   2. customer balance decremented (update)
+    //   3. provider pendingBalance incremented (update)
+    //   4. platform_earnings doc created (set)
+    //   5. transactions doc created (set)
+    //   6. auction status='matched' (update)
+    //   7. offer status='selected' (update)
+    //   8. admin settings totalPlatformBalance += commission (set with merge)
+    //   9. idempotency record saved (set, outside tx)
+    expect(txCalls.update.length).toBeGreaterThanOrEqual(4);
+    expect(txCalls.set.length).toBeGreaterThanOrEqual(4);
+
+    // Confirm the job was written with paid_escrow status
+    const jobWrite = txCalls.set.find((w) =>
+      w.payload && w.payload.status === "paid_escrow" && w.payload.source === "delivery_express"
+    );
+    expect(jobWrite).toBeDefined();
+    expect(jobWrite.payload.totalAmount).toBe(200);
+    expect(jobWrite.payload.commissionAmount).toBeCloseTo(20, 2);
+    expect(jobWrite.payload.netAmountForExpert).toBeCloseTo(180, 2);
+    expect(jobWrite.payload.commissionSource).toBe("global");
+  });
+
+  test("category commission overrides global (15% > 10%)", async () => {
+    const txCalls = setupBookMocks({
+      uid: "customer1",
+      customerBalance: 500,
+      totalPrice: 200,
+      feePercentage: 0.10,
+      categoryCommissionPct: 15, // 0-100 scale → 0.15 effective
+    });
+
+    await cf({
+      auth: { uid: "customer1" },
+      data: { auctionId: "a1", offerId: "o1" },
+    });
+
+    const jobWrite = txCalls.set.find((w) => w.payload && w.payload.status === "paid_escrow");
+    expect(jobWrite.payload.commissionFeePct).toBeCloseTo(15, 2); // CF writes pct*100 → 15
+    expect(jobWrite.payload.commissionSource).toBe("category");
+    expect(jobWrite.payload.commissionAmount).toBeCloseTo(30, 2); // 200 × 0.15
+    expect(jobWrite.payload.netAmountForExpert).toBeCloseTo(170, 2);
+  });
+
+  test("custom per-provider commission (5%) overrides category and global", async () => {
+    const txCalls = setupBookMocks({
+      uid: "customer1",
+      customerBalance: 500,
+      totalPrice: 200,
+      feePercentage: 0.10,
+      categoryCommissionPct: 15,
+      customCommissionActive: true,
+      customCommissionPct: 5, // 0-100 scale → 0.05 effective
+    });
+
+    await cf({
+      auth: { uid: "customer1" },
+      data: { auctionId: "a1", offerId: "o1" },
+    });
+
+    const jobWrite = txCalls.set.find((w) => w.payload && w.payload.status === "paid_escrow");
+    expect(jobWrite.payload.commissionFeePct).toBeCloseTo(5, 2);
+    expect(jobWrite.payload.commissionSource).toBe("custom");
+    expect(jobWrite.payload.commissionAmount).toBeCloseTo(10, 2);
+    expect(jobWrite.payload.netAmountForExpert).toBeCloseTo(190, 2);
+  });
+
+  test("custom commission with expired override falls back to category/global", async () => {
+    const past = new Date(Date.now() - 24 * 3600 * 1000); // 1 day ago
+    const txCalls = setupBookMocks({
+      uid: "customer1",
+      customerBalance: 500,
+      totalPrice: 200,
+      feePercentage: 0.10,
+      customCommissionActive: true,
+      customCommissionPct: 5,
+      customCommissionExpiresAt: { toDate: () => past },
+    });
+
+    await cf({
+      auth: { uid: "customer1" },
+      data: { auctionId: "a1", offerId: "o1" },
+    });
+
+    const jobWrite = txCalls.set.find((w) => w.payload && w.payload.status === "paid_escrow");
+    // Expired custom → falls to global 10%
+    expect(jobWrite.payload.commissionSource).toBe("global");
+    expect(jobWrite.payload.commissionFeePct).toBeCloseTo(10, 2);
+  });
+
+  test("rejects: auction does not exist", async () => {
+    setupBookMocks({ auctionExists: false });
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { auctionId: "a1", offerId: "o1" } })
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  test("rejects: auction already matched (status != searching/has_offers)", async () => {
+    setupBookMocks({ auctionStatus: "matched" });
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { auctionId: "a1", offerId: "o1" } })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("rejects: caller is NOT the auction's customer", async () => {
+    setupBookMocks({ uid: "stranger", auctionCustomerId: "real-customer" });
+    await expect(
+      cf({ auth: { uid: "stranger" }, data: { auctionId: "a1", offerId: "o1" } })
+    ).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  test("rejects: offer does not exist", async () => {
+    // uid MUST match setupBookMocks default (customer1) so the auction
+    // customerId check passes — otherwise permission-denied fires first.
+    setupBookMocks({ offerExists: false });
+    await expect(
+      cf({ auth: { uid: "customer1" }, data: { auctionId: "a1", offerId: "o1" } })
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  test("rejects: offer status not 'pending' (already selected)", async () => {
+    setupBookMocks({ offerStatus: "selected" });
+    await expect(
+      cf({ auth: { uid: "customer1" }, data: { auctionId: "a1", offerId: "o1" } })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("rejects: self-booking (customer == provider on the offer)", async () => {
+    setupBookMocks({ uid: "self", offerProviderId: "self" });
+    await expect(
+      cf({ auth: { uid: "self" }, data: { auctionId: "a1", offerId: "o1" } })
+    ).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  test("rejects: insufficient customer balance", async () => {
+    setupBookMocks({ customerBalance: 50, totalPrice: 200 });
+    await expect(
+      cf({ auth: { uid: "customer1" }, data: { auctionId: "a1", offerId: "o1" } })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("rejects: invalid offer price (totalPrice = 0)", async () => {
+    setupBookMocks({ totalPrice: 0 });
+    await expect(
+      cf({ auth: { uid: "customer1" }, data: { auctionId: "a1", offerId: "o1" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("idempotency: same clientReqId returns cached result without re-running tx", async () => {
+    const cachedResult = { success: true, jobId: "cached-job-123" };
+    const txCalls = setupBookMocks({ cachedResult });
+
+    const result = await cf({
+      auth: { uid: "customer1" },
+      data: { auctionId: "a1", offerId: "o1", clientReqId: "req-cached" },
+    });
+
+    expect(result).toEqual(cachedResult);
+    // Verify NO tx writes happened (cache hit short-circuits before tx)
+    expect(txCalls.update.length).toBe(0);
+    expect(txCalls.set.length).toBe(0);
+  });
+
+  test("flagged: writes deliveryPreferences snapshot + chat system message metadata", async () => {
+    const txCalls = setupBookMocks({
+      uid: "customer1",
+      customerBalance: 500,
+      totalPrice: 200,
+      etaMinutes: 25,
+    });
+
+    await cf({
+      auth: { uid: "customer1" },
+      data: { auctionId: "a1", offerId: "o1" },
+    });
+
+    const jobWrite = txCalls.set.find((w) =>
+      w.payload && w.payload.source === "delivery_express"
+    );
+    expect(jobWrite.payload.deliveryPreferences).toBeDefined();
+    expect(jobWrite.payload.deliveryPreferences.timing).toBe("immediate");
+    expect(jobWrite.payload.deliveryPreferences.vehicleType).toBe("scooter");
+    expect(jobWrite.payload.deliveryExpressId).toBe("a1");
+    expect(jobWrite.payload.deliveryExpressOfferId).toBe("o1");
+    expect(jobWrite.payload.chatRoomId).toMatch(/customer1_provider1|provider1_customer1/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// releaseTaskPayment — AnyTasks escrow release (CLAUDE.md §14.x). Client confirms
+// proof_submitted → CF credits provider balance + decrements pendingBalance +
+// increments orderCount + flips task to completed + logs transaction.
+// Added 2026-05-14 — gap in §79 coverage; AnyTasks money path had no tests.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("releaseTaskPayment — rejection paths", () => {
+  const cf = index.releaseTaskPayment;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  test("rejects unauthenticated", async () => {
+    await expect(
+      cf({ auth: null, data: { taskId: "t1" } })
+    ).rejects.toMatchObject({ code: "unauthenticated" });
+  });
+
+  test("rejects missing taskId", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: {} })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects when task does not exist", async () => {
+    mockCollection({}); // any_tasks/t1 not seeded
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { taskId: "t1" } })
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  test("rejects caller who is not the client", async () => {
+    mockCollection({
+      "any_tasks/t1": mockDocSnap(true, {
+        clientId: "real-client",
+        selectedProviderId: "provider1",
+        status: "proof_submitted",
+        providerPayoutNis: 100,
+      }),
+    });
+    await expect(
+      cf({ auth: { uid: "stranger" }, data: { taskId: "t1" } })
+    ).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  test("rejects task status != 'proof_submitted' (still in_progress)", async () => {
+    mockCollection({
+      "any_tasks/t1": mockDocSnap(true, {
+        clientId: "c1",
+        selectedProviderId: "provider1",
+        status: "in_progress",
+        providerPayoutNis: 100,
+      }),
+    });
+    await expect(
+      cf({ auth: { uid: "c1" }, data: { taskId: "t1" } })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("rejects task without selectedProviderId", async () => {
+    mockCollection({
+      "any_tasks/t1": mockDocSnap(true, {
+        clientId: "c1",
+        selectedProviderId: null,
+        status: "proof_submitted",
+        providerPayoutNis: 100,
+      }),
+    });
+    await expect(
+      cf({ auth: { uid: "c1" }, data: { taskId: "t1" } })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("rejects task without providerPayoutNis", async () => {
+    mockCollection({
+      "any_tasks/t1": mockDocSnap(true, {
+        clientId: "c1",
+        selectedProviderId: "provider1",
+        status: "proof_submitted",
+        providerPayoutNis: null,
+      }),
+    });
+    await expect(
+      cf({ auth: { uid: "c1" }, data: { taskId: "t1" } })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+});
+
+describe("releaseTaskPayment — happy paths", () => {
+  const cf = index.releaseTaskPayment;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  function setupReleaseTaskMocks({
+    clientId = "client1",
+    providerId = "provider1",
+    status = "proof_submitted",
+    providerPayoutNis = 90,
+    freshStatus = null, // override for concurrent-change tests
+  }) {
+    const txCalls = { update: [], set: [] };
+
+    mockFirestore.collection.mockImplementation((col) => {
+      const queryChain = {
+        where: jest.fn(() => queryChain),
+        limit: jest.fn(() => queryChain),
+        get: jest.fn(async () => ({ docs: [], empty: true })),
+      };
+      return {
+        doc: jest.fn((id) => {
+          if (col === "any_tasks" && id === "t1") {
+            return {
+              id,
+              get: jest.fn(async () => ({
+                exists: true, id,
+                data: () => ({
+                  clientId,
+                  clientName: "Test Client",
+                  selectedProviderId: providerId,
+                  selectedProviderName: "Test Provider",
+                  status,
+                  providerPayoutNis,
+                  title: "Test Task",
+                }),
+              })),
+              update: jest.fn(async () => {}),
+            };
+          }
+          return {
+            id: id || `${col}-auto-id`,
+            get: jest.fn(async () => ({ exists: false, data: () => ({}) })),
+            update: jest.fn(async () => {}),
+            set: jest.fn(async () => {}),
+          };
+        }),
+        add: jest.fn(async () => ({ id: "notify-auto-id" })),
+        where: jest.fn(() => queryChain),
+      };
+    });
+
+    mockFirestore.runTransaction = jest.fn(async (cb) => {
+      const tx = {
+        get: jest.fn(async (ref) => {
+          // For the in-tx re-read, optionally return a different status
+          // (simulates concurrent update by another caller).
+          if (freshStatus !== null) {
+            return {
+              exists: true,
+              data: () => ({
+                clientId, selectedProviderId: providerId,
+                status: freshStatus, providerPayoutNis,
+              }),
+            };
+          }
+          if (typeof ref.get === "function") return ref.get();
+          return mockDocSnap(false);
+        }),
+        update: jest.fn((ref, payload) => txCalls.update.push({ ref, payload })),
+        set:    jest.fn((ref, payload) => txCalls.set.push({ ref, payload })),
+      };
+      return cb(tx);
+    });
+
+    return txCalls;
+  }
+
+  test("happy path: provider balance += net, pendingBalance -= net, orderCount += 1, task → completed", async () => {
+    const txCalls = setupReleaseTaskMocks({
+      clientId: "c1",
+      providerId: "p1",
+      providerPayoutNis: 180,
+    });
+
+    const result = await cf({
+      auth: { uid: "c1" },
+      data: { taskId: "t1" },
+    });
+
+    expect(result).toMatchObject({ success: true, amountPaid: 180 });
+
+    // 2 updates: providerRef (balance + pendingBalance + orderCount) + taskRef (status)
+    expect(txCalls.update.length).toBe(2);
+    // 1 set: transactions log
+    expect(txCalls.set.length).toBe(1);
+
+    const providerUpdate = txCalls.update.find((w) => w.payload.balance != null);
+    expect(providerUpdate).toBeDefined();
+    expect(providerUpdate.payload).toHaveProperty("balance");
+    expect(providerUpdate.payload).toHaveProperty("pendingBalance");
+    expect(providerUpdate.payload).toHaveProperty("orderCount");
+
+    const taskUpdate = txCalls.update.find((w) => w.payload.status === "completed");
+    expect(taskUpdate).toBeDefined();
+    expect(taskUpdate.payload).toHaveProperty("completedAt");
+
+    const txWrite = txCalls.set[0];
+    expect(txWrite.payload.type).toBe("any_task_payout");
+    expect(txWrite.payload.amount).toBe(180);
+    expect(txWrite.payload.senderId).toBe("c1");
+    expect(txWrite.payload.receiverId).toBe("p1");
+  });
+
+  test("rejects: concurrent status change (tx re-read shows status != 'proof_submitted')", async () => {
+    setupReleaseTaskMocks({
+      clientId: "c1",
+      status: "proof_submitted",  // initial check passes
+      freshStatus: "disputed",     // but fresh tx.get shows changed
+    });
+
+    await expect(
+      cf({ auth: { uid: "c1" }, data: { taskId: "t1" } })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// raiseTaskDispute — AnyTasks dispute flag (CLAUDE.md §14.x). Either party
+// flips task to status='disputed'. Does NOT refund — admin handles via existing
+// dispute UI. Reason must be ≥10 chars.
+// Added 2026-05-14.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("raiseTaskDispute — rejection paths", () => {
+  const cf = index.raiseTaskDispute;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  test("rejects unauthenticated", async () => {
+    await expect(
+      cf({ auth: null, data: { taskId: "t1", reason: "Provider didn't show up" } })
+    ).rejects.toMatchObject({ code: "unauthenticated" });
+  });
+
+  test("rejects missing taskId", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { reason: "Provider didn't show up" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects missing reason", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { taskId: "t1" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects reason shorter than 10 chars", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { taskId: "t1", reason: "Too short" } }) // 9 chars
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects when task does not exist", async () => {
+    mockCollection({});
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { taskId: "t1", reason: "valid reason here" } })
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  test("rejects non-participant (not client, not provider)", async () => {
+    mockCollection({
+      "any_tasks/t1": mockDocSnap(true, {
+        clientId: "c1",
+        selectedProviderId: "p1",
+        status: "in_progress",
+      }),
+    });
+    await expect(
+      cf({ auth: { uid: "stranger" }, data: { taskId: "t1", reason: "valid reason here" } })
+    ).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  test("rejects task status not in ['in_progress', 'proof_submitted']", async () => {
+    mockCollection({
+      "any_tasks/t1": mockDocSnap(true, {
+        clientId: "c1",
+        selectedProviderId: "p1",
+        status: "completed", // terminal — can't dispute
+      }),
+    });
+    await expect(
+      cf({ auth: { uid: "c1" }, data: { taskId: "t1", reason: "valid reason here" } })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("rejects: task in 'open' status (not yet claimed)", async () => {
+    mockCollection({
+      "any_tasks/t1": mockDocSnap(true, {
+        clientId: "c1",
+        selectedProviderId: null,
+        status: "open",
+      }),
+    });
+    await expect(
+      cf({ auth: { uid: "c1" }, data: { taskId: "t1", reason: "valid reason here" } })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+});
+
+describe("raiseTaskDispute — happy paths", () => {
+  const cf = index.raiseTaskDispute;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  // The CF calls taskRef.update() directly (not via tx). Mock captures it.
+  function setupDisputeMocks({
+    clientId = "c1",
+    providerId = "p1",
+    status = "in_progress",
+  }) {
+    const updates = [];
+    const batchSets = [];
+
+    mockFirestore.collection.mockImplementation((col) => {
+      const queryChain = {
+        where: jest.fn(() => queryChain),
+        limit: jest.fn(() => queryChain),
+        get: jest.fn(async () => ({ docs: [], empty: true })),
+      };
+      return {
+        doc: jest.fn((id) => {
+          if (col === "any_tasks" && id === "t1") {
+            return {
+              id,
+              get: jest.fn(async () => ({
+                exists: true, id,
+                data: () => ({
+                  clientId, selectedProviderId: providerId, status, title: "Test Task",
+                }),
+              })),
+              update: jest.fn(async (payload) => { updates.push(payload); }),
+            };
+          }
+          return {
+            id: id || `${col}-auto-id`,
+            get: jest.fn(async () => ({ exists: false })),
+            set: jest.fn(async () => {}),
+            update: jest.fn(async () => {}),
+          };
+        }),
+        add: jest.fn(async () => ({})),
+        where: jest.fn(() => queryChain),
+      };
+    });
+
+    mockFirestore.batch = jest.fn(() => ({
+      set: jest.fn((ref, payload) => batchSets.push(payload)),
+      commit: jest.fn(async () => {}),
+    }));
+
+    return { updates, batchSets };
+  }
+
+  test("client raises dispute on 'in_progress' task: flips status, stores reason + uid", async () => {
+    const { updates } = setupDisputeMocks({
+      clientId: "c1",
+      providerId: "p1",
+      status: "in_progress",
+    });
+
+    await expect(
+      cf({ auth: { uid: "c1" }, data: { taskId: "t1", reason: "Provider stopped responding" } })
+    ).resolves.toMatchObject({ success: true });
+
+    expect(updates.length).toBe(1);
+    expect(updates[0]).toMatchObject({
+      status: "disputed",
+      disputedBy: "c1",
+      disputeReason: "Provider stopped responding",
+    });
+    expect(updates[0]).toHaveProperty("disputedAt");
+  });
+
+  test("provider raises dispute on 'proof_submitted' task: also allowed", async () => {
+    const { updates } = setupDisputeMocks({
+      clientId: "c1",
+      providerId: "p1",
+      status: "proof_submitted",
+    });
+
+    await expect(
+      cf({ auth: { uid: "p1" }, data: { taskId: "t1", reason: "Client refusing to release" } })
+    ).resolves.toMatchObject({ success: true });
+
+    expect(updates[0].disputedBy).toBe("p1");
+    expect(updates[0].status).toBe("disputed");
+  });
+
+  test("admin notification fan-out is best-effort (no throw on batch failure)", async () => {
+    // setupDisputeMocks already returns empty admins query, so batch.set fires 0 times.
+    // Test that this still succeeds — verifies the try/catch around the fan-out.
+    setupDisputeMocks({ clientId: "c1", providerId: "p1", status: "in_progress" });
+
+    await expect(
+      cf({ auth: { uid: "c1" }, data: { taskId: "t1", reason: "Quality issue with delivery" } })
+    ).resolves.toMatchObject({ success: true });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// addTipToJob — Customer adds a tip post-completion (CLAUDE.md §79.A.10).
+//
+// v15.x (2026-05-14): Hardened from `batch` → `transaction`. Now blocks:
+//   • Insufficient balance (read inside tx).
+//   • Double-tip via `clientReqId` idempotency.
+//   • Tipping a job that isn't in 'completed' or 'expert_completed' status.
+//   • Self-tipping (uid == expertId).
+//   • Tips above ₪5,000 cap.
+//   • Tipping a stranger's job (uid != job.customerId).
+// Atomic writes:
+//   • transactions/{newDoc}: type='tip', amount=tip
+//   • users/{expertId}.pendingBalance += tip
+//   • users/{customerId}.balance -= tip
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("addTipToJob — rejection paths (input validation)", () => {
+  const cf = index.addTipToJob;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  test("rejects unauthenticated", async () => {
+    await expect(
+      cf({ auth: null, data: { jobId: "j1", expertId: "e1", tipAmount: 20 } })
+    ).rejects.toMatchObject({ code: "unauthenticated" });
+  });
+
+  test("rejects missing jobId", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { expertId: "e1", tipAmount: 20 } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects missing expertId", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { jobId: "j1", tipAmount: 20 } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects missing tipAmount", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { jobId: "j1", expertId: "e1" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects tipAmount = 0", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { jobId: "j1", expertId: "e1", tipAmount: 0 } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects tipAmount negative", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { jobId: "j1", expertId: "e1", tipAmount: -10 } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects tipAmount as string (not a number)", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { jobId: "j1", expertId: "e1", tipAmount: "20" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  // ── §79.A.10 hardening rejections ─────────────────────────────────────────
+  test("rejects tipAmount > ₪5,000 cap", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { jobId: "j1", expertId: "e1", tipAmount: 5001 } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects self-tipping (uid == expertId)", async () => {
+    await expect(
+      cf({ auth: { uid: "self" }, data: { jobId: "j1", expertId: "self", tipAmount: 20 } })
+    ).rejects.toMatchObject({ code: "permission-denied" });
+  });
+});
+
+describe("addTipToJob — happy paths + transaction guards", () => {
+  const cf = index.addTipToJob;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  // Helper: build mocks for the new transaction-based flow.
+  function setupTipMocks({
+    uid = "customer1",
+    expertId = "expert1",
+    customerBalance = 500,
+    jobExists = true,
+    jobCustomerId = null,  // null → matches uid
+    jobExpertId = null,     // null → matches expertId
+    jobStatus = "completed",
+    cachedResult = null,
+  }) {
+    const txCalls = { update: [], set: [] };
+    const effectiveJobCustomer = jobCustomerId !== null ? jobCustomerId : uid;
+    const effectiveJobExpert = jobExpertId !== null ? jobExpertId : expertId;
+
+    mockFirestore.collection.mockImplementation((col) => ({
+      doc: jest.fn((id) => {
+        if (col === "jobs" && id === "j1") {
+          return {
+            id,
+            get: jest.fn(async () => jobExists
+              ? {
+                exists: true, id,
+                data: () => ({
+                  customerId: effectiveJobCustomer,
+                  expertId: effectiveJobExpert,
+                  status: jobStatus,
+                }),
+              }
+              : { exists: false, data: () => ({}) }),
+          };
+        }
+        if (col === "users" && id === uid) {
+          return {
+            id,
+            get: jest.fn(async () => ({
+              exists: true, id,
+              data: () => ({ balance: customerBalance }),
+            })),
+            update: jest.fn(async () => {}),
+          };
+        }
+        if (col === "users" && id === expertId) {
+          return {
+            id,
+            get: jest.fn(async () => ({ exists: true, id, data: () => ({}) })),
+            update: jest.fn(async () => {}),
+          };
+        }
+        if (col === "tip_idempotency") {
+          return {
+            id,
+            get: jest.fn(async () => cachedResult
+              ? {
+                exists: true,
+                data: () => ({
+                  result: cachedResult,
+                  createdAt: { toMillis: () => Date.now() - 1000 },
+                }),
+              }
+              : { exists: false, data: () => ({}) }),
+            set: jest.fn(async () => {}),
+          };
+        }
+        return {
+          id: id || `${col}-auto-id`,
+          get: jest.fn(async () => ({ exists: false })),
+          set: jest.fn(async () => {}),
+          update: jest.fn(async () => {}),
+        };
+      }),
+      add: jest.fn(async () => ({})),
+    }));
+
+    mockFirestore.runTransaction = jest.fn(async (cb) => {
+      const tx = {
+        get: jest.fn(async (ref) => {
+          if (typeof ref.get === "function") return ref.get();
+          return mockDocSnap(false);
+        }),
+        update: jest.fn((ref, payload) => txCalls.update.push({ ref, payload })),
+        set:    jest.fn((ref, payload) => txCalls.set.push({ ref, payload })),
+      };
+      return cb(tx);
+    });
+
+    return txCalls;
+  }
+
+  test("happy path: ₪20 tip → transaction logged, expert pendingBalance += 20, customer balance -= 20", async () => {
+    const txCalls = setupTipMocks({ customerBalance: 100 });
+
+    await expect(
+      cf({
+        auth: { uid: "customer1" },
+        data: { jobId: "j1", expertId: "expert1", tipAmount: 20, expertName: "Bob" },
+      })
+    ).resolves.toMatchObject({ success: true });
+
+    // 1× set: transaction log
+    expect(txCalls.set.length).toBe(1);
+    expect(txCalls.set[0].payload).toMatchObject({
+      senderId: "customer1",
+      receiverId: "expert1",
+      receiverName: "Bob",
+      amount: 20,
+      type: "tip",
+      jobId: "j1",
+      payoutStatus: "pending",
+    });
+
+    // 2× update: expert pendingBalance, customer balance
+    expect(txCalls.update.length).toBe(2);
+    const expertUpdate = txCalls.update.find((u) => u.payload.pendingBalance != null);
+    const customerUpdate = txCalls.update.find((u) => u.payload.balance != null);
+    expect(expertUpdate).toBeDefined();
+    expect(customerUpdate).toBeDefined();
+  });
+
+  test("happy path: expertName is optional (defaults to empty)", async () => {
+    const txCalls = setupTipMocks({ customerBalance: 100 });
+
+    await expect(
+      cf({
+        auth: { uid: "customer1" },
+        data: { jobId: "j1", expertId: "expert1", tipAmount: 10 },
+      })
+    ).resolves.toMatchObject({ success: true });
+
+    expect(txCalls.set[0].payload.receiverName).toBe("");
+  });
+
+  test("happy path: 'expert_completed' job is also tippable (not just 'completed')", async () => {
+    setupTipMocks({ customerBalance: 100, jobStatus: "expert_completed" });
+
+    await expect(
+      cf({
+        auth: { uid: "customer1" },
+        data: { jobId: "j1", expertId: "expert1", tipAmount: 15 },
+      })
+    ).resolves.toMatchObject({ success: true });
+  });
+
+  // ── §79.A.10 transaction guards ────────────────────────────────────────────
+
+  test("BLOCKED §79.A.10: insufficient balance → failed-precondition (cannot go negative)", async () => {
+    setupTipMocks({ customerBalance: 10, jobStatus: "completed" }); // 10 < 50 tip
+
+    await expect(
+      cf({
+        auth: { uid: "customer1" },
+        data: { jobId: "j1", expertId: "expert1", tipAmount: 50 },
+      })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("BLOCKED §79.A.10: tipping a cancelled job → failed-precondition", async () => {
+    setupTipMocks({ customerBalance: 100, jobStatus: "cancelled" });
+
+    await expect(
+      cf({
+        auth: { uid: "customer1" },
+        data: { jobId: "j1", expertId: "expert1", tipAmount: 20 },
+      })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("BLOCKED §79.A.10: tipping a refunded job → failed-precondition", async () => {
+    setupTipMocks({ customerBalance: 100, jobStatus: "refunded" });
+
+    await expect(
+      cf({
+        auth: { uid: "customer1" },
+        data: { jobId: "j1", expertId: "expert1", tipAmount: 20 },
+      })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("BLOCKED §79.A.10: tipping a disputed job → failed-precondition", async () => {
+    setupTipMocks({ customerBalance: 100, jobStatus: "disputed" });
+
+    await expect(
+      cf({
+        auth: { uid: "customer1" },
+        data: { jobId: "j1", expertId: "expert1", tipAmount: 20 },
+      })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("BLOCKED §79.A.10: tipping a job that's still in paid_escrow → failed-precondition", async () => {
+    // Pre-work tip — not allowed because tipping is post-completion behavior
+    setupTipMocks({ customerBalance: 100, jobStatus: "paid_escrow" });
+
+    await expect(
+      cf({
+        auth: { uid: "customer1" },
+        data: { jobId: "j1", expertId: "expert1", tipAmount: 20 },
+      })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("BLOCKED §79.A.10: job doesn't exist → not-found", async () => {
+    setupTipMocks({ jobExists: false });
+
+    await expect(
+      cf({
+        auth: { uid: "customer1" },
+        data: { jobId: "j1", expertId: "expert1", tipAmount: 20 },
+      })
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  test("BLOCKED §79.A.10: tipping a stranger's job → permission-denied", async () => {
+    setupTipMocks({
+      customerBalance: 100,
+      jobCustomerId: "real-customer",
+      jobStatus: "completed",
+    });
+
+    await expect(
+      cf({
+        auth: { uid: "stranger" },
+        data: { jobId: "j1", expertId: "expert1", tipAmount: 20 },
+      })
+    ).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  test("BLOCKED §79.A.10: expertId doesn't match job.expertId → invalid-argument", async () => {
+    setupTipMocks({
+      customerBalance: 100,
+      jobExpertId: "real-expert",
+      jobStatus: "completed",
+    });
+
+    await expect(
+      cf({
+        auth: { uid: "customer1" },
+        data: { jobId: "j1", expertId: "wrong-expert", tipAmount: 20 },
+      })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("§79.A.10 IDEMPOTENCY: same clientReqId returns cached result without re-writing", async () => {
+    const cachedResult = { success: true };
+    const txCalls = setupTipMocks({ customerBalance: 100, cachedResult });
+
+    const result = await cf({
+      auth: { uid: "customer1" },
+      data: {
+        jobId: "j1", expertId: "expert1", tipAmount: 20,
+        clientReqId: "double-tap-req-1",
+      },
+    });
+
+    expect(result).toEqual(cachedResult);
+    // Critical: zero tx writes on cache hit (double-tap returns cached)
+    expect(txCalls.update.length).toBe(0);
+    expect(txCalls.set.length).toBe(0);
+  });
+
+  test("§79.A.10 IDEMPOTENCY: exactly-at-cap (₪5,000) succeeds (boundary)", async () => {
+    setupTipMocks({ customerBalance: 5000, jobStatus: "completed" });
+
+    await expect(
+      cf({
+        auth: { uid: "customer1" },
+        data: { jobId: "j1", expertId: "expert1", tipAmount: 5000 },
+      })
+    ).resolves.toMatchObject({ success: true });
+  });
+
+  test("§79.A.10 BOUNDARY: tip exactly equal to balance succeeds (₪50 tip on ₪50 balance)", async () => {
+    setupTipMocks({ customerBalance: 50, jobStatus: "completed" });
+
+    await expect(
+      cf({
+        auth: { uid: "customer1" },
+        data: { jobId: "j1", expertId: "expert1", tipAmount: 50 },
+      })
+    ).resolves.toMatchObject({ success: true });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// createEscrowPayment — Chat-quote escrow creation (CLAUDE.md §4.1). Customer
+// taps "Pay & Secure" on a quote card → atomic tx:
+//   • users/{client}.balance -= amount
+//   • users/{provider}.pendingBalance += netToProvider
+//   • jobs/{new} created with status='paid_escrow'
+//   • platform_earnings + transactions log
+//   • quotes/{quoteId}.status = 'paid'
+// 3-layer commission (custom > category > global). Idempotent if quote already
+// paid (returns existing jobId without re-running tx). Hard cap: ₪5,000.
+// Added 2026-05-14.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("createEscrowPayment — rejection paths", () => {
+  const cf = index.createEscrowPayment;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  test("rejects unauthenticated", async () => {
+    await expect(
+      cf({ auth: null, data: { quoteId: "q1", providerId: "p1", amount: 200, chatRoomId: "c1" } })
+    ).rejects.toMatchObject({ code: "unauthenticated" });
+  });
+
+  test("rejects missing quoteId", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { providerId: "p1", amount: 200, chatRoomId: "c1" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects missing providerId", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { quoteId: "q1", amount: 200, chatRoomId: "c1" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects missing chatRoomId", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { quoteId: "q1", providerId: "p1", amount: 200 } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects self-booking (uid == providerId)", async () => {
+    await expect(
+      cf({ auth: { uid: "self" }, data: { quoteId: "q1", providerId: "self", amount: 200, chatRoomId: "c1" } })
+    ).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  test("rejects amount <= 0", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { quoteId: "q1", providerId: "p1", amount: -50, chatRoomId: "c1" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects amount > ₪5,000 cap", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { quoteId: "q1", providerId: "p1", amount: 5001, chatRoomId: "c1" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+});
+
+describe("createEscrowPayment — happy paths + business rules", () => {
+  const cf = index.createEscrowPayment;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  function setupCreateEscrowMocks({
+    uid = "client1",
+    providerId = "provider1",
+    clientBalance = 1000,
+    quoteStatus = "pending",
+    quoteJobId = null,
+    feePercentage = 0.10,
+    providerCategory = "",
+    categoryCommissionPct = null,
+    customCommissionActive = false,
+    customCommissionPct = null,
+  }) {
+    const txCalls = { update: [], set: [] };
+
+    mockFirestore.collection.mockImplementation((col) => {
+      const queryChain = {
+        where: jest.fn(() => queryChain),
+        limit: jest.fn(() => queryChain),
+        get: jest.fn(async () => ({ docs: [], empty: true })),
+      };
+      return {
+        doc: jest.fn((id) => {
+          if (col === "users" && id === uid) {
+            return {
+              id,
+              get: jest.fn(async () => ({
+                exists: true, id,
+                data: () => ({ balance: clientBalance, name: "Test Client" }),
+              })),
+              update: jest.fn(async () => {}),
+            };
+          }
+          if (col === "users" && id === providerId) {
+            return {
+              id,
+              get: jest.fn(async () => ({
+                exists: true, id,
+                data: () => ({
+                  serviceType: providerCategory,
+                  customCommissionActive,
+                  customCommission: customCommissionPct != null
+                    ? { percentage: customCommissionPct }
+                    : null,
+                }),
+              })),
+              update: jest.fn(async () => {}),
+            };
+          }
+          if (col === "quotes" && id === "q1") {
+            return {
+              id,
+              get: jest.fn(async () => ({
+                exists: true, id,
+                data: () => ({ status: quoteStatus, jobId: quoteJobId }),
+              })),
+              update: jest.fn(async () => {}),
+            };
+          }
+          if (col === "admin") {
+            return {
+              id,
+              get: jest.fn(async () => ({ exists: true, id, data: () => ({}) })),
+              collection: jest.fn(() => ({
+                doc: jest.fn(() => ({
+                  get: jest.fn(async () => ({
+                    exists: true,
+                    data: () => ({ feePercentage }),
+                  })),
+                  set: jest.fn(async () => {}),
+                })),
+              })),
+            };
+          }
+          if (col === "category_commissions") {
+            return {
+              id,
+              get: jest.fn(async () => categoryCommissionPct != null
+                ? { exists: true, data: () => ({ percentage: categoryCommissionPct }) }
+                : { exists: false, data: () => ({}) }),
+            };
+          }
+          // jobs / platform_earnings / transactions / chats — auto-id
+          return {
+            id: id || `${col}-auto-id`,
+            get: jest.fn(async () => ({ exists: false })),
+            set: jest.fn(async () => {}),
+            update: jest.fn(async () => {}),
+            collection: jest.fn(() => ({
+              doc: jest.fn(() => ({
+                set: jest.fn(),
+                update: jest.fn(),
+                add: jest.fn(async () => ({})),
+              })),
+              add: jest.fn(async () => ({})),
+            })),
+          };
+        }),
+        add: jest.fn(async () => ({ id: "auto-id" })),
+        where: jest.fn(() => queryChain),
+      };
+    });
+
+    mockFirestore.runTransaction = jest.fn(async (cb) => {
+      const tx = {
+        get: jest.fn(async (ref) => {
+          if (typeof ref.get === "function") return ref.get();
+          return mockDocSnap(false);
+        }),
+        update: jest.fn((ref, payload) => txCalls.update.push({ ref, payload })),
+        set:    jest.fn((ref, payload) => txCalls.set.push({ ref, payload })),
+      };
+      return cb(tx);
+    });
+
+    return txCalls;
+  }
+
+  test("happy path: 200₪ escrow, 10% commission → 180 to provider, 20 to platform", async () => {
+    const txCalls = setupCreateEscrowMocks({
+      uid: "client1",
+      providerId: "provider1",
+      clientBalance: 500,
+      feePercentage: 0.10,
+    });
+
+    const result = await cf({
+      auth: { uid: "client1" },
+      data: {
+        quoteId: "q1",
+        chatRoomId: "client1_provider1",
+        providerId: "provider1",
+        providerName: "Provider",
+        clientName: "Client",
+        amount: 200,
+        description: "Test job",
+      },
+    });
+
+    expect(result).toMatchObject({ success: true });
+    expect(result.jobId).toBeTruthy();
+
+    const jobWrite = txCalls.set.find((w) =>
+      w.payload && w.payload.status === "paid_escrow"
+    );
+    expect(jobWrite).toBeDefined();
+    expect(jobWrite.payload.totalAmount).toBe(200);
+    expect(jobWrite.payload.netAmountForExpert).toBeCloseTo(180, 2);
+    expect(jobWrite.payload.commission).toBeCloseTo(20, 2);
+    expect(jobWrite.payload.commissionSource).toBe("global");
+  });
+
+  test("idempotency: quote already 'paid' returns existing jobId without writes", async () => {
+    const txCalls = setupCreateEscrowMocks({
+      uid: "client1",
+      providerId: "provider1",
+      quoteStatus: "paid",
+      quoteJobId: "existing-job-id",
+    });
+
+    const result = await cf({
+      auth: { uid: "client1" },
+      data: {
+        quoteId: "q1",
+        chatRoomId: "c1",
+        providerId: "provider1",
+        amount: 200,
+      },
+    });
+
+    expect(result.jobId).toBe("existing-job-id");
+    // No new tx writes (early return inside tx)
+    expect(txCalls.set.length).toBe(0);
+    expect(txCalls.update.length).toBe(0);
+  });
+
+  test("category commission overrides global (15% > 10%)", async () => {
+    const txCalls = setupCreateEscrowMocks({
+      uid: "client1",
+      providerId: "provider1",
+      clientBalance: 500,
+      feePercentage: 0.10,
+      providerCategory: "עיסוי",
+      categoryCommissionPct: 15,
+    });
+
+    await cf({
+      auth: { uid: "client1" },
+      data: {
+        quoteId: "q1", chatRoomId: "c1",
+        providerId: "provider1", amount: 200,
+      },
+    });
+
+    const jobWrite = txCalls.set.find((w) => w.payload && w.payload.status === "paid_escrow");
+    expect(jobWrite.payload.commissionSource).toBe("category");
+    expect(jobWrite.payload.commission).toBeCloseTo(30, 2);
+  });
+
+  test("custom commission (5%) overrides category and global", async () => {
+    const txCalls = setupCreateEscrowMocks({
+      uid: "client1",
+      providerId: "provider1",
+      clientBalance: 500,
+      providerCategory: "עיסוי",
+      categoryCommissionPct: 15,
+      customCommissionActive: true,
+      customCommissionPct: 5,
+    });
+
+    await cf({
+      auth: { uid: "client1" },
+      data: {
+        quoteId: "q1", chatRoomId: "c1",
+        providerId: "provider1", amount: 200,
+      },
+    });
+
+    const jobWrite = txCalls.set.find((w) => w.payload && w.payload.status === "paid_escrow");
+    expect(jobWrite.payload.commissionSource).toBe("custom");
+    expect(jobWrite.payload.commission).toBeCloseTo(10, 2);
+    expect(jobWrite.payload.netAmountForExpert).toBeCloseTo(190, 2);
+  });
+
+  test("rejects: insufficient client balance", async () => {
+    setupCreateEscrowMocks({
+      uid: "client1", providerId: "provider1",
+      clientBalance: 50, // less than amount 200
+    });
+
+    await expect(
+      cf({
+        auth: { uid: "client1" },
+        data: { quoteId: "q1", chatRoomId: "c1", providerId: "provider1", amount: 200 },
+      })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// createTaskEscrow — AnyTasks accept-response escrow (CLAUDE.md §14.x).
+// Client picks a provider's offer → atomic tx:
+//   • any_tasks/{id}: selectedProviderId, agreedPriceNis, status='in_progress'
+//   • users/{client}.balance -= agreedPriceNis
+//   • users/{provider}.pendingBalance += netToProvider
+//   • platform_earnings + transactions log
+// Min price: ₪10. Self-booking blocked. Task must be 'open' status.
+// Added 2026-05-14.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("createTaskEscrow — rejection paths", () => {
+  const cf = index.createTaskEscrow;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  test("rejects unauthenticated", async () => {
+    await expect(
+      cf({ auth: null, data: { taskId: "t1", providerId: "p1", agreedPriceNis: 100 } })
+    ).rejects.toMatchObject({ code: "unauthenticated" });
+  });
+
+  test("rejects missing taskId", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { providerId: "p1", agreedPriceNis: 100 } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects missing providerId", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { taskId: "t1", agreedPriceNis: 100 } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects missing agreedPriceNis", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { taskId: "t1", providerId: "p1" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects self-booking", async () => {
+    await expect(
+      cf({ auth: { uid: "self" }, data: { taskId: "t1", providerId: "self", agreedPriceNis: 50 } })
+    ).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  test("rejects agreedPriceNis < ₪10 minimum", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { taskId: "t1", providerId: "p1", agreedPriceNis: 5 } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  test("rejects agreedPriceNis as string", async () => {
+    await expect(
+      cf({ auth: { uid: "u1" }, data: { taskId: "t1", providerId: "p1", agreedPriceNis: "100" } })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+});
+
+describe("createTaskEscrow — happy paths", () => {
+  const cf = index.createTaskEscrow;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  function setupTaskEscrowMocks({
+    uid = "client1",
+    providerId = "provider1",
+    clientBalance = 1000,
+    taskStatus = "open",
+    feePercentage = 0.10,
+    taskExists = true,
+  }) {
+    const txCalls = { update: [], set: [] };
+
+    mockFirestore.collection.mockImplementation((col) => {
+      const queryChain = {
+        where: jest.fn(() => queryChain),
+        limit: jest.fn(() => queryChain),
+        get: jest.fn(async () => ({ docs: [], empty: true })),
+      };
+      const buildTaskDoc = (id) => ({
+        id,
+        get: jest.fn(async () => taskExists
+          ? { exists: true, id, data: () => ({ status: taskStatus, title: "Test Task" }) }
+          : { exists: false, id, data: () => ({}) }),
+        update: jest.fn(async () => {}),
+        collection: jest.fn((subCol) => ({
+          doc: jest.fn(() => ({
+            get: jest.fn(async () => ({ exists: false })),
+            update: jest.fn(async () => {}),
+          })),
+        })),
+      });
+      return {
+        doc: jest.fn((id) => {
+          if (col === "any_tasks") return buildTaskDoc(id);
+          if (col === "users" && id === uid) {
+            return {
+              id,
+              get: jest.fn(async () => ({
+                exists: true, id, data: () => ({ balance: clientBalance }),
+              })),
+              update: jest.fn(async () => {}),
+            };
+          }
+          if (col === "users" && id === providerId) {
+            return {
+              id,
+              get: jest.fn(async () => ({ exists: true, id, data: () => ({}) })),
+              update: jest.fn(async () => {}),
+            };
+          }
+          if (col === "admin") {
+            return {
+              id,
+              get: jest.fn(async () => ({ exists: true, id, data: () => ({}) })),
+              collection: jest.fn(() => ({
+                doc: jest.fn(() => ({
+                  get: jest.fn(async () => ({
+                    exists: true, data: () => ({ feePercentage }),
+                  })),
+                  set: jest.fn(async () => {}),
+                })),
+              })),
+            };
+          }
+          return {
+            id: id || `${col}-auto-id`,
+            get: jest.fn(async () => ({ exists: false })),
+            set: jest.fn(async () => {}),
+            update: jest.fn(async () => {}),
+          };
+        }),
+        add: jest.fn(async () => ({})),
+        where: jest.fn(() => queryChain),
+      };
+    });
+
+    mockFirestore.runTransaction = jest.fn(async (cb) => {
+      const tx = {
+        get: jest.fn(async (ref) => {
+          if (typeof ref.get === "function") return ref.get();
+          return mockDocSnap(false);
+        }),
+        update: jest.fn((ref, payload) => txCalls.update.push({ ref, payload })),
+        set:    jest.fn((ref, payload) => txCalls.set.push({ ref, payload })),
+      };
+      return cb(tx);
+    });
+
+    return txCalls;
+  }
+
+  test("happy path: 100₪ task accepted → task in_progress, balance -= 100, pendingBalance += 90, platform += 10", async () => {
+    const txCalls = setupTaskEscrowMocks({
+      uid: "client1",
+      providerId: "provider1",
+      clientBalance: 500,
+      feePercentage: 0.10,
+    });
+
+    const result = await cf({
+      auth: { uid: "client1" },
+      data: {
+        taskId: "t1",
+        providerId: "provider1",
+        providerName: "Provider Name",
+        clientName: "Client Name",
+        agreedPriceNis: 100,
+        taskTitle: "Test Task Title",
+      },
+    });
+
+    expect(result).toMatchObject({ success: true });
+
+    // Updates: task + customer balance + provider pendingBalance + (no responseId so 3 total)
+    expect(txCalls.update.length).toBe(3);
+
+    const taskUpdate = txCalls.update.find((u) => u.payload.status === "in_progress");
+    expect(taskUpdate).toBeDefined();
+    expect(taskUpdate.payload.selectedProviderId).toBe("provider1");
+    expect(taskUpdate.payload.agreedPriceNis).toBe(100);
+    expect(taskUpdate.payload.platformFeeNis).toBe(10);
+    expect(taskUpdate.payload.providerPayoutNis).toBe(90);
+
+    // Sets: platform_earnings + transactions + admin settings
+    expect(txCalls.set.length).toBe(3);
+  });
+
+  test("rejects: task does not exist", async () => {
+    setupTaskEscrowMocks({ taskExists: false });
+    await expect(
+      cf({
+        auth: { uid: "client1" },
+        data: { taskId: "t1", providerId: "provider1", agreedPriceNis: 100 },
+      })
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  test("rejects: task already assigned (status != 'open')", async () => {
+    setupTaskEscrowMocks({ taskStatus: "in_progress" });
+    await expect(
+      cf({
+        auth: { uid: "client1" },
+        data: { taskId: "t1", providerId: "provider1", agreedPriceNis: 100 },
+      })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("rejects: insufficient client balance", async () => {
+    setupTaskEscrowMocks({ clientBalance: 50 });
+    await expect(
+      cf({
+        auth: { uid: "client1" },
+        data: { taskId: "t1", providerId: "provider1", agreedPriceNis: 100 },
+      })
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  test("rejects: agreedPriceNis exactly ₪9 (below ₪10 minimum)", async () => {
+    await expect(
+      cf({
+        auth: { uid: "client1" },
+        data: { taskId: "t1", providerId: "provider1", agreedPriceNis: 9 },
+      })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+});
+

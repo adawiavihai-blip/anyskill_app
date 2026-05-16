@@ -47,9 +47,28 @@ class CustomerBookingsTab extends StatefulWidget {
   State<CustomerBookingsTab> createState() => _CustomerBookingsTabState();
 }
 
-class _CustomerBookingsTabState extends State<CustomerBookingsTab> {
+class _CustomerBookingsTabState extends State<CustomerBookingsTab>
+    with AutomaticKeepAliveClientMixin {
+  // Three independent timeouts — primary jobs stream, tx fallback,
+  // tx fallback's own fallback (no-orderBy variant). 3s each so the
+  // user never sits on a spinner longer than ~6s total worst case
+  // (compared to the prior 6s + infinite nested spinners).
   bool _timedOut = false;
+  bool _txTimedOut = false;
+  bool _txAltTimedOut = false;
   Timer? _timeoutTimer;
+  Timer? _txTimeoutTimer;
+  Timer? _txAltTimeoutTimer;
+
+  /// Cached snapshots so transient re-emits don't blink the list out.
+  QuerySnapshot? _lastJobsSnap;
+  QuerySnapshot? _lastTxSnap;
+  QuerySnapshot? _lastTxAltSnap;
+
+  /// Pre-warmed transactions streams so the fallback paths don't pay
+  /// a fresh subscription delay when first reached.
+  late final Stream<QuerySnapshot> _txStream;
+  late final Stream<QuerySnapshot> _txAltStream;
 
   static const _activeStatuses = {
     'paid_escrow',
@@ -62,51 +81,68 @@ class _CustomerBookingsTabState extends State<CustomerBookingsTab> {
   };
 
   @override
+  bool get wantKeepAlive => true;
+
+  @override
   void initState() {
     super.initState();
-    // 6s timeout — if the stream hasn't delivered, show empty state.
-    _timeoutTimer = Timer(const Duration(seconds: 6), () {
-      if (mounted && !_timedOut) {
-        setState(() => _timedOut = true);
-      }
+    // 3s timeout — bumped down from 6s after רועי צברי report
+    // (2026-05-14: history tab stuck on spinning circle). After 3s
+    // we fall through to whatever we have + the transaction fallback.
+    _timeoutTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && !_timedOut) setState(() => _timedOut = true);
     });
+    _txTimeoutTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && !_txTimedOut) setState(() => _txTimedOut = true);
+    });
+    _txAltTimeoutTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && !_txAltTimedOut) setState(() => _txAltTimedOut = true);
+    });
+    // Pre-warm both transaction streams so they have time to emit by
+    // the time the fallback paths read them. Saves subscription delay.
+    _txStream = FirebaseFirestore.instance
+        .collection('transactions')
+        .where('senderId', isEqualTo: widget.currentUserId)
+        .orderBy('timestamp', descending: true)
+        .limit(50)
+        .snapshots();
+    _txAltStream = FirebaseFirestore.instance
+        .collection('transactions')
+        .where('senderId', isEqualTo: widget.currentUserId)
+        .limit(50)
+        .snapshots();
   }
 
   @override
   void dispose() {
     _timeoutTimer?.cancel();
+    _txTimeoutTimer?.cancel();
+    _txAltTimeoutTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // AutomaticKeepAlive contract
     return StreamBuilder<QuerySnapshot>(
       stream: widget.customerStream,
       builder: (context, snapshot) {
-        if (!snapshot.hasData && !_timedOut) {
-          return const BookingsShimmer();
-        }
         if (snapshot.hasError) {
           debugPrint('[Customer${widget.isHistory ? "History" : "Active"}] '
               'STREAM ERROR: ${snapshot.error}');
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.error_outline_rounded,
-                    size: 40, color: Color(0xFFEF4444)),
-                const SizedBox(height: 12),
-                const Text(
-                    'לא ניתן לטעון את ההזמנות כרגע. אנא נסה שוב.',
-                    textAlign: TextAlign.center,
-                    style:
-                        TextStyle(fontSize: 14, color: Color(0xFF64748B))),
-              ]),
-            ),
-          );
+          // Don't return error scaffold here — fall through to the
+          // transaction fallback so a flaky `jobs` stream doesn't
+          // break the whole tab. The fallback has its own timeout.
+        }
+        if (snapshot.hasData) _lastJobsSnap = snapshot.data;
+        final activeSnap = snapshot.data ?? _lastJobsSnap;
+        // Only show shimmer during the first 3s. After timeout, fall
+        // through to the transaction fallback with whatever we have.
+        if (activeSnap == null && !_timedOut && !snapshot.hasError) {
+          return const BookingsShimmer();
         }
 
-        final all = snapshot.data?.docs ?? [];
+        final all = activeSnap?.docs ?? const [];
         debugPrint('[Customer${widget.isHistory ? "History" : "Active"}] '
             'Stream returned ${all.length} docs for uid=${widget.currentUserId}');
 
@@ -124,10 +160,15 @@ class _CustomerBookingsTabState extends State<CustomerBookingsTab> {
         final filtered = all.where((d) {
           final status =
               (d.data() as Map<String, dynamic>)['status'] as String? ?? '';
+          // For HISTORY, include jobs with no status too — legacy
+          // bookings without a status field were silently dropped
+          // before (2026-05-14 fix after user report).
+          if (widget.isHistory) {
+            return !_activeStatuses.contains(status);
+          }
+          // For ACTIVE, only show jobs with a known active status.
           if (status.isEmpty) return false;
-          return widget.isHistory
-              ? !_activeStatuses.contains(status)
-              : _activeStatuses.contains(status);
+          return _activeStatuses.contains(status);
         }).toList()
           ..sort((a, b) {
             final ta = (a.data() as Map)['createdAt'];
@@ -155,49 +196,45 @@ class _CustomerBookingsTabState extends State<CustomerBookingsTab> {
   /// Fallback: when `jobs` collection has no history docs for this customer,
   /// pull from `transactions` to show at least a basic list of payments.
   ///
-  /// IMPORTANT — never return `_buildEmptyState()` while the streams below
-  /// are still LOADING. Returning the empty-state mid-load causes a visible
-  /// flicker ("אין היסטוריית הזמנות" → list of transactions/empty-state)
-  /// when Firestore later delivers data. We render the shared shimmer until
-  /// at least one of the two stream paths has confirmed there is no data.
+  /// Pre-warmed streams (set up in initState) + 3s timeouts on BOTH the
+  /// orderBy variant AND the no-orderBy variant ensure the user never
+  /// sees infinite spinners (the bug that left רועי צברי stuck on the
+  /// history tab — 2026-05-14).
   Widget _buildTransactionFallbackHistory() {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('transactions')
-          .where('senderId', isEqualTo: widget.currentUserId)
-          .orderBy('timestamp', descending: true)
-          .limit(50)
-          .snapshots(),
+      stream: _txStream,
       builder: (context, txSnap) {
         if (txSnap.hasError) {
           debugPrint(
               '[CustomerHistory] Transaction fallback error: ${txSnap.error}');
+          // Likely missing composite index — fall through to alt stream.
         }
-        if (!txSnap.hasData) {
-          // Composite index might be missing — try without orderBy.
-          return StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('transactions')
-                .where('senderId', isEqualTo: widget.currentUserId)
-                .limit(50)
-                .snapshots(),
-            builder: (context, txSnap2) {
-              if (!txSnap2.hasData) {
-                // Still loading — show shimmer, NOT the empty state.
-                return const BookingsShimmer();
-              }
-              if (txSnap2.data!.docs.isEmpty) {
-                return _buildEmptyState();
-              }
-              return _buildTransactionList(txSnap2.data!.docs);
-            },
-          );
+        if (txSnap.hasData) _lastTxSnap = txSnap.data;
+        final activeTxSnap = txSnap.data ?? _lastTxSnap;
+        if (activeTxSnap == null && !_txTimedOut && !txSnap.hasError) {
+          return const BookingsShimmer();
         }
-        final docs = txSnap.data!.docs;
-        if (docs.isEmpty) {
-          return _buildEmptyState();
+
+        // Primary stream returned data — render it.
+        if (activeTxSnap != null && activeTxSnap.docs.isNotEmpty) {
+          return _buildTransactionList(activeTxSnap.docs);
         }
-        return _buildTransactionList(docs);
+
+        // Either timeout fired OR primary stream returned empty.
+        // Try the no-orderBy variant (handles missing composite index).
+        return StreamBuilder<QuerySnapshot>(
+          stream: _txAltStream,
+          builder: (context, txSnap2) {
+            if (txSnap2.hasData) _lastTxAltSnap = txSnap2.data;
+            final activeAltSnap = txSnap2.data ?? _lastTxAltSnap;
+            if (activeAltSnap == null && !_txAltTimedOut) {
+              return const BookingsShimmer();
+            }
+            final docs = activeAltSnap?.docs ?? const [];
+            if (docs.isEmpty) return _buildEmptyState();
+            return _buildTransactionList(docs);
+          },
+        );
       },
     );
   }

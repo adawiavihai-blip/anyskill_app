@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/cached_readers.dart';
@@ -146,6 +147,11 @@ class PaymentModule {
         'totalAmount':  totalAmount,
         'clientReqId':  'release_$jobId',
       });
+      // §QA-Pass 2026-05-14: bust the expert's cached profile so the next
+      // FutureBuilder reading via CachedReaders (e.g. the review screen or
+      // an opened expert profile) shows the freshly-credited balance +
+      // updated orderCount. Same pattern as cancelEscrow above.
+      CachedReaders.invalidateProvider(expertId);
       return null;
     } on FirebaseFunctionsException catch (e) {
       final msg = "[${e.code}] ${e.message}${e.details != null ? ' | details: ${e.details}' : ''}";
@@ -194,7 +200,15 @@ class PaymentModule {
             'cancelledBy': cancelledBy,
             'clientReqId': 'cancel_${jobId}_$cancelledBy',
           });
-      return Map<String, dynamic>.from(result.data as Map);
+      final data = Map<String, dynamic>.from(result.data as Map);
+      // §QA-Pass 2026-05-14: cancellation refunds the customer (full or
+      // partial via policy). Their balance just changed — invalidate so
+      // their wallet refreshes on next CachedReaders read.
+      final caller = FirebaseAuth.instance.currentUser?.uid;
+      if (caller != null && caller.isNotEmpty) {
+        CachedReaders.invalidateProvider(caller);
+      }
+      return data;
     } on FirebaseFunctionsException catch (e) {
       throw (e.message ?? e.code);
     } catch (e) {

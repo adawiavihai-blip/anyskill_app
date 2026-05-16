@@ -82,6 +82,10 @@ class LiveLocationService {
   static StreamSubscription<Position>? _sub;
   static String? _activeUid;
   static String? _activeJobId;
+  // Security pen-test 2026-05-15 (VULN-005): stamp the customerId on every
+  // doc write so the Firestore rule can authorize the read for the customer
+  // of the CURRENT job only — instead of leaking GPS to every auth user.
+  static String? _activeCustomerId;
   static DateTime _lastWriteAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   /// True while the provider is broadcasting.
@@ -97,11 +101,27 @@ class LiveLocationService {
   /// Starts broadcasting the current user's location to Firestore.
   /// Safe to call multiple times — no-op if already broadcasting.
   /// Throws [StateError] if location permission is denied.
+  ///
+  /// SECURITY (pen-test 2026-05-15 — VULN-005): `customerId` is now a
+  /// REQUIRED argument. The Firestore rule for `provider_live_location/{uid}`
+  /// gates customer reads on the doc carrying the customer's uid; without it
+  /// the customer's Active-Booking map cannot subscribe.
   static Future<void> startBroadcasting({
     required String activeJobId,
+    required String customerId,
   }) async {
     if (_sub != null) {
       _activeJobId = activeJobId;
+      _activeCustomerId = customerId;
+      // Refresh the doc immediately so the rule allows the new customer
+      // even when the stream was already running for a previous job.
+      final uid = _activeUid;
+      if (uid != null) {
+        try {
+          final pos = await Geolocator.getCurrentPosition();
+          await _writePosition(uid, pos);
+        } catch (_) {/* best-effort */}
+      }
       return; // already running
     }
 
@@ -132,6 +152,7 @@ class LiveLocationService {
 
     _activeUid = uid;
     _activeJobId = activeJobId;
+    _activeCustomerId = customerId;
 
     // Write an immediate one-shot position so the customer sees a marker
     // without waiting for the first stream update.
@@ -178,6 +199,8 @@ class LiveLocationService {
         'accuracy': pos.accuracy,
         'updatedAt': FieldValue.serverTimestamp(),
         if (_activeJobId != null) 'activeJobId': _activeJobId,
+        // Pen-test fix VULN-005: customer-side rule gate.
+        if (_activeCustomerId != null) 'customerId': _activeCustomerId,
       }, SetOptions(merge: true));
     } catch (e) {
       debugPrint('[LiveLocation] write failed: $e');
@@ -193,6 +216,7 @@ class LiveLocationService {
     final uid = _activeUid;
     _activeUid = null;
     _activeJobId = null;
+    _activeCustomerId = null;
     if (uid != null) {
       try {
         await _docRef(uid).delete();

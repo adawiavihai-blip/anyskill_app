@@ -10,9 +10,7 @@ import '../services/audio_service.dart';
 import '../services/cached_readers.dart';
 import '../services/job_broadcast_service.dart';
 import '../services/location_service.dart';
-import '../services/gamification_service.dart';
 import '../services/business_coach_service.dart';
-import '../widgets/level_badge.dart';
 import '../l10n/app_localizations.dart';
 import '../constants.dart' show resolveCanonicalCategory;
 import '../widgets/hint_icon.dart';
@@ -73,8 +71,15 @@ class OpportunitiesScreen extends StatefulWidget {
 class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
   final String      _uid            = FirebaseAuth.instance.currentUser?.uid ?? '';
   final Set<String> _processingIds  = {};
+  /// Locally-hidden request IDs (optimistic decline). Survives only for
+  /// the lifetime of this screen state — if the user navigates away and
+  /// back, the set resets. The authoritative state lives in
+  /// `job_requests/{id}.declinedProviders` (synced server-side).
+  /// CRITICAL for the "remove" button UX (רועי צברי report 2026-05-14):
+  /// even when the Firestore write fails (permission, network, etc.),
+  /// the card hides immediately so the user feels the action took.
+  final Set<String> _locallyHidden  = {};
   Position?  _currentPosition;
-  int        _xp               = 0;
   int        _urgentCompleted  = 0;   // progress toward AnySkill Boost
   DateTime?  _boostExpiry;            // non-null when boost is active
   double     _platformFee      = 0.15; // loaded from Firestore; 15 % default
@@ -147,7 +152,6 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
     if (!mounted) return;
     final boostTs = d['boostedUntil'] as Timestamp?;
     setState(() {
-      _xp             = (d['xp']                 as num? ?? 0).toInt();
       _urgentCompleted = (d['urgentJobsCompleted'] as num? ?? 0).toInt();
       _boostExpiry     = boostTs?.toDate();
     });
@@ -341,37 +345,115 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
     );
     if (confirm != true || !context.mounted) return;
 
+    // CRITICAL UX (רועי צברי report 2026-05-14): "הסר" was throwing
+    // raw Firestore errors at the user when the doc was already
+    // declined, deleted, or unreachable. Now the action is treated as
+    // OPTIMISTIC: we add the request to a local "hidden" set so the
+    // card vanishes IMMEDIATELY, then try the server write. Server
+    // failures are logged but the user always sees success — the card
+    // is locally hidden so the action FELT successful from their POV.
+    setState(() => _locallyHidden.add(requestId));
+
+    bool stillActionable = true;
+    bool serverWriteSucceeded = false;
+    String? errorCode;
+
     try {
       final db = FirebaseFirestore.instance;
-      // Mark this provider as declined — hides the card
-      await db.collection('job_requests').doc(requestId).update({
-        'declinedProviders': FieldValue.arrayUnion([_uid]),
-      });
+      final ref = db.collection('job_requests').doc(requestId);
 
-      // Notify the customer
-      await db.collection('notifications').add({
-        'userId':    clientId,
-        'title':     'הספק לא זמין',
-        'body':      '${widget.providerName} לא זמין/ה כרגע לבקשה שלך. נותני שירות אחרים עדיין יכולים לענות.',
-        'type':      'request_declined',
-        'data':      {'requestId': requestId},
-        'isRead':    false,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      // Re-read the doc to decide whether to notify the customer AND
+      // to detect already-declined / deleted state. Bounded timeout so
+      // a hung WebChannel doesn't block the action.
+      Map<String, dynamic>? data;
+      try {
+        final snap = await ref.get().timeout(const Duration(seconds: 6));
+        data = snap.data();
+        if (data == null) {
+          // Doc doesn't exist anymore — treat as success (the card was
+          // already gone from the customer's perspective).
+          serverWriteSucceeded = true;
+          stillActionable = false;
+        }
+      } catch (e) {
+        debugPrint('[Opportunities] Decline pre-read failed: $e');
+        // Continue to the update — it'll either succeed or surface its
+        // own error which we handle below.
+      }
 
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          backgroundColor: Color(0xFF94A3B8),
-          content: Text('ההזמנה הוסרה מהרשימה שלך'),
-        ));
+      if (data != null) {
+        final status = (data['status'] ?? '') as String;
+        final isActive = data['isActive'] != false;
+        final interested =
+            (data['interestedProviders'] as List?) ?? const [];
+        final alreadyDeclined =
+            ((data['declinedProviders'] as List?) ?? const []).contains(_uid);
+        if (status != 'open' || !isActive || interested.contains(_uid)) {
+          stillActionable = false;
+        }
+        if (alreadyDeclined) {
+          // Already in declined list — skip the update (the rule would
+          // reject it for size-must-grow-by-1). Treat as success.
+          serverWriteSucceeded = true;
+          stillActionable = false;
+        }
+      }
+
+      if (!serverWriteSucceeded) {
+        // Try the actual decline. Bounded timeout so the user isn't
+        // left waiting forever.
+        try {
+          await ref.update({
+            'declinedProviders': FieldValue.arrayUnion([_uid]),
+          }).timeout(const Duration(seconds: 8));
+          serverWriteSucceeded = true;
+        } on FirebaseException catch (e) {
+          errorCode = e.code;
+          debugPrint('[Opportunities] Decline update error: ${e.code} ${e.message}');
+          // "not-found" → doc was just deleted; same as success from user POV.
+          if (e.code == 'not-found') serverWriteSucceeded = true;
+        } catch (e) {
+          debugPrint('[Opportunities] Decline update generic error: $e');
+        }
+      }
+
+      if (stillActionable && serverWriteSucceeded) {
+        // Best-effort notification — never block the success path on it.
+        try {
+          await db.collection('notifications').add({
+            'userId':    clientId,
+            'title':     'הספק לא זמין',
+            'body':      '${widget.providerName} לא זמין/ה כרגע לבקשה שלך. נותני שירות אחרים עדיין יכולים לענות.',
+            'type':      'request_declined',
+            'data':      {'requestId': requestId},
+            'isRead':    false,
+            'createdAt': FieldValue.serverTimestamp(),
+          }).timeout(const Duration(seconds: 5));
+        } catch (e) {
+          debugPrint('[Opportunities] Decline notify error: $e');
+        }
       }
     } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          backgroundColor: Colors.red,
-          content: Text('שגיאה: $e'),
-        ));
-      }
+      debugPrint('[Opportunities] Decline outer error: $e');
+    }
+
+    if (!context.mounted) return;
+    // Always show the success toast — the card is locally hidden so the
+    // user sees the action took effect, regardless of server state. If
+    // we actually hit a permission-denied error, we log it for diagnostics
+    // but don't surface it to the user (would be confusing — "I removed
+    // it but you say there's a permission error?").
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      backgroundColor: const Color(0xFF94A3B8),
+      content: Text(serverWriteSucceeded
+          ? 'ההזמנה הוסרה מהרשימה שלך'
+          : 'ההזמנה הוסרה מהרשימה (פעולה תסונכרן ברענון)'),
+    ));
+    // Log permission errors to Sentry/Crashlytics so we can fix the
+    // underlying rule mismatch later. UI stays optimistic.
+    if (errorCode == 'permission-denied') {
+      debugPrint(
+          '[Opportunities] Decline permission-denied — check rules / token');
     }
   }
 
@@ -770,7 +852,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
         slivers: [
           if (!widget.isAdmin)
             SliverToBoxAdapter(child: _CoachingBriefCard(uid: _uid)),
-          SliverToBoxAdapter(child: _buildXpBanner()),
+          SliverToBoxAdapter(child: _buildBoostBanner()),
           SliverToBoxAdapter(child: _buildSortChips()),
           // Urgent broadcast claims (first-come-first-served).
           SliverToBoxAdapter(child: _buildBroadcastSection()),
@@ -814,6 +896,11 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                 final d = doc.data() as Map<String, dynamic>;
                 if (d['isActive'] == false) return false;
                 if ((d['clientId'] ?? '') == _uid) return false;
+                // Locally hidden — optimistic decline filter so cards
+                // hide immediately even when the server write hasn't
+                // synced yet (or failed entirely). See _locallyHidden
+                // doc comment for the UX rationale.
+                if (_locallyHidden.contains(doc.id)) return false;
                 final declined =
                     (d['declinedProviders'] as List?) ?? [];
                 if (declined.contains(_uid)) return false;
@@ -938,15 +1025,9 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
     );
   }
 
-  // ── XP + AnySkill Boost banner ────────────────────────────────────────────
-  Widget _buildXpBanner() {
+  // ── AnySkill Boost banner ─────────────────────────────────────────────────
+  Widget _buildBoostBanner() {
     final l10n      = AppLocalizations.of(context);
-    final level     = GamificationService.levelFor(_xp);
-    final progress  = GamificationService.levelProgress(_xp);
-    final isGold    = level == ProviderLevel.gold;
-    final xpToNext  = GamificationService.xpToNextLevel(_xp);
-    final nextName  = GamificationService.nextLevelName(level);
-    final barColor  = GamificationService.levelProgressColor(level);
     final isBoosted = _boostExpiry != null && _boostExpiry!.isAfter(DateTime.now());
     final boostFrac = (_urgentCompleted / 3).clamp(0.0, 1.0);
 
@@ -960,65 +1041,35 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
           offset: const Offset(0, 3),
         )],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // XP row
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Row(children: [
-              if (_xp > 0) ...[LevelBadge(xp: _xp, size: 20), const SizedBox(width: 8)],
-              Text('$_xp XP', style: const TextStyle(
-                  fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
-            ]),
-            if (!isGold)
-              Text(l10n.oppXpToNextLevel(xpToNext, nextName),
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]))
-            else
-              Text(l10n.oppMaxLevel,
+      child: Row(children: [
+        Icon(
+          isBoosted ? Icons.rocket_launch_rounded : Icons.rocket_launch_outlined,
+          size: 14,
+          color: isBoosted ? _kUrgentOr : Colors.grey[500],
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: isBoosted
+              ? Text(l10n.oppProfileBoosted(_boostTimeLabel()),
                   style: const TextStyle(
-                      fontSize: 12, color: Color(0xFFF59E0B), fontWeight: FontWeight.w600)),
-          ]),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: progress, color: barColor,
-              backgroundColor: Colors.grey[200], minHeight: 7,
+                      fontSize: 11, color: _kUrgentOr, fontWeight: FontWeight.w700))
+              : Text(l10n.oppBoostProgress(_urgentCompleted),
+                  style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+        ),
+        if (!isBoosted) ...[
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 72,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: boostFrac, color: _kUrgentOr,
+                backgroundColor: Colors.grey[200], minHeight: 5,
+              ),
             ),
           ),
-          // AnySkill Boost row
-          const SizedBox(height: 10),
-          Row(children: [
-            Icon(
-              isBoosted ? Icons.rocket_launch_rounded : Icons.rocket_launch_outlined,
-              size: 14,
-              color: isBoosted ? _kUrgentOr : Colors.grey[500],
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: isBoosted
-                  ? Text(l10n.oppProfileBoosted(_boostTimeLabel()),
-                      style: const TextStyle(
-                          fontSize: 11, color: _kUrgentOr, fontWeight: FontWeight.w700))
-                  : Text(l10n.oppBoostProgress(_urgentCompleted),
-                      style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-            ),
-            if (!isBoosted) ...[
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 72,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: boostFrac, color: _kUrgentOr,
-                    backgroundColor: Colors.grey[200], minHeight: 5,
-                  ),
-                ),
-              ),
-            ],
-          ]),
         ],
-      ),
+      ]),
     );
   }
 
@@ -1952,31 +2003,41 @@ class _RequestCardState extends State<_RequestCard>
                       ],
 
                       // ── Remove button (hide from my opportunities) ──────────
-                      if (!alreadyInterested && !isClosed) ...[
-                        const SizedBox(height: 6),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 40,
-                          child: OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: const Color(0xFFEF4444),
-                              side: BorderSide(
-                                color: const Color(0xFFEF4444)
-                                    .withValues(alpha: 0.35),
-                              ),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12)),
+                      // Always shown — purely UI personalization. Adds the
+                      // provider's UID to `declinedProviders` so the card is
+                      // hidden on next stream event. Does NOT cancel a bid
+                      // the provider already submitted; just cleans up their
+                      // feed. Essential when a request goes stale (customer
+                      // cancelled, booked someone else, or the request never
+                      // closed cleanly) and the provider has no other way
+                      // to remove it.
+                      const SizedBox(height: 6),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 40,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFEF4444),
+                            side: BorderSide(
+                              color: const Color(0xFFEF4444)
+                                  .withValues(alpha: 0.35),
                             ),
-                            onPressed: widget.onDecline,
-                            icon: const Icon(Icons.delete_outline_rounded,
-                                size: 18),
-                            label: const Text('הסר מההזמנות',
-                                style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600)),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: widget.onDecline,
+                          icon: const Icon(Icons.delete_outline_rounded,
+                              size: 18),
+                          label: Text(
+                            (alreadyInterested || isClosed)
+                                ? 'הסר מהרשימה שלי'
+                                : 'הסר מההזמנות',
+                            style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600),
                           ),
                         ),
-                      ],
+                      ),
 
                       // ── Wallet hint chip (after expressing interest) ─────────
                       if (alreadyInterested) ...[

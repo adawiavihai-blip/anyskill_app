@@ -44,6 +44,12 @@ class FlashAuction {
   /// Provider uids that have been notified by the dispatch CF. The CF
   /// appends to this array as each tier fires.
   final List<String> notifiedProviderIds;
+  /// Provider uids who tapped "לא מעוניין" on this auction. Filtered out
+  /// of their `watchActiveAuctionsForProvider` stream client-side so the
+  /// card disappears from their opportunities tab. The auction stays
+  /// live for everyone else. (Same shape as job_requests.declinedProviders
+  /// — CLAUDE.md Law 27.)
+  final List<String> declinedProviderIds;
   /// Number of offers received. Denormalized from the offers subcollection
   /// so the searching/offers screens render the count without an extra
   /// query.
@@ -83,6 +89,7 @@ class FlashAuction {
     this.photoUrls = const [],
     this.currentRadiusKm = 5.0,
     this.notifiedProviderIds = const [],
+    this.declinedProviderIds = const [],
     this.offerCount = 0,
     this.selectedOfferId,
     this.selectedProviderId,
@@ -116,6 +123,7 @@ class FlashAuction {
         'photos': photoUrls,
         'currentRadiusKm': currentRadiusKm,
         'notifiedProviderIds': notifiedProviderIds,
+        'declinedProviderIds': declinedProviderIds,
         'offerCount': offerCount,
         if (selectedOfferId != null) 'selectedOfferId': selectedOfferId,
         if (selectedProviderId != null) 'selectedProviderId': selectedProviderId,
@@ -147,6 +155,9 @@ class FlashAuction {
       currentRadiusKm: (raw['currentRadiusKm'] as num?)?.toDouble() ?? 5.0,
       notifiedProviderIds:
           (raw['notifiedProviderIds'] as List?)?.whereType<String>().toList() ??
+              const [],
+      declinedProviderIds:
+          (raw['declinedProviderIds'] as List?)?.whereType<String>().toList() ??
               const [],
       offerCount: (raw['offerCount'] as num?)?.toInt() ?? 0,
       selectedOfferId: raw['selectedOfferId'] as String?,

@@ -248,6 +248,8 @@ class FlashAuctionService {
   /// Filters:
   ///   • `notifiedProviderIds` array-contains [providerId]
   ///   • `status` is searching | has_offers
+  ///   • Provider has NOT tapped "לא מעוניין" on this auction
+  ///     (`declinedProviderIds` does not contain [providerId])
   ///
   /// Note: a single-field array-contains query plus an inequality on
   /// `status` requires a composite index. We keep the query simple by
@@ -264,8 +266,40 @@ class FlashAuctionService {
         .snapshots()
         .map((q) {
       final all = q.docs.map(FlashAuction.fromDoc);
-      return all.where((a) => a.isLive).toList();
+      return all
+          .where((a) => a.isLive && !a.declinedProviderIds.contains(providerId))
+          .toList();
     });
+  }
+
+  /// Provider taps "לא מעוניין" — appends their uid to
+  /// `declinedProviderIds` so the card vanishes from THEIR opportunities
+  /// stream. The auction stays live for everyone else; other notified
+  /// providers can still offer. Same pattern as job_requests (CLAUDE.md
+  /// Law 27).
+  ///
+  /// Returns null on success, Hebrew error message on failure.
+  static Future<String?> declineAuction({required String auctionId}) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return 'יש להתחבר';
+    try {
+      await _db.collection(_kCollection).doc(auctionId).update({
+        'declinedProviderIds': FieldValue.arrayUnion([user.uid]),
+      });
+      debugPrint('[FlashAuction] ✅ ${user.uid} declined $auctionId');
+      return null;
+    } on FirebaseException catch (e) {
+      debugPrint(
+        '[FlashAuction] declineAuction error: ${e.code} ${e.message}',
+      );
+      if (e.code == 'permission-denied') {
+        return 'אין הרשאה — נסה לרענן את הדף';
+      }
+      return 'שגיאה בדחיית הקריאה — נסה שוב';
+    } catch (e) {
+      debugPrint('[FlashAuction] declineAuction error: $e');
+      return 'שגיאה בדחיית הקריאה — נסה שוב';
+    }
   }
 
   /// Provider commits to an ETA. Pricing is computed server-truthfully
@@ -274,32 +308,65 @@ class FlashAuctionService {
   /// frozen onto the offer doc so the customer sees what was true at
   /// offer time.
   ///
-  /// Returns the new offer id on success, null on failure.
-  /// Returns 'duplicate' (special string) when the provider already has
-  /// an active offer on this auction (we enforce 1 active offer per
-  /// (provider, auction) pair).
-  static Future<String?> submitOffer({
+  /// Returns a record:
+  ///   • `offerId != null`            → success
+  ///   • `duplicate == true`          → provider already has a pending
+  ///                                    offer on this auction
+  ///   • `error != null`              → Hebrew error message ready to
+  ///                                    show in a snackbar (never a raw
+  ///                                    Firebase code; mapped to friendly
+  ///                                    Hebrew strings per Law 10)
+  ///
+  /// Previously this method returned `null` on any failure, which left
+  /// the provider staring at a generic "שגיאה בשליחה — נסה שוב" with no
+  /// way to debug WHICH error fired (permission-denied / auction-closed
+  /// / network / etc).
+  static Future<({String? offerId, bool duplicate, String? error})>
+      submitOffer({
     required String auctionId,
     required int etaMinutes,
     required MotorcycleTowProfile providerProfile,
     DateTime? when,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return null;
+    if (user == null) {
+      return (offerId: null, duplicate: false, error: 'יש להתחבר');
+    }
 
     try {
       // 1. Read the auction for distance + status check.
       final auctionRef = _db.collection(_kCollection).doc(auctionId);
       final aSnap = await auctionRef.get();
-      if (!aSnap.exists) return null;
+      if (!aSnap.exists) {
+        return (offerId: null, duplicate: false, error: 'הקריאה לא נמצאה');
+      }
       final aData = aSnap.data() ?? {};
       final aStatus = aData['status'] as String? ?? '';
       if (aStatus != FlashAuctionStatus.searching &&
           aStatus != FlashAuctionStatus.hasOffers) {
-        // Auction closed — silent no-op (provider's UI will hide soon).
-        return null;
+        return (
+          offerId: null,
+          duplicate: false,
+          error: 'הקריאה כבר נסגרה — מישהו אחר נבחר',
+        );
       }
       final distanceKm = (aData['distanceKm'] as num?)?.toDouble() ?? 0;
+
+      // Defense-in-depth: the rules let the provider write only if they
+      // appear in `notifiedProviderIds`. If a stale UI shows the card
+      // after the CF has expanded the radius and a re-fetch dropped this
+      // provider, the write below will fail with permission-denied. Catch
+      // it client-side with a clearer message.
+      final notified =
+          (aData['notifiedProviderIds'] as List?)?.whereType<String>() ??
+              const [];
+      if (!notified.contains(user.uid)) {
+        return (
+          offerId: null,
+          duplicate: false,
+          error: 'הקריאה כבר אינה זמינה לך — נסה לרענן',
+        );
+      }
 
       // 2. Check duplicate offer (one per provider per auction).
       final existing = await auctionRef
@@ -308,7 +375,9 @@ class FlashAuctionService {
           .where('status', isEqualTo: FlashAuctionOfferStatus.pending)
           .limit(1)
           .get();
-      if (existing.docs.isNotEmpty) return 'duplicate';
+      if (existing.docs.isNotEmpty) {
+        return (offerId: null, duplicate: true, error: null);
+      }
 
       // 3. Read provider profile snapshot — name/rating/jobs/photo.
       final providerSnap =
@@ -321,6 +390,13 @@ class FlashAuctionService {
         distanceKm: distanceKm,
         when: when,
       );
+      if (breakdown.total <= 0) {
+        return (
+          offerId: null,
+          duplicate: false,
+          error: 'הגדרת המחירים שלך לא הושלמה — היכנס לפרופיל לעדכן',
+        );
+      }
 
       // 5. Atomic transaction: write the offer + bump auction.offerCount
       //    (and flip status to 'has_offers' if it was still 'searching').
@@ -350,13 +426,23 @@ class FlashAuctionService {
 
       await _db.runTransaction((tx) async {
         final aSnapTx = await tx.get(auctionRef);
-        if (!aSnapTx.exists) throw 'auction_missing';
+        if (!aSnapTx.exists) {
+          throw FirebaseException(
+            plugin: 'cloud_firestore',
+            code: 'not-found',
+            message: 'auction_missing',
+          );
+        }
         final aDataTx = aSnapTx.data() ?? {};
         final aStatusTx = aDataTx['status'] as String? ?? '';
         // Re-check inside the tx — covers status flip races.
         if (aStatusTx != FlashAuctionStatus.searching &&
             aStatusTx != FlashAuctionStatus.hasOffers) {
-          throw 'auction_closed';
+          throw FirebaseException(
+            plugin: 'cloud_firestore',
+            code: 'failed-precondition',
+            message: 'auction_closed',
+          );
         }
         tx.set(offerRef, offer.toMap());
         final updates = <String, Object?>{
@@ -369,10 +455,28 @@ class FlashAuctionService {
       });
       debugPrint(
           '[FlashAuction] ✅ offer ${offerRef.id} on $auctionId ($etaMinutes min)');
-      return offerRef.id;
+      return (offerId: offerRef.id, duplicate: false, error: null);
+    } on FirebaseException catch (e) {
+      debugPrint(
+        '[FlashAuction] submitOffer FirebaseException: ${e.code} ${e.message}',
+      );
+      final hebrew = switch (e.code) {
+        'permission-denied' =>
+          'אין הרשאה — ייתכן שהקריאה כבר אינה זמינה לך. נסה לרענן',
+        'not-found' => 'הקריאה לא נמצאה',
+        'failed-precondition' => 'הקריאה כבר נסגרה — מישהו אחר נבחר',
+        'unavailable' || 'deadline-exceeded' =>
+          'בעיית חיבור — בדוק את האינטרנט ונסה שוב',
+        _ => 'שגיאה בשליחה — נסה שוב',
+      };
+      return (offerId: null, duplicate: false, error: hebrew);
     } catch (e) {
       debugPrint('[FlashAuction] submitOffer error: $e');
-      return null;
+      return (
+        offerId: null,
+        duplicate: false,
+        error: 'שגיאה בשליחה — נסה שוב',
+      );
     }
   }
 

@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "jest --colors --verbose"
+    "test": "jest --colors --verbose --runInBand"
   },
   "keywords": [],
   "author": "",

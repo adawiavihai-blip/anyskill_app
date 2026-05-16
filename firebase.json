@@ -28,6 +28,9 @@
   },
   "hosting": {
     "public": "build/web",
+    "predeploy": [
+      "dart run scripts/update_web_version.dart"
+    ],
     "ignore": [
       "firebase.json",
       "**/.*",
