@@ -447,6 +447,10 @@ class _LiveMap extends StatefulWidget {
 class _LiveMapState extends State<_LiveMap> {
   final _mapCtrl = MapController();
 
+  /// Last provider position the camera was re-fitted on. Null until the
+  /// first GPS fix so we don't fight the initialCenter on the first frame.
+  LatLng? _followed;
+
   @override
   void dispose() {
     _mapCtrl.dispose();
@@ -461,6 +465,37 @@ class _LiveMapState extends State<_LiveMap> {
         final live = snap.data;
         final providerLat = live?.lat ?? widget.fallbackExpertLat;
         final providerLng = live?.lng ?? widget.fallbackExpertLng;
+
+        // Auto-follow: whenever the provider's GPS updates, re-fit the
+        // camera so the customer sees the provider (and their destination)
+        // immediately — no panning needed. (קובי נגר, 2026-05-17.)
+        if (providerLat != null && providerLng != null) {
+          final p = LatLng(providerLat, providerLng);
+          if (p != _followed) {
+            _followed = p;
+            final clientPt =
+                (widget.clientLat != null && widget.clientLng != null)
+                    ? LatLng(widget.clientLat!, widget.clientLng!)
+                    : null;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              try {
+                if (clientPt != null) {
+                  _mapCtrl.fitCamera(CameraFit.coordinates(
+                    coordinates: [p, clientPt],
+                    padding: const EdgeInsets.all(44),
+                    maxZoom: 16,
+                  ));
+                } else {
+                  _mapCtrl.move(p, 15.5);
+                }
+              } catch (_) {
+                // Map not attached on the first frame — initialCenter
+                // already covers that case.
+              }
+            });
+          }
+        }
 
         final markers = <Marker>[];
         LatLng center;

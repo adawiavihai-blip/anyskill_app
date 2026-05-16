@@ -53,6 +53,17 @@ class _LiveTravelMapState extends State<LiveTravelMap>
     with SingleTickerProviderStateMixin {
   late final AnimationController _pulseCtrl;
 
+  /// Drives auto-follow — recentering the camera on the provider as their
+  /// GPS updates so the customer never has to pan to find the moving pin.
+  final MapController _mapController = MapController();
+
+  /// Last provider position the camera was recentered on. Null until the
+  /// first GPS fix.
+  LatLng? _followed;
+
+  /// Zoom used on the first provider fix — close enough to see them clearly.
+  static const double _kFollowZoom = 15.0;
+
   static const _kFallbackCenter = LatLng(32.0853, 34.7818); // Tel Aviv
 
   @override
@@ -67,6 +78,7 @@ class _LiveTravelMapState extends State<LiveTravelMap>
   @override
   void dispose() {
     _pulseCtrl.dispose();
+    _mapController.dispose();
     super.dispose();
   }
 
@@ -87,6 +99,27 @@ class _LiveTravelMapState extends State<LiveTravelMap>
         final loc = snap.data;
         final provider =
             loc != null ? LatLng(loc.lat, loc.lng) : null;
+        // Auto-follow: the moment the provider's GPS arrives (or moves),
+        // recenter the map on them so the customer sees the provider right
+        // away without panning. The first fix snaps to a close zoom; later
+        // updates keep whatever zoom the customer chose.
+        // (קובי נגר, 2026-05-17.)
+        if (provider != null && provider != _followed) {
+          final isFirstFix = _followed == null;
+          _followed = provider;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            try {
+              final z = isFirstFix
+                  ? _kFollowZoom
+                  : _mapController.camera.zoom;
+              _mapController.move(provider, z);
+            } catch (_) {
+              // Map not attached on the very first frame — the
+              // initialCenter already handles that case.
+            }
+          });
+        }
         return _buildMap(provider);
       },
     );
@@ -110,6 +143,7 @@ class _LiveTravelMapState extends State<LiveTravelMap>
         child: Stack(
           children: [
             FlutterMap(
+              mapController: _mapController,
               options: MapOptions(
                 initialCenter: centre,
                 initialZoom: zoom,

@@ -564,16 +564,26 @@ class _CtrCell extends StatelessWidget {
             color: StudioColors.bgSubtle,
             borderRadius: BorderRadius.circular(999),
           ),
-          child: FractionallySizedBox(
-            alignment: AlignmentDirectional.centerStart,
-            widthFactor: (pct / 12).clamp(0.0, 1.0).toDouble(),
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: StudioColors.ctrBarGradient,
-                borderRadius: BorderRadius.circular(999),
-              ),
-            ),
-          ),
+          // ⚠️ The fill is rendered ONLY when pct > 0. A `widthFactor: 0`
+          // FractionallySizedBox paints its gradient child at a zero-width
+          // rect — the gradient's begin/end points collapse to the same
+          // coordinate and CanvasKit's `MakeLinearGradient` returns null
+          // for that zero-length gradient. The next frame's rasterizer
+          // then crashes with "Cannot read properties of null (reading
+          // 'toString')". A 0% CTR bar should be empty anyway, so we just
+          // skip the fill entirely.
+          child: pct <= 0
+              ? null
+              : FractionallySizedBox(
+                  alignment: AlignmentDirectional.centerStart,
+                  widthFactor: (pct / 12).clamp(0.0, 1.0).toDouble(),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: StudioColors.ctrBarGradient,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
         ),
       ],
     );

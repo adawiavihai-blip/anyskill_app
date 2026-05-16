@@ -432,19 +432,19 @@ class _CustomerBookingCardState extends State<CustomerBookingCard>
                           ),
                         ),
                       ]),
-                      // Live map stays on the towing-to-destination leg so
-                      // the customer keeps tracking the provider after the
-                      // "הגעתי" tap. Non-trip jobs keep the plain timer.
-                      if (isTripJob) ...[
-                        const SizedBox(height: 10),
-                        LiveTravelMap(
-                          providerUid: expertId,
-                          pickupLat: _readPickupLat(job),
-                          pickupLng: _readPickupLng(job),
-                          dropoffLat: _readDropoffLat(job),
-                          dropoffLng: _readDropoffLng(job),
-                        ),
-                      ],
+                      // Live map stays for EVERY job after the "הגעתי" tap —
+                      // not just trip jobs. The customer keeps tracking the
+                      // provider until "סיימתי" flips status to
+                      // expert_completed, at which point this whole block
+                      // disappears. (קובי נגר, 2026-05-17.)
+                      const SizedBox(height: 10),
+                      LiveTravelMap(
+                        providerUid: expertId,
+                        pickupLat: _readPickupLat(job),
+                        pickupLng: _readPickupLng(job),
+                        dropoffLat: _readDropoffLat(job),
+                        dropoffLng: _readDropoffLng(job),
+                      ),
                     ],
                   ),
                 ),

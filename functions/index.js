@@ -17689,6 +17689,13 @@ async function _faFindNearbyProviders({
     for (const doc of q.docs) {
         if (excludeUids.has(doc.id)) continue;
         const data = doc.data() || {};
+        // Skip demo/seed profiles — admin-created fake providers (§4.7) are
+        // written with isDemo:true AND isOnline:true, so they pass the
+        // isOnline query. They have no real human to answer an emergency
+        // call. Notifying them inflates `notifiedProviderIds` with ghosts,
+        // so the searching screen shows "4 גרריסטים קיבלו" when only 1 real
+        // provider exists. (Live bug — קובי נגר, 2026-05-17.)
+        if (data.isDemo === true) continue;
         // Defense-in-depth: require BOTH the motorcycle-towing profile AND
         // the current sub-category to match. A provider who filled the
         // motorcycleTowProfile and then switched sub-category to something
@@ -18507,6 +18514,9 @@ async function _bseFindNearbyProviders({
     for (const doc of q.docs) {
         if (excludeUids.has(doc.id)) continue;
         const data = doc.data() || {};
+        // Skip demo/seed profiles — see _faFindNearbyProviders (§4.7).
+        // Demos are isOnline:true but have no human to respond.
+        if (data.isDemo === true) continue;
         const profile = data.babysitterProfile;
         if (!profile) continue;
         // Trust gate — non-negotiable for childcare emergencies.
@@ -19731,6 +19741,9 @@ async function _deFindNearbyProviders({
     for (const doc of q.docs) {
         if (excludeUids.has(doc.id)) continue;
         const data = doc.data() || {};
+        // Skip demo/seed profiles — see _faFindNearbyProviders (§4.7).
+        // Demos are isOnline:true but have no human to respond.
+        if (data.isDemo === true) continue;
         const profile = data.deliveryProfile;
         if (!profile) continue;
         if (!_deIsDeliveryServiceType(data.serviceType)) continue;

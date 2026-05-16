@@ -477,6 +477,11 @@ class _GlobalSearchBarState extends State<GlobalSearchBar>
                     onChanged: _onTextChanged,
                     decoration: InputDecoration(
                       border: InputBorder.none,
+                      // The global inputDecorationTheme sets filled:true with
+                      // a near-white fillColor — that painted a white block in
+                      // the middle of the pill. Turn it off so the container's
+                      // light-indigo fill shows through edge-to-edge.
+                      filled: false,
                       contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                       hintText: l10n.searchPlaceholder,
                       hintStyle: TextStyle(
