@@ -454,6 +454,9 @@ class _AdminUserDetailScreenState
         // ── Transaction history ───────────────────────────────────────
         SliverToBoxAdapter(child: _buildTransactions()),
 
+        // ── Cancellations ─────────────────────────────────────────────
+        SliverToBoxAdapter(child: _buildCancellations()),
+
         // ── Audit log ─────────────────────────────────────────────────
         SliverToBoxAdapter(child: _buildAuditLog()),
 
@@ -1841,6 +1844,165 @@ class _AdminUserDetailScreenState
       case 'refunded':  return 'הוחזר';
       default:          return s;
     }
+  }
+
+  // ── Cancellations section ──────────────────────────────────────────────
+  // Shows every cancelled deal involving this user — which deal, when, and
+  // who cancelled it — plus a count of cancellations the user performed.
+
+  /// True when THIS user is the one who cancelled the given job.
+  /// `cancelledBy` on the job doc is 'customer' | 'provider'.
+  bool _cancelledByThisUser(Map<String, dynamic> job) {
+    final by = job['cancelledBy'] as String? ?? '';
+    final isCustomer = job['customerId'] == widget.userId;
+    final isExpert = job['expertId'] == widget.userId;
+    if (by == 'customer' && isCustomer) return true;
+    if (by == 'provider' && isExpert) return true;
+    return false;
+  }
+
+  Widget _buildCancellations() {
+    final jobsAsync = ref.watch(userJobsProvider(widget.userId));
+
+    return jobsAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (jobs) {
+        final cancelled = jobs
+            .where((j) =>
+                (j['status'] as String? ?? '').startsWith('cancelled'))
+            .toList();
+
+        if (cancelled.isEmpty) {
+          return _section(
+            'ביטולים',
+            Icons.event_busy_rounded,
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Text('אין ביטולים רשומים',
+                  style: TextStyle(color: _kMuted, fontSize: 13)),
+            ),
+          );
+        }
+
+        // Newest cancellation first.
+        cancelled.sort((a, b) {
+          final ta = a['cancelledAt'] as Timestamp?;
+          final tb = b['cancelledAt'] as Timestamp?;
+          if (ta == null || tb == null) return 0;
+          return tb.compareTo(ta);
+        });
+
+        final byThisUser =
+            cancelled.where(_cancelledByThisUser).length;
+
+        return _section(
+          'ביטולים',
+          Icons.event_busy_rounded,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _detailRow('ביטולים שביצע המשתמש', '$byThisUser'),
+              _detailRow('סך עסקאות שבוטלו', '${cancelled.length}'),
+              const SizedBox(height: 10),
+              for (final j in cancelled.take(20)) _cancellationRow(j),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _cancellationRow(Map<String, dynamic> job) {
+    final byThisUser = _cancelledByThisUser(job);
+    final isCustomer = job['customerId'] == widget.userId;
+    final counterparty = isCustomer
+        ? (job['expertName'] as String? ?? 'נותן שירות')
+        : (job['customerName'] as String? ?? 'לקוח');
+    final amount = ((job['totalAmount'] ??
+                job['totalPaidByCustomer'] ??
+                job['amount'] ??
+                0) as num)
+        .toDouble();
+    final ts = (job['cancelledAt'] as Timestamp?)?.toDate();
+    final withPenalty =
+        (job['status'] as String? ?? '') == 'cancelled_with_penalty';
+    final jobId = job['id'] as String? ?? '';
+    final shortId = jobId.length > 6 ? jobId.substring(0, 6) : jobId;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _kRed.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _kRed.withValues(alpha: 0.12)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: _kRed.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(Icons.event_busy_rounded,
+                color: _kRed, size: 16),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('עסקה עם $counterparty',
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: _kDark)),
+                const SizedBox(height: 2),
+                Text(
+                  '${ts != null ? _fmt.format(ts) : "תאריך לא ידוע"} · '
+                  '₪${amount.toStringAsFixed(0)}'
+                  '${shortId.isNotEmpty ? " · #$shortId" : ""}',
+                  style: const TextStyle(fontSize: 11, color: _kMuted),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: byThisUser
+                      ? _kRed.withValues(alpha: 0.12)
+                      : _kMuted.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  byThisUser ? 'ביטל/ה' : 'בוטל ע״י הצד השני',
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: byThisUser ? _kRed : _kMuted),
+                ),
+              ),
+              if (withPenalty) ...[
+                const SizedBox(height: 3),
+                const Text('עם קנס',
+                    style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
+                        color: _kAmber)),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   // ── Audit log section ──────────────────────────────────────────────────

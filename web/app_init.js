@@ -312,7 +312,15 @@
 //   banner's 0% CTR bar painted a zero-width gradient; CanvasKit's
 //   MakeLinearGradient returns null for a zero-length gradient and the
 //   rasterizer crashed. The 0% fill is now skipped entirely.
-var REQUIRED_VERSION = '11.9.0+18';
+// 11.9.0+19 (2026-05-17): customer can no longer cancel a booking once the
+//   provider tapped "הגעתי" (workStartedAt set) — only open a dispute.
+//   Admin user-detail screen gained a "ביטולים" section (which deal, when,
+//   per-user cancellation count).
+// 11.9.0+20 (2026-05-17): Account Settings — added a "מיקום (GPS)" toggle
+//   below "צלילי האפליקציה" (mirrors the OS location permission). Every
+//   toggle in the screen now shows a "פעיל"/"כבוי" text pill instead of
+//   the round Switch thumb.
+var REQUIRED_VERSION = '11.9.0+20';
 
 // ── iOS PWA STANDALONE FIX ──────────────────────────────────────────────────
 // iOS PWA (Home Screen icon) aggressively caches the app shell. When opened

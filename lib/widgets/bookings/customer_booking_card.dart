@@ -559,13 +559,47 @@ class _CustomerBookingCardState extends State<CustomerBookingCard>
                   ),
                 ],
 
-                if (status == 'paid_escrow') ...[
+                // Cancellation is allowed ONLY before the provider taps
+                // "הגעתי" (which sets workStartedAt). Once the work has
+                // started the customer can no longer cancel — only open a
+                // dispute if something goes wrong.
+                if (status == 'paid_escrow' && workStartedTs == null) ...[
                   BookingQuickActionChip(
                     icon: Icons.cancel_outlined,
                     label: 'בטל הזמנה',
                     color: const Color(0xFFFEF2F2),
                     iconColor: Colors.red,
                     onPressed: () => widget.onCancel(amount),
+                  ),
+                ],
+
+                if (status == 'paid_escrow' && workStartedTs != null) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 11),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.lock_clock_rounded,
+                            size: 15, color: Color(0xFF94A3B8)),
+                        SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            'העבודה כבר החלה — לא ניתן לבטל את ההזמנה',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF64748B)),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
 

@@ -606,6 +606,17 @@ Triggered when customer taps "Pay & Secure" on a quote card. Runs as a
 | `moderate` | 24 hours before appointment | 50% of amount |
 | `strict` | 48 hours before appointment | 100% of amount |
 
+**Work-started lock (v15.x):** Once the provider taps "הגעתי" (which sets
+`jobs/{id}.workStartedAt`), the **customer can no longer cancel** — only open
+a dispute. The job status is still `paid_escrow` at that point, so the gate is
+the `workStartedAt` field, NOT the status. Enforced in 3 layers:
+- `customer_booking_card.dart` — cancel chip hidden when `workStartedAt != null`,
+  replaced by an info note "העבודה כבר החלה — לא ניתן לבטל".
+- `active_booking_detail_screen.dart` — `_SwipeToCancel` disabled likewise.
+- `processCancellation` CF — throws `failed-precondition` when a **customer**
+  cancel is attempted with `workStartedAt` set. The **provider** can still
+  cancel at any time (full refund + XP penalty).
+
 **Provider cancels:** Always full refund to customer. Provider gets -100 XP penalty.
 
 **Customer cancels before deadline:** Full refund, status `cancelled`.

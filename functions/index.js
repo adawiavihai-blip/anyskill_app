@@ -3530,6 +3530,16 @@ exports.processCancellation = onCall(
             policy      = job.cancellationPolicy || "flexible";
             isProviderCancelling = (cancelledBy === "provider") || (callerId === expertId && cancelledBy !== "customer");
 
+            // Once the provider has tapped "הגעתי" (workStartedAt set), the
+            // job is in progress — the CUSTOMER may no longer cancel. The
+            // provider can still cancel (full refund + XP penalty).
+            if (!isProviderCancelling && job.workStartedAt != null) {
+                throw new HttpsError(
+                    "failed-precondition",
+                    "Cannot cancel — the provider has already started the work.",
+                );
+            }
+
             // ── DEPOSIT-ONLY ESCROW (v12.1.0) ─────────────────────────────────
             // For jobs with depositPercent > 0, the customer has only paid
             // `paidAtBooking` (= deposit). The remainder hasn't been charged

@@ -3,12 +3,15 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 
 import '../l10n/app_localizations.dart';
 import '../main.dart' show EmailCollectionScreen, rootNavigatorKey;
 import '../services/account_deletion_service.dart';
 import '../services/audio_service.dart';
 import '../services/cached_readers.dart';
+import '../services/location_service.dart';
+import '../services/permission_service.dart';
 import 'finance_screen.dart';
 import 'phone_login_screen.dart';
 
@@ -25,14 +28,21 @@ class AccountSettingsScreen extends StatefulWidget {
   State<AccountSettingsScreen> createState() => _AccountSettingsScreenState();
 }
 
-class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
+class _AccountSettingsScreenState extends State<AccountSettingsScreen>
+    with WidgetsBindingObserver {
   // ── Local UI state ─────────────────────────────────────────────────────
   // Optimistic-override pattern matches the legacy implementation in
-  // profile_screen.dart (now removed) — keeps the switch from flickering
+  // profile_screen.dart (now removed) — keeps the toggle from flickering
   // back to the old value while the Firestore write round-trips.
   bool? _invoiceEmailOverride;
   bool _invoiceEmailSaving = false;
   bool _soundEnabled = AudioService.instance.soundEnabled;
+
+  // GPS location state. `_locationEnabled` mirrors the OS-level location
+  // permission — the real source of truth. The app cannot revoke an OS
+  // permission, so the toggle re-syncs on mount and on every app resume.
+  bool _locationEnabled = false;
+  bool _locationChecking = false;
 
   User? get _user => FirebaseAuth.instance.currentUser;
 
@@ -43,6 +53,28 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
           .collection('users')
           .doc(_user?.uid ?? '_no_user_')
           .snapshots();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refreshLocationState();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Re-check after the user may have changed the location permission in
+    // the browser / device settings while the app was backgrounded.
+    if (state == AppLifecycleState.resumed) {
+      _refreshLocationState();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -106,6 +138,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
             const SizedBox(height: 12),
             // Sound Mute — per-device, SharedPreferences-backed.
             _buildSoundMuteToggle(),
+            const SizedBox(height: 12),
+            // Location (GPS) — mirrors the OS-level location permission.
+            _buildLocationToggle(),
 
             const SizedBox(height: 28),
 
@@ -259,29 +294,21 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
         borderRadius: BorderRadius.circular(15),
         border: Border.all(color: Colors.grey.shade200),
       ),
-      child: SwitchListTile.adaptive(
-        value: displayValue,
-        onChanged: saving
+      child: ListTile(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(15),
+        ),
+        onTap: saving
             ? null
-            : (val) => _toggleInvoiceEmail(val, hasEmail: hasEmail),
-        activeColor: const Color(0xFF10B981),
-        secondary: saving
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation(Color(0xFF6366F1)),
-                ),
-              )
-            : Icon(
-                hasEmail
-                    ? Icons.receipt_long_rounded
-                    : Icons.mark_email_unread_outlined,
-                color: hasEmail
-                    ? const Color(0xFF6366F1)
-                    : const Color(0xFFF59E0B),
-              ),
+            : () => _toggleInvoiceEmail(!displayValue, hasEmail: hasEmail),
+        leading: Icon(
+          hasEmail
+              ? Icons.receipt_long_rounded
+              : Icons.mark_email_unread_outlined,
+          color: hasEmail
+              ? const Color(0xFF6366F1)
+              : const Color(0xFFF59E0B),
+        ),
         title: Text(
           l10n.profInvoiceEmailTitle,
           style: const TextStyle(fontWeight: FontWeight.w600),
@@ -293,6 +320,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
             fontSize: 12,
           ),
         ),
+        trailing: _OnOffPill(value: displayValue, loading: saving),
       ),
     );
   }
@@ -466,32 +494,12 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
         borderRadius: BorderRadius.circular(15),
         border: Border.all(color: Colors.grey.shade200),
       ),
-      child: SwitchListTile.adaptive(
-        value: _soundEnabled,
-        onChanged: (val) async {
-          setState(() => _soundEnabled = val);
-          try {
-            await AudioService.instance.setSoundEnabled(val);
-          } catch (_) {
-            if (!mounted) return;
-            setState(() => _soundEnabled = !val);
-            return;
-          }
-          if (val) {
-            unawaited(
-                AudioService.instance.playEvent(AppEvent.onPaymentSuccess));
-          }
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(val
-                ? 'צלילי האפליקציה הופעלו 🔊'
-                : 'צלילי האפליקציה הושתקו 🔇'),
-            duration: const Duration(seconds: 2),
-            backgroundColor: const Color(0xFF10B981),
-          ));
-        },
-        activeColor: const Color(0xFF10B981),
-        secondary: Icon(
+      child: ListTile(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(15),
+        ),
+        onTap: () => _toggleSound(!_soundEnabled),
+        leading: Icon(
           _soundEnabled
               ? Icons.volume_up_rounded
               : Icons.volume_off_rounded,
@@ -507,6 +515,181 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
               : 'האפליקציה תשתיק את כל הצלילים',
           style: TextStyle(color: Colors.grey[600], fontSize: 12),
         ),
+        trailing: _OnOffPill(value: _soundEnabled),
+      ),
+    );
+  }
+
+  Future<void> _toggleSound(bool val) async {
+    setState(() => _soundEnabled = val);
+    try {
+      await AudioService.instance.setSoundEnabled(val);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _soundEnabled = !val);
+      return;
+    }
+    if (val) {
+      unawaited(AudioService.instance.playEvent(AppEvent.onPaymentSuccess));
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(val
+          ? 'צלילי האפליקציה הופעלו 🔊'
+          : 'צלילי האפליקציה הושתקו 🔇'),
+      duration: const Duration(seconds: 2),
+      backgroundColor: const Color(0xFF10B981),
+    ));
+  }
+
+  // ── Location (GPS) Toggle ───────────────────────────────────────────────
+  //
+  // Mirrors the OS-level location permission — the real source of truth.
+  // The app cannot revoke an OS permission, so:
+  //   • OFF + tap → runs the LocationService permission/request flow.
+  //   • ON  + tap → explains that disabling is done in device/browser
+  //                 settings (an honest, iOS-Settings-style behaviour).
+  // The pill stays "synced properly" because `_refreshLocationState` runs
+  // on mount and again every time the app is resumed (lifecycle hook).
+  Widget _buildLocationToggle() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: ListTile(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(15),
+        ),
+        onTap: _locationChecking ? null : _toggleLocation,
+        leading: Icon(
+          _locationEnabled
+              ? Icons.location_on_rounded
+              : Icons.location_off_rounded,
+          color: const Color(0xFF6366F1),
+        ),
+        title: const Text(
+          'מיקום (GPS)',
+          style: TextStyle(fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          _locationEnabled
+              ? 'האפליקציה מציגה ספקים קרובים וממיינת תוצאות לפי מרחק'
+              : 'הפעל כדי לראות ספקים קרובים אליך ולמיין לפי מרחק',
+          style: TextStyle(color: Colors.grey[600], fontSize: 12),
+        ),
+        trailing: _OnOffPill(
+          value: _locationEnabled,
+          loading: _locationChecking,
+        ),
+      ),
+    );
+  }
+
+  /// Re-reads the OS location permission and updates the pill so it stays
+  /// in sync with reality (browser/device settings can change underneath).
+  Future<void> _refreshLocationState() async {
+    // A cached position means location is working right now — trust it
+    // even if the web Permissions API reports a stale "denied".
+    if (LocationService.cached != null) {
+      if (mounted && !_locationEnabled) {
+        setState(() => _locationEnabled = true);
+      }
+      return;
+    }
+    try {
+      final perm = await Geolocator.checkPermission();
+      final granted = perm == LocationPermission.whileInUse ||
+          perm == LocationPermission.always;
+      if (!mounted) return;
+      if (granted != _locationEnabled) {
+        setState(() => _locationEnabled = granted);
+      }
+    } catch (_) {
+      // Leave the current value untouched — never crash settings.
+    }
+  }
+
+  Future<void> _toggleLocation() async {
+    // Already granted — the app can't revoke an OS permission; point the
+    // user to the device/browser settings instead.
+    if (_locationEnabled) {
+      _showLocationDisableInfo();
+      return;
+    }
+
+    setState(() => _locationChecking = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final pos = await LocationService.requestAndGet(context);
+      if (!mounted) return;
+      if (pos != null) {
+        await PermissionService.saveLocationStatus(PermissionService.granted);
+        if (!mounted) return;
+        setState(() {
+          _locationEnabled = true;
+          _locationChecking = false;
+        });
+        messenger.showSnackBar(const SnackBar(
+          content: Text('מיקום הופעל 📍'),
+          backgroundColor: Color(0xFF10B981),
+          duration: Duration(seconds: 2),
+        ));
+      } else {
+        setState(() => _locationChecking = false);
+        // The user may have granted at the OS level even though the fix
+        // failed — re-check so the pill never lies.
+        await _refreshLocationState();
+        if (!mounted) return;
+        if (!_locationEnabled) {
+          messenger.showSnackBar(const SnackBar(
+            content: Text(
+                'לא ניתן לקבל גישה למיקום. ניתן לאפשר זאת בהגדרות הדפדפן/המכשיר.'),
+            backgroundColor: Color(0xFFF59E0B),
+            duration: Duration(seconds: 4),
+          ));
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _locationChecking = false);
+      messenger.showSnackBar(SnackBar(
+        content: Text('שגיאה בהפעלת המיקום: $e'),
+        backgroundColor: const Color(0xFFEF4444),
+        duration: const Duration(seconds: 3),
+      ));
+    }
+  }
+
+  /// Explains that turning location OFF is done in the device/browser
+  /// settings — the app itself cannot revoke an OS-level permission.
+  void _showLocationDisableInfo() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: const [
+            Text('כיבוי מיקום',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            SizedBox(width: 8),
+            Icon(Icons.location_off_rounded, color: Color(0xFF6366F1)),
+          ],
+        ),
+        content: const Text(
+          'כדי לכבות את הגישה למיקום יש לבטל את הרשאת המיקום בהגדרות הדפדפן '
+          'או המכשיר. האפליקציה אינה יכולה לבטל את ההרשאה בעצמה.',
+          textAlign: TextAlign.right,
+          style: TextStyle(height: 1.5, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('הבנתי'),
+          ),
+        ],
       ),
     );
   }
@@ -693,5 +876,49 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
           behavior: SnackBarBehavior.floating,
         ));
     }
+  }
+}
+
+/// Compact "פעיל" / "כבוי" status pill — replaces the round Switch thumb
+/// across every toggle in this screen. Purely visual: the whole [ListTile]
+/// row hosting it owns the tap (`onTap`), so the pill never double-fires a
+/// toggle. Shows a spinner while an action is in flight.
+class _OnOffPill extends StatelessWidget {
+  final bool value;
+  final bool loading;
+
+  const _OnOffPill({required this.value, this.loading = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = value ? const Color(0xFF10B981) : const Color(0xFFE5E7EB);
+    final fg = value ? Colors.white : const Color(0xFF6B7280);
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      width: 64,
+      height: 32,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: loading
+          ? const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation(Color(0xFF6366F1)),
+              ),
+            )
+          : Text(
+              value ? 'פעיל' : 'כבוי',
+              style: TextStyle(
+                color: fg,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+            ),
+    );
   }
 }

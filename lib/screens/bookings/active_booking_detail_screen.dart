@@ -214,11 +214,45 @@ class _ActiveBookingDetailScreenState
               ),
               _CancellationPolicyCard(expertId: expertId,
                   expertName: expertName),
+              // Cancellation is allowed ONLY before the provider taps
+              // "הגעתי" (workStartedAt set). After that the job is in
+              // progress and the customer can no longer cancel.
               _SwipeToCancel(
-                enabled: status == 'paid_escrow',
+                enabled: status == 'paid_escrow' && workStartedTs == null,
                 onCancelled: () =>
                     widget.onCancelRequested(job, totalAmount),
               ),
+              if (status == 'paid_escrow' && workStartedTs != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 11),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.lock_clock_rounded,
+                            size: 15, color: Color(0xFF94A3B8)),
+                        SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            'העבודה כבר החלה — לא ניתן לבטל את ההזמנה',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF64748B)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               const _TrustBar(),
             ],
           ),

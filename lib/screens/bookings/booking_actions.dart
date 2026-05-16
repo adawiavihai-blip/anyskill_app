@@ -314,8 +314,15 @@ class BookingActions {
             : 'ההזמנה בוטלה — ₪${amount.toStringAsFixed(0)} הוחזרו לארנק'),
       ));
     } catch (e) {
+      // The server blocks a customer cancel once the provider has started
+      // the work (status still paid_escrow but workStartedAt is set).
+      final raw = e.toString().toLowerCase();
+      final msg = raw.contains('failed-precondition') ||
+              raw.contains('already started')
+          ? 'לא ניתן לבטל — נותן השירות כבר התחיל בעבודה'
+          : 'שגיאה בביטול: $e';
       messenger.showSnackBar(SnackBar(
-          backgroundColor: Colors.red, content: Text('שגיאה בביטול: $e')));
+          backgroundColor: Colors.red, content: Text(msg)));
     } finally {
       if (nav.canPop()) nav.pop();
     }
